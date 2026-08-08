@@ -23,6 +23,28 @@ export interface ConfigureModalTranslations {
   channelNotLinkedBadge: string
   applyPreset: string
   applyPresetPlaceholder: string
+  managePresetsHint: string
+  managePresetsApplyHint: string
+  managePresetsEdit: string
+  managePresetsDelete: string
+  editPresetTitle: string
+  editPresetAction: string
+  deletePresetTitle: string
+  deletePresetConfirm: string
+  deletePresetAction: string
+  presetDeleted: string
+  exportPresets: string
+  importPresets: string
+  exportPresetsTitle: string
+  exportPresetsNameLabel: string
+  exportPresetsNamePlaceholder: string
+  exportPresetsAction: string
+  exportPresetsSelectHint: string
+  exportPresetsSelectAll: string
+  exportPresetsSelectNone: string
+  presetsExported: string
+  presetsImported: string
+  presetsImportFailed: string
   applyPresetTitle: string
   applyPresetConfirm: string
   applyPresetChannelLabel: string

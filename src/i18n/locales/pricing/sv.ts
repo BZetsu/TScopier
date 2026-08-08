@@ -15,8 +15,9 @@ export const pricingSv: PricingBundleTranslations = {
     extraAccountUnit: '$10/konto/månad',
     extraAccountUnitAnnual: '$96/konto/år',
     subscribe: 'Prenumerera',
-    startTrial: 'Starta 10 dagars gratis provperiod',
-    trialDays: '10 dagars gratis provperiod',
+    startTrial: 'Prenumerera',
+    trialDays: '30 dagars pengarna-tillbaka-garanti',
+    moneyBackGuarantee: '30 dagars pengarna-tillbaka-garanti',
     features: 'Funktioner',
     popular: 'Mest populär',
     basicFeatures: [

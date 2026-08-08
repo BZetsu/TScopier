@@ -96,19 +96,6 @@ export const authFr: AuthTranslations = {
     backToLogin: 'Retour à la connexion',
     confirmLinkExpired: 'Ce lien de confirmation a expiré ou a déjà été utilisé. Connectez-vous ou demandez un nouvel e-mail.',
   },
-  welcome: {
-    title: 'Bienvenue sur TScopier',
-    subtitle: 'Votre compte est prêt. Commencez votre essai gratuit pour copier les signaux Telegram vers votre broker.',
-    steps: [
-      'Connectez Telegram et choisissez vos canaux de signaux',
-      'Liez votre compte MT4/MT5',
-      'Copiez les trades automatiquement avec vos paramètres de risque',
-    ],
-    exploreDashboard: 'Explorer le tableau de bord d\'abord',
-    seePricing: 'Voir les tarifs',
-    errorFallback: 'Impossible de continuer. Veuillez réessayer.',
-    checkoutFailed: 'Impossible de démarrer le paiement. Veuillez réessayer.',
-  },
   marketing: {
     headline: 'Un copieur fluide pour chaque signal Telegram',
     trustpilotLabel: 'Trustpilot',

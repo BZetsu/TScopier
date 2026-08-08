@@ -46,6 +46,8 @@ export const settingsAr: SettingsBundleTranslations = {
       confirmPassword: 'تأكيد كلمة المرور',
       notificationSound: 'صوت إشعارات الصفقات',
       notificationSoundDescription: 'شغّل صوتًا عند تنفيذ صفقة أو تعديلها أو إغلاقها.',
+      notificationEmail: 'إشعارات البريد الإلكتروني',
+      notificationEmailDescription: 'أرسل بريدًا إلكترونيًا عند الحاجة إلى مراجعة إشارة.',
     },
     placeholders: {
       address: 'الشارع، رقم المبنى، الرمز البريدي…',

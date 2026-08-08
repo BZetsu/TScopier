@@ -29,6 +29,7 @@ import {
 import type { PlannerResult } from './manualPlanner'
 import { mergePlanImmediateOrders } from './multiTradeMerge'
 import { syncBrokerPendingStopsForBasket } from './brokerPendingStopsSync'
+import { captureDeferredBusinessFailure } from './observability/deferredBusinessEvents'
 
 export type RangeBasketParsedSlice = {
   sl?: number | null
@@ -211,7 +212,7 @@ export function buildRangeBasketTpTargets(args: {
 }): PerLegStopTargetLike[] {
   const {
     familyTrades, plan, parsed, tpLots, direction, activePendingCount, maxPendingStepIdx,
-    forceLayeringRebalance, forceMessageRevisionRefresh, channelTpLevels, finalTpsOverride,
+    forceLayeringRebalance, forceMessageRevisionRefresh, channelTpLevels,
     stoplossOverride, explicitSl,
   } = args
   if (!familyTrades.length) return []
@@ -974,6 +975,35 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     effectiveSlSource: effective.source,
     skippedReason: frozen ? tpGate.reason : undefined,
   })
+
+  if (modifyResult && modifyResult.summary.failed > 0) {
+    captureDeferredBusinessFailure({
+      category: 'management',
+      event: 'basket_tp_sync_failed',
+      severity: modifyResult.summary.modified > 0 ? 'warning' : 'error',
+      reasonCode: 'BASKET_TP_SYNC_FINAL_FAILURE',
+      message: 'Basket SL/TP synchronization did not fully apply after final retry',
+      userImpact: modifyResult.summary.modified > 0 ? 'partial' : 'failed',
+      operation: 'range_basket_tp_sync',
+      context: {
+        user_id: args.userId,
+        signal_id: args.signalId,
+        broker_account_id: args.brokerAccountId,
+        basket_id: `${args.signalId}:${args.brokerAccountId}`,
+        symbol: args.symbol,
+        side: args.direction,
+        extra: {
+          targeted_count: modifyResult.summary.attempted,
+          successful_count: modifyResult.summary.modified,
+          failed_count: modifyResult.summary.failed,
+          skipped_already_compliant_count: Math.max(0, familyTrades.length - modifyResult.summary.attempted),
+          phase: effectivePhase,
+          frozen,
+          user_visible_state_may_be_stale: true,
+        },
+      },
+    })
+  }
 
   if (modifyResult && modifyResult.summary.modified > 0) {
     console.log(

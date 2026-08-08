@@ -347,7 +347,8 @@ function defaultTrainingSchemaFromRows(rows: Array<{ raw_message: string }>): Si
 function pipSize(symbolRaw: string | null, price: number): number {
   const symbol = (symbolRaw ?? "").toUpperCase()
   if (symbol.includes("JPY")) return 0.01
-  if (symbol.includes("XAU") || symbol.includes("XAG")) return price >= 100 ? 0.1 : 0.01
+  if (symbol.includes("XAU")) return 0.1
+  if (symbol.includes("XAG")) return 0.01
   if (price < 10) return 0.0001
   return 0.01
 }

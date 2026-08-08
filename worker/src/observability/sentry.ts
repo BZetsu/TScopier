@@ -13,16 +13,18 @@ type SentryAdapter = Pick<typeof Sentry,
   | 'setContext'
   | 'withScope'
   | 'flush'
+  | 'logger'
 >
 
 type CaptureOptions = {
   subsystem: string
   operation: string
-  level?: 'error' | 'warning'
+  level?: 'fatal' | 'error' | 'warning' | 'info'
   fingerprint?: string[]
   context?: WorkerSentryContextInput
   extra?: Record<string, unknown>
   errorCode?: string
+  tags?: Record<string, string | number | boolean | null | undefined>
 }
 
 let sentry: SentryAdapter = Sentry
@@ -37,10 +39,17 @@ const fatalErrors = new WeakSet<object>()
 const fatalSignatures = new Map<string, number>()
 
 const ALLOWED_BREADCRUMB_CATEGORIES = new Set([
+  'account',
+  'auth',
   'broker',
+  'copier',
+  'layering',
+  'management',
   'persistence',
   'queue',
   'range',
+  'reconciliation',
+  'trade',
   'telegram',
   'worker',
 ])
@@ -194,6 +203,22 @@ function beforeBreadcrumb(breadcrumb: unknown): unknown {
   return { category: 'worker', message: '[REDACTED_BREADCRUMB]', level: 'info' }
 }
 
+function beforeSendLog(log: unknown): unknown {
+  const safe = safeForSentry(log)
+  if (!safe || typeof safe !== 'object' || Array.isArray(safe)) return null
+  const src = safe as Record<string, unknown>
+  const message = src.message
+  if (typeof message !== 'string') return null
+  const attributes = src.attributes
+  return {
+    level: src.level ?? 'info',
+    message: String(message).slice(0, 512),
+    attributes: attributes && typeof attributes === 'object' && !Array.isArray(attributes)
+      ? safeForSentry(attributes) as Record<string, unknown>
+      : undefined,
+  }
+}
+
 export function initWorkerSentry(env: NodeJS.ProcessEnv = process.env): void {
   if (initialized) return
   initialized = true
@@ -212,15 +237,17 @@ export function initWorkerSentry(env: NodeJS.ProcessEnv = process.env): void {
       environment: environmentFromEnv(env),
       release: releaseFromEnv(env),
       defaultIntegrations: false,
-      integrations: [],
+      integrations: [Sentry.consoleLoggingIntegration()],
       tracesSampleRate: 0,
       profilesSampleRate: 0,
       skipOpenTelemetrySetup: true,
       tracePropagationTargets: [],
       sendDefaultPii: false,
       maxBreadcrumbs: 50,
+      enableLogs: true,
       beforeSend: beforeSend as never,
       beforeBreadcrumb: beforeBreadcrumb as never,
+      beforeSendLog: beforeSendLog as never,
     })
     enabled = true
     setWorkerGlobalTags(env)
@@ -260,7 +287,7 @@ export function setWorkerGlobalTags(env: NodeJS.ProcessEnv = process.env): void 
 
 function applyScope(scope: unknown, opts: CaptureOptions): void {
   const s = scope as {
-    setLevel?: (level: 'error' | 'warning') => void
+    setLevel?: (level: 'fatal' | 'error' | 'warning' | 'info') => void
     setTag?: (key: string, value: string) => void
     setContext?: (key: string, value: Record<string, unknown>) => void
     setFingerprint?: (fingerprint: string[]) => void
@@ -271,6 +298,12 @@ function applyScope(scope: unknown, opts: CaptureOptions): void {
   s.setTag?.('operation', safeName(opts.operation, 'unknown'))
   const errorCode = opts.errorCode ?? 'UNKNOWN'
   s.setTag?.('error_code', safeName(errorCode, 'UNKNOWN').toUpperCase())
+  if (opts.tags) {
+    for (const [key, value] of Object.entries(opts.tags)) {
+      if (value == null) continue
+      s.setTag?.(safeName(key, 'tag'), String(safeForSentry(value)).slice(0, 160))
+    }
+  }
   s.setContext?.('pipeline', buildSafePipelineContext({
     ...(opts.context ?? {}),
     stage: opts.context?.stage ?? opts.operation,
@@ -303,6 +336,51 @@ export function captureWorkerWarning(messageOrError: unknown, opts: CaptureOptio
       if (messageOrError instanceof Error) sentry.captureException(messageOrError)
       else sentry.captureMessage(String(safeForSentry(String(messageOrError ?? 'warning'))), 'warning')
     })
+  } catch {
+    // best-effort only
+  }
+}
+
+export function captureWorkerMessage(message: string, opts: CaptureOptions): void {
+  if (!enabled) return
+  try {
+    const errorCode = opts.errorCode ?? 'MESSAGE'
+    sentry.withScope(scope => {
+      applyScope(scope, { ...opts, errorCode })
+      sentry.captureMessage(String(safeForSentry(message)).slice(0, 240), opts.level ?? 'warning')
+    })
+  } catch {
+    // best-effort only
+  }
+}
+
+export type WorkerLogLevel = 'info' | 'warn' | 'error'
+
+export function captureWorkerLog(
+  level: WorkerLogLevel,
+  message: string,
+  opts: CaptureOptions & { attributes?: Record<string, unknown> },
+): void {
+  if (!enabled) return
+  try {
+    const attributes: Record<string, unknown> = {
+      subsystem: safeName(opts.subsystem, 'unknown'),
+      operation: safeName(opts.operation, 'unknown'),
+    }
+    if (opts.errorCode) attributes.error_code = safeName(opts.errorCode, 'UNKNOWN').toUpperCase()
+    const tags = sanitizeTags(opts.tags)
+    if (tags) Object.assign(attributes, tags)
+    if (opts.attributes && typeof opts.attributes === 'object' && !Array.isArray(opts.attributes)) {
+      const safeAttributes = safeForSentry(opts.attributes)
+      if (safeAttributes && typeof safeAttributes === 'object' && !Array.isArray(safeAttributes)) {
+        Object.assign(attributes, safeAttributes as Record<string, unknown>)
+      }
+    }
+    const safeMessage = String(safeForSentry(message)).slice(0, 512)
+    const log = sentry.logger
+    if (level === 'info') log.info(safeMessage, attributes)
+    else if (level === 'warn') log.warn(safeMessage, attributes)
+    else log.error(safeMessage, attributes)
   } catch {
     // best-effort only
   }

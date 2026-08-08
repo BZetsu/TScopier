@@ -11,6 +11,7 @@ import {
   isSlAtOrBeyondBreakeven,
 } from '../autoManagement'
 import { signalPipPrice } from '../signalPip'
+import { convertPipOffsetToPrice, convertPipOffsetsToPrices } from '../signalStopUnits'
 import { isChannelManagementBlocked, isPendingCancelBlocked, normalizeChannelMessageFiltersMap } from '../channelMessageFilters'
 import {
   cweInstructionGroupKey,
@@ -59,13 +60,15 @@ import { mgmtBasketConcurrency, mgmtLegConcurrency, mgmtVerifyAfterModify, paral
 import { patchActiveRangePendingLegStops } from '../rangePendingLadderSync'
 import { symbolsCompatibleForBasket } from '../basketModFollowUp'
 import { type TradeExecutorContext } from './context'
-import { brokerHasLinkedSession, brokerSessionUuid, isMtUuid } from './helpers'
+import { brokerHasLinkedSession, brokerSessionUuid } from './helpers'
 import {
   type BrokerRow,
   type ParsedSignal,
   type RangePendingCancelScope,
   type SignalRow
 } from './types'
+import { captureBusinessIssue } from '../observability/businessEvents'
+import { captureDeferredBusinessFailure } from '../observability/deferredBusinessEvents'
 
 function mgmtCloseOpts(liveMgmtFast: boolean) {
   return { maxAttempts: 2, slippageEscalation: 50, liveFast: liveMgmtFast }
@@ -73,6 +76,37 @@ function mgmtCloseOpts(liveMgmtFast: boolean) {
 
 function normBasketSymbolKey(sym: string): string {
   return String(sym ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+/** Reference (entry + direction + symbol) for converting pip offsets on a modify.
+ *  Anchored to the most recently opened leg of the target symbol bucket so
+ *  "add 30 pips take profit" converts against the live basket, not a stale level. */
+function referenceEntryForMgmtRows(
+  rows: MgmtTradeRow[],
+  symbolHint: string | null,
+): { entry: number; isBuy: boolean; symbol: string } | null {
+  const hint = String(symbolHint ?? '').trim().toUpperCase()
+  const candidate = hint
+    ? rows.filter(r => symbolsCompatibleForBasket(hint, r.symbol))
+    : rows
+  if (!candidate.length) return null
+  let best: MgmtTradeRow | null = null
+  for (const r of candidate) {
+    if (!(typeof r.entry_price === 'number' && Number.isFinite(r.entry_price) && r.entry_price > 0)) continue
+    if (!best) {
+      best = r
+      continue
+    }
+    const ta = r.opened_at ? new Date(r.opened_at).getTime() : 0
+    const tb = best.opened_at ? new Date(best.opened_at).getTime() : 0
+    if (ta >= tb) best = r
+  }
+  if (!best || !(typeof best.entry_price === 'number') || !(best.entry_price > 0)) return null
+  return {
+    entry: best.entry_price,
+    isBuy: String(best.direction).toLowerCase() === 'buy',
+    symbol: best.symbol,
+  }
 }
 
 function mgmtRowToBasketLegForReconcile(row: MgmtTradeRow): BasketOpenLeg {
@@ -197,6 +231,27 @@ function deferMgmtCloseCleanup(args: {
         `[tradeExecutor] mgmt deferred close cleanup failed signal=${signal.id}:`,
         err instanceof Error ? err.message : err,
       )
+      captureDeferredBusinessFailure({
+        category: 'management',
+        event: 'trade_management_cleanup_failed',
+        severity: 'warning',
+        reasonCode: 'MGMT_CLOSE_CLEANUP_FAILED',
+        message: 'Deferred management close cleanup failed after main close handling',
+        userImpact: 'partial',
+        operation: 'management_close_cleanup',
+        err,
+        context: {
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          channel_id: signal.channel_id,
+          telegram_message_id: signal.telegram_message_id,
+          extra: {
+            targeted_count: brokerAccountIds.length,
+            pending_scope_count: cancelledPendingScopes.size,
+            live_fast: liveMgmtFast,
+          },
+        },
+      })
     }
   })()
 }
@@ -265,7 +320,7 @@ function findRawOrderByTicket(rawOrders: unknown[], ticket: number): unknown | n
 }
 
 async function verifyBreakevenApplied(args: {
-  api: NonNullable<TradeExecutorContext['apiFor'] extends (...x: any[]) => infer R ? R : never>
+  api: NonNullable<ReturnType<TradeExecutorContext['apiFor']>>
   uuid: string
   ticket: number
   expectedSl: number
@@ -352,6 +407,27 @@ export async function logSendSkipped(ctx: TradeExecutorContext,
     } catch {
       // Logging failure is non-fatal.
     }
+    captureBusinessIssue({
+      category: reason === 'broker_session_not_connected' ? 'account' : 'trade',
+      event: reason === 'broker_session_not_connected'
+        ? 'broker_account_unavailable'
+        : 'trade_copy_blocked',
+      severity: reason === 'broker_session_not_connected' ? 'error' : 'warning',
+      reasonCode: reason,
+      message: 'Trade copy skipped before broker send',
+      userImpact: 'skipped',
+      context: {
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        channel_id: signal.channel_id,
+        telegram_message_id: signal.telegram_message_id,
+        broker_account_id: broker.id,
+        symbol: typeof extra.symbol === 'string' ? extra.symbol : null,
+        operation: 'order_send',
+        broker_provider: String(broker.platform ?? 'unknown'),
+        extra,
+      },
+    })
   }
 
 export async function skipMgmtSignal(ctx: TradeExecutorContext, signalId: string, reason: string): Promise<void> {
@@ -400,6 +476,22 @@ async function skipMgmtSignalWithLog(
       request_payload: { skip_reason: reason, ...extra } as unknown as Record<string, unknown>,
     })
   } catch { /* best-effort */ }
+  captureBusinessIssue({
+    category: 'management',
+    event: 'trade_management_failed',
+    severity: reason.includes('no_open') || reason.includes('none') ? 'warning' : 'error',
+    reasonCode: reason,
+    message: 'Trade management instruction skipped or failed before completion',
+    userImpact: reason.includes('no_open') || reason.includes('none') ? 'skipped' : 'failed',
+    context: {
+      user_id: signal.user_id,
+      signal_id: signal.id,
+      channel_id: signal.channel_id,
+      telegram_message_id: signal.telegram_message_id,
+      operation: String(extra?.action ?? 'management'),
+      extra,
+    },
+  })
 }
 
 export async function applyManagement(
@@ -414,7 +506,6 @@ export async function applyManagement(
     let legsTotal = 0
     // Diagnostics for multi-account modify latency (scope load vs broker apply).
     const scopeLoadStart = Date.now()
-    let scopeLoadMs: number | undefined
     let basketsTotal: number | undefined
     let basketApplyMs: number | undefined
     let basketConcurrency: number | undefined
@@ -429,8 +520,6 @@ export async function applyManagement(
     const replyScoped = isReplyScopedManagement(signal)
     const symbolFromText = explicitMgmtSymbol(parsed)
     let mgmtSymbolHint: string | null = symbolFromText
-    let basketAnchorId: string | null = null
-    let rows: MgmtTradeRow[] = []
     let modifyApplyResult: ChannelStopApplyResult | null = null
 
     // Every management instruction is channel-scoped: it applies to every open basket on
@@ -584,8 +673,8 @@ export async function applyManagement(
         ? allChannelModifySymbolBuckets(channelRows)
         : resolveChannelModifyTargets(channelRows, parsed)
     }
-    rows = channelRows
-    basketAnchorId = rows[0]?.signal_id ?? null
+    let rows: MgmtTradeRow[] = channelRows
+    let basketAnchorId: string | null = rows[0]?.signal_id ?? null
 
     const byBroker = new Map(brokers.map(b => [b.id, b]))
     const action = String(parsed.action).toLowerCase()
@@ -597,7 +686,7 @@ export async function applyManagement(
       })
       basketAnchorId = rows[0]?.signal_id ?? basketAnchorId
     }
-    scopeLoadMs = Date.now() - scopeLoadStart
+    const scopeLoadMs = Date.now() - scopeLoadStart
 
     if (
       (action === 'close' || action === 'breakeven' || action === 'partial_profit' || action === 'partial_breakeven')
@@ -661,6 +750,46 @@ export async function applyManagement(
       (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
     )
     const hasNewTp = parsedTpLevels.length > 0
+
+    // Pip-offset modify instructions ("Add 30 pips take profit", "SL 20 pips") must
+    // be converted to absolute broker prices anchored to the open basket's entry.
+    // Entry execution does this (entryPrepare); modify/apply paths never did, so a
+    // 30-pip instruction was applied as the absolute price 30.
+    const slInPips = parsed.sl_unit === 'pips'
+    const tpInPips = parsed.tp_unit === 'pips'
+    let effectiveSl: number | null = hasNewSl ? (parsed.sl as number) : null
+    let effectiveTpLevels: number[] = parsedTpLevels
+    if ((slInPips || tpInPips) && rows.length) {
+      const anchor = referenceEntryForMgmtRows(rows, mgmtSymbolHint)
+      if (anchor) {
+        const pipSize = signalPipPrice(anchor.symbol)
+        if (Number.isFinite(pipSize) && pipSize > 0) {
+          if (slInPips && effectiveSl != null) {
+            effectiveSl = convertPipOffsetToPrice({
+              offset: effectiveSl,
+              entryAnchor: anchor.entry,
+              isBuy: anchor.isBuy,
+              pipSize,
+            }) ?? effectiveSl
+          }
+          if (tpInPips && effectiveTpLevels.length) {
+            effectiveTpLevels = convertPipOffsetsToPrices({
+              offsets: effectiveTpLevels,
+              entryAnchor: anchor.entry,
+              isBuy: anchor.isBuy,
+              pipSize,
+            })
+          }
+        }
+      }
+    }
+    const parsedForApply: ParsedSignal = {
+      ...parsed,
+      sl: effectiveSl,
+      tp: effectiveTpLevels,
+      sl_unit: 'price',
+      tp_unit: 'price',
+    }
 
     const mgmtCtx = { hasNewSl, hasNewTp }
 
@@ -1421,8 +1550,8 @@ export async function applyManagement(
             rowsByBrokerSignal: rowsByBrokerSignalStop,
             hasNewSl,
             hasNewTp,
-            parsedSl: hasNewSl ? (parsed.sl as number) : null,
-            parsedTpLevels,
+            parsedSl: effectiveSl,
+            parsedTpLevels: effectiveTpLevels,
             // Inline broker re-read/verify is off by default — the v2 reconciler
             // (or v1 basket reconcile monitor) re-verifies broker drift, so this
             // synchronous per-leg snapshot check is redundant and previously caused
@@ -1446,12 +1575,12 @@ export async function applyManagement(
               user_id: signal.user_id,
               channel_id: signal.channel_id,
             },
-            parsed,
+            parsed: parsedForApply,
             rowsByBrokerSignal: mgmtRowsForApply,
             brokersById: byBroker,
             hasNewSl,
             hasNewTp,
-            parsedTpLevels,
+            parsedTpLevels: effectiveTpLevels,
             liveMgmtFast,
           })
         }
@@ -1474,7 +1603,7 @@ export async function applyManagement(
       )
       const pendingUpdated = await updateRangePendingLegsForManagement({
         supabase: ctx.supabase,
-        parsed,
+        parsed: parsedForApply,
         pendingLegs,
         openTrades: rows,
         tpLotsByBroker,
@@ -1482,7 +1611,7 @@ export async function applyManagement(
         action,
         hasNewSl,
         hasNewTp,
-        parsedTpLevels,
+        parsedTpLevels: effectiveTpLevels,
       })
       if (pendingUpdated > 0) {
         console.log(
@@ -1505,8 +1634,8 @@ export async function applyManagement(
         userId: signal.user_id,
         channelId: signal.channel_id,
         symbols,
-        stoploss: hasNewSl ? (parsed.sl as number) : null,
-        tpLevels: hasNewTp ? parsedTpLevels : undefined,
+        stoploss: effectiveSl,
+        tpLevels: effectiveTpLevels.length ? effectiveTpLevels : undefined,
         replace: true,
       })
       // Record the latest adjustment as the authoritative per-basket target so
@@ -1520,8 +1649,8 @@ export async function applyManagement(
           anchorSignalId,
           channelId: signal.channel_id,
           symbol: brokerRows[0]?.symbol ?? symbols[0] ?? 'UNKNOWN',
-          stoploss: hasNewSl ? (parsed.sl as number) : null,
-          tpLevels: hasNewTp ? parsedTpLevels : null,
+          stoploss: effectiveSl,
+          tpLevels: effectiveTpLevels.length ? effectiveTpLevels : null,
           source: 'adjust',
           instructionAt: signal.created_at,
         })
@@ -1532,8 +1661,8 @@ export async function applyManagement(
         )
         const mgmtChannelParams: ChannelActiveTradeParams = {
           symbol: symbols[0] ?? symbolFromText ?? pendingLegs[0]!.symbol,
-          stoploss: hasNewSl ? (parsed.sl as number) : null,
-          tpLevels: hasNewTp ? parsedTpLevels : [],
+          stoploss: effectiveSl,
+          tpLevels: effectiveTpLevels.length ? effectiveTpLevels : [],
         }
         const scopes = new Map<string, { signalId: string; brokerAccountId: string; symbol: string }>()
         for (const leg of pendingLegs) {
@@ -1548,7 +1677,7 @@ export async function applyManagement(
           pendingPatched += await patchActiveRangePendingLegStops({
             supabase: ctx.supabase,
             scope,
-            stoploss: hasNewSl ? (parsed.sl as number) : null,
+            stoploss: effectiveSl,
             channelParams: mgmtChannelParams,
             tpLots: tpLotsByBroker.get(scope.brokerAccountId),
             plannedRangeLegs: pendingLegs.filter(
@@ -1598,7 +1727,6 @@ export async function applyManagement(
           if (!symbolBreakevenOk(sym)) continue
           if (bestSl <= 0) {
             bestSl = hit.sl
-            bestIsBuy = hit.isBuy
           } else {
             bestSl = hit.isBuy ? Math.max(bestSl, hit.sl) : Math.min(bestSl, hit.sl)
           }
@@ -1705,10 +1833,57 @@ export async function applyManagement(
         + ` signal=${signal.id} modified=${modifyApplyResult!.totalModified}`
         + ` failed=${modifyApplyResult!.totalFailed}`,
       )
+      captureBusinessIssue({
+        category: 'management',
+        event: hasNewSl && !hasNewTp ? 'stop_loss_update_failed' : hasNewTp && !hasNewSl ? 'take_profit_update_failed' : 'trade_management_partial',
+        severity: modifyApplyResult!.totalModified > 0 ? 'warning' : 'error',
+        reasonCode: 'MANAGEMENT_MODIFY_PARTIAL',
+        message: 'Trade management modify did not fully apply to all targeted trades',
+        userImpact: modifyApplyResult!.totalModified > 0 ? 'partial' : 'failed',
+        context: {
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          channel_id: signal.channel_id,
+          telegram_message_id: signal.telegram_message_id,
+          operation: hasNewSl && !hasNewTp ? 'stop_loss_update' : hasNewTp && !hasNewSl ? 'take_profit_update' : 'modify',
+          extra: {
+            targeted_count: modifyApplyResult!.totalModified + modifyApplyResult!.totalFailed + modifyApplyResult!.totalSkipped,
+            successful_count: modifyApplyResult!.totalModified,
+            failed_count: modifyApplyResult!.totalFailed,
+            skipped_already_compliant_count: modifyApplyResult!.totalSkipped,
+            timed_out_count: null,
+            duration_ms: basketApplyMs ?? null,
+            partial_failure: modifyApplyResult!.totalModified > 0,
+            user_visible_state_may_be_stale: true,
+          },
+        },
+      })
     } else if (breakevenNeedsRetry) {
       console.warn(
         `[tradeExecutor] mgmt breakeven partial — leaving signal parsed for reconcile signal=${signal.id}`,
       )
+      captureBusinessIssue({
+        category: 'management',
+        event: 'trade_management_partial',
+        severity: breakevenAppliedTradeIds.size > 0 ? 'warning' : 'error',
+        reasonCode: 'BREAKEVEN_PARTIAL',
+        message: 'Breakeven management did not fully apply to all targeted trades',
+        userImpact: breakevenAppliedTradeIds.size > 0 ? 'partial' : 'failed',
+        context: {
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          channel_id: signal.channel_id,
+          telegram_message_id: signal.telegram_message_id,
+          operation: 'breakeven',
+          extra: {
+            total_targeted_trades: rows.length,
+            successful_count: breakevenAppliedTradeIds.size,
+            failed_symbol_count: breakevenFailedSymbolKeys.size,
+            partial_failure: breakevenAppliedTradeIds.size > 0,
+            user_visible_state_may_be_stale: true,
+          },
+        },
+      })
     } else {
       await finalizeMgmtSignal(ctx, signal.id)
     }
@@ -1848,7 +2023,6 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
           pipSize,
         })
         : selectImmediateLegsForCweInstruction(groupTrades, layeringTickets)
-      let groupClosed = 0
       legsTotal += toClose.length
 
       console.log(
@@ -1959,7 +2133,7 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
       const closeResults = liveMgmtFast && toClose.length > 1
         ? await parallelMap(toClose, legConcurrency, trade => closeOneLeg(trade))
         : await Promise.all(toClose.map(trade => closeOneLeg(trade)))
-      groupClosed = closeResults.reduce((sum, n) => sum + n, 0)
+      const groupClosed = closeResults.reduce((sum, n) => sum + n, 0)
       return { closed: groupClosed, eligible: toClose.length }
     }))
 

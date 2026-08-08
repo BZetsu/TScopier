@@ -264,6 +264,98 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     return finalTps[finalTps.length - 1] ?? null
   }
 
+  // Teaser / no-TP signals: never burst-split into N *full-lot* clones.
+  // - No range: one full-lot immediate (classic teaser).
+  // - With range: one OrderSend per immediate leg at targetLeg size (matches UI
+  //   "N instant"), plus virtual range legs — never one aggregated instant
+  //   order of immediateLegs × targetLeg (that looked like a single fat fill).
+  if (finalTps.length === 0) {
+    const virtualPendings: VirtualPendingLeg[] = []
+    if (rangeLegCount > 0) {
+      const pendHours = clampPendingExpiryHours(manual.pending_expiry_hours)
+      const expiryHours = pendHours > 0 ? pendHours : undefined
+      for (let i = 0; i < rangeLegCount; i++) {
+        virtualPendings.push({
+          stepIdx: i + 1,
+          stepPriceOffset,
+          isBuy,
+          volume: targetLeg,
+          stoploss: finalSl,
+          takeprofit: null,
+          slippage: slippage ?? 20,
+          comment: appendOrderCommentSuffix(commentPrefix, `:rg${i + 1}.tp${i + 1}`),
+          expertID: expertId,
+          expiryHours,
+        })
+      }
+    }
+    const rangeLayeringFields =
+      manual.range_trading === true && reservedRangeLegs > 0
+        ? { rangeLayering: rangeLayeringMeta! }
+        : {}
+    const emptyTpFallback = {
+      fallback_reason: 'multi_trade_fallback_empty_tps' as const,
+    }
+
+    // Range path: emit granular instant legs (same volume as layered virtuals).
+    if (rangeLegCount > 0) {
+      if (immediateLegs > 0 && targetUnits < minUnits) {
+        return {
+          orders: [],
+          delay_ms,
+          ...emptyTpFallback,
+          ...(virtualPendings.length ? { virtualPendings } : {}),
+          ...rangeLayeringFields,
+        }
+      }
+      const orders: OrderSendArgs[] = []
+      for (let i = 0; i < immediateLegs; i++) {
+        orders.push({
+          ...orderBase,
+          volume: targetLeg,
+          stoploss: roundPrice(finalSl),
+          takeprofit: roundPrice(null),
+          ...expirationFields,
+          comment: appendOrderCommentSuffix(commentPrefix, `:tp${i + 1}`),
+        })
+      }
+      return {
+        orders,
+        delay_ms,
+        anchor: { source: entryAnchor != null ? 'signal' : 'unknown', value: entryAnchor },
+        pip,
+        pipQuote,
+        isBuy,
+        ...(strictEntry ? { strictEntry } : {}),
+        ...(virtualPendings.length ? { virtualPendings } : {}),
+        ...rangeLayeringFields,
+        ...emptyTpFallback,
+      }
+    }
+
+    // No range: classic teaser — one full-lot immediate.
+    const single = buildSingleOrder({
+      orderBase,
+      expirationFields,
+      strictEntry,
+      manualLot,
+      finalSl,
+      finalTps,
+      manual,
+      ctx,
+      delay_ms,
+      entryAnchor,
+      isBuy,
+      pip,
+      pipQuote,
+      roundPrice,
+      fallbackReason: 'multi_trade_fallback_empty_tps',
+    })
+    return {
+      ...single,
+    }
+  }
+
   // Burst consolidation packs IMMEDIATE legs into fewer OrderSends for speed.
   // multi_trade_max_orders also seeds the Total Open Trades basket ceiling — only
   // use it for consolidation when it is below the immediate leg count (legacy low caps).

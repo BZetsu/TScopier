@@ -34,7 +34,7 @@ import {
 import { signalExecutionProven } from '../signalExecutionProven'
 import { resolveChannelLabelForComment, sanitizeChannelCommentSlug } from '../tradeComment'
 import { ensureSignalRow } from '../ensureSignalRow'
-import { isMtUuid, operationFor, brokerHasLinkedSession, brokerSessionUuid } from './helpers'
+import { operationFor, brokerHasLinkedSession } from './helpers'
 import {
   EXECUTOR_MAX_CONCURRENT_SIGNALS,
   EXECUTOR_REPLAY_MAX_AGE_MS,
@@ -44,7 +44,7 @@ import {
 import type { ChannelKeywords } from '../manualPlanner'
 import { ACTIVITY_RETRY_DISPATCH_SOURCE } from '../retryActivity'
 import { loadSignalById, MESSAGE_REVISION_DISPATCH_SOURCE, revisionDirectionFlippedFromActions } from '../signalRevision'
-import { hasActiveSignalRangeEntryWait, SIGNAL_RANGE_WAKE_DISPATCH_SOURCE } from '../signalRangeEntryHelpers'
+import { SIGNAL_RANGE_WAKE_DISPATCH_SOURCE } from '../signalRangeEntryHelpers'
 import { finalizeSignalIfAllWaitsTerminal, syncWaitRow } from '../signalRangeEntryService'
 import { signalEntryRangeStrictEnabled } from '../manualPlanning/manualSettings'
 import { applyUserOverrideToSignalRow } from '../signalOverride'
@@ -61,9 +61,9 @@ import {
 } from '../subscriptionAccess'
 import { evaluateParsedSignalExecutionEligibility } from '../signalExecutionEligibility'
 import { evaluateChannelCopyLimitPauseForBroker } from '../copyLimitDispatch'
-import type { MgmtExecOptions } from '../mgmtExecOptions'
 import { isV2 } from '../engine/executionMode'
 import { upsertBasketSlTpTarget } from '../basketTargetStore'
+import { captureBusinessIssue } from '../observability/businessEvents'
 
 /** Seed basket desired-state (source 'entry') for v2-flagged brokers only, so the v2
  * reconciler has the full SL/TP ladder. No-op for v1 brokers (zero behavior change). */
@@ -329,6 +329,36 @@ export async function logDispatchSkipped(ctx: TradeExecutorContext,
     } catch {
       /* best-effort */
     }
+    if (!transient) {
+      const reason = skipReason.toUpperCase().replace(/[^A-Z0-9_]+/g, '_')
+      captureBusinessIssue({
+        category: skipReason.includes('subscription') || skipReason.includes('plan_')
+          ? 'auth'
+          : skipReason.includes('broker') || skipReason.includes('channel_config')
+            ? 'account'
+            : 'trade',
+        event: skipReason.includes('copy_limit') || skipReason.includes('risk') || skipReason.includes('max_')
+          ? 'trade_copy_blocked'
+          : skipReason.includes('broker')
+            ? 'broker_account_unavailable'
+            : 'trade_copy_blocked',
+        severity: skipReason.includes('broker') || skipReason.includes('listener') ? 'error' : 'warning',
+        reasonCode: reason,
+        message: 'Signal dispatch skipped before trade execution',
+        userImpact: 'skipped',
+        context: {
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          channel_id: signal.channel_id,
+          telegram_message_id: signal.telegram_message_id,
+          operation: 'dispatch',
+          extra: {
+            skip_reason: skipReason,
+            ...extra,
+          },
+        },
+      })
+    }
   }
 
 export function logPipelineSummaryBackground(ctx: TradeExecutorContext, 
@@ -454,6 +484,8 @@ export async function handleSignal(ctx: TradeExecutorContext,
       )
     }
     // Defense in depth: guarantee signals row exists before OrderSend / post-fill FKs.
+    // raw_message is preserved from any existing row (ensureSignalRow ignores empty
+    // values) so listener-persisted Telegram text survives dispatch upserts.
     const ensured = await ensureSignalRow(ctx.supabase, {
       id: row.id,
       user_id: row.user_id,
@@ -465,7 +497,6 @@ export async function handleSignal(ctx: TradeExecutorContext,
       parent_signal_id: row.parent_signal_id,
       is_modification: row.is_modification,
       pipeline_ts: row.pipeline_ts as Record<string, unknown> | undefined,
-      raw_message: '',
     })
     if (!ensured.ok) {
       console.error(
@@ -719,6 +750,25 @@ export async function handleSignal(ctx: TradeExecutorContext,
           const staleAfterReactivation = allMatchingBrokers.length > 0
             && allMatchingBrokers.every(b => !ctx.brokerEligibleForSignal(b, row))
           if (!staleAfterReactivation) {
+            captureBusinessIssue({
+              category: 'account',
+              event: 'broker_account_unavailable',
+              severity: 'warning',
+              reasonCode: 'NO_ELIGIBLE_BROKER_ACCOUNT',
+              message: 'Signal matched configured brokers but none were currently eligible',
+              userImpact: 'skipped',
+              context: {
+                user_id: row.user_id,
+                signal_id: row.id,
+                channel_id: row.channel_id,
+                telegram_message_id: row.telegram_message_id,
+                operation: 'dispatch',
+                extra: {
+                  raw_matching_brokers: rawMatchingBrokers.length,
+                  configured_matching_brokers: allMatchingBrokers.length,
+                },
+              },
+            })
             return
           }
           // A matching broker exists but it was reactivated AFTER the signal
@@ -851,9 +901,64 @@ export async function handleSignal(ctx: TradeExecutorContext,
         row.pipeline_ts.t_order_send_done = Date.now()
       }
       const anyOpened = outcomes.some(o => o.openedOrMerged === true)
+      const openedCount = outcomes.filter(o => o.openedOrMerged === true).length
+      const failedCount = outcomes.length - openedCount
       const entryFailureReason = !anyOpened && isEntryAction(action)
         ? aggregateEntryFailureReason(outcomes)
         : null
+      if (isEntryAction(action) && anyOpened && failedCount > 0) {
+        const failureReasons = [...new Set(outcomes
+          .filter(o => o.openedOrMerged !== true)
+          .map(o => o.finalizeSkipReason ?? o.failureReason ?? 'UNKNOWN'))]
+        captureBusinessIssue({
+          category: 'trade',
+          event: 'trade_copy_partial',
+          severity: 'warning',
+          reasonCode: 'PARTIAL_MULTI_ACCOUNT_EXECUTION',
+          message: 'Trade copied to some accounts or legs but failed for others',
+          userImpact: 'partial',
+          context: {
+            user_id: row.user_id,
+            signal_id: row.id,
+            channel_id: row.channel_id,
+            telegram_message_id: row.telegram_message_id,
+            broker_account_id: opts?.wakeBrokerAccountId ?? row.wake_broker_account_id,
+            operation: 'order_send',
+            symbol: parsed.symbol ?? null,
+            side: String(action ?? ''),
+            extra: {
+              attempted_count: outcomes.length,
+              successful_count: openedCount,
+              failed_count: failedCount,
+              failure_reasons: failureReasons.slice(0, 8),
+              user_exposure_may_be_partial: true,
+            },
+          },
+        })
+      }
+      if (isEntryAction(action) && !anyOpened && outcomes.length > 0 && entryFailureReason) {
+        captureBusinessIssue({
+          category: 'trade',
+          event: 'trade_copy_failed',
+          severity: 'error',
+          reasonCode: entryFailureReason,
+          message: 'Signal accepted but trade copy permanently failed',
+          userImpact: 'failed',
+          context: {
+            user_id: row.user_id,
+            signal_id: row.id,
+            channel_id: row.channel_id,
+            telegram_message_id: row.telegram_message_id,
+            operation: 'order_send',
+            symbol: parsed.symbol ?? null,
+            side: String(action ?? ''),
+            extra: {
+              attempted_count: outcomes.length,
+              failure_reason: entryFailureReason,
+            },
+          },
+        })
+      }
       if (anyOpened) {
         // v2 cutover: seed the basket desired-state at entry so the single v2
         // reconciler can fill naked legs from the ladder and converge every future

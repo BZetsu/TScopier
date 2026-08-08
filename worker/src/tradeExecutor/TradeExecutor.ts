@@ -2,199 +2,87 @@ import { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
 import {
   getFxsocketClient,
   hasFxsocketConfigured,
-  isBrokerDisconnectedMessage,
-  MT_SESSION_EXPIRED_HINT,
   FxsocketBrokerClient,
   mtPlatformFrom,
   MtOperation,
-  normalizeSymbolParams,
-  OrderSendArgs,
-  SymbolParams,
 } from '../fxsocketClient'
 import {
   clampPendingExpiryHours,
-  parsedHasExplicitEntryAnchor,
-  planManualOrders,
   resolvedParsedEntryPrice,
-  resolvedParsedEntryZone,
-  signalEntryPriceStrictEnabled,
-  SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
-  strictSignalEntryQuoteAllowsImmediate,
-  lastPositiveParsedTpPrice,
   type ChannelKeywords,
   type ManualSettings,
   type ParsedSignal as PlannerParsedSignal,
-  type PlannerPartialTp,
   type PlannerResult,
   type VirtualPendingLeg,
 } from '../manualPlanner'
 import { normalizeManualSettingsForExecution } from '../manualPlanning/normalizeManualSettings'
 import { resolveBrokerTotalBalance } from '../effectiveBrokerBalance'
-import { normalizeChannelTradingConfigsMap, withChannelTradingConfig, channelConfigReadyForExecution, resolveChannelTradingConfig, healChannelTradingConfigsMap, persistHealedChannelConfigs } from '../channelTradingConfig'
+import { withChannelTradingConfig, channelConfigReadyForExecution, resolveChannelTradingConfig, healChannelTradingConfigsMap, persistHealedChannelConfigs } from '../channelTradingConfig'
 import {
   applyBrokerChannelTradingConfigRow,
   fetchBrokerChannelTradingConfigRows,
-  fetchFreshBrokerForChannel,
   mergeChannelTradingConfigsFromTable,
   type BrokerChannelTradingConfigRow,
 } from '../brokerChannelTradingConfigs'
+import {
+  fetchBrokerForChannelWithLightConfigCache,
+  LightConfigCache,
+} from '../lightConfigCache'
 import { manualDispatchAlreadyMaterialized } from './basketMerge/helpers'
 import { claimSignalBrokerDispatch, releaseSignalBrokerDispatchClaim } from './signalBrokerDispatchClaim'
 import { hasActiveSignalRangeEntryWait, SIGNAL_RANGE_WAKE_DISPATCH_SOURCE } from '../signalRangeEntryHelpers'
 import { MESSAGE_REVISION_DISPATCH_SOURCE } from '../signalRevision'
-import { findActiveNewsBlackout } from '../newsTrading/blackout'
-import { getCalendarEventsCached } from '../newsTrading/calendarProvider'
-import { isNewsTradingEnabled } from '../newsTrading/settings'
-import { autoManagementTradeSnapshot } from '../autoManagement'
-import {
-  referencePriceForDirection,
-  cweInstructionGroupKey,
-  parseCweInstructionGroupKey,
-  selectTradesForCweInstruction,
-} from '../closeWorseEntries'
 import {
   dispatchPriorityForAction,
-  isEntryAction,
-  isManagementAction,
   parsedAction,
   signalMatchesExecutorMode,
 } from '../tradeSignalActions'
 import { workerConfig, userBelongsToShard } from '../workerConfig'
 import type { MgmtExecOptions, MgmtExecResult } from '../mgmtExecOptions'
-import { writeBrokerConnectionStatus } from '../brokerConnectionStatus'
 import {
   applyShardToQuery,
   hasWorkOnShard,
-  monitorActiveIntervalMs,
-  monitorIdleIntervalMs,
   startMonitorLoop,
   type MonitorLoopHandle,
 } from '../monitorIdleGate'
-import {
-  isChannelManagementBlocked,
-  isOppositeSignalCloseBlocked,
-  isPendingCancelBlocked,
-  normalizeChannelMessageFiltersMap,
-  type ChannelMessageFiltersMap,
-} from '../channelMessageFilters'
-import { signalPipPrice } from '../signalPip'
-import { trailingTradeRowSnapshot } from '../trailingStop'
-import { isPostgresDuplicateKeyError } from '../rangePendingLegPersist'
-import {
-  cancelSignalEntryRowAtBroker,
-  isPendingEntryRow,
-  type SignalEntryPendingRow,
-} from '../signalEntryPendingHelpers'
+import { isPendingEntryRow } from '../signalEntryPendingHelpers'
 import { isTscopierComment } from '../tscopierComment'
-import {
-  computeBasketMergeLinkContext,
-  type BasketMergeLinkContext,
-  MERGE_IMPLICIT_CHANNEL_BUNDLE_MS,
-} from '../signalMergeLink'
+import type { BasketMergeLinkContext } from '../signalMergeLink'
 import type { UserSessionManager } from '../sessionManager'
 import {
-  buildPerLegStopTargets,
-  legacyMergeLinkingEnabled,
-  mergePlanImmediateOrders,
-  resolveLatestOpenBasketAnchor,
-  shouldRouteAsBasketParameterRefresh,
   type MergeModifySummary,
 } from '../multiTradeMerge'
-import { symbolsCompatibleForBasket } from '../basketModFollowUp'
 import {
-  classifyGhostBasketLegs,
-  closeStaleOpenTrades,
-  fetchOpenBrokerTickets,
-  fetchOpenBrokerTicketsStrict,
-  GHOST_BASKET_CLOSED_USER_MESSAGE,
-  markBasketReconcileDone,
-  markBasketReconcileDoneForAnchor,
-  runBasketLegModifies,
-  upsertBasketReconcileJob,
   type BasketOpenLeg,
-  type BasketSymbolParams,
 } from '../basketSlTpReconcile'
-import { syncRangePendingLadderOnBasketRefresh } from '../rangePendingLadderSync'
-import { loadExistingRangeStepIndices } from '../rangePendingFireGuard'
 import { channelMatchesBrokerSignal } from '../brokerChannelFilter'
 import { replayParsedSignalsForBroker } from '../brokerSignalReplay'
 import { listenerLeaseRecoveryTick } from '../listenerSignalReplay'
 import { normalizeChannelUuid } from '../channelTradingConfig'
 import { normalizeCopyLimitState, type CopyLimitState } from '../copyLimitTypes'
-import { takeProfitForLegIndex } from '../manualPlanning/tpBucketDistribution'
-import {
-  explicitMgmtSymbol,
-  isReplyScopedManagement,
-  loadOpenTradesForManagement,
-  resolveChannelModifyTargets,
-  type MgmtTradeRow,
-} from '../managementScope'
-import {
-  applyChannelParamsToVirtualPendingList,
-  estimateBasketTotalPlannedLegs,
-  loadChannelActiveTradeParamsForSymbol,
-  mergeParsedWithChannelParams,
-  reapplyChannelParamsToPendingLegs,
-  parsedSignalHasExplicitStops,
-  shouldMergeChannelParamsForEntry,
-  stripInvalidStopsForSide,
-  symbolsForChannelParamsPersist,
-  upsertChannelActiveTradeParams,
-  type ChannelActiveTradeParams,
-} from '../channelActiveTradeParams'
-import {
-  loadRangePendingLegsInMgmtScope,
-  pendingLegsToCancelScopes,
-  updateRangePendingLegsForManagement,
-} from '../managementPendingLegs'
 import {
   buildPipelineCorrelation,
   emitPipelineEvent,
   parsePipelineTimestamps,
-  pipelineSummaryPayload,
   setPipelineTimestamp,
-  type PipelineTimestamps,
 } from '../pipelineTimestamps'
-import {
-  buildTscopierCommentPrefix,
-  resolveChannelLabelForComment,
-  sanitizeChannelCommentSlug,
-} from '../tradeComment'
-import { applyPostFillFollowUp, type PostFillTradeLeg } from '../postFillFollowUp'
-import { isBenignOrderModifyError } from '../orderModifyBenign'
 import { invalidateChannelParseCache } from '../channelKeywordsCache'
 import { buildRangeLayerTriggerMap } from '../manualPlanning/rangeLayerTriggers'
 import {
-  applySymbolMapping,
   brokerHasLinkedSession,
   brokerOrderOpenMs,
   brokerSessionUuid,
-  clampOrderStops,
-  computeCweTp,
-  computeLot,
-  isBuySideOp,
-  isExcluded,
-  operationFor,
-  parseSymbolToTradeList,
   roundLot,
   triggerPriceFor,
   virtualPendingTriggerAllowed,
-  type Leg,
 } from './helpers'
 import {
   BROKER_SESSION_HEARTBEAT_MS,
-  EXECUTION_LOG_ACTIONS_HANDLED,
-  EXECUTOR_MAX_CONCURRENT_SIGNALS,
   EXECUTOR_PARSED_SWEEP_MS,
   EXECUTOR_REPLAY_MAX_AGE_MS,
   EXECUTOR_SWEEP_IDLE_MS,
   PARSED_STATUSES,
-  SESSION_PING_MIN_INTERVAL_MS,
   SYMBOL_CACHE_KEEPALIVE_MS,
-  SYMBOL_CACHE_STALE_MS,
-  SYMBOL_CACHE_TTL_MS,
-  SYMBOL_LIST_TTL_MS,
-  telegramLiveTradeGateEnabled,
   type BrokerRow,
   type MergeOutcome,
   type ParsedSignal,
@@ -215,6 +103,7 @@ import {
   applyCopierPauseProfileUpdate,
   primeCopierPauseCache,
 } from '../copierPause'
+import { captureDeferredBusinessFailure } from '../observability/deferredBusinessEvents'
 
 export type { SignalRow } from './types'
 
@@ -250,6 +139,7 @@ export class TradeExecutor {
     commentSlug: string | null
     loadedAt: number
   }>()
+  readonly lightConfigCache = new LightConfigCache()
   sessionPingAt = new Map<string, number>()
   /** Coalesce concurrent session checks per MT uuid (burst fan-out). */
   sessionCheckInflight = new Map<string, Promise<boolean>>()
@@ -281,6 +171,7 @@ export class TradeExecutor {
   }
 
   apiFor(broker: BrokerRow): FxsocketBrokerClient | null {
+    void broker
     return getFxsocketClient()
   }
 
@@ -708,6 +599,21 @@ export class TradeExecutor {
 
   private subscribeChannelTradingConfigs() {
     if (this.channelTradingConfigsChannel) return
+    const invalidateConfigRow = (raw: Record<string, unknown> | undefined) => {
+      const brokerId = String(raw?.broker_account_id ?? '')
+      const channelId = String(raw?.channel_id ?? '')
+      if (!brokerId || !channelId) return
+      const cachedBroker = this.brokersById.get(brokerId)
+      if (cachedBroker?.user_id) {
+        this.lightConfigCache.invalidateExact({
+          userId: cachedBroker.user_id,
+          brokerAccountId: brokerId,
+          channelId,
+        })
+        return
+      }
+      this.lightConfigCache.invalidateByBrokerChannel(brokerId, channelId)
+    }
     this.channelTradingConfigsChannel = this.supabase
       .channel('trade_executor_broker_channel_configs')
       .on(
@@ -722,6 +628,7 @@ export class TradeExecutor {
           if (evt === 'DELETE') {
             const brokerId = String(payload.old?.broker_account_id ?? '')
             if (!brokerId) return
+            invalidateConfigRow(payload.old)
             const cached = this.brokersById.get(brokerId)
             if (!cached) return
             void this.mergeBrokerRowWithTableConfigs(cached)
@@ -731,8 +638,12 @@ export class TradeExecutor {
               })
             return
           }
+          if (evt === 'UPDATE') {
+            invalidateConfigRow(payload.old)
+          }
           const row = payload.new as BrokerChannelTradingConfigRow | undefined
           if (!row?.broker_account_id) return
+          invalidateConfigRow(payload.new)
           const cached = this.brokersById.get(row.broker_account_id)
           if (!cached) return
           this.applyBrokerCacheRow(applyBrokerChannelTradingConfigRow(cached, row))
@@ -1418,7 +1329,16 @@ export class TradeExecutor {
 
     let executionBroker = broker
     if (signal.channel_id) {
-      const fresh = await fetchFreshBrokerForChannel(this.supabase, broker, signal.channel_id)
+      // Production safety boundary: this light cache may wrap only the stable
+      // broker_channel_trading_configs refresh. Claims, idempotency,
+      // broker readiness, prices, order state, and kill switches stay live
+      // below this point and must not be added to the cache.
+      const fresh = await fetchBrokerForChannelWithLightConfigCache(
+        this.lightConfigCache,
+        this.supabase,
+        broker,
+        signal.channel_id,
+      )
       if (fresh.channel_trading_configs !== broker.channel_trading_configs) {
         this.applyBrokerCacheRow(fresh)
         executionBroker = this.brokersById.get(broker.id) ?? fresh
@@ -1429,7 +1349,9 @@ export class TradeExecutor {
     const resolved = resolveChannelTradingConfig(executionBroker, signal.channel_id)
     const entryKey = `${signal.id}:${effectiveBroker.id}`
     const liveFast = sendOpts?.liveEntryFast === true
+
     const isRevisionRefresh = sendOpts?.sameSignalRefresh === true
+
     const isRangeWake = signal.dispatch_source === SIGNAL_RANGE_WAKE_DISPATCH_SOURCE
 
     // Message revisions must wait for an in-flight first entry, then never open a
@@ -1850,6 +1772,32 @@ export class TradeExecutor {
       console.error(
         `[tradeExecutor] deferred virtual persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`,
       )
+      captureDeferredBusinessFailure({
+        category: 'layering',
+        event: 'layering_materialization_failed',
+        severity: 'error',
+        reasonCode: 'DEFERRED_VIRTUAL_MATERIALIZATION_PERSIST_FAILED',
+        message: 'Deferred virtual pending rows could not be persisted',
+        userImpact: 'partial',
+        operation: 'deferred_virtual_pending_materialize',
+        err: persist.lastError ?? 'unknown',
+        context: {
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          channel_id: signal.channel_id,
+          broker_account_id: broker.id,
+          symbol,
+          side: plan.isBuy === false ? 'sell' : 'buy',
+          execution_mechanism: 'virtual_pending_monitor',
+          layering_mode: plan.rangeLayering?.rangeLayeringType ?? 'virtual_pending',
+          extra: {
+            targeted_count: insertRows.length,
+            successful_count: 0,
+            failed_count: insertRows.length,
+            anchor_source: anchorSource,
+          },
+        },
+      })
       return
     }
     console.log(

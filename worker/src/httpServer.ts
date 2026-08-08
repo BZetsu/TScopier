@@ -11,6 +11,8 @@ import { UserSessionManager } from './sessionManager'
 import { userBelongsToShard } from './workerConfig'
 import { getQueueHealthMetrics } from './queue/queueHealth'
 import { parseRawChannelMessage } from './parseSignal'
+import { getChannelParseContext } from './channelKeywordsCache'
+import { getUniversalParseMode, routeSignalParse } from './signalIntent/parseRouting'
 import { aiParseModification, aiResultToParseResult } from './aiParseModification'
 import { applySignalOverride } from './applySignalOverride'
 import { forceCloseSignalTrades } from './forceCloseSignalTrades'
@@ -34,6 +36,10 @@ interface Body {
   run_id?: string
   phone_code_hash?: string
   session_string?: string
+  raw_message?: string
+  is_reply?: boolean
+  parent_signal_id?: string | null
+  is_modification_class?: boolean
 }
 
 function isTelegramSessionInvalid(err: unknown): err is TelegramSessionInvalidError {
@@ -330,6 +336,50 @@ export function startHttpServer(
         }
         const result = await sessionManager.reconcileAllListenersOnShard()
         return sendJson(res, 200, { ok: true, ...result })
+      }
+
+      if (url === '/internal/parse-ai-debug') {
+        if (!body.channel_row_id || typeof body.raw_message !== 'string') {
+          return sendJson(res, 400, { error: 'channel_row_id and raw_message required' })
+        }
+        try {
+          const supabase = sessionManager.getSupabase()
+          const { keywords, lexicon } = await getChannelParseContext(supabase, body.channel_row_id)
+          const pipelineTs: Record<string, unknown> = {}
+          const started = Date.now()
+          const routed = await routeSignalParse({
+            supabase,
+            userId: body.user_id ?? 'debug-user',
+            channelRowId: body.channel_row_id,
+            signalId: `debug-${Date.now()}`,
+            rawMessage: body.raw_message,
+            isReply: body.is_reply === true,
+            parentSignalId: body.parent_signal_id ?? null,
+            isModificationClass: body.is_modification_class === true,
+            keywords,
+            lexicon,
+            pipelineTs,
+          })
+          return sendJson(res, 200, {
+            mode: getUniversalParseMode(),
+            aiMeta: routed.aiMeta ?? null,
+            verification: routed.verification ?? null,
+            pipeline_ts: pipelineTs,
+            parse_result: {
+              action: routed.parseResult.parsed.action,
+              symbol: routed.parseResult.parsed.symbol ?? null,
+              confidence: typeof routed.parseResult.parsed.confidence === 'number'
+                ? routed.parseResult.parsed.confidence
+                : null,
+              status: routed.parseResult.status,
+              skip_reason: routed.parseResult.skip_reason ?? null,
+            },
+            elapsed_ms: Date.now() - started,
+          })
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'parse failed'
+          return sendJson(res, 500, { error: msg })
+        }
       }
 
       return sendJson(res, 404, { error: 'Unknown route' })

@@ -1,6 +1,7 @@
 import clsx from 'clsx'
 import { Bell, BellOff } from 'lucide-react'
 import { useNotifications } from '../../context/NotificationsContext'
+import { useHumanReview } from '../../context/HumanReviewContext'
 import { useT } from '../../context/LocaleContext'
 import { NotificationDropdown } from './NotificationDropdown'
 
@@ -14,6 +15,7 @@ export function NotificationBell({ open, onOpen, onClose }: NotificationBellProp
   const t = useT()
   const nn = t.nav.notifications
   const { unreadCount, soundEnabled } = useNotifications()
+  const { pending: pendingReviews } = useHumanReview()
   const badge = unreadCount > 9 ? '9+' : unreadCount > 0 ? String(unreadCount) : null
 
   return (
@@ -39,6 +41,13 @@ export function NotificationBell({ open, onOpen, onClose }: NotificationBellProp
         ) : (
           <BellOff className="h-5 w-5" />
         )}
+        {pendingReviews.length > 0 ? (
+          <span
+            className="absolute -start-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-400"
+            title={nn.reviewPending}
+            aria-label={nn.reviewPending}
+          />
+        ) : null}
         {badge ? (
           <span className="absolute -end-0.5 -top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-teal-600 px-1 text-[10px] font-bold leading-none text-white">
             {badge}

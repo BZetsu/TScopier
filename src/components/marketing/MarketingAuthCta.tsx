@@ -2,7 +2,7 @@ import clsx from 'clsx'
 import { ArrowRight } from 'lucide-react'
 import { useMarketingAuthState } from '../../hooks/useMarketingAuthState'
 import { useT } from '../../context/LocaleContext'
-import { appUrl } from '../../lib/site'
+import { appUrl, marketingUrl, withQuery } from '../../lib/site'
 import { trackMarketingEvent } from '../../lib/analytics'
 
 type MarketingAuthCtaVariant = 'hero' | 'header' | 'headerMobile'
@@ -16,20 +16,19 @@ const primaryBtnClass =
   'inline-flex shrink-0 items-center justify-center rounded-lg border border-teal-600 bg-teal-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:border-teal-700 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-950'
 
 const heroCtaClass =
-  'group inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-600 bg-teal-600 px-7 py-3.5 text-base font-semibold text-white shadow-lg shadow-teal-600/25 transition-all duration-300 hover:border-teal-500 hover:bg-teal-500 hover:shadow-[0_0_28px_rgba(45,212,191,0.55),0_0_56px_rgba(13,148,136,0.22)] sm:w-auto'
+  'group inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-600 bg-teal-600 px-9 py-4 text-lg font-semibold text-white shadow-lg shadow-teal-600/25 transition-all duration-300 hover:border-teal-500 hover:bg-teal-500 hover:shadow-[0_0_28px_rgba(45,212,191,0.55),0_0_56px_rgba(13,148,136,0.22)] sm:w-auto sm:px-11 sm:py-5 sm:text-xl'
 
 export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps) {
   const { isSignedIn, loading } = useMarketingAuthState()
   const nav = useT().landing.nav
   const hero = useT().landing.hero
-  const referralSuffix = (() => {
-    if (typeof window === 'undefined') return ''
-    const params = new URLSearchParams(window.location.search)
-    const ref = params.get('ref')?.trim()
-    if (!ref) return ''
-    return `?ref=${encodeURIComponent(ref)}`
+  const referralRef = (() => {
+    if (typeof window === 'undefined') return null
+    return new URLSearchParams(window.location.search).get('ref')?.trim() || null
   })()
-  const onCtaClick = (action: 'signup' | 'login' | 'dashboard') => {
+  const pricingHref = withQuery(marketingUrl('/pricing'), { ref: referralRef })
+  const loginHref = withQuery(appUrl('/login'), { ref: referralRef })
+  const onCtaClick = (action: 'signup' | 'login' | 'dashboard' | 'pricing') => {
     trackMarketingEvent('marketing_cta_click', {
       action,
       variant,
@@ -78,8 +77,8 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
     return (
       <div className="flex w-full flex-col items-center justify-center">
         <a
-          href={`${appUrl('/signup')}${referralSuffix}`}
-          onClick={() => onCtaClick('signup')}
+          href={pricingHref}
+          onClick={() => onCtaClick('pricing')}
           className={heroCtaClass}
         >
           {hero.primaryCta}
@@ -92,15 +91,15 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
     return (
       <>
         <a
-          href={`${appUrl('/login')}${referralSuffix}`}
+          href={loginHref}
           onClick={() => onCtaClick('login')}
           className="rounded-lg px-3 py-2.5 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-white/10"
         >
           {nav.signIn}
         </a>
         <a
-          href={`${appUrl('/signup')}${referralSuffix}`}
-          onClick={() => onCtaClick('signup')}
+          href={pricingHref}
+          onClick={() => onCtaClick('pricing')}
           className="mt-1 inline-flex w-full items-center justify-center rounded-lg border border-teal-600 bg-teal-600 px-3 py-2.5 text-sm font-medium text-white transition-colors hover:border-teal-700 hover:bg-teal-700"
         >
           {nav.getStarted}
@@ -112,15 +111,15 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
   return (
     <>
       <a
-        href={`${appUrl('/login')}${referralSuffix}`}
+        href={loginHref}
         onClick={() => onCtaClick('login')}
         className="hidden text-sm font-medium text-neutral-600 transition-colors hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100 lg:inline-block lg:px-3"
       >
         {nav.signIn}
       </a>
       <a
-        href={`${appUrl('/signup')}${referralSuffix}`}
-        onClick={() => onCtaClick('signup')}
+        href={pricingHref}
+        onClick={() => onCtaClick('pricing')}
         className={clsx(primaryBtnClass, 'hidden md:inline-flex')}
       >
         {nav.getStarted}

@@ -86,6 +86,23 @@ test('looksLikeChannelManagementUpdate: SL to entry stays management even for tr
   )
 })
 
+test('looksLikeChannelManagementUpdate: TP modifications are management class', () => {
+  assert.equal(looksLikeChannelManagementUpdate('You can add a Take Profit of 30 pips'), true)
+  assert.equal(looksLikeChannelManagementUpdate('30 pips take profit to Gold sell'), true)
+  assert.equal(looksLikeChannelManagementUpdate('Take profit of 30 pips on the sell'), true)
+  assert.equal(looksLikeChannelManagementUpdate('Set TP to 2660'), true)
+  assert.equal(looksLikeChannelManagementUpdate('Move take profit to 2670'), true)
+})
+
+test('looksLikeChannelManagementUpdate: TP result language is still management', () => {
+  assert.equal(looksLikeChannelManagementUpdate('Take profit target hit at 2660'), true)
+})
+
+test('looksLikeChannelManagementUpdate: structured entries stay entries', () => {
+  assert.equal(looksLikeChannelManagementUpdate('GOLD BUY NOW Entry 2650 SL 2640 TP 2660'), false)
+  assert.equal(looksLikeChannelManagementUpdate('SELL GOLD 4276 TP 4256'), false)
+})
+
 test('partialCloseFractionFromMessage: secure 30% profits', () => {
   assert.equal(
     partialCloseFractionFromMessage('secure 30% profits by closing partial lotsize'),

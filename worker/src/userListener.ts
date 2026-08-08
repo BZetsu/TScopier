@@ -44,11 +44,19 @@ import {
   setPipelineTimestamp,
   type PipelineTimestamps,
 } from './pipelineTimestamps'
-import { addWorkerBreadcrumb, captureWorkerError, captureWorkerWarning } from './observability/sentry'
+import { addWorkerBreadcrumb, captureWorkerError } from './observability/sentry'
+import { captureBusinessIssue } from './observability/businessEvents'
 import { incMetric } from './workerMetrics'
 import { workerConfig } from './workerConfig'
 import { isManagementAction, parsedAction } from './tradeSignalActions'
 import { applyCopierPauseProfileUpdate, loadCachedUserCopierPaused } from './copierPause'
+import {
+  copierHealthFreshnessThresholdMs,
+  maybeCaptureCopierOffline,
+  persistCopierHealth,
+  resolveCopierEngineState,
+  type SignalListenerState,
+} from './copierHealth'
 import {
   MESSAGE_REVISION_DISPATCH_SOURCE,
   buildRevisionDispatchRow,
@@ -105,6 +113,22 @@ const PARSE_SIGNAL_AUTH_KEY = isJwt(RAW_PARSE_SIGNAL_KEY)
   ? RAW_PARSE_SIGNAL_KEY
   : SUPABASE_SERVICE_ROLE_KEY
 const PARSE_SIGNAL_API_KEY = SUPABASE_SERVICE_ROLE_KEY
+
+/** Fire-and-forget call to the signal-review-email edge function (best-effort). */
+function notifyHumanReviewEmail(signalId: string): void {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return
+  const url = `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/signal-review-email`
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+    body: JSON.stringify({ signal_id: signalId }),
+  }).catch((err: unknown) => {
+    console.warn(`[userListener] signal-review-email notification failed id=${signalId}: ${err instanceof Error ? err.message : String(err)}`)
+  })
+}
 
 function listenerInlineParseEnabled(): boolean {
   const v = String(process.env.LISTENER_INLINE_PARSE ?? 'true').toLowerCase()
@@ -235,6 +259,7 @@ export interface ChannelInfo {
 export interface ListenerStatus {
   user_id: string
   connected: boolean
+  listener_status: SignalListenerState
   last_event_at: number
   last_successful_poll_at: number
   last_reconnect_at: number
@@ -427,6 +452,68 @@ export class UserListener {
   private revisionAiCooldowns = new Map<string, number>()
   /** signal_channel_ids where canonical feed is live — skip poll/reconcile in primary mode. */
   private passiveSignalChannelIds = new Set<string>()
+  private readonly healthLeaseAcquiredAt = new Date().toISOString()
+  private readonly healthOwnershipEpoch = this.healthLeaseAcquiredAt
+
+  private persistHealth(patch: Parameters<typeof persistCopierHealth>[2], opts?: { force?: boolean }): void {
+    void persistCopierHealth(this.supabase, this.userId, patch, {
+      ...opts,
+      ownershipEpoch: this.healthOwnershipEpoch,
+      leaseAcquiredAt: this.healthLeaseAcquiredAt,
+    })
+  }
+
+  private currentListenerStatus(): SignalListenerState {
+    if (this.isConnected) return 'connected'
+    if (this.reconnectInFlight || this.deferredRetryTimer) return 'reconnecting'
+    if (this.stopping) return 'disconnected'
+    return 'unknown'
+  }
+
+  private updateHealth(reason: string, opts?: { force?: boolean; recoveryExhausted?: boolean }): void {
+    const listenerStatus: SignalListenerState = opts?.recoveryExhausted
+      ? 'failed'
+      : reason === 'watchdog_probe_failed'
+        ? 'reconnecting'
+        : this.currentListenerStatus()
+    const lastSuccessful = this.lastSuccessfulPollAt || null
+    const combined = resolveCopierEngineState({
+      linked: true,
+      listenerStatus,
+      owned: true,
+      mtprotoConnected: this.isConnected,
+      lastSuccessfulProbeAt: lastSuccessful,
+      recoveryExhausted: opts?.recoveryExhausted,
+      shutdownInProgress: this.stopping,
+      freshnessThresholdMs: copierHealthFreshnessThresholdMs(),
+    })
+    const nowIso = new Date().toISOString()
+    this.persistHealth({
+      ...combined,
+      listenerStatus,
+      mtprotoConnected: this.isConnected,
+      lastConnectedAt: this.isConnected ? nowIso : undefined,
+      lastDisconnectedAt: !this.isConnected ? nowIso : undefined,
+      lastProbeAt: nowIso,
+      lastSuccessfulProbeAt: lastSuccessful ? new Date(lastSuccessful).toISOString() : null,
+      consecutiveProbeFailures: this.consecutiveProbeFailures,
+      reconnectStartedAt: this.reconnectInFlight ? nowIso : null,
+      recoveryExhausted: opts?.recoveryExhausted === true,
+      shutdownInProgress: this.stopping,
+      healthReason: reason || combined.healthReason,
+      ownershipEpoch: this.healthOwnershipEpoch,
+      leaseAcquiredAt: this.healthLeaseAcquiredAt,
+      freshnessThresholdMs: copierHealthFreshnessThresholdMs(),
+    }, opts)
+  }
+
+  getHealthOwnershipEpoch(): string {
+    return this.healthOwnershipEpoch
+  }
+
+  getHealthLeaseAcquiredAt(): string {
+    return this.healthLeaseAcquiredAt
+  }
 
   constructor(
     userId: string,
@@ -649,15 +736,19 @@ export class UserListener {
       `[userListener] channel_auto_disabled user=${this.userId}`
       + ` channel=${row.id} count=${state.consecutiveCount} code=${errorCode}`,
     )
-    captureWorkerWarning('Telegram channel auto-disabled after repeated invalid-channel failures', {
-      subsystem: 'telegram',
-      operation: 'channel_auto_disabled',
-      errorCode: errorCode || 'CHANNEL_INVALID',
-      fingerprint: ['telegram', errorCode || 'CHANNEL_INVALID', 'channel_auto_disabled'],
+    captureBusinessIssue({
+      category: 'telegram',
+      event: 'telegram_channel_auto_disabled',
+      severity: 'warning',
+      reasonCode: errorCode || 'CHANNEL_INVALID',
+      message: 'Telegram channel auto-disabled after repeated invalid-channel failures',
+      userImpact: 'failed',
+      fingerprint: ['telegram_channel_auto_disabled', errorCode || 'CHANNEL_INVALID', 'channel_auto_disabled'],
       context: {
         user_id: this.userId,
         channel_id: row.id,
         stage: 'channel_auto_disabled',
+        operation: 'channel_monitoring',
         retry_attempt: state.consecutiveCount,
         extra: { source, threshold: CHANNEL_INVALID_DISABLE_THRESHOLD },
       },
@@ -712,6 +803,8 @@ export class UserListener {
     this.isConnected = true
     this.startedAt = Date.now()
     this.lastEventAt = Date.now()
+    this.lastSuccessfulPollAt = Date.now()
+    this.updateHealth('listener_started', { force: true })
 
     // Do not await getDialogs warmup here — flood-wait / hung dialogs blocked
     // startListener, held the connection lock, and left users with No lease.
@@ -770,6 +863,7 @@ export class UserListener {
     } finally {
       this.isConnected = false
       this.clearDialogsCache()
+      this.updateHealth('listener_stopped', { force: true })
     }
   }
 
@@ -816,6 +910,7 @@ export class UserListener {
     return {
       user_id: this.userId,
       connected: this.isConnected,
+      listener_status: this.currentListenerStatus(),
       last_event_at: this.lastEventAt,
       last_successful_poll_at: this.lastSuccessfulPollAt,
       last_reconnect_at: this.lastReconnectAt,
@@ -2019,9 +2114,15 @@ export class UserListener {
     signalId: string
     isReply: boolean
     parentSignalId: string | null
+    pipelineTs?: Record<string, unknown>
   }): Promise<{
     parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
-    aiMeta?: { intent: string; source: string }
+    aiMeta?: {
+      intent: string
+      source: string
+      fallbackReason?: string
+      reviewRequired?: boolean
+    }
     channelKeywords: Awaited<ReturnType<typeof getChannelParseContext>>['keywords']
   }> {
     const { keywords, lexicon } = await getChannelParseContext(this.supabase, args.channelRowId)
@@ -2044,16 +2145,30 @@ export class UserListener {
         isModificationClass,
         keywords,
         lexicon,
+        pipelineTs: args.pipelineTs,
       })
-      if (routed.parseResult.status === 'parsed' && routed.aiMeta?.source === 'openai') {
+      if (
+        routed.parseResult.status === 'parsed'
+        && routed.aiMeta?.source
+        && ['openai', 'cerebras', 'gpt4o'].includes(routed.aiMeta.source)
+      ) {
         console.log(
           `[userListener] universal parse user=${this.userId} channelRow=${args.channelRowId}`
           + ` intent=${routed.aiMeta.intent} action=${routed.parseResult.parsed.action}`
           + ` symbol=${routed.parseResult.parsed.symbol ?? 'null'}`,
         )
       }
+      const parseResult = routed.verification
+        ? {
+            ...routed.parseResult,
+            parsed: {
+              ...routed.parseResult.parsed,
+              _verification: routed.verification,
+            },
+          }
+        : routed.parseResult
       return {
-        parseResult: routed.parseResult,
+        parseResult,
         aiMeta: routed.aiMeta,
         channelKeywords: keywords,
       }
@@ -2364,7 +2479,12 @@ export class UserListener {
     })
 
     let parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
-    let aiMeta: { intent: string; source: string } | undefined
+    let aiMeta: {
+      intent: string
+      source: string
+      fallbackReason?: string
+      reviewRequired?: boolean
+    } | undefined
     let channelKeywords: Awaited<ReturnType<typeof getChannelParseContext>>['keywords'] | undefined
     try {
       setPipelineTimestamp(pipelineTs, 'parse_started_at', Date.now())
@@ -2374,6 +2494,7 @@ export class UserListener {
         signalId,
         isReply,
         parentSignalId,
+        pipelineTs,
       })
       parseResult = parsed.parseResult
       aiMeta = parsed.aiMeta
@@ -2469,6 +2590,39 @@ export class UserListener {
           signal_id: signalId,
           intent: aiMeta.intent,
           skip_reason: parseResult.skip_reason,
+        },
+      })
+    }
+
+    if (aiMeta?.fallbackReason) {
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'ai_parse_fallback',
+        channelRowId: channelRow.id,
+        telegramMessageId: messageId,
+        detail: {
+          signal_id: signalId,
+          reason: aiMeta.fallbackReason,
+          deterministic_status: parseResult.status,
+          deterministic_action: parseResult.parsed.action,
+          ai_intent: aiMeta.intent,
+          ai_source: aiMeta.source,
+        },
+      })
+    }
+    if (aiMeta?.reviewRequired) {
+      notifyHumanReviewEmail(signalId)
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'ai_parse_review_required',
+        channelRowId: channelRow.id,
+        telegramMessageId: messageId,
+        detail: {
+          signal_id: signalId,
+          ai_intent: aiMeta.intent,
+          ai_source: aiMeta.source,
+          skip_reason: parseResult.skip_reason,
+          review_required: true,
         },
       })
     }
@@ -2599,6 +2753,13 @@ export class UserListener {
       reply_to_message_id: replyToMessageId,
       created_at: new Date().toISOString(),
       pipeline_ts: pipelineTs,
+    }
+    // AI-lane dispatches carry their source so the trade worker can apply the
+    // adverse-price entry guard only to AI-parsed / GPT-4o-reconciled entries.
+    if (aiMeta?.source === 'cerebras' || aiMeta?.source === 'openai') {
+      dispatchRow.dispatch_source = 'ai_parsed'
+    } else if (aiMeta?.source === 'gpt4o') {
+      dispatchRow.dispatch_source = 'ai_reconciled'
     }
     console.log(
       `[userListener] dispatch signal user=${this.userId} signalId=${signalId} channelRow=${channelRow.id} messageId=${messageId}`,
@@ -3908,12 +4069,15 @@ export class UserListener {
       await tgInvoke(this.client, new Api.updates.GetState())
       this.consecutiveProbeFailures = 0
       this.lastEventAt = this.lastEventAt || Date.now()
+      this.lastSuccessfulPollAt = Date.now()
+      this.updateHealth('watchdog_probe_ok')
     } catch (err) {
       if (isAuthKeyDuplicated(err)) {
         this.noteAuthKeyDuplicated('watchdog_probe')
         return
       }
       this.consecutiveProbeFailures++
+      this.updateHealth('watchdog_probe_failed')
       console.warn(
         `[watchdog] probe failed (${this.consecutiveProbeFailures}/${WATCHDOG_FAILURE_THRESHOLD}) for ${this.userId}:`,
         err instanceof Error ? err.message : String(err),
@@ -3968,6 +4132,7 @@ export class UserListener {
     const delay = elapsed < cooldown ? cooldown - elapsed : 0
 
     this.reconnectInFlight = (async () => {
+      this.updateHealth(reason, { force: true })
       if (delay > 0) {
         console.log(`[userListener] reconnect cooldown ${delay}ms for ${this.userId} cycle=${cycleId}`)
         await new Promise(r => setTimeout(r, delay))
@@ -4006,14 +4171,18 @@ export class UserListener {
         `[userListener] malformed Telegram RPC result recovery exhausted for ${this.userId}`
         + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()}) — invalidating session`,
       )
-      captureWorkerError(err instanceof Error ? err : new Error(String(err ?? 'malformed rpc result')), {
-        subsystem: 'telegram',
-        operation: 'malformed_rpc_recovery_exhausted',
-        errorCode: 'GRAMJS_MALFORMED_RPC_RESULT',
-        fingerprint: ['telegram', 'GRAMJS_MALFORMED_RPC_RESULT', 'exhausted'],
+      captureBusinessIssue({
+        category: 'telegram',
+        event: 'telegram_recovery_exhausted',
+        severity: 'error',
+        reasonCode: 'GRAMJS_MALFORMED_RPC_RESULT',
+        message: 'Malformed Telegram RPC result recovery exhausted',
+        userImpact: 'failed',
+        fingerprint: ['telegram_recovery_exhausted', 'malformed_rpc_result', 'exhausted'],
         context: {
           user_id: this.userId,
           stage: 'malformed_rpc_recovery',
+          operation: 'telegram_rpc_recovery',
           retry_attempt: this.malformedRpcRecoveryCount,
           extra: { max_recoveries: malformedRpcResultMaxRecoveries() },
         },
@@ -4021,6 +4190,14 @@ export class UserListener {
       this.connectionTrace('recovery_invalidated', {
         source: 'malformed_rpc_result',
         attempts: this.malformedRpcRecoveryCount,
+      })
+      this.updateHealth('malformed_rpc_recovery_exhausted', { force: true, recoveryExhausted: true })
+      maybeCaptureCopierOffline({
+        userId: this.userId,
+        listenerStatus: 'failed',
+        reasonCode: 'GRAMJS_MALFORMED_RPC_RESULT',
+        reason: 'malformed_rpc_recovery_exhausted',
+        manualReview: true,
       })
       setImmediate(() => this.onAuthKeyDuplicatedRecoveryExhausted?.(this.userId, 'malformed_rpc_result'))
       return
@@ -4053,6 +4230,7 @@ export class UserListener {
     this.lastReconnectAt = Date.now()
     this.consecutiveProbeFailures = 0
     this.isConnected = false
+    this.updateHealth(reason, { force: true })
     this.connectionTrace('disconnect_start', { source: reason, cycleId })
     try { await this.client.disconnect() } catch { /* ignore */ }
     this.connectionTrace('disconnect_complete', { source: reason, cycleId })
@@ -4072,6 +4250,8 @@ export class UserListener {
         this.connectionTrace('connect_start', { source: reason, cycleId, attempt: attempt + 1 })
         await this.client.connect()
         this.isConnected = true
+        this.lastSuccessfulPollAt = Date.now()
+        this.updateHealth('reconnect_success', { force: true })
         lastErr = undefined
         this.connectionTrace('recovery_complete', { source: reason, cycleId, attempt: attempt + 1 })
         break
@@ -4103,18 +4283,30 @@ export class UserListener {
         `[userListener] reconnect failed for ${this.userId} cycle=${cycleId}:`,
         redactTelegramConnectionLog(lastErr ?? 'unknown'),
       )
-      captureWorkerWarning(lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? 'reconnect failed')), {
-        subsystem: 'telegram',
-        operation: 'reconnect_exhausted_deferred',
-        errorCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
-        fingerprint: ['telegram', 'TELEGRAM_RECONNECT_EXHAUSTED', reason],
+      captureBusinessIssue({
+        category: 'telegram',
+        event: 'telegram_listener_failed',
+        severity: 'error',
+        reasonCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
+        message: 'Telegram reconnect attempts exhausted and listener deferred retry',
+        userImpact: 'delayed',
+        fingerprint: ['telegram_listener_failed', 'reconnect', 'TELEGRAM_RECONNECT_EXHAUSTED', reason],
         context: {
           user_id: this.userId,
           stage: 'reconnect',
+          operation: 'telegram_reconnect',
           extra: { reason, cycle_id: cycleId, attempts: delays.length },
         },
       })
       this.connectionTrace('recovery_invalidated', { source: reason, cycleId, attempts: delays.length })
+      this.updateHealth('reconnect_exhausted', { force: true })
+      maybeCaptureCopierOffline({
+        userId: this.userId,
+        listenerStatus: 'failed',
+        reasonCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
+        reason,
+        sinceMs: this.lastReconnectAt || null,
+      })
       this.scheduleDeferredRetry(cycleId)
       return
     }

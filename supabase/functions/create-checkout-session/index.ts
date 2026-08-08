@@ -82,6 +82,21 @@ Deno.serve(async (req: Request) => {
         metadata: { supabase_user_id: user.id },
       });
       customerId = customer.id;
+      // Persist customer id before Checkout completes so we can reconcile even if
+      // the webhook is delayed or missing (e.g. staging without a Stripe endpoint).
+      if (!existingSub) {
+        await supabase.from("subscriptions").insert({
+          user_id: user.id,
+          stripe_customer_id: customerId,
+          plan,
+          status: "incomplete",
+        });
+      } else {
+        await supabase
+          .from("subscriptions")
+          .update({ stripe_customer_id: customerId, updated_at: new Date().toISOString() })
+          .eq("user_id", user.id);
+      }
     }
 
     // Prevent stacking Basic on top of an already-active Advanced entitlement.
@@ -149,25 +164,19 @@ Deno.serve(async (req: Request) => {
       },
     };
 
-    // Advanced plan gets a 10-day free trial for first-time subscribers only
-    if (plan === "advanced" && !existingSub?.trial_ends_at) {
-      subscriptionData.trial_period_days = 10;
-      subscriptionData.trial_settings = {
-        end_behavior: {
-          missing_payment_method: "create_invoice",
-        },
-      };
-    }
+    // Stripe replaces the literal `{CHECKOUT_SESSION_ID}` after payment.
+    const rawSuccess = String(successUrl || `${origin}/dashboard?checkout=success`).trim();
+    const successWithSession = rawSuccess.includes("{CHECKOUT_SESSION_ID}")
+      ? rawSuccess
+      : `${rawSuccess}${rawSuccess.includes("?") ? "&" : "?"}session_id={CHECKOUT_SESSION_ID}`;
 
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       customer: customerId,
       mode: "subscription",
       line_items: lineItems,
-      // Card-only avoids Link/automatic PM flows submitting empty card payloads on $0 trials.
       payment_method_types: ["card"],
       payment_method_collection: "always",
-      success_url:
-        successUrl || `${origin}/dashboard?checkout=success`,
+      success_url: successWithSession,
       cancel_url: cancelUrl || `${origin}/pricing`,
       metadata: {
         supabase_user_id: user.id,

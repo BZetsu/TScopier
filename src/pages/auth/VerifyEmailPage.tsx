@@ -9,13 +9,14 @@ import { isEmailVerified } from '../../lib/emailVerification'
 import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 import { useLocale } from '../../context/LocaleContext'
+import { postAuthAppPath } from '../../lib/pendingPlanSelection'
 
 export function VerifyEmailPage() {
   const navigate = useNavigate()
   const { auth } = useLocale()
   const verifyT = auth.verify
   const { user, session, signOut } = useAuth()
-  const { onboardingCompletedAt, hasProfileRow, emailVerifiedAt, loading: profileLoading, refreshProfile } =
+  const { emailVerifiedAt, loading: profileLoading, refreshProfile } =
     useUserProfile()
   const [searchParams] = useSearchParams()
   const email = searchParams.get('email') ?? user?.email ?? ''
@@ -32,12 +33,8 @@ export function VerifyEmailPage() {
 
   useEffect(() => {
     if (profileLoading || !user || !isEmailVerified(user, emailVerifiedAt)) return
-    if (hasProfileRow && !onboardingCompletedAt) {
-      navigate('/dashboard', { replace: true })
-      return
-    }
-    navigate('/dashboard', { replace: true })
-  }, [user, profileLoading, emailVerifiedAt, hasProfileRow, onboardingCompletedAt, navigate])
+    navigate(postAuthAppPath(), { replace: true })
+  }, [user, profileLoading, emailVerifiedAt, navigate])
 
   const handleResend = async () => {
     if (!email) return

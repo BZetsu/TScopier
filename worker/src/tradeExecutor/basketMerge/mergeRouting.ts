@@ -31,10 +31,12 @@ import {
 import { reconcileGhostBasketLegs, loadMergeSignalForLinking, resolveBasketMergeLinkContext } from './helpers'
 import { applyBasketSlTpRefresh } from './slTpRefresh'
 
+export function revisionRefreshSafeSkipOutcome(): MergeOutcome {
+  return { handled: true, success: false }
+}
+
 export function revisionRefreshWithoutOpenBasketOutcome(sameSignalRefresh: boolean): MergeOutcome {
-  return sameSignalRefresh
-    ? { handled: true, success: false }
-    : { handled: false }
+  return sameSignalRefresh ? revisionRefreshSafeSkipOutcome() : { handled: false }
 }
 
 export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorContext, args: {
@@ -55,13 +57,15 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid,
       strictEntryPrefetch, commentPrefix,
     } = args
-    if (!hasFxsocketConfigured()) return { handled: false }
-    if (parsedHasReEnterIntent(parsed)) return { handled: false }
+    const sameSignalRefresh = args.sameSignalRefresh === true
+    const revisionSafeSkip = (): MergeOutcome => revisionRefreshSafeSkipOutcome()
+    if (!hasFxsocketConfigured()) return sameSignalRefresh ? revisionSafeSkip() : { handled: false }
+    if (parsedHasReEnterIntent(parsed)) return sameSignalRefresh ? revisionSafeSkip() : { handled: false }
     if (!shouldRouteAsBasketParameterRefresh(parsed) && args.sameSignalRefresh !== true) {
       return { handled: false }
     }
     const api = ctx.apiFor(broker)
-    if (!api) return { handled: false }
+    if (!api) return sameSignalRefresh ? revisionSafeSkip() : { handled: false }
 
     if (isChannelSlTpUpdateBlocked(
       normalizeChannelMessageFiltersMap(broker.channel_message_filters),
@@ -84,10 +88,8 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
     }
 
     const a = String(parsed.action ?? '').toLowerCase()
-    if (a !== 'buy' && a !== 'sell') return { handled: false }
+    if (a !== 'buy' && a !== 'sell') return sameSignalRefresh ? revisionSafeSkip() : { handled: false }
     const direction = a === 'buy' ? 'buy' : 'sell'
-    const sameSignalRefresh = args.sameSignalRefresh === true
-
     let anchor = sameSignalRefresh
       ? await resolveOpenBasketAnchorForSameSignal(ctx.supabase, {
           userId: signal.user_id,

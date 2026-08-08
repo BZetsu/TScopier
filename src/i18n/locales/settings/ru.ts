@@ -46,6 +46,8 @@ export const settingsRu: SettingsBundleTranslations = {
       confirmPassword: 'Подтвердите пароль',
       notificationSound: 'Звук уведомлений о сделках',
       notificationSoundDescription: 'Проигрывать звук, когда сделка исполнена, изменена или закрыта.',
+      notificationEmail: 'Email-уведомления',
+      notificationEmailDescription: 'Отправлять email, когда сигнал требует вашего подтверждения.',
     },
     placeholders: {
       address: 'Улица, дом, почтовый индекс…',

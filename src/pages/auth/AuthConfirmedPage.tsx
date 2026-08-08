@@ -8,6 +8,7 @@ import { markEmailVerified } from '../../lib/markEmailVerified'
 import { loadUserProfile } from '../../lib/userProfile'
 import { waitForAuthSession } from '../../lib/waitForAuthSession'
 import { useLocale } from '../../context/LocaleContext'
+import { postAuthAppPath } from '../../lib/pendingPlanSelection'
 
 /** Landing route after the user clicks the verification link in their email. */
 export function AuthConfirmedPage() {
@@ -51,7 +52,7 @@ export function AuthConfirmedPage() {
         const row = await loadUserProfile(activeUser.id)
         await refreshProfile()
         if (isEmailVerified(activeUser, row?.email_verified_at)) {
-          navigate('/dashboard', { replace: true })
+          navigate(postAuthAppPath(), { replace: true })
           return
         }
         await new Promise(r => setTimeout(r, 400))

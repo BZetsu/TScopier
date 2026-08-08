@@ -115,6 +115,9 @@ export default function App() {
           <Route path="/email-unsubscribe" element={<EmailUnsubscribePage />} />
           <Route path="/:referralCode" element={<ReferralCodeRedirect />} />
 
+          {/* Public pricing — paywall / acquisition (no auth required). */}
+          <Route path="/pricing" element={<LazyPage><AppPricingPage /></LazyPage>} />
+
           <Route element={<VerifyEmailLayout />}>
             <Route path="/verify-email" element={<VerifyEmailPage />} />
             <Route path="/auth/confirmed" element={<AuthConfirmedPage />} />
@@ -136,7 +139,6 @@ export default function App() {
           >
             <Route path="/welcome" element={<Navigate to="/dashboard" replace />} />
             <Route element={<AppShell />}>
-            <Route path="/pricing" element={<LazyPage><AppPricingPage /></LazyPage>} />
             <Route path="/dashboard/*" element={<DashboardRouteAnchor />} />
             <Route path="/brokers" element={<LazyPage><AccountConfigPage /></LazyPage>} />
             <Route path="/account-configuration" element={<Navigate to="/brokers" replace />} />

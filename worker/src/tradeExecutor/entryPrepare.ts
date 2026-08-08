@@ -30,6 +30,10 @@ import {
   ENTRY_ZONE_FAR_FROM_MARKET_REASON,
   entryZoneFarFromQuote,
 } from '../signalEntryZoneSanity'
+import {
+  ENTRY_PRICE_MOVED_ADVERSE_REASON,
+  entryPriceMovedAdverse,
+} from '../signalEntryPriceGuard'
 import { pipCalculator } from '../pipCalculator'
 import {
   convertPipOffsetToPrice,
@@ -308,6 +312,33 @@ export async function prepareEntryExecution(
     )
   }
   const baseLot = roundLot(computeLot(broker, parsed), params)
+  const sameSignalRefresh = sendOpts?.sameSignalRefresh === true
+
+  // A Telegram revision is never a new entry. Route it through the
+  // modify-only path before any entry-zone, teaser, range, or OrderSend logic.
+  // The merge router returns handled=true for every revision outcome, including
+  // an unavailable broker/API or a missing open basket, so revisions cannot
+  // fall through into a fresh entry.
+  if (sameSignalRefresh) {
+    const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
+      signal,
+      parsed,
+      broker,
+      channelKeywords,
+      baseLot,
+      params,
+      symbol,
+      uuid,
+      strictEntryPrefetch: null,
+      commentPrefix,
+      sameSignalRefresh: true,
+      liveMgmtFast: sendOpts?.liveMgmtFast === true,
+    })
+    return {
+      ok: false,
+      outcome: { openedOrMerged: paramOutcome.handled === true && paramOutcome.success === true },
+    }
+  }
 
   let strictEntryPrefetch: { bid: number; ask: number } | null = null
   if (needsQuotePrefetch) {
@@ -359,11 +390,60 @@ export async function prepareEntryExecution(
     }
   }
 
+  // ── AI-lane adverse-price guard ─────────────────────────────────────────
+  // AI-parsed/reconciled entries (dispatch_source ai_parsed / ai_reconciled)
+  // must not execute when the live market has moved against the signal entry
+  // beyond the broker's signal_entry_pip_tolerance — that would open at a
+  // worse price than the signal published and risk an immediate loss.
+  // Strict-entry and range-strict brokers are excluded: they already handle
+  // adverse prices by deferring to broker pendings at the signal entry.
+  if (
+    (signal.dispatch_source === 'ai_parsed' || signal.dispatch_source === 'ai_reconciled')
+    && (entryDirection === 'buy' || entryDirection === 'sell')
+    && !signalEntryPriceStrictEnabled(manual)
+    && !signalEntryRangeStrictEnabled(manual)
+    && sendOpts?.sameSignalRefresh !== true
+    && api
+  ) {
+    try {
+      const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
+      strictEntryPrefetch = q
+      const tolerancePips = Math.max(0, Number(manual.signal_entry_pip_tolerance ?? 10))
+      const moved = entryPriceMovedAdverse({
+        action: entryDirection as 'buy' | 'sell',
+        entryPrice: typeof parsed.entry_price === 'number' ? parsed.entry_price : null,
+        zoneLow: typeof parsed.entry_zone_low === 'number' ? parsed.entry_zone_low : null,
+        zoneHigh: typeof parsed.entry_zone_high === 'number' ? parsed.entry_zone_high : null,
+        bid: q.bid,
+        ask: q.ask,
+        tolerancePips,
+        pipSize: params?.point ?? 0.00001,
+      })
+      if (moved) {
+        await ctx.logSendSkipped(signal, broker, ENTRY_PRICE_MOVED_ADVERSE_REASON, {
+          symbol,
+          quote_bid: q.bid,
+          quote_ask: q.ask,
+          entry_price: parsed.entry_price ?? null,
+          entry_zone_low: parsed.entry_zone_low ?? null,
+          entry_zone_high: parsed.entry_zone_high ?? null,
+          tolerance_pips: tolerancePips,
+          dispatch_source: signal.dispatch_source,
+        })
+        return {
+          ok: false,
+          outcome: { finalizeSkipReason: ENTRY_PRICE_MOVED_ADVERSE_REASON },
+        }
+      }
+    } catch {
+      // Best-effort guard — proceed when quote is unavailable.
+    }
+  }
+
   // Basket SL/TP refresh — always before OrderSend (not deferred to post-fill).
   // Skip when Use signal range is on: zone+market-now+SL/TP must open via range entry wait,
   // not merge into a prior teaser that may never have opened.
   const basketRefreshSucceeded = false
-  const sameSignalRefresh = sendOpts?.sameSignalRefresh === true
   const blockNewEntry = sendOpts?.blockNewEntry === true
   const rangeEntryStrict = signalEntryRangeStrictEnabled(manual)
   if (isManual && !rangeEntryStrict && (shouldRouteAsBasketParameterRefresh(parsed) || sameSignalRefresh)) {

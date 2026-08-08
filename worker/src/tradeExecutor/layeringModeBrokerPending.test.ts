@@ -194,7 +194,7 @@ class MockSupabase {
   }
 }
 
-function prepFor(snap = snapshot(), opts?: { opened?: unknown[]; openedThrows?: Error; sendThrows?: Error; afterSend?: () => void }) {
+function prepFor(snap = snapshot(), opts?: { opened?: unknown[]; openedThrows?: Error; sendThrows?: Error; sendThrowsOnce?: Error; afterSend?: () => void }) {
   const sends: unknown[] = []
   const api = {
     async openedOrders() {
@@ -205,6 +205,7 @@ function prepFor(snap = snapshot(), opts?: { opened?: unknown[]; openedThrows?: 
     async orderSend(_uuid: string, args: unknown) {
       sends.push(args)
       opts?.afterSend?.()
+      if (opts?.sendThrowsOnce && sends.length === 1) throw opts.sendThrowsOnce
       if (opts?.sendThrows) throw opts.sendThrows
       return { ticket: 9000 + sends.length }
     },
@@ -276,8 +277,8 @@ test('native pending sends only after durable per-leg claim', async () => {
   assert.equal(sends.length, 4)
   for (const args of sends) {
     const a = args as { stoploss?: number; takeprofit?: number }
-    assert.equal(a.stoploss, 0, 'resting broker pending must be naked (no SL)')
-    assert.equal(a.takeprofit, 0, 'resting broker pending must be naked (no TP)')
+    assert.equal(a.stoploss, 3300, 'resting broker pending carries planned SL')
+    assert.equal(a.takeprofit, 3400, 'resting broker pending carries planned TP')
   }
   assert.deepEqual(supabase.legs.map(r => r.step_idx), [2, 3, 4, 5])
   assert.deepEqual(supabase.legs.map(r => r.trigger_price), snap.fundedPrices!.slice(1))
@@ -285,6 +286,31 @@ test('native pending sends only after durable per-leg claim', async () => {
   // Desired stops remain on the DB row for post-fill assignment.
   assert.equal(supabase.legs.every(r => Number(r.stoploss) === 3300), true)
   assert.equal(supabase.legs.every(r => Number(r.takeprofit) === 3400), true)
+  restoreEnv()
+})
+
+test('broker invalid-stops rejection falls back to naked send', async () => {
+  restoreEnv()
+  enableLayeringEnv()
+  const snap = snapshot()
+  const { prep, sends, supabase } = prepFor(snap, {
+    sendThrowsOnce: new Error('Invalid stops'),
+  })
+  const result = await activateLayeringBrokerPendingOrders({ prep, snapshot: snap, skipFirstLayer: true })
+  assert.deepEqual(result, { ok: true, outcome: 'activated', placed: 4, adopted: 0 })
+  assert.equal(sends.length, 5)
+  const first = sends[0] as { stoploss?: number; takeprofit?: number }
+  assert.equal(first.stoploss, 3300, 'first attempt carries planned SL')
+  assert.equal(first.takeprofit, 3400, 'first attempt carries planned TP')
+  const naked = sends[1] as { stoploss?: number; takeprofit?: number }
+  assert.equal(naked.stoploss, 0, 'invalid-stops retry is naked')
+  assert.equal(naked.takeprofit, 0, 'invalid-stops retry is naked')
+  for (const args of sends.slice(2)) {
+    const a = args as { stoploss?: number; takeprofit?: number }
+    assert.equal(a.stoploss, 3300, 'later legs keep planned SL')
+    assert.equal(a.takeprofit, 3400, 'later legs keep planned TP')
+  }
+  assert.equal(supabase.legs.every(r => r.native_submission_status === 'confirmed'), true)
   restoreEnv()
 })
 

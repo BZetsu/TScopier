@@ -5,7 +5,7 @@ import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet, Link2,
   ChevronLeft, ChevronRight, Search, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
-  Infinity as InfinityIcon, Coins, X, Sparkles,
+  Infinity as InfinityIcon, Coins, X, MessageSquareText, FileUp, FileDown,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -111,9 +111,14 @@ import {
 } from '../../lib/brokerChannelTradingConfigs'
 import { parseSymbolToTradeList } from '../../lib/channelSymbolDetection'
 import {
+  deleteTradingPreset,
+  downloadTradingPresetsFile,
+  importTradingPresetsFromFile,
   listTradingPresets,
   presetToChannelConfigDraft,
+  renameTradingPreset,
   upsertTradingPreset,
+  TSCOPIER_PRESETS_EXTENSION,
   type ChannelTradingPreset,
 } from '../../lib/tradingPresets'
 import {
@@ -780,7 +785,7 @@ export function AccountConfigPage() {
 
   const manualSubTabs = useMemo<ManualSubTabDef[]>(
     () => [
-      { id: 'signal_examples', label: cm.manualSubTabs.aiTraining, icon: Sparkles },
+      { id: 'signal_examples', label: cm.manualSubTabs.aiTraining, icon: MessageSquareText },
       { id: 'symbols', label: cm.manualSubTabs.symbols, icon: Coins },
       { id: 'channel_instructions', label: cm.manualSubTabs.channelInstructions, icon: ScrollText },
       { id: 'risk', label: cm.manualSubTabs.risk, icon: Wallet },
@@ -903,6 +908,42 @@ export function AccountConfigPage() {
     channelConfigs: {},
   })
   const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('signal_examples')
+  const configScrollRef = useRef<HTMLDivElement | null>(null)
+  const sectionRefs = useRef<Partial<Record<ManualSubTabId, HTMLElement | null>>>({})
+  const tabButtonRefs = useRef<Partial<Record<ManualSubTabId, HTMLButtonElement | null>>>({})
+  const programmaticScrollRef = useRef(false)
+  const programmaticScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const setSectionRef = useCallback((id: ManualSubTabId, el: HTMLElement | null) => {
+    sectionRefs.current[id] = el
+  }, [])
+
+  const setTabButtonRef = useCallback((id: ManualSubTabId, el: HTMLButtonElement | null) => {
+    tabButtonRefs.current[id] = el
+  }, [])
+
+  const scrollToConfigSection = useCallback((id: ManualSubTabId) => {
+    const el = sectionRefs.current[id]
+    if (!el) {
+      setActiveManualSubTab(id)
+      return
+    }
+    programmaticScrollRef.current = true
+    if (programmaticScrollTimerRef.current) clearTimeout(programmaticScrollTimerRef.current)
+    setActiveManualSubTab(id)
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    programmaticScrollTimerRef.current = setTimeout(() => {
+      programmaticScrollRef.current = false
+      programmaticScrollTimerRef.current = null
+    }, 700)
+  }, [])
+
+  const resetConfigSectionScroll = useCallback((id: ManualSubTabId = 'signal_examples') => {
+    setActiveManualSubTab(id)
+    const scroller = configScrollRef.current
+    if (scroller) scroller.scrollTop = 0
+  }, [])
+
   const [trainingRunningByChannel, setTrainingRunningByChannel] = useState<Record<string, boolean>>({})
   const [trainingSavingByChannel, setTrainingSavingByChannel] = useState<Record<string, boolean>>({})
   const [trainingProgressByChannel, setTrainingProgressByChannel] = useState<Record<string, number>>({})
@@ -913,10 +954,17 @@ export function AccountConfigPage() {
   const [tradingPresets, setTradingPresets] = useState<ChannelTradingPreset[]>([])
   const [presetsLoading, setPresetsLoading] = useState(false)
   const [presetSaving, setPresetSaving] = useState(false)
-  const [presetSavedAt, setPresetSavedAt] = useState<number | null>(null)
+  const [presetStatusMessage, setPresetStatusMessage] = useState<string | null>(null)
   const [showPresetNameModal, setShowPresetNameModal] = useState(false)
+  const [showManagePresetsModal, setShowManagePresetsModal] = useState(false)
+  const [showExportPresetsModal, setShowExportPresetsModal] = useState(false)
+  const [exportNameDraft, setExportNameDraft] = useState('')
+  const [exportSelectedIds, setExportSelectedIds] = useState<string[]>([])
   const [presetNameDraft, setPresetNameDraft] = useState('')
   const [pendingApplyPreset, setPendingApplyPreset] = useState<ChannelTradingPreset | null>(null)
+  const [editingPreset, setEditingPreset] = useState<ChannelTradingPreset | null>(null)
+  const [pendingDeletePreset, setPendingDeletePreset] = useState<ChannelTradingPreset | null>(null)
+  const presetImportInputRef = useRef<HTMLInputElement | null>(null)
   const [channelLinkEditMode, setChannelLinkEditMode] = useState(false)
   const [error, setError] = useState('')
   const [channelsLoading, setChannelsLoading] = useState(() =>
@@ -1508,10 +1556,76 @@ export function AccountConfigPage() {
   }, [configSavedAt])
 
   useEffect(() => {
-    if (presetSavedAt == null) return
-    const t = setTimeout(() => setPresetSavedAt(null), 2500)
+    if (presetStatusMessage == null) return
+    const t = setTimeout(() => setPresetStatusMessage(null), 2500)
     return () => clearTimeout(t)
-  }, [presetSavedAt])
+  }, [presetStatusMessage])
+
+  useEffect(() => {
+    if (!selectedChannelLinked) return
+    const root = configScrollRef.current
+    if (!root) return
+
+    const sectionIds = manualSubTabs.map(s => s.id)
+    let observer: IntersectionObserver | null = null
+    let cancelled = false
+    let attempts = 0
+
+    const attach = () => {
+      if (cancelled) return
+      const els = sectionIds
+        .map(id => sectionRefs.current[id])
+        .filter((el): el is HTMLElement => Boolean(el))
+      if (els.length < sectionIds.length && attempts < 10) {
+        attempts += 1
+        requestAnimationFrame(attach)
+        return
+      }
+      if (els.length === 0) return
+      observer = new IntersectionObserver(
+        entries => {
+          if (programmaticScrollRef.current) return
+          const visible = entries
+            .filter(e => e.isIntersecting)
+            .map(e => {
+              const id = (e.target as HTMLElement).dataset.configSection as ManualSubTabId | undefined
+              return id ? { id, top: e.boundingClientRect.top } : null
+            })
+            .filter((v): v is { id: ManualSubTabId; top: number } => Boolean(v))
+          if (visible.length === 0) return
+          visible.sort((a, b) => a.top - b.top)
+          const next = visible[0]?.id
+          if (!next) return
+          setActiveManualSubTab(prev => (prev === next ? prev : next))
+        },
+        {
+          root,
+          rootMargin: '-10% 0px -65% 0px',
+          threshold: [0, 0.1, 0.25],
+        },
+      )
+      for (const el of els) observer.observe(el)
+    }
+
+    attach()
+
+    return () => {
+      cancelled = true
+      observer?.disconnect()
+    }
+  }, [manualSubTabs, selectedChannelLinked, configDraft.selectedChannelId])
+
+  useEffect(() => {
+    if (!selectedChannelLinked) return
+    const btn = tabButtonRefs.current[activeManualSubTab]
+    btn?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
+  }, [activeManualSubTab, selectedChannelLinked])
+
+  useEffect(() => {
+    return () => {
+      if (programmaticScrollTimerRef.current) clearTimeout(programmaticScrollTimerRef.current)
+    }
+  }, [])
 
   const startBackgroundAiTraining = useCallback((channelId: string, opts?: { force?: boolean }) => {
     if (!userId) {
@@ -1610,7 +1724,7 @@ export function AccountConfigPage() {
       limitStateMap[row.channel_id] = normalizeCopyLimitState(row.copy_limit_state)
     }
     setChannelCopyLimitState(limitStateMap)
-    setActiveManualSubTab('symbols')
+    resetConfigSectionScroll('signal_examples')
     const draft = buildChannelConfigDraftFromBroker(merged, channelIds, keywordFiltersEnabled)
     const nextDraft = {
       ...draft,
@@ -1653,7 +1767,7 @@ export function AccountConfigPage() {
 
   const selectConfigureChannel = (channelId: string) => {
     setConfigDraft(prev => ({ ...prev, selectedChannelId: channelId }))
-    setActiveManualSubTab('symbols')
+    resetConfigSectionScroll('signal_examples')
   }
 
   const connectSelectedChannelToBroker = async () => {
@@ -1755,8 +1869,14 @@ export function AccountConfigPage() {
     setConfigAccount(null)
     setConfigSavedSignature('')
     setShowPresetNameModal(false)
+    setShowManagePresetsModal(false)
+    setShowExportPresetsModal(false)
     setPresetNameDraft('')
+    setExportNameDraft('')
+    setExportSelectedIds([])
     setPendingApplyPreset(null)
+    setEditingPreset(null)
+    setPendingDeletePreset(null)
     setChannelLinkEditMode(false)
     setError('')
   }
@@ -1888,11 +2008,143 @@ export function AccountConfigPage() {
       })
       setShowPresetNameModal(false)
       setPresetNameDraft('')
-      setPresetSavedAt(Date.now())
+      setPresetStatusMessage(cm.presetSaved)
     } catch (err) {
       setError(err instanceof Error ? err.message : cm.saveAsPreset)
     } finally {
       setPresetSaving(false)
+    }
+  }
+
+  const openEditPresetModal = (preset: ChannelTradingPreset) => {
+    setError('')
+    setEditingPreset(preset)
+    setPresetNameDraft(preset.name)
+  }
+
+  const confirmEditPreset = async () => {
+    if (!user?.id || !editingPreset) return
+    const name = presetNameDraft.trim()
+    if (!name) return
+
+    setPresetSaving(true)
+    setError('')
+    try {
+      const saved = await renameTradingPreset(user.id, editingPreset.id, name)
+      setTradingPresets(prev =>
+        prev
+          .map(p => (p.id === saved.id ? saved : p))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      )
+      setEditingPreset(null)
+      setPresetNameDraft('')
+      setPresetStatusMessage(cm.presetSaved)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : cm.editPresetTitle)
+    } finally {
+      setPresetSaving(false)
+    }
+  }
+
+  const confirmDeletePreset = async () => {
+    if (!user?.id || !pendingDeletePreset) return
+
+    setPresetSaving(true)
+    setError('')
+    try {
+      await deleteTradingPreset(user.id, pendingDeletePreset.id)
+      setTradingPresets(prev => prev.filter(p => p.id !== pendingDeletePreset.id))
+      if (pendingApplyPreset?.id === pendingDeletePreset.id) setPendingApplyPreset(null)
+      if (editingPreset?.id === pendingDeletePreset.id) {
+        setEditingPreset(null)
+        setPresetNameDraft('')
+      }
+      setPendingDeletePreset(null)
+      setPresetStatusMessage(cm.presetDeleted)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : cm.deletePresetTitle)
+    } finally {
+      setPresetSaving(false)
+    }
+  }
+
+  const openExportPresetsModal = () => {
+    if (tradingPresets.length === 0) return
+    setError('')
+    const ids = tradingPresets.map(p => p.id)
+    setExportSelectedIds(ids)
+    setExportNameDraft(
+      tradingPresets.length === 1 ? tradingPresets[0]!.name : 'tscopier-presets',
+    )
+    setShowExportPresetsModal(true)
+  }
+
+  const setExportSelection = (nextIds: string[]) => {
+    setExportSelectedIds(nextIds)
+    if (nextIds.length === 1) {
+      const hit = tradingPresets.find(p => p.id === nextIds[0])
+      if (hit) setExportNameDraft(hit.name)
+      return
+    }
+    if (nextIds.length > 1) {
+      setExportNameDraft(prev => {
+        const singleNames = new Set(tradingPresets.map(p => p.name))
+        if (!prev.trim() || singleNames.has(prev.trim())) return 'tscopier-presets'
+        return prev
+      })
+    }
+  }
+
+  const toggleExportPreset = (presetId: string) => {
+    setExportSelection(
+      exportSelectedIds.includes(presetId)
+        ? exportSelectedIds.filter(id => id !== presetId)
+        : [...exportSelectedIds, presetId],
+    )
+  }
+
+  const confirmExportPresets = () => {
+    const selected = tradingPresets.filter(p => exportSelectedIds.includes(p.id))
+    if (selected.length === 0) return
+    const raw = exportNameDraft.trim() || (selected.length === 1 ? selected[0]!.name : 'tscopier-presets')
+    const safe = raw
+      .replace(/\.tscp$/i, '')
+      .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, '-')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^\.+|\.+$/g, '')
+      .slice(0, 80)
+      || 'tscopier-presets'
+    try {
+      downloadTradingPresetsFile(selected, `${safe}${TSCOPIER_PRESETS_EXTENSION}`)
+      setShowExportPresetsModal(false)
+      setExportNameDraft('')
+      setExportSelectedIds([])
+      setPresetStatusMessage(cm.presetsExported)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : cm.presetsImportFailed)
+    }
+  }
+
+  const importTradingPresetsFromPicker = async (file: File | null) => {
+    if (!user?.id || !file) return
+    setPresetSaving(true)
+    setError('')
+    try {
+      const raw = await file.text()
+      const { imported, presets: saved } = await importTradingPresetsFromFile(user.id, raw)
+      setTradingPresets(prev => {
+        const byName = new Map(prev.map(p => [p.name.toLowerCase(), p]))
+        for (const row of saved) byName.set(row.name.toLowerCase(), row)
+        return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
+      })
+      setShowManagePresetsModal(true)
+      setPresetStatusMessage(interpolate(cm.presetsImported, { count: String(imported) }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : cm.presetsImportFailed)
+    } finally {
+      setPresetSaving(false)
+      if (presetImportInputRef.current) presetImportInputRef.current.value = ''
     }
   }
 
@@ -2877,8 +3129,9 @@ export function AccountConfigPage() {
                         return (
                           <button
                             key={sub.id}
+                            ref={el => setTabButtonRef(sub.id, el)}
                             type="button"
-                            onClick={() => setActiveManualSubTab(sub.id)}
+                            onClick={() => scrollToConfigSection(sub.id)}
                             className={clsx(
                                 'shrink-0 flex items-center gap-1.5 px-3 py-2.5 sm:py-2 text-sm transition-colors border-b-2 -mb-px min-h-[44px] sm:min-h-0 whitespace-nowrap',
                               active
@@ -2895,7 +3148,10 @@ export function AccountConfigPage() {
                   </div>
                 ) : null}
 
-                <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 sm:py-5 min-h-0 overscroll-y-contain">
+                <div
+                  ref={configScrollRef}
+                  className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 sm:py-5 min-h-0 overscroll-y-contain"
+                >
                 {error && <PaywallErrorAlert message={error} className="mb-4" />}
 
                 {selectedChannelLinked && (selectedChannelNeedsPersistedSave || configureModalDirty) ? (
@@ -2979,8 +3235,43 @@ export function AccountConfigPage() {
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-4">
-                        {activeManualSubTab === 'symbols' && (
+                      <div className="space-y-8">
+                        <section
+                          id="config-section-signal_examples"
+                          data-config-section="signal_examples"
+                          ref={el => setSectionRef('signal_examples', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.aiTraining}
+                          </h3>
+                          
+                          {
+                          selectedChannelOption && configDraft.selectedChannelId && userId ? (
+                            <ChannelSignalExamplesSection
+                              channelId={configDraft.selectedChannelId}
+                              userId={userId}
+                              labels={cm.aiTraining}
+                              trainingActive={activeChannelTrainingRunning || activeChannelTrainingSaving}
+                              onRetrain={() => startBackgroundAiTraining(configDraft.selectedChannelId!, { force: true })}
+                            />
+                          ) : (
+                            <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
+                          )
+                        }
+                        </section>
+
+                        <section
+                          id="config-section-symbols"
+                          data-config-section="symbols"
+                          ref={el => setSectionRef('symbols', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.symbols}
+                          </h3>
+                          
+                          {
                           selectedChannelOption && configDraft.selectedChannelId ? (
                             <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
                               <ConfigTitle variant="semibold" info={cm.channelSymbols.intro}>
@@ -3018,9 +3309,20 @@ export function AccountConfigPage() {
                           ) : (
                             <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
                           )
-                        )}
+                        }
+                        </section>
 
-                        {activeManualSubTab === 'channel_instructions' && (
+                        <section
+                          id="config-section-channel_instructions"
+                          data-config-section="channel_instructions"
+                          ref={el => setSectionRef('channel_instructions', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.channelInstructions}
+                          </h3>
+                          
+                          {
                           selectedChannelOption && configDraft.selectedChannelId ? (
                             <div className="relative">
                               <section
@@ -3074,23 +3376,18 @@ export function AccountConfigPage() {
                           ) : (
                             <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
                           )
-                        )}
+                        }
+                        </section>
 
-                        {activeManualSubTab === 'signal_examples' && (
-                          selectedChannelOption && configDraft.selectedChannelId && userId ? (
-                            <ChannelSignalExamplesSection
-                              channelId={configDraft.selectedChannelId}
-                              userId={userId}
-                              labels={cm.aiTraining}
-                              trainingActive={activeChannelTrainingRunning || activeChannelTrainingSaving}
-                              onRetrain={() => startBackgroundAiTraining(configDraft.selectedChannelId!, { force: true })}
-                            />
-                          ) : (
-                            <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
-                          )
-                        )}
-
-                        {activeManualSubTab === 'risk' && (
+                        <section
+                          id="config-section-risk"
+                          data-config-section="risk"
+                          ref={el => setSectionRef('risk', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.risk}
+                          </h3>
                           <div className="space-y-4">
                             {channelManualSettings.risk_mode === 'fixed_lot' && (
                               <div className="flex justify-end">
@@ -3405,9 +3702,20 @@ export function AccountConfigPage() {
                             )}
 
                           </div>
-                        )}
+                        </section>
 
-                        {activeManualSubTab === 'stops' && (() => {
+                        <section
+                          id="config-section-stops"
+                          data-config-section="stops"
+                          ref={el => setSectionRef('stops', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.stops}
+                          </h3>
+
+                          {
+                          (() => {
                           const ms = channelManualSettings
                           const predefSummary = describePredefinedStopsOverrideI18n(ms, cm.stops)
                           return (
@@ -3586,9 +3894,22 @@ export function AccountConfigPage() {
 
                           </div>
                           )
-                        })()}
+                        })()
+                        }
+                        </section>
 
-                        {activeManualSubTab === 'management' && (() => {
+                        <section
+                          id="config-section-management"
+                          data-config-section="management"
+                          ref={el => setSectionRef('management', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.management}
+                          </h3>
+
+                          {
+                          (() => {
                           const ms = channelManualSettings
                           const autoMgmtEnabled = isAutoManagementEnabled(ms)
                           const triggerMode = ms.move_sl_to_entry_after_mode ?? 'pips'
@@ -3958,9 +4279,19 @@ export function AccountConfigPage() {
                             </section>
                           </div>
                           )
-                        })()}
+                        })()
+                        }
+                        </section>
 
-                        {activeManualSubTab === 'filters' && (
+                        <section
+                          id="config-section-filters"
+                          data-config-section="filters"
+                          ref={el => setSectionRef('filters', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.filters}
+                          </h3>
                           <div className="space-y-6">
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
                               <ConfigTitle info={cm.filters.timeSubtitle}>{cm.filters.timeTitle}</ConfigTitle>
@@ -4081,7 +4412,8 @@ export function AccountConfigPage() {
                         )}
                             </section>
                       </div>
-                    )}
+                        </section>
+
 
                   </div>
                 )}
@@ -4098,39 +4430,34 @@ export function AccountConfigPage() {
                 {configSavedAt != null && (
                   <span className="text-xs text-success-600 transition-opacity">{cm.saved}</span>
                 )}
-                {presetSavedAt != null && (
-                  <span className="text-xs text-success-600 transition-opacity">{cm.presetSaved}</span>
+                {presetStatusMessage != null && (
+                  <span className="text-xs text-success-600 transition-opacity">{presetStatusMessage}</span>
                 )}
                         </div>
               <Button variant="ghost" className="w-full sm:w-auto min-h-[44px]" onClick={() => closeConfigureModal()} disabled={configSaving || presetSaving}>{cm.cancel}</Button>
+              {selectedChannelLinked && tradingPresets.length > 0 ? (
+                <Button
+                  variant="secondary"
+                  className="w-full sm:w-auto min-h-[44px]"
+                  disabled={configSaving || presetSaving || presetsLoading}
+                  onClick={openExportPresetsModal}
+                >
+                  <FileUp className="w-4 h-4 me-1.5" />
+                  {cm.exportPresets}
+                </Button>
+              ) : null}
               {selectedChannelLinked ? (
-                <label className="w-full sm:w-auto min-h-[44px] inline-flex items-stretch rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-sm overflow-hidden has-[:disabled]:opacity-50">
-                  <span className="inline-flex items-center px-3 text-sm font-medium text-neutral-700 dark:text-neutral-200 border-e border-neutral-200 dark:border-neutral-700 whitespace-nowrap">
-                    {cm.applyPreset}
-                  </span>
-                  <select
-                    className="flex-1 min-w-0 sm:min-w-[8rem] text-sm bg-transparent text-neutral-700 dark:text-neutral-200 px-2 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:cursor-not-allowed"
-                    defaultValue=""
-                    disabled={configSaving || presetSaving || presetsLoading || tradingPresets.length === 0}
-                    onChange={e => {
-                      const v = e.target.value
-                      e.target.value = ''
-                      const preset = tradingPresets.find(p => p.id === v)
-                      if (preset) setPendingApplyPreset(preset)
-                    }}
-                  >
-                    <option value="" disabled>
-                      {presetsLoading
-                        ? '…'
-                        : tradingPresets.length === 0
-                          ? cm.noPresetsYet
-                          : cm.applyPresetPlaceholder}
-                    </option>
-                    {tradingPresets.map(preset => (
-                      <option key={preset.id} value={preset.id}>{preset.name}</option>
-                    ))}
-                  </select>
-                </label>
+                <Button
+                  variant="secondary"
+                  className="w-full sm:w-auto min-h-[44px]"
+                  disabled={configSaving || presetSaving || presetsLoading}
+                  onClick={() => {
+                    setError('')
+                    setShowManagePresetsModal(true)
+                  }}
+                >
+                  {presetsLoading ? '…' : cm.applyPreset}
+                </Button>
               ) : null}
               {selectedChannelLinked && selectedChannelEditedFromDefault ? (
                 <Button
@@ -4229,6 +4556,286 @@ export function AccountConfigPage() {
                     >
                       {cm.applyPresetAction}
                     </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {showManagePresetsModal ? (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-neutral-950/55 p-4">
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="manage-presets-title"
+                  className="w-full max-w-md rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xl overflow-hidden"
+                >
+                  <div className="px-5 pt-5 pb-3">
+                    <h4 id="manage-presets-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                      {cm.applyPreset}
+                    </h4>
+                    <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-400">
+                      {tradingPresets.length === 0 ? cm.noPresetsYet : cm.managePresetsHint}
+                    </p>
+                    {tradingPresets.length > 0 ? (
+                      <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                        {cm.managePresetsApplyHint}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="max-h-[min(50vh,22rem)] overflow-y-auto border-y border-neutral-100 dark:border-neutral-800">
+                    {presetsLoading ? (
+                      <p className="px-5 py-8 text-sm text-center text-neutral-500">…</p>
+                    ) : tradingPresets.length === 0 ? (
+                      <p className="px-5 py-8 text-sm text-center text-neutral-500 dark:text-neutral-400">
+                        {cm.noPresetsYet}
+                      </p>
+                    ) : (
+                      <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+                        {tradingPresets.map(preset => (
+                          <li key={preset.id} className="flex items-stretch gap-1 px-2 py-1.5">
+                            <button
+                              type="button"
+                              className="min-w-0 flex-1 rounded-lg px-3 py-2.5 text-start text-sm font-medium text-neutral-900 dark:text-neutral-50 hover:bg-neutral-50 dark:hover:bg-neutral-800/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                              disabled={configSaving || presetSaving}
+                              onClick={() => {
+                                setShowManagePresetsModal(false)
+                                setPendingApplyPreset(preset)
+                              }}
+                            >
+                              <span className="block truncate">{preset.name}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="shrink-0 inline-flex items-center justify-center rounded-lg p-2.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 dark:hover:bg-neutral-800 dark:hover:text-neutral-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50"
+                              aria-label={cm.managePresetsEdit}
+                              title={cm.managePresetsEdit}
+                              disabled={configSaving || presetSaving}
+                              onClick={() => openEditPresetModal(preset)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              className="shrink-0 inline-flex items-center justify-center rounded-lg p-2.5 text-neutral-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:opacity-50"
+                              aria-label={cm.managePresetsDelete}
+                              title={cm.managePresetsDelete}
+                              disabled={configSaving || presetSaving}
+                              onClick={() => setPendingDeletePreset(preset)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div className="px-5 py-4 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <input
+                      ref={presetImportInputRef}
+                      type="file"
+                      accept=".tscp,application/json,.json"
+                      className="hidden"
+                      onChange={e => {
+                        const file = e.target.files?.[0] ?? null
+                        void importTradingPresetsFromPicker(file)
+                      }}
+                    />
+                    <Button
+                      variant="secondary"
+                      className="w-full sm:w-auto"
+                      disabled={configSaving || presetSaving}
+                      loading={presetSaving}
+                      onClick={() => presetImportInputRef.current?.click()}
+                    >
+                      <FileDown className="w-4 h-4 me-1.5" />
+                      {cm.importPresets}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="w-full sm:w-auto"
+                      onClick={() => setShowManagePresetsModal(false)}
+                    >
+                      {cm.close}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {editingPreset ? (
+              <div className="absolute inset-0 z-30 flex items-center justify-center bg-neutral-950/55 p-4">
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="edit-preset-title"
+                  className="w-full max-w-md rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 space-y-4"
+                >
+                  <h4 id="edit-preset-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                    {cm.editPresetTitle}
+                  </h4>
+                  <ConfigureInput
+                    label={cm.saveAsPresetNameLabel}
+                    value={presetNameDraft}
+                    placeholder={cm.saveAsPresetNamePlaceholder}
+                    onChange={e => setPresetNameDraft(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') void confirmEditPreset()
+                    }}
+                  />
+                  <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      className="w-full sm:w-auto"
+                      disabled={presetSaving}
+                      onClick={() => {
+                        setEditingPreset(null)
+                        setPresetNameDraft('')
+                      }}
+                    >
+                      {cm.cancel}
+                    </Button>
+                    <Button
+                      className="w-full sm:w-auto"
+                      loading={presetSaving}
+                      disabled={!presetNameDraft.trim()}
+                      onClick={() => void confirmEditPreset()}
+                    >
+                      {cm.editPresetAction}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {pendingDeletePreset ? (
+              <div className="absolute inset-0 z-30 flex items-center justify-center bg-neutral-950/55 p-4">
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="delete-preset-title"
+                  className="w-full max-w-md rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xl overflow-hidden"
+                >
+                  <div className="px-5 pt-5 pb-4">
+                    <div className="flex gap-3">
+                      <div className="shrink-0 flex h-10 w-10 items-center justify-center rounded-full bg-red-100 dark:bg-red-950/50">
+                        <Trash2 className="h-5 w-5 text-red-600 dark:text-red-400" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 id="delete-preset-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                          {cm.deletePresetTitle}
+                        </h4>
+                        <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+                          {interpolate(cm.deletePresetConfirm, { name: pendingDeletePreset.name })}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="px-5 py-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      className="w-full sm:w-auto"
+                      disabled={presetSaving}
+                      onClick={() => setPendingDeletePreset(null)}
+                    >
+                      {cm.cancel}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      className="w-full sm:w-auto"
+                      loading={presetSaving}
+                      onClick={() => void confirmDeletePreset()}
+                    >
+                      {cm.deletePresetAction}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {showExportPresetsModal ? (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-neutral-950/55 p-4">
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="export-presets-title"
+                  className="w-full max-w-md rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xl overflow-hidden"
+                >
+                  <div className="px-5 pt-5 pb-3 space-y-3">
+                    <h4 id="export-presets-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                      {cm.exportPresetsTitle}
+                    </h4>
+                    <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                      {cm.exportPresetsSelectHint}
+                    </p>
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
+                        onClick={() => setExportSelection(tradingPresets.map(p => p.id))}
+                      >
+                        {cm.exportPresetsSelectAll}
+                      </button>
+                      <span className="text-neutral-300 dark:text-neutral-600" aria-hidden>·</span>
+                      <button
+                        type="button"
+                        className="text-primary-700 hover:underline dark:text-primary-400"
+                        onClick={() => setExportSelection([])}
+                      >
+                        {cm.exportPresetsSelectNone}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="max-h-[min(40vh,16rem)] overflow-y-auto border-y border-neutral-100 dark:border-neutral-800">
+                    <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+                      {tradingPresets.map(preset => {
+                        const checked = exportSelectedIds.includes(preset.id)
+                        return (
+                          <li key={preset.id}>
+                            <label className="flex items-center gap-3 px-5 py-3 text-sm text-neutral-900 dark:text-neutral-50 hover:bg-neutral-50 dark:hover:bg-neutral-800/60 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                className="rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                                checked={checked}
+                                onChange={() => toggleExportPreset(preset.id)}
+                              />
+                              <span className="truncate">{preset.name}</span>
+                            </label>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                  <div className="px-5 py-4 space-y-4">
+                    <ConfigureInput
+                      label={cm.exportPresetsNameLabel}
+                      value={exportNameDraft}
+                      placeholder={cm.exportPresetsNamePlaceholder}
+                      onChange={e => setExportNameDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') confirmExportPresets()
+                      }}
+                    />
+                    <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                      <Button
+                        variant="ghost"
+                        className="w-full sm:w-auto"
+                        onClick={() => {
+                          setShowExportPresetsModal(false)
+                          setExportNameDraft('')
+                          setExportSelectedIds([])
+                        }}
+                      >
+                        {cm.cancel}
+                      </Button>
+                      <Button
+                        className="w-full sm:w-auto"
+                        disabled={exportSelectedIds.length === 0 || !exportNameDraft.trim()}
+                        onClick={confirmExportPresets}
+                      >
+                        <FileUp className="w-4 h-4 me-1.5" />
+                        {cm.exportPresetsAction}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>

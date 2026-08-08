@@ -23,7 +23,7 @@ test('broker range pending: unique stepIdx — no duplicate prices from cycling'
   assert.deepEqual(stepIdxs, [1, 2, 3])
   const triggers = stepIdxs.map(stepIdx =>
     triggerPriceFor(
-      { stepIdx, isBuy: false, volume: 0.01, stepPriceOffset, stoploss: 0, takeprofit: 0, slippage: 20, comment: '' },
+      { stepIdx, isBuy: false, stepPriceOffset },
       anchor,
       2,
     ),
@@ -39,25 +39,32 @@ test('broker range rematerialize skips existing step indices', () => {
   assert.deepEqual(remaining, [4, 5])
 })
 
-test('broker pending OrderSend is always naked while DB keeps desired stops', () => {
+test('broker pending OrderSend carries planned stops while DB keeps desired stops', () => {
   const planned = { stoploss: 4040, takeprofit: 4100, cweClosePrice: null as number | null }
+  const plannedSl = planned.stoploss > 0 ? planned.stoploss : 0
+  const plannedTp = planned.cweClosePrice != null
+    ? 0
+    : (planned.takeprofit > 0 ? planned.takeprofit : 0)
   const sendArgs = {
-    stoploss: 0,
-    takeprofit: 0,
+    stoploss: plannedSl,
+    takeprofit: plannedTp,
   }
   const desiredSl = planned.stoploss > 0 ? planned.stoploss : null
   const desiredTp = planned.cweClosePrice != null
     ? null
     : (planned.takeprofit > 0 ? planned.takeprofit : null)
-  assert.equal(sendArgs.stoploss, 0)
-  assert.equal(sendArgs.takeprofit, 0)
+  assert.equal(sendArgs.stoploss, 4040)
+  assert.equal(sendArgs.takeprofit, 4100)
   assert.equal(desiredSl, 4040)
   assert.equal(desiredTp, 4100)
 })
 
 test('CWE broker pending keeps naked TP on place and null desired TP', () => {
   const planned = { stoploss: 4040, takeprofit: 4100, cweClosePrice: 4055 }
-  const sendArgs = { stoploss: 0, takeprofit: 0 }
+  const plannedTp = planned.cweClosePrice != null
+    ? 0
+    : (planned.takeprofit > 0 ? planned.takeprofit : 0)
+  const sendArgs = { stoploss: 4040, takeprofit: plannedTp }
   const desiredTp = planned.cweClosePrice != null
     ? null
     : (planned.takeprofit > 0 ? planned.takeprofit : null)

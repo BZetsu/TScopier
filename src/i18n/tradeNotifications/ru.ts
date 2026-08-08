@@ -6,6 +6,7 @@ export const tradeNotificationsRu: TradeNotificationsTranslations = {
     modificationCompleted: 'ИЗМЕНЕНИЕ СДЕЛКИ ЗАВЕРШЕНО',
     layeringCompleted: 'ЛЕЙЕРИНГ ЗАВЕРШЕН',
     tradesClosed: 'ЧАСТЬ СДЕЛОК ЗАКРЫТА',
+    reviewRequired: 'СИГНАЛ ОЖИДАЕТ ПОДТВЕРЖДЕНИЯ',
   },
   bodies: {
     executionBatch: 'Открыто {count} сделок {side} на {broker} из {channel}.',
@@ -23,6 +24,7 @@ export const tradeNotificationsRu: TradeNotificationsTranslations = {
     tradesClosedTp: 'Закрыто {count} сделок на {broker} по причине {reason} из {channel}.',
     tradesClosedGeneric: 'Закрыто {count} сделок на {broker} из {channel}.',
     tradesClosedSingle: 'Закрыта сделка на {broker} из {channel}.',
+    reviewRequired: 'Сигнал из {channel} ожидает вашего подтверждения.',
   },
   sides: {
     buy: 'на покупку',

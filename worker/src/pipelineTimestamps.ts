@@ -30,6 +30,15 @@ export type PipelineTimestamps = {
   reconciliation_completed_at?: number
   /** Unix ms when AI/deterministic modification parse completed. */
   t_ai_parse_done?: number
+  /** Stage 1 (deterministic regex) decision window. */
+  t_stage1_started_at?: number
+  t_stage1_done_at?: number
+  /** Stage 2 (OSS context interpretation) LLM call window. */
+  t_stage2_started_at?: number
+  t_stage2_done_at?: number
+  /** Stage 3 (GPT-4o reconciliation) LLM call window. */
+  t_stage3_started_at?: number
+  t_stage3_done_at?: number
   t_telegram_event?: number
   t_listener_received?: number
   t_parse_done?: number
@@ -80,6 +89,7 @@ export type PipelineEventName =
   | 'execution_input_received'
   | 'execution_planned'
   | 'execution_claimed'
+  | 'execution_claim_reused'
   | 'execution_claim_lost'
   | 'broker_request_started'
   | 'broker_request_succeeded'
@@ -114,6 +124,12 @@ const TIMESTAMP_KEYS: Array<keyof PipelineTimestamps> = [
   'reconciliation_started_at',
   'reconciliation_completed_at',
   't_ai_parse_done',
+  't_stage1_started_at',
+  't_stage1_done_at',
+  't_stage2_started_at',
+  't_stage2_done_at',
+  't_stage3_started_at',
+  't_stage3_done_at',
   't_telegram_event',
   't_listener_received',
   't_parse_done',

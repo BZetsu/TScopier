@@ -9,8 +9,9 @@ export function isDuplicateKeyError(error: { code?: string; message?: string } |
 
 /**
  * Claim exclusive entry dispatch for signal+broker before OrderSend.
- * Returns false when another worker already claimed, or when the claim insert
- * fails for any non-success reason (fail-closed — never proceed without a claim).
+ * Returns false when another worker already claimed the dispatch or when the
+ * database cannot confirm that this worker owns the claim. An uncertain claim
+ * must never be treated as permission to place a broker order.
  */
 export async function claimSignalBrokerDispatch(
   supabase: SupabaseClient,

@@ -6,6 +6,7 @@ export const tradeNotificationsAr: TradeNotificationsTranslations = {
     modificationCompleted: 'اكتمل تعديل الصفقة',
     layeringCompleted: 'اكتمل التدرج',
     tradesClosed: 'أُغلقت بعض الصفقات',
+    reviewRequired: 'إشارة بانتظار الموافقة',
   },
   bodies: {
     executionBatch: 'فُتحت {count} صفقة {side} على {broker} من {channel}.',
@@ -24,6 +25,7 @@ export const tradeNotificationsAr: TradeNotificationsTranslations = {
     tradesClosedTp: 'أُغلقت {count} صفقة على {broker} بسبب {reason} من {channel}.',
     tradesClosedGeneric: 'أُغلقت {count} صفقة على {broker} من {channel}.',
     tradesClosedSingle: 'أُغلقت صفقة على {broker} من {channel}.',
+    reviewRequired: 'إشارة من {channel} بانتظار موافقتك.',
   },
   sides: {
     buy: 'شراء',

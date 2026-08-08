@@ -83,6 +83,7 @@ export interface NavTranslations {
     kindClosed: string
     markAllRead: string
     viewTrades: string
+    reviewPending: string
     dayToday: string
     dayYesterday: string
   }
@@ -100,6 +101,66 @@ export interface NavTranslations {
     affiliateProgram: string
     rateUs: string
     signOut: string
+  }
+  assistant: {
+    title: string
+    subtitle: string
+    ariaLabel: string
+    close: string
+    placeholder: string
+    send: string
+    thinking: string
+    confirm: string
+    cancel: string
+    welcomeTitle: string
+    suggestions: string[]
+    emptyReply: string
+    actionDone: string
+    errorFallback: string
+    attachImage: string
+    removeImage: string
+    imageOnlyCaption: string
+    imageTooLarge: string
+    imageTypeUnsupported: string
+    imageLimitReached: string
+    telegram: {
+      phoneTitle: string
+      phoneHint: string
+      phonePlaceholder: string
+      sendCode: string
+      codeTitle: string
+      codeHint: string
+      codePlaceholder: string
+      verifyCode: string
+      twoFaTitle: string
+      twoFaHint: string
+      twoFaPlaceholder: string
+      submitPassword: string
+      restart: string
+      openQrInstead: string
+      invalidPhone: string
+      codeSent: string
+      twoFaNeeded: string
+      linkedSuccess: string
+      useSecureCodeField: string
+      sessionExpired: string
+      composerPhoneHint: string
+      composerCodeHint: string
+    }
+    broker: {
+      title: string
+      hint: string
+      platformLabel: string
+      loginLabel: string
+      serverLabel: string
+      labelLabel: string
+      passwordLabel: string
+      passwordPlaceholder: string
+      connect: string
+      openFullForm: string
+      missingFields: string
+      connectedSuccess: string
+    }
   }
 }
 
@@ -919,6 +980,8 @@ export interface SettingsTranslations {
     confirmPassword: string
     notificationSound: string
     notificationSoundDescription: string
+    notificationEmail: string
+    notificationEmailDescription: string
   }
   placeholders: {
     address: string
@@ -1282,8 +1345,11 @@ export interface PricingTranslations {
   extraAccountUnit: string
   extraAccountUnitAnnual: string
   subscribe: string
+  /** @deprecated Prefer subscribe; kept for locale compatibility */
   startTrial: string
+  /** @deprecated Prefer moneyBackGuarantee */
   trialDays: string
+  moneyBackGuarantee: string
   features: string
   popular: string
   basicFeatures: string[]

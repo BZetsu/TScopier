@@ -15,8 +15,9 @@ export const pricingRu: PricingBundleTranslations = {
     extraAccountUnit: '$10/счет/месяц',
     extraAccountUnitAnnual: '$96/счет/год',
     subscribe: 'Оформить подписку',
-    startTrial: 'Начать 10-дневный бесплатный пробный период',
-    trialDays: '10-дневный бесплатный пробный период',
+    startTrial: 'Подписаться',
+    trialDays: '30-дневная гарантия возврата денег',
+    moneyBackGuarantee: '30-дневная гарантия возврата денег',
     features: 'Возможности',
     popular: 'Самый популярный',
     basicFeatures: [

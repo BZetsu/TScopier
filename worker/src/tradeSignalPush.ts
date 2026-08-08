@@ -7,7 +7,7 @@ import { dispatchPriorityForAction, isManagementAction, parsedAction } from './t
 import type { PipelineTimestamps } from './pipelineTimestamps'
 import { deployedTradeShardCount, redisQueueConfigured, signalQueueConfig } from './queue/signalQueueConfig'
 import { shardForUserId } from './workerConfig'
-import { captureWorkerWarning } from './observability/sentry'
+import { captureBusinessIssue } from './observability/businessEvents'
 
 export type TradeSignalPushPayload = {
   id: string
@@ -100,24 +100,29 @@ function logPushFailed(
   reason: string,
   attempt: number,
 ): void {
-  captureWorkerWarning('trade worker dispatch push failed after retries', {
-    subsystem: 'queue',
-    operation: 'trade_worker_push_failed',
-    errorCode: 'TRADE_WORKER_PUSH_FAILED',
-    fingerprint: ['queue', 'TRADE_WORKER_PUSH_FAILED', action],
+  captureBusinessIssue({
+    category: 'queue',
+    event: 'signal_dispatch_failed',
+    severity: 'error',
+    reasonCode: 'TRADE_WORKER_PUSH_FAILED',
+    message: 'Telegram signal was accepted but dispatch to trade worker failed after retries',
+    userImpact: 'failed',
+    fingerprint: ['signal_dispatch_failed', 'trade_worker_push', 'TRADE_WORKER_PUSH_FAILED', action],
     context: {
       user_id: row.user_id,
       signal_id: row.id,
       channel_id: row.channel_id,
+      telegram_message_id: row.telegram_message_id,
       dispatch_source: row.dispatch_source ?? 'listener_push',
+      operation: 'trade_worker_push',
       retry_attempt: attempt,
-    },
-    extra: {
-      action,
-      attempt,
-      max_attempts: PUSH_MAX_ATTEMPTS,
-      reason,
-      target: baseUrl,
+      extra: {
+        action,
+        attempt,
+        max_attempts: PUSH_MAX_ATTEMPTS,
+        reason,
+        target_configured: Boolean(baseUrl),
+      },
     },
   })
   console.warn(
@@ -252,6 +257,7 @@ async function pushParsedSignalToTradeWorkerInner(
     reply_to_message_id: row.reply_to_message_id ?? null,
     created_at: row.created_at,
     pipeline_ts: row.pipeline_ts,
+    dispatch_source: row.dispatch_source ?? null,
     revision_prior_action: row.revision_prior_action ?? null,
   }
 
