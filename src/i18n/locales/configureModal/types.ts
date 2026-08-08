@@ -33,6 +33,15 @@ export interface ConfigureModalTranslations {
   deletePresetConfirm: string
   deletePresetAction: string
   presetDeleted: string
+  exportPresets: string
+  importPresets: string
+  exportPresetsTitle: string
+  exportPresetsNameLabel: string
+  exportPresetsNamePlaceholder: string
+  exportPresetsAction: string
+  presetsExported: string
+  presetsImported: string
+  presetsImportFailed: string
   applyPresetTitle: string
   applyPresetConfirm: string
   applyPresetChannelLabel: string

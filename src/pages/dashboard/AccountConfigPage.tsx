@@ -5,7 +5,7 @@ import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet, Link2,
   ChevronLeft, ChevronRight, Search, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
-  Infinity as InfinityIcon, Coins, X, Sparkles,
+  Infinity as InfinityIcon, Coins, X, Sparkles, FileUp, FileDown,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -112,10 +112,13 @@ import {
 import { parseSymbolToTradeList } from '../../lib/channelSymbolDetection'
 import {
   deleteTradingPreset,
+  downloadTradingPresetsFile,
+  importTradingPresetsFromFile,
   listTradingPresets,
   presetToChannelConfigDraft,
   renameTradingPreset,
   upsertTradingPreset,
+  TSCOPIER_PRESETS_EXTENSION,
   type ChannelTradingPreset,
 } from '../../lib/tradingPresets'
 import {
@@ -905,6 +908,42 @@ export function AccountConfigPage() {
     channelConfigs: {},
   })
   const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('signal_examples')
+  const configScrollRef = useRef<HTMLDivElement | null>(null)
+  const sectionRefs = useRef<Partial<Record<ManualSubTabId, HTMLElement | null>>>({})
+  const tabButtonRefs = useRef<Partial<Record<ManualSubTabId, HTMLButtonElement | null>>>({})
+  const programmaticScrollRef = useRef(false)
+  const programmaticScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const setSectionRef = useCallback((id: ManualSubTabId, el: HTMLElement | null) => {
+    sectionRefs.current[id] = el
+  }, [])
+
+  const setTabButtonRef = useCallback((id: ManualSubTabId, el: HTMLButtonElement | null) => {
+    tabButtonRefs.current[id] = el
+  }, [])
+
+  const scrollToConfigSection = useCallback((id: ManualSubTabId) => {
+    const el = sectionRefs.current[id]
+    if (!el) {
+      setActiveManualSubTab(id)
+      return
+    }
+    programmaticScrollRef.current = true
+    if (programmaticScrollTimerRef.current) clearTimeout(programmaticScrollTimerRef.current)
+    setActiveManualSubTab(id)
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    programmaticScrollTimerRef.current = setTimeout(() => {
+      programmaticScrollRef.current = false
+      programmaticScrollTimerRef.current = null
+    }, 700)
+  }, [])
+
+  const resetConfigSectionScroll = useCallback((id: ManualSubTabId = 'signal_examples') => {
+    setActiveManualSubTab(id)
+    const scroller = configScrollRef.current
+    if (scroller) scroller.scrollTop = 0
+  }, [])
+
   const [trainingRunningByChannel, setTrainingRunningByChannel] = useState<Record<string, boolean>>({})
   const [trainingSavingByChannel, setTrainingSavingByChannel] = useState<Record<string, boolean>>({})
   const [trainingProgressByChannel, setTrainingProgressByChannel] = useState<Record<string, number>>({})
@@ -918,10 +957,13 @@ export function AccountConfigPage() {
   const [presetStatusMessage, setPresetStatusMessage] = useState<string | null>(null)
   const [showPresetNameModal, setShowPresetNameModal] = useState(false)
   const [showManagePresetsModal, setShowManagePresetsModal] = useState(false)
+  const [showExportPresetsModal, setShowExportPresetsModal] = useState(false)
+  const [exportNameDraft, setExportNameDraft] = useState('')
   const [presetNameDraft, setPresetNameDraft] = useState('')
   const [pendingApplyPreset, setPendingApplyPreset] = useState<ChannelTradingPreset | null>(null)
   const [editingPreset, setEditingPreset] = useState<ChannelTradingPreset | null>(null)
   const [pendingDeletePreset, setPendingDeletePreset] = useState<ChannelTradingPreset | null>(null)
+  const presetImportInputRef = useRef<HTMLInputElement | null>(null)
   const [channelLinkEditMode, setChannelLinkEditMode] = useState(false)
   const [error, setError] = useState('')
   const [channelsLoading, setChannelsLoading] = useState(() =>
@@ -1518,6 +1560,72 @@ export function AccountConfigPage() {
     return () => clearTimeout(t)
   }, [presetStatusMessage])
 
+  useEffect(() => {
+    if (!selectedChannelLinked) return
+    const root = configScrollRef.current
+    if (!root) return
+
+    const sectionIds = manualSubTabs.map(s => s.id)
+    let observer: IntersectionObserver | null = null
+    let cancelled = false
+    let attempts = 0
+
+    const attach = () => {
+      if (cancelled) return
+      const els = sectionIds
+        .map(id => sectionRefs.current[id])
+        .filter((el): el is HTMLElement => Boolean(el))
+      if (els.length < sectionIds.length && attempts < 10) {
+        attempts += 1
+        requestAnimationFrame(attach)
+        return
+      }
+      if (els.length === 0) return
+      observer = new IntersectionObserver(
+        entries => {
+          if (programmaticScrollRef.current) return
+          const visible = entries
+            .filter(e => e.isIntersecting)
+            .map(e => {
+              const id = (e.target as HTMLElement).dataset.configSection as ManualSubTabId | undefined
+              return id ? { id, top: e.boundingClientRect.top } : null
+            })
+            .filter((v): v is { id: ManualSubTabId; top: number } => Boolean(v))
+          if (visible.length === 0) return
+          visible.sort((a, b) => a.top - b.top)
+          const next = visible[0]?.id
+          if (!next) return
+          setActiveManualSubTab(prev => (prev === next ? prev : next))
+        },
+        {
+          root,
+          rootMargin: '-10% 0px -65% 0px',
+          threshold: [0, 0.1, 0.25],
+        },
+      )
+      for (const el of els) observer.observe(el)
+    }
+
+    attach()
+
+    return () => {
+      cancelled = true
+      observer?.disconnect()
+    }
+  }, [manualSubTabs, selectedChannelLinked, configDraft.selectedChannelId])
+
+  useEffect(() => {
+    if (!selectedChannelLinked) return
+    const btn = tabButtonRefs.current[activeManualSubTab]
+    btn?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
+  }, [activeManualSubTab, selectedChannelLinked])
+
+  useEffect(() => {
+    return () => {
+      if (programmaticScrollTimerRef.current) clearTimeout(programmaticScrollTimerRef.current)
+    }
+  }, [])
+
   const startBackgroundAiTraining = useCallback((channelId: string, opts?: { force?: boolean }) => {
     if (!userId) {
       return Promise.resolve({ trained: false, error: 'Not signed in' })
@@ -1615,7 +1723,7 @@ export function AccountConfigPage() {
       limitStateMap[row.channel_id] = normalizeCopyLimitState(row.copy_limit_state)
     }
     setChannelCopyLimitState(limitStateMap)
-    setActiveManualSubTab('symbols')
+    resetConfigSectionScroll('signal_examples')
     const draft = buildChannelConfigDraftFromBroker(merged, channelIds, keywordFiltersEnabled)
     const nextDraft = {
       ...draft,
@@ -1658,7 +1766,7 @@ export function AccountConfigPage() {
 
   const selectConfigureChannel = (channelId: string) => {
     setConfigDraft(prev => ({ ...prev, selectedChannelId: channelId }))
-    setActiveManualSubTab('symbols')
+    resetConfigSectionScroll('signal_examples')
   }
 
   const connectSelectedChannelToBroker = async () => {
@@ -1761,7 +1869,9 @@ export function AccountConfigPage() {
     setConfigSavedSignature('')
     setShowPresetNameModal(false)
     setShowManagePresetsModal(false)
+    setShowExportPresetsModal(false)
     setPresetNameDraft('')
+    setExportNameDraft('')
     setPendingApplyPreset(null)
     setEditingPreset(null)
     setPendingDeletePreset(null)
@@ -1953,6 +2063,59 @@ export function AccountConfigPage() {
       setError(err instanceof Error ? err.message : cm.deletePresetTitle)
     } finally {
       setPresetSaving(false)
+    }
+  }
+
+  const openExportPresetsModal = () => {
+    if (tradingPresets.length === 0) return
+    setError('')
+    const defaultName = tradingPresets.length === 1
+      ? tradingPresets[0]!.name
+      : 'tscopier-presets'
+    setExportNameDraft(defaultName)
+    setShowExportPresetsModal(true)
+  }
+
+  const confirmExportPresets = () => {
+    if (tradingPresets.length === 0) return
+    const raw = exportNameDraft.trim() || 'tscopier-presets'
+    const safe = raw
+      .replace(/\.tscp$/i, '')
+      .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, '-')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^\.+|\.+$/g, '')
+      .slice(0, 80)
+      || 'tscopier-presets'
+    try {
+      downloadTradingPresetsFile(tradingPresets, `${safe}${TSCOPIER_PRESETS_EXTENSION}`)
+      setShowExportPresetsModal(false)
+      setExportNameDraft('')
+      setPresetStatusMessage(cm.presetsExported)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : cm.presetsImportFailed)
+    }
+  }
+
+  const importTradingPresetsFromPicker = async (file: File | null) => {
+    if (!user?.id || !file) return
+    setPresetSaving(true)
+    setError('')
+    try {
+      const raw = await file.text()
+      const { imported, presets: saved } = await importTradingPresetsFromFile(user.id, raw)
+      setTradingPresets(prev => {
+        const byName = new Map(prev.map(p => [p.name.toLowerCase(), p]))
+        for (const row of saved) byName.set(row.name.toLowerCase(), row)
+        return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
+      })
+      setShowManagePresetsModal(true)
+      setPresetStatusMessage(interpolate(cm.presetsImported, { count: String(imported) }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : cm.presetsImportFailed)
+    } finally {
+      setPresetSaving(false)
+      if (presetImportInputRef.current) presetImportInputRef.current.value = ''
     }
   }
 
@@ -2937,8 +3100,9 @@ export function AccountConfigPage() {
                         return (
                           <button
                             key={sub.id}
+                            ref={el => setTabButtonRef(sub.id, el)}
                             type="button"
-                            onClick={() => setActiveManualSubTab(sub.id)}
+                            onClick={() => scrollToConfigSection(sub.id)}
                             className={clsx(
                                 'shrink-0 flex items-center gap-1.5 px-3 py-2.5 sm:py-2 text-sm transition-colors border-b-2 -mb-px min-h-[44px] sm:min-h-0 whitespace-nowrap',
                               active
@@ -2955,7 +3119,10 @@ export function AccountConfigPage() {
                   </div>
                 ) : null}
 
-                <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 sm:py-5 min-h-0 overscroll-y-contain">
+                <div
+                  ref={configScrollRef}
+                  className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 sm:py-5 min-h-0 overscroll-y-contain"
+                >
                 {error && <PaywallErrorAlert message={error} className="mb-4" />}
 
                 {selectedChannelLinked && (selectedChannelNeedsPersistedSave || configureModalDirty) ? (
@@ -3039,8 +3206,43 @@ export function AccountConfigPage() {
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-4">
-                        {activeManualSubTab === 'symbols' && (
+                      <div className="space-y-8">
+                        <section
+                          id="config-section-signal_examples"
+                          data-config-section="signal_examples"
+                          ref={el => setSectionRef('signal_examples', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.aiTraining}
+                          </h3>
+                          
+                          {
+                          selectedChannelOption && configDraft.selectedChannelId && userId ? (
+                            <ChannelSignalExamplesSection
+                              channelId={configDraft.selectedChannelId}
+                              userId={userId}
+                              labels={cm.aiTraining}
+                              trainingActive={activeChannelTrainingRunning || activeChannelTrainingSaving}
+                              onRetrain={() => startBackgroundAiTraining(configDraft.selectedChannelId!, { force: true })}
+                            />
+                          ) : (
+                            <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
+                          )
+                        }
+                        </section>
+
+                        <section
+                          id="config-section-symbols"
+                          data-config-section="symbols"
+                          ref={el => setSectionRef('symbols', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.symbols}
+                          </h3>
+                          
+                          {
                           selectedChannelOption && configDraft.selectedChannelId ? (
                             <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
                               <ConfigTitle variant="semibold" info={cm.channelSymbols.intro}>
@@ -3078,9 +3280,20 @@ export function AccountConfigPage() {
                           ) : (
                             <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
                           )
-                        )}
+                        }
+                        </section>
 
-                        {activeManualSubTab === 'channel_instructions' && (
+                        <section
+                          id="config-section-channel_instructions"
+                          data-config-section="channel_instructions"
+                          ref={el => setSectionRef('channel_instructions', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.channelInstructions}
+                          </h3>
+                          
+                          {
                           selectedChannelOption && configDraft.selectedChannelId ? (
                             <div className="relative">
                               <section
@@ -3134,23 +3347,18 @@ export function AccountConfigPage() {
                           ) : (
                             <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
                           )
-                        )}
+                        }
+                        </section>
 
-                        {activeManualSubTab === 'signal_examples' && (
-                          selectedChannelOption && configDraft.selectedChannelId && userId ? (
-                            <ChannelSignalExamplesSection
-                              channelId={configDraft.selectedChannelId}
-                              userId={userId}
-                              labels={cm.aiTraining}
-                              trainingActive={activeChannelTrainingRunning || activeChannelTrainingSaving}
-                              onRetrain={() => startBackgroundAiTraining(configDraft.selectedChannelId!, { force: true })}
-                            />
-                          ) : (
-                            <p className="text-sm text-neutral-500 dark:text-neutral-400">{cm.channels.selectChannelFirst}</p>
-                          )
-                        )}
-
-                        {activeManualSubTab === 'risk' && (
+                        <section
+                          id="config-section-risk"
+                          data-config-section="risk"
+                          ref={el => setSectionRef('risk', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.risk}
+                          </h3>
                           <div className="space-y-4">
                             {channelManualSettings.risk_mode === 'fixed_lot' && (
                               <div className="flex justify-end">
@@ -3465,9 +3673,20 @@ export function AccountConfigPage() {
                             )}
 
                           </div>
-                        )}
+                        </section>
 
-                        {activeManualSubTab === 'stops' && (() => {
+                        <section
+                          id="config-section-stops"
+                          data-config-section="stops"
+                          ref={el => setSectionRef('stops', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.stops}
+                          </h3>
+
+                          {
+                          (() => {
                           const ms = channelManualSettings
                           const predefSummary = describePredefinedStopsOverrideI18n(ms, cm.stops)
                           return (
@@ -3646,9 +3865,22 @@ export function AccountConfigPage() {
 
                           </div>
                           )
-                        })()}
+                        })()
+                        }
+                        </section>
 
-                        {activeManualSubTab === 'management' && (() => {
+                        <section
+                          id="config-section-management"
+                          data-config-section="management"
+                          ref={el => setSectionRef('management', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.management}
+                          </h3>
+
+                          {
+                          (() => {
                           const ms = channelManualSettings
                           const autoMgmtEnabled = isAutoManagementEnabled(ms)
                           const triggerMode = ms.move_sl_to_entry_after_mode ?? 'pips'
@@ -4018,9 +4250,19 @@ export function AccountConfigPage() {
                             </section>
                           </div>
                           )
-                        })()}
+                        })()
+                        }
+                        </section>
 
-                        {activeManualSubTab === 'filters' && (
+                        <section
+                          id="config-section-filters"
+                          data-config-section="filters"
+                          ref={el => setSectionRef('filters', el)}
+                          className="scroll-mt-3 space-y-4"
+                        >
+                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                            {cm.manualSubTabs.filters}
+                          </h3>
                           <div className="space-y-6">
                             <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 space-y-3">
                               <ConfigTitle info={cm.filters.timeSubtitle}>{cm.filters.timeTitle}</ConfigTitle>
@@ -4141,7 +4383,8 @@ export function AccountConfigPage() {
                         )}
                             </section>
                       </div>
-                    )}
+                        </section>
+
 
                   </div>
                 )}
@@ -4164,6 +4407,17 @@ export function AccountConfigPage() {
                         </div>
               <Button variant="ghost" className="w-full sm:w-auto min-h-[44px]" onClick={() => closeConfigureModal()} disabled={configSaving || presetSaving}>{cm.cancel}</Button>
               {selectedChannelLinked && tradingPresets.length > 0 ? (
+                <Button
+                  variant="secondary"
+                  className="w-full sm:w-auto min-h-[44px]"
+                  disabled={configSaving || presetSaving || presetsLoading}
+                  onClick={openExportPresetsModal}
+                >
+                  <FileUp className="w-4 h-4 me-1.5" />
+                  {cm.exportPresets}
+                </Button>
+              ) : null}
+              {selectedChannelLinked ? (
                 <Button
                   variant="secondary"
                   className="w-full sm:w-auto min-h-[44px]"
@@ -4346,7 +4600,27 @@ export function AccountConfigPage() {
                       </ul>
                     )}
                   </div>
-                  <div className="px-5 py-4 flex justify-end">
+                  <div className="px-5 py-4 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <input
+                      ref={presetImportInputRef}
+                      type="file"
+                      accept=".tscp,application/json,.json"
+                      className="hidden"
+                      onChange={e => {
+                        const file = e.target.files?.[0] ?? null
+                        void importTradingPresetsFromPicker(file)
+                      }}
+                    />
+                    <Button
+                      variant="secondary"
+                      className="w-full sm:w-auto"
+                      disabled={configSaving || presetSaving}
+                      loading={presetSaving}
+                      onClick={() => presetImportInputRef.current?.click()}
+                    >
+                      <FileDown className="w-4 h-4 me-1.5" />
+                      {cm.importPresets}
+                    </Button>
                     <Button
                       variant="ghost"
                       className="w-full sm:w-auto"
@@ -4443,6 +4717,50 @@ export function AccountConfigPage() {
                       onClick={() => void confirmDeletePreset()}
                     >
                       {cm.deletePresetAction}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {showExportPresetsModal ? (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-neutral-950/55 p-4">
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="export-presets-title"
+                  className="w-full max-w-md rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 space-y-4"
+                >
+                  <h4 id="export-presets-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                    {cm.exportPresetsTitle}
+                  </h4>
+                  <ConfigureInput
+                    label={cm.exportPresetsNameLabel}
+                    value={exportNameDraft}
+                    placeholder={cm.exportPresetsNamePlaceholder}
+                    onChange={e => setExportNameDraft(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') confirmExportPresets()
+                    }}
+                  />
+                  <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      className="w-full sm:w-auto"
+                      onClick={() => {
+                        setShowExportPresetsModal(false)
+                        setExportNameDraft('')
+                      }}
+                    >
+                      {cm.cancel}
+                    </Button>
+                    <Button
+                      className="w-full sm:w-auto"
+                      disabled={!exportNameDraft.trim()}
+                      onClick={confirmExportPresets}
+                    >
+                      <FileUp className="w-4 h-4 me-1.5" />
+                      {cm.exportPresetsAction}
                     </Button>
                   </div>
                 </div>
