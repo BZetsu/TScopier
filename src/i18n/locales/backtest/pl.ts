@@ -55,6 +55,7 @@ export const backtestPl: BacktestBundleTranslations = {
     resultsTitle: 'Wyniki backtestu',
     resultsSubtitle: '{symbol} · {channel} · dotknij sygnału, aby zobaczyć szczegóły',
     newRun: 'Nowe uruchomienie',
+    exportCsv: 'Eksportuj CSV',
     totalPips: 'Łącznie pipsów',
     winRate: 'Skuteczność',
     winLoss: 'W / P',

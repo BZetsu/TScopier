@@ -82,7 +82,7 @@ export function AssistantPanel() {
   const pendingCodeRef = useRef('')
 
   const a = t.nav.assistant
-  const ce = t.pages.copierEngine
+  const ce = t.copierEnginePage
   const EDGE_FN = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-auth`
 
   const tgErrorMessages = {
@@ -306,10 +306,11 @@ export function AssistantPanel() {
       await refreshProfile()
     } catch (e) {
       const labels = brokerConnectErrorLabelsFromI18n(t.accountConfig.brokerList)
+      const message = e instanceof Error ? e.message : String(e)
       setBrokerConnect(prev => ({
         ...prev,
         busy: false,
-        error: userFacingBrokerConnectError(e, labels),
+        error: userFacingBrokerConnectError(message, labels),
       }))
     }
   }
@@ -584,7 +585,7 @@ export function AssistantPanel() {
           {showTelegramCard ? (
             <AssistantTelegramLinkCard
               key={`${telegramLink.stage}:${telegramLink.phone}`}
-              stage={telegramLink.stage}
+              stage={telegramLink.stage as 'phone' | 'code' | 'twoFa'}
               phone={telegramLink.phone}
               error={telegramLink.error}
               busy={telegramLink.busy}

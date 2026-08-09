@@ -34,6 +34,17 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 }
 
+function isApiThrottleMessage(message: string | null | undefined): boolean {
+  return /throttl|rate limit|too many requests|expected available in/i.test(String(message ?? ""))
+}
+
+function parseThrottleBackoffMs(message: string | null | undefined): number {
+  const m = String(message ?? "").match(/expected available in\s+(\d+)\s*seconds?/i)
+  const sec = m ? Number(m[1]) : NaN
+  if (Number.isFinite(sec) && sec > 0) return Math.min(120_000, Math.max(2_000, sec * 1000 + 500))
+  return 8_000
+}
+
 function bad(status: number, msg: string) {
   return Response.json({ error: msg }, { status, headers: corsHeaders })
 }
@@ -299,79 +310,80 @@ Deno.serve(async (req: Request) => {
       return Response.json({ ok: true }, { headers: corsHeaders })
     }
 
+    // Password re-link on the same broker_accounts row (preserves trading config).
     if (action === "reconnect") {
-      // Trigger a terminal reconnect WITHOUT deleting the FxSocket account.
-      // Re-submitting the same login/password/server to POST /v1/accounts makes
-      // FxSocket re-provision/re-attach the existing terminal pod. The old
-      // account id is kept unless FxSocket confirms it is gone.
-      const accountRowId = String(body.account_id ?? "")
+      const accountRowId = String(body.account_id ?? body.broker_id ?? "")
       if (!accountRowId) return bad(400, "account_id required")
       const password = String(body.password ?? "")
-      if (!password) return bad(400, "password required to reconnect the terminal")
+      if (!password) return bad(400, "password required")
+
       const row = await loadOwnedBrokerRow(supabase, userId, accountRowId)
       const login = String(row.account_login ?? "").trim()
-      const server = String(row.broker_server ?? "").trim()
-      if (!login || !server) return bad(400, "Account has no login/server stored — delete and re-add it")
-      const oldAccountId = String(row.fxsocket_account_id ?? "").trim()
+      const server = String(body.server ?? row.broker_server ?? "").trim()
+      if (!login) return bad(400, "Broker login is missing — delete and connect again.")
+      if (!server) return bad(400, "Broker server is missing — delete and connect again.")
 
-      let newAccountId: string
+      const platform = brokerApiPlatform(row)
+      const oldUuid = String(row.fxsocket_account_id ?? "").trim()
+      const displayLabel = String(row.label ?? "").trim() || `${platform} • ${login}`
+
+      let newAccountId = ""
       try {
         const connected = await fx.connectAccount({
           login,
           password,
           server,
-          label: row.label || `${row.platform ?? "MT5"} • ${login}`,
-          platform: row.platform,
+          label: displayLabel,
+          platform,
         })
         newAccountId = connected.accountId
       } catch (e) {
-        const msg = e instanceof FxsocketApiError ? e.message : e instanceof Error ? e.message : "Reconnect failed"
-        const { error: updateErr } = await supabase
+        const rawMsg = e instanceof FxsocketApiError ? e.message : e instanceof Error ? e.message : "Reconnect failed"
+        const kind = classifyBrokerConnectError(rawMsg, { credentialConnect: true })
+        const msg = friendlyBrokerConnectError(rawMsg, { credentialConnect: true })
+        await supabase
           .from("broker_accounts")
           .update({
             fxsocket_status: "error",
             connection_status: "error",
             connection_error: msg,
+            connection_error_kind: kind,
+            connection_error_message: rawMsg,
           })
           .eq("id", accountRowId)
           .eq("user_id", userId)
-        if (updateErr) return bad(500, updateErr.message)
         return bad(e instanceof FxsocketApiError ? e.status : 502, msg)
       }
 
-      // FxSocket returned a different account id. Never abandon the old
-      // terminal while it still exists — that would risk a duplicate session.
-      let effectiveId = newAccountId
-      if (newAccountId !== oldAccountId) {
-        try {
-          await fx.getV1Account(oldAccountId)
-          // Old terminal still alive: keep the existing id and credentials,
-          // do not switch. Report so the user can retry once the pod cycles.
-          return bad(
-            409,
-            "The broker returned a new terminal link while the old terminal is still active. Wait a minute and try Reconnect again.",
-          )
-        } catch {
-          // Old terminal is gone — point the row at the fresh link.
-          effectiveId = newAccountId
-        }
+      if (oldUuid && oldUuid !== newAccountId) {
+        try { await fx.deleteAccount(oldUuid) } catch { /* swallow */ }
       }
 
-      const { data: updated, error } = await supabase
+      const { data: updated, error: updErr } = await supabase
         .from("broker_accounts")
         .update({
-          fxsocket_account_id: effectiveId,
+          fxsocket_account_id: newAccountId,
+          broker_server: server,
           fxsocket_status: "connecting",
           connection_status: "pending",
           connection_error: null,
+          connection_error_kind: null,
+          connection_error_message: null,
+          terminal_connected: false,
+          trade_allowed: false,
         })
         .eq("id", accountRowId)
         .eq("user_id", userId)
         .select("*")
         .single()
-      if (error) return bad(500, error.message)
+
+      if (updErr) {
+        try { await fx.deleteAccount(newAccountId) } catch { /* swallow */ }
+        return bad(500, updErr.message)
+      }
+
       return Response.json(
-        { ok: true, account: updated ?? row, pending: true },
+        { ok: true, account: updated, pending: true },
         { headers: corsHeaders },
       )
     }
@@ -388,6 +400,8 @@ Deno.serve(async (req: Request) => {
             fxsocket_status: "connecting",
             connection_status: "pending",
             connection_error: null,
+            connection_error_kind: null,
+            connection_error_message: null,
           })
           .eq("id", accountRowId)
           .eq("user_id", userId)
@@ -432,6 +446,8 @@ Deno.serve(async (req: Request) => {
               fxsocket_status: "connected",
               connection_status: "connected",
               connection_error: null,
+              connection_error_kind: null,
+              connection_error_message: null,
               ...summaryToRowPatch(readiness.summary),
               ...baselinePatch,
               ...terminalPatch,
@@ -452,6 +468,17 @@ Deno.serve(async (req: Request) => {
         }
 
         const rawMsg = readiness.error || "FxSocket terminal connection failed"
+        if (isApiThrottleMessage(rawMsg) || classifyBrokerConnectError(rawMsg) === "rate_limited") {
+          return Response.json(
+            {
+              ok: true,
+              account: row,
+              throttled: true,
+              retry_after_ms: parseThrottleBackoffMs(rawMsg),
+            },
+            { headers: corsHeaders },
+          )
+        }
         const readinessKind = classifyBrokerConnectError(rawMsg, { credentialConnect: establishing })
         if (establishing && !isDefinitiveCredentialError(readinessKind)) {
           return await respondPending()
@@ -469,6 +496,17 @@ Deno.serve(async (req: Request) => {
         return bad(502, msg)
       } catch (e) {
         const rawMsg = e instanceof Error ? e.message : "Refresh failed"
+        if (isApiThrottleMessage(rawMsg) || classifyBrokerConnectError(rawMsg) === "rate_limited") {
+          return Response.json(
+            {
+              ok: true,
+              account: row,
+              throttled: true,
+              retry_after_ms: parseThrottleBackoffMs(rawMsg),
+            },
+            { headers: corsHeaders },
+          )
+        }
         const errorKind = classifyBrokerConnectError(rawMsg, { credentialConnect: establishing })
         if (establishing && !isDefinitiveCredentialError(errorKind)) {
           return await respondPending()
@@ -500,6 +538,18 @@ Deno.serve(async (req: Request) => {
         )
       } catch (e) {
         const msg = e instanceof FxsocketApiError ? e.message : e instanceof Error ? e.message : "Status check failed"
+        if (isApiThrottleMessage(msg)) {
+          return Response.json(
+            {
+              ok: true,
+              healthy: row.terminal_connected === true && row.trade_allowed !== false,
+              account: row,
+              throttled: true,
+              retry_after_ms: parseThrottleBackoffMs(msg),
+            },
+            { headers: corsHeaders },
+          )
+        }
         await supabase
           .from("broker_accounts")
           .update({ terminal_connected: false, trade_allowed: false })

@@ -1144,6 +1144,7 @@ export const fr: Translations = {
     resultsTitle: 'Résultats du backtest',
     resultsSubtitle: '{symbol} · {channel} · touchez un signal pour les détails',
     newRun: 'Nouvelle exécution',
+    exportCsv: 'Exporter CSV',
     totalPips: 'Pips totaux',
     winRate: 'Taux de réussite',
     winLoss: 'G / P',

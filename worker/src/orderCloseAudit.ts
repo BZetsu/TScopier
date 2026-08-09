@@ -17,6 +17,7 @@ export type OrderCloseAuditEvent = {
 type AuditSink = (event: OrderCloseAuditEvent & { stack: string }) => void
 
 let sink: AuditSink | null = null
+const userIdByFxAccount = new Map<string, string>()
 
 /** Register from worker boot so closes can persist to trade_execution_logs. */
 export function registerOrderCloseAuditSink(next: AuditSink | null): void {
@@ -25,9 +26,25 @@ export function registerOrderCloseAuditSink(next: AuditSink | null): void {
 
 export function registerOrderCloseAuditSupabase(supabase: SupabaseClient): void {
   registerOrderCloseAuditSink((event) => {
-    void supabase
-      .from('trade_execution_logs')
-      .insert({
+    void (async () => {
+      let userId = userIdByFxAccount.get(event.accountId)
+      if (!userId) {
+        const { data } = await supabase
+          .from('broker_accounts')
+          .select('user_id')
+          .eq('fxsocket_account_id', event.accountId)
+          .maybeSingle()
+        userId = (data as { user_id?: string } | null)?.user_id ?? undefined
+        if (userId) userIdByFxAccount.set(event.accountId, userId)
+      }
+      if (!userId) {
+        console.warn(
+          `[orderCloseAudit] skip persist — no user_id for fx account=${event.accountId}`,
+        )
+        return
+      }
+      const { error } = await supabase.from('trade_execution_logs').insert({
+        user_id: userId,
         action: 'order_close_audit',
         status: event.ok === false ? 'failed' : 'success',
         request_payload: {
@@ -41,11 +58,10 @@ export function registerOrderCloseAuditSupabase(supabase: SupabaseClient): void 
         } as unknown as Record<string, unknown>,
         error_message: event.ok === false ? (event.message ?? 'orderClose failed') : null,
       })
-      .then(({ error }) => {
-        if (error) {
-          console.warn(`[orderCloseAudit] persist failed: ${error.message}`)
-        }
-      })
+      if (error) {
+        console.warn(`[orderCloseAudit] persist failed: ${error.message}`)
+      }
+    })()
   })
 }
 

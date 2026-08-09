@@ -1819,10 +1819,20 @@ export function DashboardPage() {
     if (accounts.length === 0) return
 
     let cancelled = false
+    let cursor = 0
+    // Multi-account dashboards hammer FxSocket if every account polls every 2s.
+    // Scale interval with account count and rotate one account per tick.
+    const pollIntervalMs = Math.min(15_000, Math.max(4_000, 2_000 * Math.ceil(accounts.length / 2)))
+    const throttleUntilById: Record<string, number> = {}
+
     const pollLiveSnapshots = async () => {
+      if (cancelled || accounts.length === 0) return
       const now = Date.now()
-      for (const account of accounts) {
-        if (cancelled) return
+      // Probe at most one quiet account per tick to avoid burst throttling.
+      for (let attempt = 0; attempt < accounts.length; attempt++) {
+        const account = accounts[cursor % accounts.length]!
+        cursor += 1
+        if ((throttleUntilById[account.id] ?? 0) > now) continue
         const lastWs = lastWsTickRef.current[account.id] ?? 0
         if (now - lastWs < 2500) continue
         try {
@@ -1844,15 +1854,21 @@ export function DashboardPage() {
             }
           }
           flushLiveBrokerMetrics()
-        } catch {
-          /* WS or next poll will retry */
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (/throttl|rate limit|expected available in/i.test(msg)) {
+            const m = msg.match(/expected available in\s+(\d+)\s*seconds?/i)
+            const sec = m ? Number(m[1]) : 8
+            throttleUntilById[account.id] = Date.now() + Math.min(120_000, Math.max(4_000, (Number.isFinite(sec) ? sec : 8) * 1000 + 500))
+          }
         }
+        return
       }
     }
 
     const intervalId = window.setInterval(() => {
       void pollLiveSnapshots()
-    }, 2000)
+    }, pollIntervalMs)
     void pollLiveSnapshots()
 
     return () => {

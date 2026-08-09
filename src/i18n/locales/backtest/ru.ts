@@ -55,6 +55,7 @@ export const backtestRu: BacktestBundleTranslations = {
     resultsTitle: 'Результаты бэктеста',
     resultsSubtitle: '{symbol} · {channel} · нажмите сигнал для деталей',
     newRun: 'Новый запуск',
+    exportCsv: 'Экспорт CSV',
     totalPips: 'Всего пунктов',
     winRate: 'Процент прибыльных',
     winLoss: 'В / П',

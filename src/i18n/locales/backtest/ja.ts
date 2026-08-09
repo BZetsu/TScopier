@@ -55,6 +55,7 @@ export const backtestJa: BacktestBundleTranslations = {
     resultsTitle: 'バックテスト結果',
     resultsSubtitle: '{symbol} · {channel} · シグナルをタップすると詳細を表示',
     newRun: '新規実行',
+    exportCsv: 'CSVをエクスポート',
     totalPips: '合計pips',
     winRate: '勝率',
     winLoss: '勝 / 敗',

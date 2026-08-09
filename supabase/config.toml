@@ -60,6 +60,15 @@ verify_jwt = true
 [functions.reconcile-stripe-entitlement]
 verify_jwt = false
 
+[functions.email-unsubscribe]
+verify_jwt = false
+
+[functions.send-subscription-email]
+verify_jwt = false
+
+[functions.send-subscription-campaigns]
+verify_jwt = false
+
 [functions.layering-mode-capabilities]
 verify_jwt = true
 

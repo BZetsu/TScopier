@@ -67,13 +67,20 @@ test('collectPrewarmSymbolsForBroker includes mapped variants', () => {
   assert.ok(symbols.includes('EURUSD'))
 })
 
-test('sessionHeartbeatTick updates sessionPingAt on successful keepSessionAlive', async () => {
-  const ctx = makeCtx()
+test('sessionHeartbeatTick stamps sessionPingAt without keepSessionAlive network call', async () => {
+  let calls = 0
+  const ctx = makeCtx({
+    keepAlive: async () => {
+      calls += 1
+      return false
+    },
+  })
   await brokerSymbolCache.sessionHeartbeatTick(ctx)
+  assert.equal(calls, 0)
   assert.equal(ctx.sessionPingAt.has(FX_UUID), true)
 })
 
-test('sessionHeartbeatTick skips ping when sessionPingAt is fresh', async () => {
+test('sessionHeartbeatTick stamps even when sessionPingAt is fresh', async () => {
   let calls = 0
   const ctx = makeCtx({
     keepAlive: async () => {
@@ -84,9 +91,10 @@ test('sessionHeartbeatTick skips ping when sessionPingAt is fresh', async () => 
   ctx.sessionPingAt.set(FX_UUID, Date.now())
   await brokerSymbolCache.sessionHeartbeatTick(ctx)
   assert.equal(calls, 0)
+  assert.equal(ctx.sessionPingAt.has(FX_UUID), true)
 })
 
-test('pingBrokerSession forces ping even when sessionPingAt is fresh', async () => {
+test('pingBrokerSession does not call keepSessionAlive', async () => {
   let calls = 0
   const ctx = makeCtx({
     keepAlive: async () => {
@@ -96,26 +104,11 @@ test('pingBrokerSession forces ping even when sessionPingAt is fresh', async () 
   })
   ctx.sessionPingAt.set(FX_UUID, Date.now())
   await brokerSymbolCache.pingBrokerSession(ctx, makeBroker())
-  assert.equal(calls, 1)
-})
-
-test('sessionHeartbeatTick treats throttle as soft success without marking broker down', async () => {
-  let downCalls = 0
-  const ctx = makeCtx({
-    keepAlive: async () => {
-      throw new Error('Request was throttled. Expected available in 4 seconds.')
-    },
-    markDown: async () => {
-      downCalls += 1
-    },
-  })
-  ctx.sessionPingAt.delete(FX_UUID)
-  await brokerSymbolCache.sessionHeartbeatTick(ctx)
-  assert.equal(downCalls, 0)
+  assert.equal(calls, 0)
   assert.equal(ctx.sessionPingAt.has(FX_UUID), true)
 })
 
-test('sessionHeartbeatTick marks broker down after repeated failures', async () => {
+test('sessionHeartbeatTick never marks broker down from keepalive', async () => {
   let downCalls = 0
   const ctx = makeCtx({
     keepAlive: async () => false,
@@ -123,15 +116,43 @@ test('sessionHeartbeatTick marks broker down after repeated failures', async () 
       downCalls += 1
     },
   })
-  const failuresBeforeDown = Math.max(
-    2,
-    Number(process.env.BROKER_HEARTBEAT_FAILURES_BEFORE_DOWN ?? 4) || 4,
-  )
-  for (let i = 0; i < failuresBeforeDown; i += 1) {
+  for (let i = 0; i < 8; i += 1) {
     ctx.sessionPingAt.delete(FX_UUID)
     await brokerSymbolCache.sessionHeartbeatTick(ctx)
   }
-  assert.equal(downCalls, 1)
+  assert.equal(downCalls, 0)
+})
+
+test('ensureBrokerSession skips network and returns false when order-blocked', async () => {
+  let calls = 0
+  const ctx = makeCtx({
+    keepAlive: async () => {
+      calls += 1
+      return true
+    },
+  })
+  const broker = makeBroker()
+  ctx.sessionOrderBlocked.add(broker.id)
+  const api = ctx.apiFor(broker)!
+  const ok = await brokerSymbolCache.ensureBrokerSession(ctx, api, FX_UUID, broker)
+  assert.equal(ok, false)
+  assert.equal(calls, 0)
+})
+
+test('ensureBrokerSessionLiveFast returns true without keepSessionAlive', async () => {
+  let calls = 0
+  const ctx = makeCtx({
+    keepAlive: async () => {
+      calls += 1
+      return false
+    },
+  })
+  const broker = makeBroker()
+  const api = ctx.apiFor(broker)!
+  const ok = await brokerSymbolCache.ensureBrokerSessionLiveFast(ctx, api, FX_UUID, broker)
+  assert.equal(ok, true)
+  assert.equal(calls, 0)
+  assert.equal(ctx.sessionPingAt.has(FX_UUID), true)
 })
 
 test('brokersWarmForLiveEntry returns false when sessionPingAt is stale', () => {

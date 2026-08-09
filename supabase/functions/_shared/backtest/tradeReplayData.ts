@@ -118,7 +118,7 @@ async function fetchBarReplayCandles(
         timeframe: tf,
         from: query.from,
         to: query.to,
-      })
+      }, ctx.platform)
       if (!bars.length) continue
 
       const ohlc = fxsocketBarsToOhlcCandles(bars, utcOffsetSeconds, fetchFromMs, fetchToMs)
@@ -176,7 +176,7 @@ export async function fetchTradeReplayData(
     throw new TradeReplayNoDataError(`Symbol ${symbol} is not available on your linked broker.`)
   }
 
-  const utcOffsetSeconds = await fetchUtcOffsetSeconds(fx, brokerCtx.fxsocketAccountId)
+  const utcOffsetSeconds = await fetchUtcOffsetSeconds(fx, brokerCtx.fxsocketAccountId, brokerCtx.platform)
 
   let source: "ticks" | "bars" = "ticks"
   let intervalMs = pickCandleIntervalMs(tradeDurationMs, 0)

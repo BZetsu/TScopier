@@ -32,6 +32,13 @@ Deno.test("resolveBrokerSymbol matches suffix broker names", () => {
   assertEquals(resolveBrokerSymbol("BTCUSD", symbols), null)
 })
 
+Deno.test("resolveBrokerSymbol maps GOLD / XAU aliases to XAUUSD", () => {
+  assertEquals(resolveBrokerSymbol("XAUUSD", ["GOLD", "EURUSD"]), "GOLD")
+  assertEquals(resolveBrokerSymbol("XAUUSD", ["XAU", "EURUSD"]), "XAU")
+  assertEquals(resolveBrokerSymbol("GOLD", ["XAUUSD+", "EURUSD"]), "XAUUSD+")
+  assertEquals(resolveBrokerSymbol("XAUUSD", ["GOLD.m", "EURUSD"]), "GOLD.m")
+})
+
 Deno.test("normalizeBacktestSymbol strips punctuation", () => {
   assertEquals(normalizeBacktestSymbol("XAU/USD"), "XAUUSD")
   assertEquals(normalizeBacktestSymbol(" eurusd "), "EURUSD")
