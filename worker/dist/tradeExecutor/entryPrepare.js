@@ -9,6 +9,7 @@ const settings_1 = require("../newsTrading/settings");
 const multiTradeMerge_1 = require("../multiTradeMerge");
 const signalPriceInference_1 = require("../signalPriceInference");
 const signalEntryZoneSanity_1 = require("../signalEntryZoneSanity");
+const signalEntryPriceGuard_1 = require("../signalEntryPriceGuard");
 const pipCalculator_1 = require("../pipCalculator");
 const signalStopUnits_1 = require("../signalStopUnits");
 const channelActiveTradeParams_1 = require("../channelActiveTradeParams");
@@ -175,6 +176,32 @@ async function prepareEntryExecution(ctx, args) {
         console.warn(`[tradeExecutor] user-decorated symbol params missing broker=${broker.id} symbol=${symbol}`);
     }
     const baseLot = (0, helpers_1.roundLot)((0, helpers_1.computeLot)(broker, parsed), params);
+    const sameSignalRefresh = sendOpts?.sameSignalRefresh === true;
+    // A Telegram revision is never a new entry. Route it through the
+    // modify-only path before any entry-zone, teaser, range, or OrderSend logic.
+    // The merge router returns handled=true for every revision outcome, including
+    // an unavailable broker/API or a missing open basket, so revisions cannot
+    // fall through into a fresh entry.
+    if (sameSignalRefresh) {
+        const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
+            signal,
+            parsed,
+            broker,
+            channelKeywords,
+            baseLot,
+            params,
+            symbol,
+            uuid,
+            strictEntryPrefetch: null,
+            commentPrefix,
+            sameSignalRefresh: true,
+            liveMgmtFast: sendOpts?.liveMgmtFast === true,
+        });
+        return {
+            ok: false,
+            outcome: { openedOrMerged: paramOutcome.handled === true && paramOutcome.success === true },
+        };
+    }
     let strictEntryPrefetch = null;
     if (needsQuotePrefetch) {
         try {
@@ -218,11 +245,58 @@ async function prepareEntryExecution(ctx, args) {
             // Best-effort guard — proceed when quote is unavailable.
         }
     }
+    // ── AI-lane adverse-price guard ─────────────────────────────────────────
+    // AI-parsed/reconciled entries (dispatch_source ai_parsed / ai_reconciled)
+    // must not execute when the live market has moved against the signal entry
+    // beyond the broker's signal_entry_pip_tolerance — that would open at a
+    // worse price than the signal published and risk an immediate loss.
+    // Strict-entry and range-strict brokers are excluded: they already handle
+    // adverse prices by deferring to broker pendings at the signal entry.
+    if ((signal.dispatch_source === 'ai_parsed' || signal.dispatch_source === 'ai_reconciled')
+        && (entryDirection === 'buy' || entryDirection === 'sell')
+        && !(0, manualPlanner_1.signalEntryPriceStrictEnabled)(manual)
+        && !(0, manualPlanner_1.signalEntryRangeStrictEnabled)(manual)
+        && sendOpts?.sameSignalRefresh !== true
+        && api) {
+        try {
+            const q = strictEntryPrefetch ?? await api.quote(uuid, symbol);
+            strictEntryPrefetch = q;
+            const tolerancePips = Math.max(0, Number(manual.signal_entry_pip_tolerance ?? 10));
+            const moved = (0, signalEntryPriceGuard_1.entryPriceMovedAdverse)({
+                action: entryDirection,
+                entryPrice: typeof parsed.entry_price === 'number' ? parsed.entry_price : null,
+                zoneLow: typeof parsed.entry_zone_low === 'number' ? parsed.entry_zone_low : null,
+                zoneHigh: typeof parsed.entry_zone_high === 'number' ? parsed.entry_zone_high : null,
+                bid: q.bid,
+                ask: q.ask,
+                tolerancePips,
+                pipSize: params?.point ?? 0.00001,
+            });
+            if (moved) {
+                await ctx.logSendSkipped(signal, broker, signalEntryPriceGuard_1.ENTRY_PRICE_MOVED_ADVERSE_REASON, {
+                    symbol,
+                    quote_bid: q.bid,
+                    quote_ask: q.ask,
+                    entry_price: parsed.entry_price ?? null,
+                    entry_zone_low: parsed.entry_zone_low ?? null,
+                    entry_zone_high: parsed.entry_zone_high ?? null,
+                    tolerance_pips: tolerancePips,
+                    dispatch_source: signal.dispatch_source,
+                });
+                return {
+                    ok: false,
+                    outcome: { finalizeSkipReason: signalEntryPriceGuard_1.ENTRY_PRICE_MOVED_ADVERSE_REASON },
+                };
+            }
+        }
+        catch {
+            // Best-effort guard — proceed when quote is unavailable.
+        }
+    }
     // Basket SL/TP refresh — always before OrderSend (not deferred to post-fill).
     // Skip when Use signal range is on: zone+market-now+SL/TP must open via range entry wait,
     // not merge into a prior teaser that may never have opened.
     const basketRefreshSucceeded = false;
-    const sameSignalRefresh = sendOpts?.sameSignalRefresh === true;
     const blockNewEntry = sendOpts?.blockNewEntry === true;
     const rangeEntryStrict = (0, manualPlanner_1.signalEntryRangeStrictEnabled)(manual);
     if (isManual && !rangeEntryStrict && ((0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed) || sameSignalRefresh)) {
@@ -309,21 +383,21 @@ async function prepareEntryExecution(ctx, args) {
             return { ok: false, outcome: { openedOrMerged: true } };
         }
     }
+    if (isManual && manual.add_new_trades_to_existing === false && !(0, channelActiveTradeParams_1.parsedSignalHasExplicitStops)(parsed)) {
+        await ctx.logSendSkipped(signal, broker, 'explicit_stops_required_when_add_to_existing_off', { symbol });
+        return { ok: false, outcome: { finalizeSkipReason: 'explicit_stops_required_when_add_to_existing_off' } };
+    }
+    if (!liveEntryFast && isManual && manual.close_on_opposite_signal === true) {
+        await ctx.closeOppositeDirectionTrades(signal, parsed, broker, symbol);
+    }
+    if (isManual && manual.add_new_trades_to_existing === false) {
+        const already = await ctx.hasOpenTradeForSymbol(broker.id, symbol);
+        if (already) {
+            await ctx.logSendSkipped(signal, broker, 'add_new_trades_to_existing=false', { symbol });
+            return { ok: false, outcome: { finalizeSkipReason: 'add_new_trades_to_existing=false' } };
+        }
+    }
     if (!liveEntryFast) {
-        if (isManual && manual.add_new_trades_to_existing === false && !(0, channelActiveTradeParams_1.parsedSignalHasExplicitStops)(parsed)) {
-            await ctx.logSendSkipped(signal, broker, 'explicit_stops_required_when_add_to_existing_off', { symbol });
-            return { ok: false, outcome: { finalizeSkipReason: 'explicit_stops_required_when_add_to_existing_off' } };
-        }
-        if (isManual && manual.close_on_opposite_signal === true) {
-            await ctx.closeOppositeDirectionTrades(signal, parsed, broker, symbol);
-        }
-        if (isManual && manual.add_new_trades_to_existing === false) {
-            const already = await ctx.hasOpenTradeForSymbol(broker.id, symbol);
-            if (already) {
-                await ctx.logSendSkipped(signal, broker, 'add_new_trades_to_existing=false', { symbol });
-                return { ok: false, outcome: { finalizeSkipReason: 'add_new_trades_to_existing=false' } };
-            }
-        }
         const newsPreFill = String(process.env.EXECUTOR_NEWS_BLACKOUT_PRE_FILL ?? 'false').toLowerCase();
         if ((newsPreFill === '1' || newsPreFill === 'true' || newsPreFill === 'yes')
             && isManual
@@ -555,14 +629,13 @@ async function prepareEntryExecution(ctx, args) {
             || !(0, channelActiveTradeParams_1.shouldPreferParsedStopsOnEntry)(parsed))) {
         virtualPendings = (0, channelActiveTradeParams_1.applyChannelParamsToVirtualPendingList)(virtualPendings, entryChannelParams, capped.length, manual.tp_lots, totalPlannedLegCount);
     }
-    // sendOrder already claims + dedupes on the live fast path — skip the extra
-    // four-table materialized probe here so we don't pay a second DB round-trip.
-    if (!liveEntryFast) {
-        const already = await ctx.manualDispatchAlreadyMaterialized(signal.id, broker.id);
-        if (already) {
-            console.warn(`[tradeExecutor] skip duplicate entry dispatch signal=${signal.id} broker=${broker.id}`);
-            return { ok: false, outcome: { openedOrMerged: true } };
-        }
+    // Always re-check materialization (including live-fast): claim is first line of
+    // defense; this catches races where another worker already OrderSent.
+    const already = await ctx.manualDispatchAlreadyMaterialized(signal.id, broker.id);
+    if (already) {
+        console.warn(`[tradeExecutor] skip duplicate entry dispatch signal=${signal.id} broker=${broker.id}`
+            + ` liveFast=${liveEntryFast}`);
+        return { ok: false, outcome: { openedOrMerged: true } };
     }
     // ── Strict signal entry (post-delay live quote) ───────────────────────
     // Buy: immediate market only when ask ≤ entry; else one virtual pending at entry.
@@ -711,9 +784,31 @@ async function prepareEntryExecution(ctx, args) {
         ...(idx === 0 && plan.partialTps?.length ? { partialTps: plan.partialTps } : {}),
     }));
     // Single trade style: one broker order only (partials ride on partial_tp_legs).
+    // If the planner somehow emitted multiple immediates, hard-block rather than
+    // silently sending the first leg (that masked config/planner bugs).
     if (isManual && manual.trade_style !== 'multi' && legs.length > 1) {
-        console.warn(`[tradeExecutor] single trade_style capping legs ${legs.length}→1 signal=${signal.id} broker=${broker.id}`);
-        legs = legs.slice(0, 1);
+        console.error(`[tradeExecutor] single trade_style multi_leg_blocked ${legs.length} legs`
+            + ` signal=${signal.id} broker=${broker.id}`);
+        try {
+            await ctx.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                broker_account_id: broker.id,
+                action: 'single_style_multi_leg_blocked',
+                status: 'failed',
+                request_payload: { leg_count: legs.length },
+                error_message: `single trade_style refused ${legs.length} immediate legs`,
+            });
+        }
+        catch { /* best-effort */ }
+        return {
+            ok: false,
+            outcome: {
+                channelDelayMs,
+                channelDelaySkipped,
+                failureReason: 'single_style_multi_leg_blocked',
+            },
+        };
     }
     // ── Anchor resolution ────────────────────────────────────────────────
     // Priority: parsed signal entry → live /Quote (Ask for buy, Bid for sell).

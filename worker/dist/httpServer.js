@@ -9,6 +9,8 @@ const telegramAuthRecovery_1 = require("./telegramAuthRecovery");
 const workerConfig_1 = require("./workerConfig");
 const queueHealth_1 = require("./queue/queueHealth");
 const parseSignal_1 = require("./parseSignal");
+const channelKeywordsCache_1 = require("./channelKeywordsCache");
+const parseRouting_1 = require("./signalIntent/parseRouting");
 const aiParseModification_1 = require("./aiParseModification");
 const applySignalOverride_1 = require("./applySignalOverride");
 const forceCloseSignalTrades_1 = require("./forceCloseSignalTrades");
@@ -269,6 +271,50 @@ function startHttpServer(authService, sessionManager) {
                 }
                 const result = await sessionManager.reconcileAllListenersOnShard();
                 return sendJson(res, 200, { ok: true, ...result });
+            }
+            if (url === '/internal/parse-ai-debug') {
+                if (!body.channel_row_id || typeof body.raw_message !== 'string') {
+                    return sendJson(res, 400, { error: 'channel_row_id and raw_message required' });
+                }
+                try {
+                    const supabase = sessionManager.getSupabase();
+                    const { keywords, lexicon } = await (0, channelKeywordsCache_1.getChannelParseContext)(supabase, body.channel_row_id);
+                    const pipelineTs = {};
+                    const started = Date.now();
+                    const routed = await (0, parseRouting_1.routeSignalParse)({
+                        supabase,
+                        userId: body.user_id ?? 'debug-user',
+                        channelRowId: body.channel_row_id,
+                        signalId: `debug-${Date.now()}`,
+                        rawMessage: body.raw_message,
+                        isReply: body.is_reply === true,
+                        parentSignalId: body.parent_signal_id ?? null,
+                        isModificationClass: body.is_modification_class === true,
+                        keywords,
+                        lexicon,
+                        pipelineTs,
+                    });
+                    return sendJson(res, 200, {
+                        mode: (0, parseRouting_1.getUniversalParseMode)(),
+                        aiMeta: routed.aiMeta ?? null,
+                        verification: routed.verification ?? null,
+                        pipeline_ts: pipelineTs,
+                        parse_result: {
+                            action: routed.parseResult.parsed.action,
+                            symbol: routed.parseResult.parsed.symbol ?? null,
+                            confidence: typeof routed.parseResult.parsed.confidence === 'number'
+                                ? routed.parseResult.parsed.confidence
+                                : null,
+                            status: routed.parseResult.status,
+                            skip_reason: routed.parseResult.skip_reason ?? null,
+                        },
+                        elapsed_ms: Date.now() - started,
+                    });
+                }
+                catch (err) {
+                    const msg = err instanceof Error ? err.message : 'parse failed';
+                    return sendJson(res, 500, { error: msg });
+                }
             }
             return sendJson(res, 404, { error: 'Unknown route' });
         }

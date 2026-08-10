@@ -83,6 +83,20 @@ export function isPartialTpTriggered(isBuy: boolean, triggerPrice: number, bid: 
   return isBuy ? bid >= triggerPrice : ask <= triggerPrice
 }
 
+/**
+ * Broker replies that mean "the parent position is already gone" for a
+ * partial-TP /OrderClose attempt. When matched, the partial leg is cancelled
+ * and the parent trade closed instead of retrying forever.
+ *
+ * `unknown ticket` must be here: FxSocket replies "unknown ticket" when it no
+ * longer knows the position (closed by SL/broker TP/user). Without it the
+ * monitor rolled the leg back to `pending` and retried every ~400ms for days
+ * (prod incident 2026-08-10, trade 1278201 — 505 errors in 14.5 min).
+ */
+export function isPartialTpBenignBrokerError(message: string): boolean {
+  return /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order|unknown\s+ticket/i.test(message)
+}
+
 export class PartialTpMonitor {
   private loop: MonitorLoopHandle | null = null
   private platformByUuid: PlatformByFxsocketId = new Map()
@@ -354,7 +368,7 @@ export class PartialTpMonitor {
       // "trade not found" / "position already closed" — the parent trade
       // closed under us (SL, broker TP, manual). Cancel the partial; the
       // remaining slice rode to broker TP already, nothing left to do.
-      const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i.test(msg)
+      const benign = isPartialTpBenignBrokerError(msg)
       if (benign) {
         console.log(
           `[partialTpMonitor] parent gone signal=${partial.signal_id} ticket=${ticketNum}: ${msg}`,

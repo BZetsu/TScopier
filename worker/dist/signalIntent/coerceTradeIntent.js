@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.coerceTradeIntent = coerceTradeIntent;
 const KINDS = new Set([
-    'entry', 'modify', 'close', 'breakeven', 'partial_close', 'cancel_pending', 'ignore', 'commentary',
+    'entry', 'modify', 'close', 'breakeven', 'partial_close', 'cancel_pending', 'ignore', 'commentary', 'uncertain',
 ]);
 function numOrNull(v) {
     const n = typeof v === 'number' ? v : Number(v);

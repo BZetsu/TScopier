@@ -50,6 +50,8 @@ const channelListenerConfig_1 = require("./channelListenerConfig");
 const subscriptionAccess_1 = require("./subscriptionAccess");
 const authKeyDuplicatedRecovery_1 = require("./authKeyDuplicatedRecovery");
 const sentry_1 = require("./observability/sentry");
+const businessEvents_1 = require("./observability/businessEvents");
+const copierHealth_1 = require("./copierHealth");
 /**
  * Race a promise against a timeout so a single wedged network call cannot
  * stall a whole loop forever. Does not cancel the underlying work (the
@@ -717,6 +719,15 @@ class UserSessionManager {
         if (error) {
             console.warn(`[sessionManager] invalidateTelegramSession session delete failed for ${userId}:`, error.message);
         }
+        void (0, copierHealth_1.persistCopierHealth)(this.supabase, userId, {
+            telegramAccountStatus: 'reconnect_required',
+            listenerStatus: 'failed',
+            copierEngineStatus: 'stopped',
+            workerOwnershipStatus: 'unowned',
+            mtprotoConnected: false,
+            recoveryExhausted: true,
+            healthReason: 'telegram_session_invalidated',
+        }, { force: true, allowWithoutLease: true });
     }
     async listChannels(userId, opts) {
         const local = this.listeners.get(userId);
@@ -818,6 +829,14 @@ class UserSessionManager {
         if (error) {
             console.warn(`[sessionManager] disconnectTelegramSession delete failed for ${userId}:`, error.message);
         }
+        void (0, copierHealth_1.persistCopierHealth)(this.supabase, userId, {
+            telegramAccountStatus: 'not_linked',
+            listenerStatus: 'disconnected',
+            copierEngineStatus: 'stopped',
+            workerOwnershipStatus: 'unowned',
+            mtprotoConnected: false,
+            healthReason: 'user_disconnected_telegram',
+        }, { force: true, allowWithoutLease: true });
         return { ok: true };
     }
     async ensureListener(userId) {
@@ -997,6 +1016,29 @@ class UserSessionManager {
                 }
                 catch { /* ignore */ }
                 await (0, sessionLease_1.releaseSessionLease)(this.supabase, userId);
+                void (0, copierHealth_1.persistCopierHealth)(this.supabase, userId, {
+                    telegramAccountStatus: err instanceof telegramClient_1.TelegramSessionInvalidError ? 'reconnect_required' : 'linked',
+                    listenerStatus: err instanceof telegramClient_1.TelegramSessionInvalidError ? 'failed' : 'disconnected',
+                    copierEngineStatus: err instanceof telegramClient_1.TelegramSessionInvalidError ? 'stopped' : 'offline',
+                    workerOwnershipStatus: 'unowned',
+                    mtprotoConnected: false,
+                    recoveryExhausted: err instanceof telegramClient_1.TelegramSessionInvalidError,
+                    healthReason: err instanceof telegramClient_1.TelegramSessionInvalidError ? 'telegram_session_invalid' : 'listener_start_failed',
+                }, {
+                    force: true,
+                    ownershipEpoch: listener.getHealthOwnershipEpoch(),
+                    leaseAcquiredAt: listener.getHealthLeaseAcquiredAt(),
+                    allowWithoutLease: true,
+                });
+                if (!(err instanceof telegramClient_1.TelegramSessionInvalidError)) {
+                    (0, copierHealth_1.maybeCaptureCopierOffline)({
+                        userId,
+                        listenerStatus: 'failed',
+                        reasonCode: 'LISTENER_START_FAILED',
+                        reason: 'listener_start_failed',
+                        sinceMs: Date.now() - 2 * 60000,
+                    });
+                }
                 if (err instanceof telegramClient_1.TelegramSessionInvalidError) {
                     // Do not call invalidateTelegramSession here — it re-enters
                     // withConnectionLock while we still hold it (deadlock).
@@ -1018,10 +1060,37 @@ class UserSessionManager {
         const listener = this.listeners.get(userId);
         if (!listener)
             return;
+        void (0, copierHealth_1.persistCopierHealth)(this.supabase, userId, {
+            telegramAccountStatus: 'linked',
+            listenerStatus: 'disconnected',
+            copierEngineStatus: 'stopped',
+            workerOwnershipStatus: 'owned',
+            mtprotoConnected: false,
+            shutdownInProgress: true,
+            healthReason: 'listener_stop_requested',
+        }, {
+            force: true,
+            ownershipEpoch: listener.getHealthOwnershipEpoch(),
+            leaseAcquiredAt: listener.getHealthLeaseAcquiredAt(),
+        });
         await listener.stop();
         this.listeners.delete(userId);
         this.disconnectedRenewTicks.delete(userId);
         await (0, sessionLease_1.releaseSessionLease)(this.supabase, userId);
+        void (0, copierHealth_1.persistCopierHealth)(this.supabase, userId, {
+            telegramAccountStatus: 'linked',
+            listenerStatus: 'disconnected',
+            copierEngineStatus: 'stopped',
+            workerOwnershipStatus: 'unowned',
+            mtprotoConnected: false,
+            shutdownInProgress: false,
+            healthReason: 'listener_stopped',
+        }, {
+            force: true,
+            ownershipEpoch: listener.getHealthOwnershipEpoch(),
+            leaseAcquiredAt: listener.getHealthLeaseAcquiredAt(),
+            allowWithoutLease: true,
+        });
         console.log(`[sessionManager] Stopped listener for user ${userId}`);
     }
     async stopListener(userId) {
@@ -1149,14 +1218,18 @@ class UserSessionManager {
     onAuthKeyDuplicatedRecoveryExhausted(userId, reason) {
         console.error(`[sessionManager] AUTH_KEY_DUPLICATED recovery exhausted user=${userId}`
             + ` reason=${reason} — invalidating session so UI can re-link`);
-        (0, sentry_1.captureWorkerError)(new Error('AUTH_KEY_DUPLICATED recovery exhausted'), {
-            subsystem: 'telegram',
-            operation: 'auth_key_duplicated_exhausted',
-            errorCode: 'AUTH_KEY_DUPLICATED',
-            fingerprint: ['telegram', 'AUTH_KEY_DUPLICATED', 'exhausted'],
+        (0, businessEvents_1.captureBusinessIssue)({
+            category: 'telegram',
+            event: 'telegram_recovery_exhausted',
+            severity: 'error',
+            reasonCode: 'AUTH_KEY_DUPLICATED',
+            message: 'Telegram AUTH_KEY_DUPLICATED recovery exhausted and session was invalidated',
+            userImpact: 'failed',
+            fingerprint: ['telegram_recovery_exhausted', 'auth_key_duplicated', 'exhausted'],
             context: {
                 user_id: userId,
                 stage: 'auth_key_duplicated_recovery',
+                operation: 'telegram_reconnect',
                 extra: { reason },
             },
         });

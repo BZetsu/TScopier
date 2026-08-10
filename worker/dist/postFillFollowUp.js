@@ -9,6 +9,7 @@ const manualStops_1 = require("./manualPlanning/manualStops");
 const manualStops_2 = require("./manualPlanning/manualStops");
 const parsedEntry_1 = require("./manualPlanning/parsedEntry");
 const orderModifyBenign_1 = require("./orderModifyBenign");
+const deferredBusinessEvents_1 = require("./observability/deferredBusinessEvents");
 function newsBlackoutPreFillEnabled() {
     const v = String(process.env.EXECUTOR_NEWS_BLACKOUT_PRE_FILL ?? 'false').toLowerCase();
     return v === '1' || v === 'true' || v === 'yes';
@@ -108,12 +109,37 @@ async function applyPipAndChannelStops(args) {
             if ((0, orderModifyBenign_1.isBenignOrderModifyError)(msg))
                 continue;
             console.warn(`[postFillFollowUp] OrderModify stops failed signal=${signal.id} ticket=${leg.ticket}: ${msg}`);
+            (0, deferredBusinessEvents_1.captureDeferredBusinessFailure)({
+                category: 'management',
+                event: slChanged && !tpChanged ? 'stop_loss_update_failed' : tpChanged && !slChanged ? 'take_profit_update_failed' : 'deferred_trade_follow_up_failed',
+                severity: 'error',
+                reasonCode: slChanged && !tpChanged ? 'POST_FILL_SL_UPDATE_FAILED' : tpChanged && !slChanged ? 'POST_FILL_TP_UPDATE_FAILED' : 'POST_FILL_STOPS_UPDATE_FAILED',
+                message: 'Post-fill stop update failed after broker entry success',
+                userImpact: 'partial',
+                operation: 'post_fill_stop_update',
+                err,
+                context: {
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    channel_id: signal.channel_id,
+                    broker_account_id: broker.id,
+                    trade_id: leg.tradeRowId,
+                    symbol,
+                    side: isBuy ? 'buy' : 'sell',
+                    extra: {
+                        broker_ticket_present: true,
+                        stop_loss_targeted: slChanged,
+                        take_profit_targeted: tpChanged,
+                        failed_count: 1,
+                    },
+                },
+            });
         }
     }
 }
 /** Run deferred management after live market fill. */
 async function applyPostFillFollowUp(args) {
-    const { hooks, signal, parsed, broker, symbol, baseLot, params, op, uuid } = args;
+    const { hooks, signal, parsed, broker, symbol } = args;
     const manual = (broker.manual_settings ?? {});
     await applyPipAndChannelStops(args);
     if (manual.close_on_opposite_signal === true) {

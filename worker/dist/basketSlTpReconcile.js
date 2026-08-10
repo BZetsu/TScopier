@@ -228,7 +228,8 @@ async function logBasketLegModify(supabase, args) {
     catch { /* best-effort */ }
 }
 async function runBasketLegModifies(args) {
-    const { supabase, api, uuid, symbol, direction, baseLot, params, signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets, signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, skipAlreadySynced, alreadyModified, liveMgmtFast, parallelLegs, internalRebalance, effectiveStoploss, orderCommentsEnabled, explicitChannelTargets, } = args;
+    const { supabase, api, uuid, symbol, direction, baseLot, params, signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets, signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, alreadyModified, liveMgmtFast, parallelLegs, internalRebalance, effectiveStoploss, orderCommentsEnabled, explicitChannelTargets, } = args;
+    void args.skipAlreadySynced; // retained for callers; DB-only skip removed (naked-fill bug)
     const parsedTps = (signalTps ?? []).filter(t => typeof t === 'number' && Number.isFinite(t) && t > 0);
     const perLegTargets = (0, tpBucketDistribution_1.expandPerLegTargetsToCount)({
         targets: rawTargets,
@@ -278,11 +279,10 @@ async function runBasketLegModifies(args) {
             return noopOutcome();
         const legIdx = familyTrades.findIndex(t => t.id === tr.id);
         const cweIdx = legIdx >= 0 ? legIdx : i;
-        if (skipAlreadySynced && stopsAlreadyMatch(tr, target, nImmCwe, cweIdx)) {
-            // DB may already match while a naked broker fill still has SL/TP=0 — only
-            // skip when the leg is not a fresh naked CWE/open that still needs broker apply.
-            return { ...noopOutcome(), modifiedId: tr.id, modified: 1 };
-        }
+        // NOTE: do not skip OrderModify when DB stops already match targets.
+        // Naked OrderSend fallbacks often persist *intended* SL/TP on the trades
+        // row while the broker position is still 0/0; skipping left legs naked.
+        // modifyLegSlTpWithFallback treats true broker no-ops as benign.
         const ticket = Number(tr.metaapi_order_id);
         if (!Number.isFinite(ticket) || ticket <= 0) {
             return { ...noopOutcome(), skippedNoTicket: 1 };

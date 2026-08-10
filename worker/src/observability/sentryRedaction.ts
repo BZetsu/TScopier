@@ -14,7 +14,15 @@ const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi
 const API_KEY_RE = /\b(?:fxs|sk|rk|pk|sb|supabase|openai)[A-Za-z0-9_-]{16,}\b/gi
 const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi
-const PHONE_RE = /(?<!\d)\+?\d[\d\s().-]{7,}\d(?!\d)/g
+const PHONE_CANDIDATE_RE = /(?<!\d)\+?\d[\d\s().-]{7,}\d(?!\d)/g
+
+function redactPhones(input: string): string {
+  return input.replace(PHONE_CANDIDATE_RE, (match) => {
+    const digitCount = match.replace(/\D/g, '').length
+    if (digitCount < 9 || digitCount > 15) return match
+    return '[REDACTED_PHONE]'
+  })
+}
 
 type SafeOpts = {
   depth?: number
@@ -48,7 +56,7 @@ export function redactStringForSentry(value: string): string {
     .replace(BEARER_RE, 'Bearer [REDACTED]')
     .replace(API_KEY_RE, '[REDACTED_KEY]')
     .replace(EMAIL_RE, '[REDACTED_EMAIL]')
-    .replace(PHONE_RE, '[REDACTED_PHONE]'))
+    .replace(PHONE_CANDIDATE_RE, redactPhones))
 }
 
 function looksSerializedJson(value: string): boolean {

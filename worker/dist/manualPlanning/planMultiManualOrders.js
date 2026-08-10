@@ -205,6 +205,53 @@ function planMultiManualOrders(args) {
             return price;
         return finalTps[finalTps.length - 1] ?? null;
     };
+    // Teaser / no-TP signals: do not burst-split null-TP groups into N full-lot
+    // clones. One immediate market order (full lot); range virtuals may still layer.
+    if (finalTps.length === 0) {
+        const virtualPendings = [];
+        if (rangeLegCount > 0) {
+            const pendHours = (0, manualSettings_1.clampPendingExpiryHours)(manual.pending_expiry_hours);
+            const expiryHours = pendHours > 0 ? pendHours : undefined;
+            for (let i = 0; i < rangeLegCount; i++) {
+                virtualPendings.push({
+                    stepIdx: i + 1,
+                    stepPriceOffset,
+                    isBuy,
+                    volume: targetLeg,
+                    stoploss: finalSl,
+                    takeprofit: null,
+                    slippage: slippage ?? 20,
+                    comment: (0, tradeComment_1.appendOrderCommentSuffix)(commentPrefix, `:rg${i + 1}.tp${i + 1}`),
+                    expertID: expertId,
+                    expiryHours,
+                });
+            }
+        }
+        const single = buildSingleOrder({
+            orderBase,
+            expirationFields,
+            strictEntry,
+            manualLot,
+            finalSl,
+            finalTps,
+            manual,
+            ctx,
+            delay_ms,
+            entryAnchor,
+            isBuy,
+            pip,
+            pipQuote,
+            roundPrice,
+            fallbackReason: 'multi_trade_fallback_empty_tps',
+        });
+        return {
+            ...single,
+            ...(virtualPendings.length ? { virtualPendings } : {}),
+            ...(manual.range_trading === true && reservedRangeLegs > 0
+                ? { rangeLayering: rangeLayeringMeta }
+                : {}),
+        };
+    }
     // Burst consolidation packs IMMEDIATE legs into fewer OrderSends for speed.
     // multi_trade_max_orders also seeds the Total Open Trades basket ceiling — only
     // use it for consolidation when it is below the immediate leg count (legacy low caps).

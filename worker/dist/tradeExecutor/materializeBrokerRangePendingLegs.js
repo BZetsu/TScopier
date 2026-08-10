@@ -8,6 +8,7 @@ const rangePendingPriceRemap_1 = require("./rangePendingPriceRemap");
 const rangePendingFireGuard_1 = require("../rangePendingFireGuard");
 const rangePendingLegPersist_1 = require("../rangePendingLegPersist");
 const brokerPendingOpenedDedupe_1 = require("./brokerPendingOpenedDedupe");
+const deferredBusinessEvents_1 = require("../observability/deferredBusinessEvents");
 /** In-process single-flight for broker ladder OrderSends (signal+broker+symbol). */
 const brokerRangeMaterializeInflight = new Set();
 /**
@@ -20,7 +21,7 @@ const brokerRangeMaterializeInflight = new Set();
  * cannot re-add them.
  */
 async function materializeBrokerRangePendingLegs(ctx, prep, strictBrokerPlaced, opts) {
-    const { signal, broker, api, uuid, symbol, virtualPendings, params, plan, liveEntryFast, strictDeferred, } = prep;
+    const { signal, broker, api, symbol, virtualPendings, } = prep;
     if (!api || virtualPendings.length === 0)
         return false;
     const inflightKey = `${signal.id}:${broker.id}:${symbol}`;
@@ -47,7 +48,6 @@ async function materializeBrokerRangePendingLegsUnlocked(ctx, prep, strictBroker
         console.warn(`[tradeExecutor] dropping ${virtualPendings.length} broker range pendings: no anchor signal=${signal.id} broker=${broker.id} symbol=${symbol}`);
         return false;
     }
-    const digits = Math.max(0, Math.min(8, Number(params?.digits) || 5));
     const ladder = (0, brokerRangeLadderPricing_1.resolveBrokerRangeLadderPricing)({
         symbol,
         rangeLayering: plan.rangeLayering,
@@ -331,15 +331,19 @@ async function materializeBrokerRangePendingLegsUnlocked(ctx, prep, strictBroker
                     + ` step=${pick.stepIdx} price=${limitPx}`);
                 continue;
             }
-            // Resting BuyLimit/SellLimit must be naked — SL/TP are assigned on fill via
-            // tryApplyBasketFollowUpToNewFill + syncRangeBasketTakeProfits (tp_lots %).
+            // Prefer planned SL/TP on the resting limit so the chart shows protection.
+            // Invalid-stops fallback still places naked; monitor/rebalance heals later.
+            const plannedSl = v.stoploss != null && Number(v.stoploss) > 0 ? Number(v.stoploss) : 0;
+            const plannedTp = v.cweClosePrice != null
+                ? 0
+                : (v.takeprofit != null && Number(v.takeprofit) > 0 ? Number(v.takeprofit) : 0);
             const sendArgs = {
                 symbol,
                 operation: pendingOp,
                 volume: vol,
                 price: limitPx,
-                stoploss: 0,
-                takeprofit: 0,
+                stoploss: plannedSl,
+                takeprofit: plannedTp,
                 slippage: v.slippage ?? 20,
                 comment: v.comment ?? '',
                 expertID: v.expertID ?? 909090,
@@ -412,12 +416,14 @@ async function materializeBrokerRangePendingLegsUnlocked(ctx, prep, strictBroker
                         + ` from step=${plannedStepIdx} @${plannedPrice} → step=${pick.stepIdx} @${limitPx}`);
                 }
                 exhaustedInvalidSteps.delete(pick.stepIdx);
-                // Persist intended SL/TP on the DB row for post-fill assignment; broker
-                // limit itself was placed naked (SL=0/TP=0).
-                const desiredSl = v.stoploss != null && Number(v.stoploss) > 0 ? Number(v.stoploss) : null;
+                const desiredSl = Number(clamped.args.stoploss) > 0
+                    ? Number(clamped.args.stoploss)
+                    : (v.stoploss != null && Number(v.stoploss) > 0 ? Number(v.stoploss) : null);
                 const desiredTp = v.cweClosePrice != null
                     ? null
-                    : (v.takeprofit != null && Number(v.takeprofit) > 0 ? Number(v.takeprofit) : null);
+                    : (Number(clamped.args.takeprofit) > 0
+                        ? Number(clamped.args.takeprofit)
+                        : (v.takeprofit != null && Number(v.takeprofit) > 0 ? Number(v.takeprofit) : null));
                 const row = {
                     signal_id: signal.id,
                     user_id: signal.user_id,
@@ -604,6 +610,33 @@ async function materializeBrokerRangePendingLegsUnlocked(ctx, prep, strictBroker
                 }
                 catch { /* best-effort */ }
             }
+            (0, deferredBusinessEvents_1.captureDeferredBusinessFailure)({
+                category: 'layering',
+                event: 'layering_materialization_failed',
+                severity: 'error',
+                reasonCode: 'BROKER_PENDING_MATERIALIZATION_PERSIST_FAILED',
+                message: 'Broker-pending layer rows could not be persisted after broker orders were placed',
+                userImpact: 'manual_review_required',
+                operation: 'broker_pending_materialize',
+                err: persist.lastError ?? 'unknown',
+                context: {
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    broker_account_id: broker.id,
+                    symbol,
+                    side,
+                    execution_mechanism: 'broker_pending_order',
+                    layering_mode: plan.rangeLayering?.rangeLayeringType ?? 'pending_order',
+                    extra: {
+                        targeted_count: coalescedLegs.length,
+                        successful_count: placedTickets.length,
+                        failed_count: Math.max(0, coalescedLegs.length - placedTickets.length),
+                        skipped_already_compliant_count: existingSteps.size,
+                        rollback_attempted_count: placedTickets.length,
+                        anchor_source: anchorSource,
+                    },
+                },
+            });
             return false;
         }
     }

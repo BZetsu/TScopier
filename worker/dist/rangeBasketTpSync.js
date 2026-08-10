@@ -25,6 +25,8 @@ const rangePendingFireGuard_1 = require("./rangePendingFireGuard");
 const basketEffectiveStops_1 = require("./basketEffectiveStops");
 const tpBucketDistribution_1 = require("./manualPlanning/tpBucketDistribution");
 const multiTradeMerge_1 = require("./multiTradeMerge");
+const brokerPendingStopsSync_1 = require("./brokerPendingStopsSync");
+const deferredBusinessEvents_1 = require("./observability/deferredBusinessEvents");
 function toRangeBasketParsedSlice(raw) {
     if (!raw)
         return {};
@@ -133,7 +135,7 @@ function resolveRangeBasketLegCounts(args) {
     return { immediateLegCount, firedRangeLegCount, phase };
 }
 function buildRangeBasketTpTargets(args) {
-    const { familyTrades, plan, parsed, tpLots, direction, activePendingCount, maxPendingStepIdx, forceLayeringRebalance, forceMessageRevisionRefresh, channelTpLevels, finalTpsOverride, stoplossOverride, explicitSl, } = args;
+    const { familyTrades, plan, parsed, tpLots, direction, activePendingCount, maxPendingStepIdx, forceLayeringRebalance, forceMessageRevisionRefresh, channelTpLevels, stoplossOverride, explicitSl, } = args;
     if (!familyTrades.length)
         return [];
     const fromPlan = (plan ? (0, multiTradeMerge_1.mergePlanImmediateOrders)(plan) : []).map(o => ({
@@ -230,7 +232,7 @@ async function patchPendingRangeLegTakeProfits(args) {
         .select('id, trigger_price, step_idx')
         .eq('broker_account_id', brokerAccountId)
         .eq('signal_id', signalId)
-        .in('status', ['pending', 'claimed'])
+        .in('status', ['pending', 'claimed', 'broker_pending'])
         .limit(500);
     if (!pendingRows?.length)
         return 0;
@@ -429,7 +431,7 @@ async function setActivePendingRangeLegsTakeProfit(supabase, brokerAccountId, si
         .update({ takeprofit })
         .eq('broker_account_id', brokerAccountId)
         .eq('signal_id', signalId)
-        .in('status', ['pending', 'claimed'])
+        .in('status', ['pending', 'claimed', 'broker_pending'])
         .select('id');
     if (error) {
         console.warn(`[rangeBasketTpSync] freeze pending TP set failed signal=${signalId}: ${error.message}`);
@@ -596,7 +598,7 @@ async function syncRangeBasketTakeProfits(args) {
     const isBuy = args.direction === 'buy';
     const deepestTp = deepestFinalTp(finalTps, isBuy);
     const frozen = tpGate.mode === 'backfill_only';
-    // Pending (future) range legs.
+    // Pending (future) range legs — update DB then OrderModify resting broker limits.
     if (frozen) {
         // A TP has been hit: future legs are "new" and must fire with the deepest
         // TP (never repaint existing open legs). Only relevant when Layer-till-close
@@ -624,6 +626,20 @@ async function syncRangeBasketTakeProfits(args) {
         }
         catch (err) {
             console.warn(`[rangeBasketTpSync] pending TP patch failed signal=${args.signalId}:`, err instanceof Error ? err.message : String(err));
+        }
+    }
+    if (activePendingCount > 0) {
+        try {
+            await (0, brokerPendingStopsSync_1.syncBrokerPendingStopsForBasket)({
+                supabase: args.supabase,
+                api: args.api,
+                signalId: args.signalId,
+                brokerAccountId: args.brokerAccountId,
+                stoploss: effective.stoploss > 0 ? effective.stoploss : null,
+            });
+        }
+        catch (err) {
+            console.warn(`[rangeBasketTpSync] broker pending stop sync failed signal=${args.signalId}:`, err instanceof Error ? err.message : String(err));
         }
     }
     // Open-leg targets: redistribute by % while layering (no TP hit), otherwise
@@ -662,7 +678,7 @@ async function syncRangeBasketTakeProfits(args) {
         overrideTp: null,
         strictEntryPrefetch: sharedQuote,
         openedTickets,
-        skipAlreadySynced: true,
+        skipAlreadySynced: args.forceLayeringRebalance !== true,
         parallelLegs: true,
         internalRebalance,
         effectiveStoploss: effective.stoploss > 0 ? effective.stoploss : undefined,
@@ -721,6 +737,34 @@ async function syncRangeBasketTakeProfits(args) {
         effectiveSlSource: effective.source,
         skippedReason: frozen ? tpGate.reason : undefined,
     });
+    if (modifyResult && modifyResult.summary.failed > 0) {
+        (0, deferredBusinessEvents_1.captureDeferredBusinessFailure)({
+            category: 'management',
+            event: 'basket_tp_sync_failed',
+            severity: modifyResult.summary.modified > 0 ? 'warning' : 'error',
+            reasonCode: 'BASKET_TP_SYNC_FINAL_FAILURE',
+            message: 'Basket SL/TP synchronization did not fully apply after final retry',
+            userImpact: modifyResult.summary.modified > 0 ? 'partial' : 'failed',
+            operation: 'range_basket_tp_sync',
+            context: {
+                user_id: args.userId,
+                signal_id: args.signalId,
+                broker_account_id: args.brokerAccountId,
+                basket_id: `${args.signalId}:${args.brokerAccountId}`,
+                symbol: args.symbol,
+                side: args.direction,
+                extra: {
+                    targeted_count: modifyResult.summary.attempted,
+                    successful_count: modifyResult.summary.modified,
+                    failed_count: modifyResult.summary.failed,
+                    skipped_already_compliant_count: Math.max(0, familyTrades.length - modifyResult.summary.attempted),
+                    phase: effectivePhase,
+                    frozen,
+                    user_visible_state_may_be_stale: true,
+                },
+            },
+        });
+    }
     if (modifyResult && modifyResult.summary.modified > 0) {
         console.log(`[rangeBasketTpSync] rebalanced signal=${args.signalId} broker=${args.brokerAccountId}`
             + ` open=${familyTrades.length} phase=${effectivePhase}`

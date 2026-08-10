@@ -42,6 +42,17 @@ const orderCloseAudit_1 = require("./orderCloseAudit");
 const brokerExecutionMode_1 = require("./brokerExecutionMode");
 (0, sentry_1.initWorkerSentry)();
 (0, sentry_1.installWorkerProcessSentryHandlers)();
+(0, sentry_1.captureWorkerLog)('info', 'worker startup', {
+    subsystem: 'worker',
+    operation: 'startup',
+    errorCode: 'STARTUP',
+    attributes: {
+        build_tag: workerConfig_1.WORKER_BUILD_TAG,
+        role: workerConfig_1.workerConfig.role,
+        shard_id: workerConfig_1.workerConfig.shardId,
+        shard_count: workerConfig_1.workerConfig.shardCount,
+    },
+});
 if (!globalThis.WebSocket) {
     globalThis.WebSocket = ws_1.default;
 }

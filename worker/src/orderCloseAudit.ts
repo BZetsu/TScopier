@@ -25,27 +25,47 @@ export function registerOrderCloseAuditSink(next: AuditSink | null): void {
 
 export function registerOrderCloseAuditSupabase(supabase: SupabaseClient): void {
   registerOrderCloseAuditSink((event) => {
-    void supabase
-      .from('trade_execution_logs')
-      .insert({
-        action: 'order_close_audit',
-        status: event.ok === false ? 'failed' : 'success',
-        request_payload: {
-          source: event.source,
-          account_id: event.accountId,
-          ticket: event.ticket,
-          volume: event.volume ?? null,
-          slippage: event.slippage ?? null,
-          message: event.message ?? null,
-          stack: event.stack.slice(0, 4000),
-        } as unknown as Record<string, unknown>,
-        error_message: event.ok === false ? (event.message ?? 'orderClose failed') : null,
-      })
-      .then(({ error }) => {
-        if (error) {
-          console.warn(`[orderCloseAudit] persist failed: ${error.message}`)
-        }
-      })
+    void (async () => {
+      // trade_execution_logs requires user_id + signal_id (both NOT NULL).
+      // The low-level broker clients only know accountId + ticket, so resolve
+      // the owning trade row before inserting — otherwise every audit insert
+      // fails at the DB and the trail is silently dropped.
+      const { data: trade } = await supabase
+        .from('trades')
+        .select('user_id, signal_id')
+        .eq('broker_account_id', event.accountId)
+        .eq('metaapi_order_id', String(event.ticket))
+        .maybeSingle()
+
+      if (!trade?.user_id || !trade?.signal_id) {
+        console.warn(
+          `[orderCloseAudit] no trade row for account=${event.accountId} ticket=${event.ticket}; audit not persisted`,
+        )
+        return
+      }
+
+      const { error } = await supabase
+        .from('trade_execution_logs')
+        .insert({
+          user_id: trade.user_id,
+          signal_id: trade.signal_id,
+          action: 'order_close_audit',
+          status: event.ok === false ? 'failed' : 'success',
+          request_payload: {
+            source: event.source,
+            account_id: event.accountId,
+            ticket: event.ticket,
+            volume: event.volume ?? null,
+            slippage: event.slippage ?? null,
+            message: event.message ?? null,
+            stack: event.stack.slice(0, 4000),
+          } as unknown as Record<string, unknown>,
+          error_message: event.ok === false ? (event.message ?? 'orderClose failed') : null,
+        })
+      if (error) {
+        console.warn(`[orderCloseAudit] persist failed: ${error.message}`)
+      }
+    })()
   })
 }
 

@@ -20,10 +20,12 @@ const signalManagementIntent_1 = require("./signalManagementIntent");
 const normalizeTelegramMessageText_1 = require("./normalizeTelegramMessageText");
 const pipelineTimestamps_1 = require("./pipelineTimestamps");
 const sentry_1 = require("./observability/sentry");
+const businessEvents_1 = require("./observability/businessEvents");
 const workerMetrics_1 = require("./workerMetrics");
 const workerConfig_1 = require("./workerConfig");
 const tradeSignalActions_1 = require("./tradeSignalActions");
 const copierPause_1 = require("./copierPause");
+const copierHealth_1 = require("./copierHealth");
 const signalRevision_1 = require("./signalRevision");
 const aiParseModification_1 = require("./aiParseModification");
 const aiParseEntry_1 = require("./aiParseEntry");
@@ -46,6 +48,22 @@ const PARSE_SIGNAL_AUTH_KEY = isJwt(RAW_PARSE_SIGNAL_KEY)
     ? RAW_PARSE_SIGNAL_KEY
     : SUPABASE_SERVICE_ROLE_KEY;
 const PARSE_SIGNAL_API_KEY = SUPABASE_SERVICE_ROLE_KEY;
+/** Fire-and-forget call to the signal-review-email edge function (best-effort). */
+function notifyHumanReviewEmail(signalId) {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY)
+        return;
+    const url = `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/signal-review-email`;
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+        body: JSON.stringify({ signal_id: signalId }),
+    }).catch((err) => {
+        console.warn(`[userListener] signal-review-email notification failed id=${signalId}: ${err instanceof Error ? err.message : String(err)}`);
+    });
+}
 function listenerInlineParseEnabled() {
     const v = String(process.env.LISTENER_INLINE_PARSE ?? 'true').toLowerCase();
     return v !== '0' && v !== 'false' && v !== 'no';
@@ -191,6 +209,64 @@ function isConfirmedChannelInvalidError(err) {
         || code.includes('CHANNEL_PRIVATE');
 }
 class UserListener {
+    persistHealth(patch, opts) {
+        void (0, copierHealth_1.persistCopierHealth)(this.supabase, this.userId, patch, {
+            ...opts,
+            ownershipEpoch: this.healthOwnershipEpoch,
+            leaseAcquiredAt: this.healthLeaseAcquiredAt,
+        });
+    }
+    currentListenerStatus() {
+        if (this.isConnected)
+            return 'connected';
+        if (this.reconnectInFlight || this.deferredRetryTimer)
+            return 'reconnecting';
+        if (this.stopping)
+            return 'disconnected';
+        return 'unknown';
+    }
+    updateHealth(reason, opts) {
+        const listenerStatus = opts?.recoveryExhausted
+            ? 'failed'
+            : reason === 'watchdog_probe_failed'
+                ? 'reconnecting'
+                : this.currentListenerStatus();
+        const lastSuccessful = this.lastSuccessfulPollAt || null;
+        const combined = (0, copierHealth_1.resolveCopierEngineState)({
+            linked: true,
+            listenerStatus,
+            owned: true,
+            mtprotoConnected: this.isConnected,
+            lastSuccessfulProbeAt: lastSuccessful,
+            recoveryExhausted: opts?.recoveryExhausted,
+            shutdownInProgress: this.stopping,
+            freshnessThresholdMs: (0, copierHealth_1.copierHealthFreshnessThresholdMs)(),
+        });
+        const nowIso = new Date().toISOString();
+        this.persistHealth({
+            ...combined,
+            listenerStatus,
+            mtprotoConnected: this.isConnected,
+            lastConnectedAt: this.isConnected ? nowIso : undefined,
+            lastDisconnectedAt: !this.isConnected ? nowIso : undefined,
+            lastProbeAt: nowIso,
+            lastSuccessfulProbeAt: lastSuccessful ? new Date(lastSuccessful).toISOString() : null,
+            consecutiveProbeFailures: this.consecutiveProbeFailures,
+            reconnectStartedAt: this.reconnectInFlight ? nowIso : null,
+            recoveryExhausted: opts?.recoveryExhausted === true,
+            shutdownInProgress: this.stopping,
+            healthReason: reason || combined.healthReason,
+            ownershipEpoch: this.healthOwnershipEpoch,
+            leaseAcquiredAt: this.healthLeaseAcquiredAt,
+            freshnessThresholdMs: (0, copierHealth_1.copierHealthFreshnessThresholdMs)(),
+        }, opts);
+    }
+    getHealthOwnershipEpoch() {
+        return this.healthOwnershipEpoch;
+    }
+    getHealthLeaseAcquiredAt() {
+        return this.healthLeaseAcquiredAt;
+    }
     constructor(userId, sessionString, supabase, adoptedClient, onAuthKeyDuplicatedRecoveryExhausted) {
         this.onAuthKeyDuplicatedRecoveryExhausted = onAuthKeyDuplicatedRecoveryExhausted;
         this.monitoredChannels = new Set();
@@ -250,6 +326,8 @@ class UserListener {
         this.revisionAiCooldowns = new Map();
         /** signal_channel_ids where canonical feed is live — skip poll/reconcile in primary mode. */
         this.passiveSignalChannelIds = new Set();
+        this.healthLeaseAcquiredAt = new Date().toISOString();
+        this.healthOwnershipEpoch = this.healthLeaseAcquiredAt;
         this.userId = userId;
         this.supabase = supabase;
         this.client = adoptedClient ?? (0, telegramClient_1.buildClient)(sessionString);
@@ -430,15 +508,19 @@ class UserListener {
         }
         console.warn(`[userListener] channel_auto_disabled user=${this.userId}`
             + ` channel=${row.id} count=${state.consecutiveCount} code=${errorCode}`);
-        (0, sentry_1.captureWorkerWarning)('Telegram channel auto-disabled after repeated invalid-channel failures', {
-            subsystem: 'telegram',
-            operation: 'channel_auto_disabled',
-            errorCode: errorCode || 'CHANNEL_INVALID',
-            fingerprint: ['telegram', errorCode || 'CHANNEL_INVALID', 'channel_auto_disabled'],
+        (0, businessEvents_1.captureBusinessIssue)({
+            category: 'telegram',
+            event: 'telegram_channel_auto_disabled',
+            severity: 'warning',
+            reasonCode: errorCode || 'CHANNEL_INVALID',
+            message: 'Telegram channel auto-disabled after repeated invalid-channel failures',
+            userImpact: 'failed',
+            fingerprint: ['telegram_channel_auto_disabled', errorCode || 'CHANNEL_INVALID', 'channel_auto_disabled'],
             context: {
                 user_id: this.userId,
                 channel_id: row.id,
                 stage: 'channel_auto_disabled',
+                operation: 'channel_monitoring',
                 retry_attempt: state.consecutiveCount,
                 extra: { source, threshold: CHANNEL_INVALID_DISABLE_THRESHOLD },
             },
@@ -494,6 +576,8 @@ class UserListener {
         this.isConnected = true;
         this.startedAt = Date.now();
         this.lastEventAt = Date.now();
+        this.lastSuccessfulPollAt = Date.now();
+        this.updateHealth('listener_started', { force: true });
         // Do not await getDialogs warmup here — flood-wait / hung dialogs blocked
         // startListener, held the connection lock, and left users with No lease.
         // Periodic startEntityWarmup + initial fire-and-forget cover the same work.
@@ -547,6 +631,7 @@ class UserListener {
         finally {
             this.isConnected = false;
             this.clearDialogsCache();
+            this.updateHealth('listener_stopped', { force: true });
         }
     }
     clearDialogsCache() {
@@ -588,6 +673,7 @@ class UserListener {
         return {
             user_id: this.userId,
             connected: this.isConnected,
+            listener_status: this.currentListenerStatus(),
             last_event_at: this.lastEventAt,
             last_successful_poll_at: this.lastSuccessfulPollAt,
             last_reconnect_at: this.lastReconnectAt,
@@ -1664,14 +1750,26 @@ class UserListener {
                 isModificationClass,
                 keywords,
                 lexicon,
+                pipelineTs: args.pipelineTs,
             });
-            if (routed.parseResult.status === 'parsed' && routed.aiMeta?.source === 'openai') {
+            if (routed.parseResult.status === 'parsed'
+                && routed.aiMeta?.source
+                && ['openai', 'cerebras', 'gpt4o'].includes(routed.aiMeta.source)) {
                 console.log(`[userListener] universal parse user=${this.userId} channelRow=${args.channelRowId}`
                     + ` intent=${routed.aiMeta.intent} action=${routed.parseResult.parsed.action}`
                     + ` symbol=${routed.parseResult.parsed.symbol ?? 'null'}`);
             }
+            const parseResult = routed.verification
+                ? {
+                    ...routed.parseResult,
+                    parsed: {
+                        ...routed.parseResult.parsed,
+                        _verification: routed.verification,
+                    },
+                }
+                : routed.parseResult;
             return {
-                parseResult: routed.parseResult,
+                parseResult,
                 aiMeta: routed.aiMeta,
                 channelKeywords: keywords,
             };
@@ -1946,6 +2044,7 @@ class UserListener {
                 signalId,
                 isReply,
                 parentSignalId,
+                pipelineTs,
             });
             parseResult = parsed.parseResult;
             aiMeta = parsed.aiMeta;
@@ -2043,6 +2142,38 @@ class UserListener {
                     signal_id: signalId,
                     intent: aiMeta.intent,
                     skip_reason: parseResult.skip_reason,
+                },
+            });
+        }
+        if (aiMeta?.fallbackReason) {
+            void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
+                userId: this.userId,
+                eventType: 'ai_parse_fallback',
+                channelRowId: channelRow.id,
+                telegramMessageId: messageId,
+                detail: {
+                    signal_id: signalId,
+                    reason: aiMeta.fallbackReason,
+                    deterministic_status: parseResult.status,
+                    deterministic_action: parseResult.parsed.action,
+                    ai_intent: aiMeta.intent,
+                    ai_source: aiMeta.source,
+                },
+            });
+        }
+        if (aiMeta?.reviewRequired) {
+            notifyHumanReviewEmail(signalId);
+            void (0, listenerEvents_1.persistListenerEvent)(this.supabase, {
+                userId: this.userId,
+                eventType: 'ai_parse_review_required',
+                channelRowId: channelRow.id,
+                telegramMessageId: messageId,
+                detail: {
+                    signal_id: signalId,
+                    ai_intent: aiMeta.intent,
+                    ai_source: aiMeta.source,
+                    skip_reason: parseResult.skip_reason,
+                    review_required: true,
                 },
             });
         }
@@ -2162,6 +2293,14 @@ class UserListener {
             created_at: new Date().toISOString(),
             pipeline_ts: pipelineTs,
         };
+        // AI-lane dispatches carry their source so the trade worker can apply the
+        // adverse-price entry guard only to AI-parsed / GPT-4o-reconciled entries.
+        if (aiMeta?.source === 'cerebras' || aiMeta?.source === 'openai') {
+            dispatchRow.dispatch_source = 'ai_parsed';
+        }
+        else if (aiMeta?.source === 'gpt4o') {
+            dispatchRow.dispatch_source = 'ai_reconciled';
+        }
         console.log(`[userListener] dispatch signal user=${this.userId} signalId=${signalId} channelRow=${channelRow.id} messageId=${messageId}`);
         this.liveMessageDedup.set(dedupKey, Date.now());
         // Persist BEFORE dispatch so trades / order_send logs / range_pending_legs
@@ -3317,6 +3456,8 @@ class UserListener {
             await (0, telegramClient_1.tgInvoke)(this.client, new tl_1.Api.updates.GetState());
             this.consecutiveProbeFailures = 0;
             this.lastEventAt = this.lastEventAt || Date.now();
+            this.lastSuccessfulPollAt = Date.now();
+            this.updateHealth('watchdog_probe_ok');
         }
         catch (err) {
             if ((0, telegramClient_1.isAuthKeyDuplicated)(err)) {
@@ -3324,6 +3465,7 @@ class UserListener {
                 return;
             }
             this.consecutiveProbeFailures++;
+            this.updateHealth('watchdog_probe_failed');
             console.warn(`[watchdog] probe failed (${this.consecutiveProbeFailures}/${WATCHDOG_FAILURE_THRESHOLD}) for ${this.userId}:`, err instanceof Error ? err.message : String(err));
             if (this.consecutiveProbeFailures >= WATCHDOG_FAILURE_THRESHOLD) {
                 await this.requestReconnect('watchdog');
@@ -3366,6 +3508,7 @@ class UserListener {
         const elapsed = Date.now() - this.lastReconnectEndedAt;
         const delay = elapsed < cooldown ? cooldown - elapsed : 0;
         this.reconnectInFlight = (async () => {
+            this.updateHealth(reason, { force: true });
             if (delay > 0) {
                 console.log(`[userListener] reconnect cooldown ${delay}ms for ${this.userId} cycle=${cycleId}`);
                 await new Promise(r => setTimeout(r, delay));
@@ -3374,6 +3517,12 @@ class UserListener {
         })().finally(() => {
             this.lastReconnectEndedAt = Date.now();
             this.reconnectInFlight = null;
+        });
+        // Attach a rejection handler so a failing reconnect cycle can never
+        // become an unhandled rejection and kill the whole worker — the
+        // original promise is still returned to awaiters unchanged.
+        this.reconnectInFlight.catch(err => {
+            console.error(`[userListener] reconnect cycle failed for ${this.userId} reason=${reason} cycle=${cycleId}:`, (0, authKeyDuplicatedRecovery_1.redactTelegramConnectionLog)(err));
         });
         return this.reconnectInFlight;
     }
@@ -3392,14 +3541,18 @@ class UserListener {
         if (this.malformedRpcRecoveryCount > malformedRpcResultMaxRecoveries()) {
             console.error(`[userListener] malformed Telegram RPC result recovery exhausted for ${this.userId}`
                 + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()}) — invalidating session`);
-            (0, sentry_1.captureWorkerError)(err instanceof Error ? err : new Error(String(err ?? 'malformed rpc result')), {
-                subsystem: 'telegram',
-                operation: 'malformed_rpc_recovery_exhausted',
-                errorCode: 'GRAMJS_MALFORMED_RPC_RESULT',
-                fingerprint: ['telegram', 'GRAMJS_MALFORMED_RPC_RESULT', 'exhausted'],
+            (0, businessEvents_1.captureBusinessIssue)({
+                category: 'telegram',
+                event: 'telegram_recovery_exhausted',
+                severity: 'error',
+                reasonCode: 'GRAMJS_MALFORMED_RPC_RESULT',
+                message: 'Malformed Telegram RPC result recovery exhausted',
+                userImpact: 'failed',
+                fingerprint: ['telegram_recovery_exhausted', 'malformed_rpc_result', 'exhausted'],
                 context: {
                     user_id: this.userId,
                     stage: 'malformed_rpc_recovery',
+                    operation: 'telegram_rpc_recovery',
                     retry_attempt: this.malformedRpcRecoveryCount,
                     extra: { max_recoveries: malformedRpcResultMaxRecoveries() },
                 },
@@ -3407,6 +3560,14 @@ class UserListener {
             this.connectionTrace('recovery_invalidated', {
                 source: 'malformed_rpc_result',
                 attempts: this.malformedRpcRecoveryCount,
+            });
+            this.updateHealth('malformed_rpc_recovery_exhausted', { force: true, recoveryExhausted: true });
+            (0, copierHealth_1.maybeCaptureCopierOffline)({
+                userId: this.userId,
+                listenerStatus: 'failed',
+                reasonCode: 'GRAMJS_MALFORMED_RPC_RESULT',
+                reason: 'malformed_rpc_recovery_exhausted',
+                manualReview: true,
             });
             setImmediate(() => this.onAuthKeyDuplicatedRecoveryExhausted?.(this.userId, 'malformed_rpc_result'));
             return;
@@ -3435,6 +3596,7 @@ class UserListener {
         this.lastReconnectAt = Date.now();
         this.consecutiveProbeFailures = 0;
         this.isConnected = false;
+        this.updateHealth(reason, { force: true });
         this.connectionTrace('disconnect_start', { source: reason, cycleId });
         try {
             await this.client.disconnect();
@@ -3454,6 +3616,8 @@ class UserListener {
                 this.connectionTrace('connect_start', { source: reason, cycleId, attempt: attempt + 1 });
                 await this.client.connect();
                 this.isConnected = true;
+                this.lastSuccessfulPollAt = Date.now();
+                this.updateHealth('reconnect_success', { force: true });
                 lastErr = undefined;
                 this.connectionTrace('recovery_complete', { source: reason, cycleId, attempt: attempt + 1 });
                 break;
@@ -3481,18 +3645,30 @@ class UserListener {
         }
         if (!this.isConnected) {
             console.error(`[userListener] reconnect failed for ${this.userId} cycle=${cycleId}:`, (0, authKeyDuplicatedRecovery_1.redactTelegramConnectionLog)(lastErr ?? 'unknown'));
-            (0, sentry_1.captureWorkerWarning)(lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? 'reconnect failed')), {
-                subsystem: 'telegram',
-                operation: 'reconnect_exhausted_deferred',
-                errorCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
-                fingerprint: ['telegram', 'TELEGRAM_RECONNECT_EXHAUSTED', reason],
+            (0, businessEvents_1.captureBusinessIssue)({
+                category: 'telegram',
+                event: 'telegram_listener_failed',
+                severity: 'error',
+                reasonCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
+                message: 'Telegram reconnect attempts exhausted and listener deferred retry',
+                userImpact: 'delayed',
+                fingerprint: ['telegram_listener_failed', 'reconnect', 'TELEGRAM_RECONNECT_EXHAUSTED', reason],
                 context: {
                     user_id: this.userId,
                     stage: 'reconnect',
+                    operation: 'telegram_reconnect',
                     extra: { reason, cycle_id: cycleId, attempts: delays.length },
                 },
             });
             this.connectionTrace('recovery_invalidated', { source: reason, cycleId, attempts: delays.length });
+            this.updateHealth('reconnect_exhausted', { force: true });
+            (0, copierHealth_1.maybeCaptureCopierOffline)({
+                userId: this.userId,
+                listenerStatus: 'failed',
+                reasonCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
+                reason,
+                sinceMs: this.lastReconnectAt || null,
+            });
             this.scheduleDeferredRetry(cycleId);
             return;
         }
@@ -3502,7 +3678,23 @@ class UserListener {
         this.monitoredChannels.clear();
         // Warm entity cache BEFORE registering the handler so gramjs can
         // deliver NewMessage events for all monitored channels.
-        await this.warmEntityCache();
+        try {
+            await this.warmEntityCache();
+        }
+        catch (err) {
+            if ((0, telegramClient_1.isAuthKeyUnregistered)(err) || (0, telegramClient_1.isAuthKeyDuplicated)(err)) {
+                // Session died again between connect() and warmup (e.g. the auth key
+                // is invalidated/duplicated by a peer replica). Never let this escape
+                // forceReconnect — treat it like the exhausted-recovery path instead
+                // of crashing the whole worker with an unhandled rejection.
+                console.error(`[userListener] session invalid during reconnect warmup for ${this.userId} cycle=${cycleId}:`, (0, authKeyDuplicatedRecovery_1.redactTelegramConnectionLog)(err));
+                this.isConnected = false;
+                this.connectionTrace('recovery_invalidated', { source: reason, cycleId, stage: 'warmup' });
+                this.scheduleDeferredRetry(cycleId);
+                return;
+            }
+            throw err;
+        }
         if (!this.isConnected) {
             return;
         }
