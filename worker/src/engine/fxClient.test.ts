@@ -141,3 +141,16 @@ describe('FxHttpError ambiguity classification', () => {
     assert.equal(new FxHttpError('x', 400, null, false).ambiguous, false)
   })
 })
+
+describe('FxClient.http error messages', () => {
+  it('surfaces SymbolSelect failed as Symbol not found instead of HTTP 500', async () => {
+    const { transport } = mockTransport(() => ({
+      status: 500,
+      body: { error: 'MRPC', message: 'SymbolSelect failed', command_id: 42 },
+    }))
+    const fx = new FxClient({ apiKey: 'k', transport })
+    const r = await fx.orderSend('acct', 'MT5', REQ, SEND_OPTS)
+    assert.equal(r.ok, false)
+    assert.equal(r.message, 'Symbol not found: XAUUSD')
+  })
+})

@@ -185,6 +185,7 @@ export const channelWorkerRu: ChannelWorkerTranslations = {
   dispatchSkipped: 'Этот сигнал не был скопирован ({reason}).',
   errorTicketNotFound: 'Тикет {ticket} не найден',
   errorSymbolNotFound: 'Символ не найден: {symbol}',
+  errorBrokerRejectedGeneric: 'Брокер отклонил ордер — проверьте сопоставление символов и соединение, затем повторите',
   errorBrokerBridgeUnavailable:
     'Broker bridge temporarily unavailable — enable Algo Trading on MT5 and confirm Trade EA ready in Account Configuration',
   errorTradeEaNotReady:

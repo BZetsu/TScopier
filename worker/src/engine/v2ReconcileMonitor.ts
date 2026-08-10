@@ -161,6 +161,7 @@ function filterDirectionallyValidModifies(
       takeprofit: wantTp,
       referencePrice: ref,
       isBuy,
+      symbol: o.symbol,
     })
     if (m.stoploss != null && m.stoploss > 0 && stripped.stoploss === 0) return false
     if (m.takeProfit != null && m.takeProfit > 0 && stripped.takeprofit === 0) return false

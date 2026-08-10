@@ -4,11 +4,9 @@ import type { BrokerRow } from './types'
 export function hasLegacySymbolDecoration(manual: Record<string, unknown>): boolean {
   const prefix = String(manual.symbol_prefix ?? '').trim()
   const suffix = String(manual.symbol_suffix ?? '').trim()
-  const mapping = manual.symbol_mapping
-  const hasMap = mapping != null
-    && typeof mapping === 'object'
-    && Object.keys(mapping as Record<string, unknown>).length > 0
-  return prefix.length > 0 || suffix.length > 0 || hasMap
+  // Explicit symbol_mapping is an intentional escape hatch (e.g. XAUUSD → GOLD#) when
+  // fuzzy auto-match cannot rename instruments. Never treat maps as disposable "legacy".
+  return prefix.length > 0 || suffix.length > 0
 }
 
 export function stripSymbolDecoration(manual: Record<string, unknown>): Record<string, unknown> {
@@ -16,11 +14,10 @@ export function stripSymbolDecoration(manual: Record<string, unknown>): Record<s
     ...manual,
     symbol_prefix: '',
     symbol_suffix: '',
-    symbol_mapping: {},
   }
 }
 
-/** Remove stored prefix/suffix/map so runtime fuzzy broker matching is used. */
+/** Remove stored prefix/suffix so runtime fuzzy broker matching is used. Keeps symbol_mapping. */
 export async function clearLegacySymbolDecorationIfPresent(
   supabase: SupabaseClient,
   broker: BrokerRow,
@@ -42,7 +39,7 @@ export async function clearLegacySymbolDecorationIfPresent(
 
   broker.manual_settings = nextSettings as BrokerRow['manual_settings']
   console.log(
-    `[tradeExecutor] cleared legacy symbol decoration broker=${broker.id} (auto-match enabled)`,
+    `[tradeExecutor] cleared legacy symbol prefix/suffix broker=${broker.id} (auto-match enabled; symbol_mapping preserved)`,
   )
   return true
 }

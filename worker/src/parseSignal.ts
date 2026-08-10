@@ -747,12 +747,38 @@ function entryZoneFromRawTokens(rawA: string, rawB: string): { entry_zone_low: n
   return { entry_zone_low: zone.low, entry_zone_high: zone.high }
 }
 
+/** Drop RRR / risk-reward ratio chatter so "1:3+" is not parsed as SL. */
+function stripRiskRewardRatioNoise(text: string): string {
+  return String(text ?? '')
+    .replace(/\bRRR\b(?:\s*\([^)]*\))?/gi, ' ')
+    .replace(/\brisk\s*[-/]?\s*to\s*[-/]?\s*reward(?:\s*ratio)?\b/gi, ' ')
+    .replace(/\b\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?\+?(?:\s*(?:rrr|rr|r\/r))?\b/gi, ' ')
+}
+
+function pricesExcludingRatioTokens(clause: string, prices: number[]): number[] {
+  const ratioNums = new Set<number>()
+  for (const m of String(clause).matchAll(/\b(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\+?/g)) {
+    const a = Number(m[1])
+    const b = Number(m[2])
+    if (Number.isFinite(a) && a > 0) ratioNums.add(a)
+    if (Number.isFinite(b) && b > 0) ratioNums.add(b)
+  }
+  if (ratioNums.size === 0) return prices
+  return prices.filter((p) => !ratioNums.has(p))
+}
+
 function slPriceFromClause(clause: string): number | null {
-  const slClauseTo = clause.match(new RegExp(`(?:\\bto\\b|إلى)\\s*(${SIGNAL_PRICE_NUM})`, 'iu'))
+  const cleaned = stripRiskRewardRatioNoise(clause)
+  const slClauseTo = cleaned.match(new RegExp(`(?:\\bto\\b|إلى)\\s*(${SIGNAL_PRICE_NUM})`, 'iu'))
   if (slClauseTo?.[1]) return parseSignalPriceToken(slClauseTo[1])
-  const candidates = bareTradePricesExcludingPips(clause, extractUnlabeledPrices(clause))
-  const tail = candidates.length > 0 ? candidates[candidates.length - 1] : null
-  if (tail != null && Number.isFinite(tail) && tail > 0) return tail
+  const candidates = pricesExcludingRatioTokens(
+    clause,
+    bareTradePricesExcludingPips(cleaned, extractUnlabeledPrices(cleaned)),
+  )
+  // Prefer the first price after the SL label (e.g. "SL (STOP LOSS): 4325"), not
+  // trailing ratio / hype numbers that may remain in a long clause.
+  const head = candidates.length > 0 ? candidates[0] : null
+  if (head != null && Number.isFinite(head) && head > 0) return head
   return null
 }
 
@@ -766,26 +792,35 @@ function looksLikeStopOrTpAdjustCommand(text: string): boolean {
 }
 
 function parseSlFromText(text: string): number | null {
-  const slSlashAt = text.match(
+  const cleaned = stripRiskRewardRatioNoise(text)
+  const slSlashAt = cleaned.match(
     /(?:^|\s)(?:sl|stop\s*loss|stoploss)[_\s]*\/\s*@\s*(\d+(?:\.\d+)?)/i,
   )
   if (slSlashAt?.[1]) return parseSignalPriceToken(slSlashAt[1])
-  const slDotLeader = text.match(
+  // "SL (STOP LOSS): 4325" / "Stop Loss (SL): 4325"
+  const slParenthetical = cleaned.match(
+    new RegExp(
+      `\\b(?:sl|stop\\s*loss|stoploss)\\b(?:\\s*\\([^)]*\\))?\\s*[:=@\\-]?\\s*(${SIGNAL_PRICE_NUM})`,
+      'i',
+    ),
+  )
+  if (slParenthetical?.[1]) return parseSignalPriceToken(slParenthetical[1])
+  const slDotLeader = cleaned.match(
     new RegExp(`\\b(?:${SL_TEXT_LABELS})\\b[.\\s]+(${SIGNAL_PRICE_NUM})`, 'i'),
   )
   if (slDotLeader?.[1]) return parseSignalPriceToken(slDotLeader[1])
-  const slDotLabel = text.match(/\b(?:sl|stop\s*loss)\b\s*\.\s*(\d+(?:\.\d+)?)/i)
+  const slDotLabel = cleaned.match(/\b(?:sl|stop\s*loss)\b\s*\.\s*(\d+(?:\.\d+)?)/i)
   if (slDotLabel?.[1]) return parseSignalPriceToken(slDotLabel[1])
-  const slMatchStandard = text.match(
+  const slMatchStandard = cleaned.match(
     new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s*[:=@]?\\s*(${SIGNAL_PRICE_NUM})`, 'i'),
   )
   if (slMatchStandard?.[1]) return parseSignalPriceToken(slMatchStandard[1])
-  const slMatchTo = text.match(
+  const slMatchTo = cleaned.match(
     new RegExp(`\\b(?:${SL_TEXT_LABELS})\\s+(?:to|إلى)\\s+(${SIGNAL_PRICE_NUM})`, 'iu'),
   )
   if (slMatchTo?.[1]) return parseSignalPriceToken(slMatchTo[1])
   // "Adjust Risk/SL/Stoploss … (+ pips) … to 4505"
-  const mgmtAdjust = text.match(
+  const mgmtAdjust = cleaned.match(
     new RegExp(`\\b(?:${SL_MGMT_VERBS})\\s+(?:${SL_TEXT_LABELS})\\b([^\\n\\r]{0,120})`, 'i'),
   )
   if (mgmtAdjust?.[1]) {
@@ -793,7 +828,11 @@ function parseSlFromText(text: string): number | null {
     if (fromMgmt != null) return fromMgmt
   }
   // Handles verbose updates like "Adjust SL + 20 pips for now to 4505".
-  const slClause = text.match(new RegExp(`\\b(?:${SL_TEXT_LABELS})\\b([^\\n\\r]{0,96})`, 'i'))?.[1] ?? ''
+  // Prefer explicit SL/stop-loss labels over bare "risk" (RRR chatter).
+  const slClause =
+    cleaned.match(new RegExp(`\\b(?:sl|stop\\s*loss|stoploss|وقف\\s*الخسارة|وقف)\\b([^\\n\\r]{0,96})`, 'i'))?.[1]
+    ?? cleaned.match(new RegExp(`\\b(?:${SL_TEXT_LABELS})\\b([^\\n\\r]{0,96})`, 'i'))?.[1]
+    ?? ''
   if (slClause) {
     const fromClause = slPriceFromClause(slClause)
     if (fromClause != null) return fromClause
@@ -972,13 +1011,24 @@ function extractOptionalEntryAnchor(
   const text = message.replace(/\s+/g, " ").trim()
   const delim = channelKeywords.additional.delimiters
   const zone = text.match(
-    new RegExp(`\\b(?:between|from)\\s+(${SIGNAL_PRICE_NUM})\\s+(?:and|to|-|–)\\s+(${SIGNAL_PRICE_NUM})\\b`, 'i'),
+    new RegExp(
+      `\\b(?:between|from)\\s+(${SIGNAL_PRICE_NUM})\\s*(?:and|to|-|–|_)\\s*(${SIGNAL_PRICE_NUM})\\b`,
+      'i',
+    ),
+  )
+  // "Trade Activated From 4350_4360" / "Activated From 4315-4310"
+  const activatedFromZone = text.match(
+    new RegExp(
+      `\\b(?:trade\\s+)?activated\\s+from\\s+(${SIGNAL_PRICE_NUM})\\s*(?:_|-|–|to|/)\\s*(${SIGNAL_PRICE_NUM})\\b`,
+      'i',
+    ),
   )
   let entry_zone_low: number | null = null
   let entry_zone_high: number | null = null
   let entry_price: number | null = null
-  if (zone?.[1] && zone?.[2]) {
-    const normalized = entryZoneFromRawTokens(zone[1], zone[2])
+  const primaryZone = activatedFromZone ?? zone
+  if (primaryZone?.[1] && primaryZone?.[2]) {
+    const normalized = entryZoneFromRawTokens(primaryZone[1], primaryZone[2])
     if (normalized) {
       entry_zone_low = normalized.entry_zone_low
       entry_zone_high = normalized.entry_zone_high
@@ -995,7 +1045,7 @@ function extractOptionalEntryAnchor(
     // ZN / ZONE / Z: 4105-4113 (common shorthand on gold channels)
     const znZone = text.match(
       new RegExp(
-        `\\b(?:zn|zone|z)\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${SIGNAL_PRICE_NUM})\\b`,
+        `\\b(?:zn|zone|z)\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})\\s*(?:-|–|to|_)\\s*(${SIGNAL_PRICE_NUM})\\b`,
         'i',
       ),
     )

@@ -184,6 +184,7 @@ export const channelWorkerJa: ChannelWorkerTranslations = {
   dispatchSkipped: 'このシグナルはコピーされませんでした（{reason}）。',
   errorTicketNotFound: 'チケット {ticket} が見つかりません',
   errorSymbolNotFound: 'シンボルが見つかりません: {symbol}',
+  errorBrokerRejectedGeneric: 'ブローカーが注文を拒否しました — シンボルマッピングと接続を確認して再試行してください',
   errorBrokerBridgeUnavailable:
     'Broker bridge temporarily unavailable — enable Algo Trading on MT5 and confirm Trade EA ready in Account Configuration',
   errorTradeEaNotReady:

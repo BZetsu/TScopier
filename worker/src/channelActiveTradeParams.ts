@@ -7,6 +7,7 @@ import { symbolsCompatibleForBasket } from './basketModFollowUp'
 import { takeProfitForPoolLegIndex } from './manualPlanning/tpBucketDistribution'
 import { parsedHasExplicitEntryAnchor } from './manualPlanning/parsedEntry'
 import type { ManualTpLot, ParsedSignal, VirtualPendingLeg } from './manualPlanning/types'
+import { signalPipPrice } from './signalPip'
 
 export type ChannelActiveTradeParams = {
   symbol: string
@@ -525,6 +526,23 @@ export function mergeParsedWithChannelParams(
 }
 
 /**
+ * Minimum |level − reference| used when stripping near-touch / wrong-side stops.
+ *
+ * Must be symbol-aware: an absolute 0.5 floor is fine for XAUUSD but wipes valid
+ * FX stops (e.g. GBPUSD SL ~50 pips away is only ~0.005 price units).
+ */
+export function defaultStripStopsMinDistance(
+  referencePrice: number,
+  symbol?: string | null,
+): number {
+  const ref = Number(referencePrice)
+  const pip = signalPipPrice(symbol ?? '')
+  const pipFloor = Number.isFinite(pip) && pip > 0 ? pip * 2 : 0
+  const relative = Number.isFinite(ref) && ref > 0 ? ref * 1e-5 : 0
+  return Math.max(relative, pipFloor, 1e-8)
+}
+
+/**
  * Drop SL/TP on the wrong side of the fill reference (broker rejects as invalid stops),
  * and drop levels so close to market they would fill immediately (stale channel memory /
  * mis-applied Adjust SL is a common source of "trades closed with no Telegram close").
@@ -534,9 +552,12 @@ export function stripInvalidStopsForSide(args: {
   takeprofit: number
   referencePrice: number
   isBuy: boolean
+  /** Optional symbol — used to derive a pip-based default minDistance. */
+  symbol?: string | null
   /**
-   * Minimum |level − reference| required to keep a stop. Defaults to a small absolute
-   * floor so near-touch SL/TP from stale DB memory cannot auto-close a fresh fill.
+   * Minimum |level − reference| required to keep a stop. Defaults to a small
+   * symbol-aware floor so near-touch SL/TP from stale DB memory cannot auto-close
+   * a fresh fill, without rejecting healthy FX stops.
    */
   minDistance?: number
 }): { stoploss: number; takeprofit: number; stripped: string[] } {
@@ -547,7 +568,7 @@ export function stripInvalidStopsForSide(args: {
   }
   const minDistance = Number.isFinite(args.minDistance) && (args.minDistance as number) > 0
     ? (args.minDistance as number)
-    : Math.max(ref * 1e-4, 0.5)
+    : defaultStripStopsMinDistance(ref, args.symbol)
   let stoploss = args.stoploss
   let takeprofit = args.takeprofit
   const stripped: string[] = []

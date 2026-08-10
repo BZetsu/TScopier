@@ -41,6 +41,64 @@ const symbolInventoryReadyHandled = new Set<string>()
 
 const SYMBOL_AUTO_MATCH_PROBES = ['EURUSD', 'XAUUSD', 'GBPUSD', 'BTCUSD'] as const
 
+/**
+ * Map canonical metals (XAUUSD / GOLD) onto broker names like GOLD# (XM) when
+ * suffix/contains heuristics cannot rename XAUUSD → GOLD.
+ * Avoid equity lookalikes (BarrickGold, Gold Fields, Goldman…).
+ */
+export function resolveMetalAliasFromInventory(
+  inventory: SymbolListCacheEntry,
+  requested: string,
+): string | null {
+  const target = requested.toUpperCase().replace(/[^A-Z0-9]/g, '')
+  const isXau =
+    target === 'XAUUSD'
+    || target === 'XAU'
+    || target === 'GOLD'
+    || target === 'XAUUSDM'
+  if (!isXau) return null
+
+  const preferred = [
+    'GOLD#',
+    'GOLD',
+    'XAUUSD#',
+    'XAUUSDM',
+    'XAUUSD.M',
+    'XAUUSD+',
+    'XAUUSD.',
+    'GOLD24-7#',
+    'GOLD24-7',
+  ]
+  for (const p of preferred) {
+    if (inventory.set.has(p)) {
+      return inventory.list.find(s => s.toUpperCase() === p) ?? p
+    }
+  }
+
+  const candidates = inventory.list.filter(s => {
+    const u = s.toUpperCase()
+    if (/^XAUUSD([.#+\-_M].*)?$/i.test(u)) return true
+    // GOLD / GOLD# / GOLDm / GOLD.r / GOLD24-7# — not BarrickGold / GoldmSachs / Gold Fields
+    if (u === 'GOLD' || u === 'GOLDM') return true
+    if (/^GOLD#/.test(u)) return true
+    if (/^GOLD[.#+\-_]/.test(u)) return true
+    if (/^GOLD\d/.test(u)) return true
+    return false
+  })
+  if (candidates.length === 0) return null
+
+  const score = (s: string): number => {
+    const u = s.toUpperCase()
+    if (u === 'GOLD#') return 0
+    if (u === 'GOLD') return 1
+    if (u.startsWith('GOLD')) return 2
+    if (u.startsWith('XAUUSD')) return 3
+    return 4
+  }
+  candidates.sort((a, b) => score(a) - score(b) || a.length - b.length)
+  return candidates[0] ?? null
+}
+
 function findBrokerBySessionUuid(ctx: TradeExecutorContext, uuid: string): BrokerRow | undefined {
   for (const broker of ctx.brokersById.values()) {
     if (brokerSessionUuid(broker) === uuid) return broker
@@ -496,6 +554,9 @@ export function resolveBrokerSymbolFromInventory(ctx: TradeExecutorContext,
       const exact = inventory.list.find(s => s.toUpperCase() === winner)
       return exact ?? winner!
     }
+
+    const metal = resolveMetalAliasFromInventory(inventory, target)
+    if (metal) return metal
 
     const contains = inventory.list.filter(s => s.toUpperCase().includes(target))
     if (contains.length === 1) return contains[0]!

@@ -266,6 +266,25 @@ SL ⛔️4038`
     assert.equal(eligibility.eligible, true)
   })
 
+  it('allows Apex-style activated gold sell (not RRR commentary)', () => {
+    const msg = `🥇sell (GOLD) XAUUSD
+✅Trade Activated From 4350_4360
+✅TP1: 4320
+✅TP2: 4315
+🙋 SL (STOP LOSS): 4325
+RRR(Risk To Reward Ratio) 1:3+
+Action Plan: Stay Calm, Trust The Setup, And keep Holding Your Trades`
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'sell',
+      symbol: 'XAUUSD',
+      sl: 4325,
+      tp: [4320, 4315, 4310, 4305],
+      entry_zone_low: 4350,
+      entry_zone_high: 4360,
+    }, msg)
+    assert.equal(eligibility.eligible, true)
+  })
+
   it('still rejects vague commentary without structure', () => {
     const eligibility = evaluateParsedSignalExecutionEligibility({
       action: 'sell',
