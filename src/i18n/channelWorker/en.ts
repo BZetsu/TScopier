@@ -186,9 +186,9 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
   },
   dispatchSkipped: 'Did not copy this signal ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} not found',
-  errorSymbolNotFound: 'Symbol {symbol} is not available on this broker — map it in Account Configuration → Symbol mapping (e.g. XAUUSD → GOLD#)',
+  errorSymbolNotFound: 'Symbol {symbol} is not available on this broker — it may use a different name (e.g. GOLD# for gold on XM). Reconnect the account or contact support if this keeps failing.',
   errorBrokerRejectedGeneric:
-    'Broker rejected this order — check symbol mapping and connection, then try again',
+    'Broker rejected this order — check the symbol name on your broker and connection, then try again',
   errorBrokerBridgeUnavailable:
     'Broker bridge temporarily unavailable — open Account Configuration → broker health, enable Algo Trading on MT5, and wait until Trade EA ready is green',
   errorTradeEaNotReady:

@@ -486,8 +486,8 @@ test('channelWorkerLogMessage: HTTP 500 with symbol shows mapping guidance', () 
   assert.ok(message, 'expected a user-facing message')
   assert.ok(!message!.includes('HTTP 500'), `still shows raw HTTP 500: ${message}`)
   assert.ok(
-    message!.includes('Symbol mapping') || message!.includes('GOLD#'),
-    `expected symbol-mapping guidance, got: ${message}`,
+    message!.includes('GOLD#') || message!.includes('different name') || message!.includes('XAUUSD'),
+    `expected broker symbol guidance, got: ${message}`,
   )
 })
 
@@ -510,7 +510,7 @@ test('channelWorkerLogMessage: Symbol not found uses mapping guidance', () => {
     { 'ch-1': 'Gold Trader Mo' },
   )
   assert.ok(message?.includes('XAUUSD'))
-  assert.ok(message?.includes('Symbol mapping'))
+  assert.ok(message?.includes('GOLD#') || message?.includes('different name'))
 })
 
 test('channelWorkerLogMessage: hides unlinked channel mgmt-style skipped remap', () => {
