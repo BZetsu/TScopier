@@ -489,6 +489,7 @@ export async function runBasketLegModifies(args: {
       takeprofit,
       referencePrice: ref,
       isBuy: direction === 'buy',
+      symbol,
     })
     if (stripped.stripped.length) {
       stoploss = stripped.stoploss
@@ -561,6 +562,7 @@ export async function runBasketLegModifies(args: {
       takeprofit: modTp,
       referencePrice: ref,
       isBuy: direction === 'buy',
+      symbol,
     })
     if (postClampStripped.stripped.length) {
       modSl = postClampStripped.stoploss
@@ -926,11 +928,11 @@ export function reconcileBackoffMs(attempts: number): number {
   return capped
 }
 
-/** True when any leg still needs a broker modify (hard failures only — skips do not block). */
+/** True when any leg still needs a broker modify (hard failures or unfixable skips). */
 export function basketLegModifyMergeFailed(
   summary: MergeModifySummary & { skippedNotOnBroker?: number; skippedUnfixable?: number },
 ): boolean {
-  return summary.failed > 0
+  return summary.failed > 0 || (summary.skippedUnfixable ?? 0) > 0
 }
 
 export async function upsertBasketReconcileJob(

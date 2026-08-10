@@ -465,6 +465,54 @@ test('channelWorkerLogMessage: HTTP 503 shows bridge unavailable guidance', () =
   assert.ok(message?.includes('Broker bridge temporarily unavailable'))
 })
 
+test('channelWorkerLogMessage: HTTP 500 with symbol shows mapping guidance', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'order_send',
+      status: 'failed',
+      request_payload: { symbol: 'XAUUSD', trade_symbol: 'XAUUSD', operation: 'Sell' },
+      response_payload: null,
+      error_message: 'HTTP 500',
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'sell', symbol: 'XAUUSD' },
+        status: 'failed',
+        skip_reason: 'HTTP 500',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Gold Trader Mo' },
+  )
+  assert.ok(message, 'expected a user-facing message')
+  assert.ok(!message!.includes('HTTP 500'), `still shows raw HTTP 500: ${message}`)
+  assert.ok(
+    message!.includes('GOLD#') || message!.includes('different name') || message!.includes('XAUUSD'),
+    `expected broker symbol guidance, got: ${message}`,
+  )
+})
+
+test('channelWorkerLogMessage: Symbol not found uses mapping guidance', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'order_send',
+      status: 'failed',
+      request_payload: { symbol: 'XAUUSD', operation: 'Sell' },
+      response_payload: null,
+      error_message: 'Symbol not found: XAUUSD',
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'sell', symbol: 'XAUUSD' },
+        status: 'failed',
+        skip_reason: 'Symbol not found: XAUUSD',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Gold Trader Mo' },
+  )
+  assert.ok(message?.includes('XAUUSD'))
+  assert.ok(message?.includes('GOLD#') || message?.includes('different name'))
+})
+
 test('channelWorkerLogMessage: hides unlinked channel mgmt-style skipped remap', () => {
   const message = channelWorkerLogMessage(
     {

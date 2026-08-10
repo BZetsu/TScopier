@@ -213,7 +213,12 @@ export function classifyBrokerFailureReason(message: string): string {
   if (/margin|not enough money|insufficient funds/.test(lower)) return 'INSUFFICIENT_MARGIN'
   if (/market.*closed|off quotes|trade disabled/.test(lower)) return 'MARKET_CLOSED'
   if (/invalid volume|lot|minimum volume|min lot/.test(lower)) return 'INVALID_LOT'
-  if (/symbol|instrument/.test(lower) && /not found|unknown|disabled|unsupported|invalid/.test(lower)) return 'SYMBOL_UNSUPPORTED'
+  if (
+    /symbolselect/.test(lower)
+    || (/symbol|instrument/.test(lower) && /not found|unknown|disabled|unsupported|invalid|select\s*failed/.test(lower))
+  ) {
+    return 'SYMBOL_UNSUPPORTED'
+  }
   if (/timeout|timed out|operation timeout/.test(lower)) return 'BROKER_TIMEOUT'
   if (/not connected|disconnected|session|auth|unauthorized|forbidden|invalid api/.test(lower)) return 'BROKER_ACCOUNT_UNAVAILABLE'
   if (/rate limit|too many requests/.test(lower)) return 'BROKER_RATE_LIMITED'

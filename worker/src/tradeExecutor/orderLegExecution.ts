@@ -9,6 +9,7 @@ import type { ChannelKeywords, ManualSettings, PlannerResult, VirtualPendingLeg 
 import { autoManagementTradeSnapshot } from '../autoManagement'
 import { stripInvalidStopsForSide } from '../channelActiveTradeParams'
 import { isInvalidStopsError } from '../orderModifySafe'
+import { humanizeOrderSendError } from '../brokerTradeError'
 import { trailingTradeRowSnapshot } from '../trailingStop'
 import { applyPostFillFollowUp, type PostFillTradeLeg } from '../postFillFollowUp'
 import type { TradeExecutorContext } from './context'
@@ -347,7 +348,10 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
         break
       } catch (err) {
         setPipelineTimestamp(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'broker_response_received_at', Date.now())
-        lastAttemptError = err instanceof Error ? err.message : String(err)
+        lastAttemptError = humanizeOrderSendError(
+          err instanceof Error ? err.message : String(err),
+          sendArgs.symbol,
+        )
         const hasStops = (Number(sendArgs.stoploss) || 0) > 0 || (Number(sendArgs.takeprofit) || 0) > 0
         if (attempt === 0 && isInvalidStopsError(lastAttemptError) && hasStops) {
           console.warn(
@@ -1008,7 +1012,10 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
     .find((r): r is PromiseRejectedResult => r.status === 'rejected')
     ?.reason
   if (rejectedSendReason != null) {
-    lastSendError = rejectedSendReason instanceof Error ? rejectedSendReason.message : String(rejectedSendReason)
+    lastSendError = humanizeOrderSendError(
+      rejectedSendReason instanceof Error ? rejectedSendReason.message : String(rejectedSendReason),
+      symbol,
+    )
   }
   const parsedTpCount = (parsed.tp ?? []).filter(
     (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,
