@@ -46,6 +46,8 @@ export const settingsPl: SettingsBundleTranslations = {
       confirmPassword: 'Potwierdź hasło',
       notificationSound: 'Dźwięk powiadomień o transakcjach',
       notificationSoundDescription: 'Odtwórz dźwięk, gdy transakcja zostanie wykonana, zmodyfikowana lub zamknięta.',
+      notificationEmail: 'Powiadomienia e-mail',
+      notificationEmailDescription: 'Wyślij e-mail, gdy sygnał wymaga Twojej akceptacji.',
     },
     placeholders: {
       address: 'Ulica, numer budynku, kod pocztowy…',

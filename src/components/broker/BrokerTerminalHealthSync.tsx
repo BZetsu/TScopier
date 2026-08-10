@@ -57,8 +57,14 @@ export function BrokerTerminalHealthSync() {
             terminalHealthSupportedRef.current = false
             return
           }
+          const msg = err instanceof Error ? err.message : String(err)
+          if (/throttl|rate limit|expected available in/i.test(msg)) {
+            // Back off the whole poll cycle; do not treat throttle as unhealthy.
+            return
+          }
           // Next interval retries for transient errors.
         }
+        await new Promise(r => setTimeout(r, 750))
       }
     }
 

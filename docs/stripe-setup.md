@@ -1,6 +1,6 @@
 # Stripe subscription setup
 
-This document covers TScopier Stripe billing, webhook sync, and soft paywall enforcement.
+This document covers TScopier Stripe billing, webhook sync, and paywall enforcement.
 
 ## Products and prices
 
@@ -101,12 +101,13 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 
 ## Checkout flow
 
-1. Authenticated user opens `/pricing` and starts checkout (`create-checkout-session`).
+1. Marketing **Choose a plan** → `/pricing` → select Basic/Advanced → signup/login with plan remembered → Stripe Checkout (`create-checkout-session`).
 2. Checkout metadata includes `supabase_user_id`, `plan`, `extra_accounts`.
 3. Subscription metadata mirrors checkout metadata for portal updates.
-4. Advanced plan: 10-day trial (`trial_period_days = 10`) for first-time subscribers only.
-5. Checkout always collects a card (`payment_method_collection: always`). After checkout completes, the webhook sets `payment_settings.save_default_payment_method: on_subscription` on the Stripe subscription so renewal at trial end can charge off-session.
-6. Success redirect: `/dashboard?checkout=success` (SubscriptionContext refreshes).
+4. **No free trial on new checkouts** — Basic and Advanced are charged from day one. Existing Stripe `trialing` subscribers keep access until `trial_ends_at`.
+5. Checkout always collects a card (`payment_method_collection: always`). After checkout completes, the webhook sets `payment_settings.save_default_payment_method: on_subscription` on the Stripe subscription for renewals.
+6. Success redirect: `/dashboard?checkout=success` (SubscriptionContext refreshes). Cancel → `/pricing`.
+7. Pricing pages show a **30-day money-back guarantee**.
 
 ### Checkout troubleshooting
 
@@ -116,12 +117,11 @@ Common causes:
 
 - User clicked Pay before the card fields finished loading
 - Ad blocker / privacy extension blocking Stripe.js iframes
-- Stripe Checkout **preview/beta** UI (`custom_checkout_payment_form`) glitch on **$0 trial** sessions (`expected_amount: 0`)
 - Stripe Link or “automatic” payment method selected without a valid saved card
 
 **Fixes:** retry in incognito without extensions; ensure all card fields are filled; in Stripe Dashboard disable Checkout preview/beta features if enabled; `create-checkout-session` forces `payment_method_types: [card]` to reduce empty Link/auto submissions.
 
-## Soft paywall (plan limits)
+## Paywall (plan limits)
 
 | Feature | Basic | Advanced |
 |---------|-------|----------|
@@ -141,14 +141,17 @@ When Stripe finalizes an open invoice billed via `send_invoice` (`invoice.finali
 
 When Stripe needs 3DS or another customer step (`invoice.payment_action_required`), or a charge fails (`invoice.payment_failed`), the webhook sets `past_due`, pauses the copier, and emails the user a link to the hosted invoice (or `/billing` as fallback).
 
+After payment, the app also calls `confirm-checkout` (using Stripe `session_id` from the success URL) so entitlement syncs even when the webhook is delayed or not configured for a given Supabase project (e.g. local/staging).
+
 ## Manual smoke test checklist
 
-1. **New user** — dashboard loads; subscribe banner visible; broker/channel/backtest actions blocked with upgrade prompt.
-2. **Basic checkout** — complete test checkout; `subscriptions` row `plan=basic`, `status=active` or `trialing`.
+1. **New user (unpaid)** — after verify, redirected to `/pricing`; dashboard and other app routes blocked until paid.
+2. **Basic checkout** — complete test checkout (charged day one); `subscriptions` row `plan=basic`, `status=active`.
 3. **Second broker on Basic** — UI + `broker-metatrader` register return limit error.
-4. **Advanced trial** — extra accounts editor on `/billing` works; limits expand.
-5. **Portal cancel** — webhook sets `status=canceled`; Advanced settings blocked again.
-6. **Backtest limit** — sixth run in UTC month on Basic rejected by `backtest-run`.
+4. **Advanced checkout** — no free trial; extra accounts editor on `/billing` works; limits expand.
+5. **Grandfathered trial** — existing `trialing` users keep access until trial ends.
+6. **Portal cancel** — webhook sets `status=canceled`; Advanced settings blocked again.
+7. **Backtest limit** — sixth run in UTC month on Basic rejected by `backtest-run`.
 
 ### Stripe test card
 
@@ -158,7 +161,7 @@ Use `4242 4242 4242 4242`, any future expiry, any CVC, any billing postal code.
 
 ```bash
 supabase db push
-supabase functions deploy stripe-webhook create-checkout-session customer-portal update-extra-accounts
+supabase functions deploy stripe-webhook create-checkout-session confirm-checkout customer-portal update-extra-accounts
 supabase functions deploy backtest-run broker-metatrader
 # Redeploy worker for subscription execution gates
 ```

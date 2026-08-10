@@ -18,12 +18,16 @@ import {
   countUnreadNotifications,
   readNotificationsLastReadAt,
   tradeNotificationsFromLogs,
+  reviewNotificationFromSignal,
+  REVIEW_REQUIRED_SIGNAL_SELECT,
   TRADE_EXECUTION_LOG_NOTIFICATION_SELECT,
   TRADE_NOTIFICATION_LOG_ACTIONS,
   writeNotificationsLastReadAt,
+  type ReviewRequiredSignal,
   type TradeExecutionLogRow,
   type TradeNotification,
 } from '../lib/tradeNotifications'
+import { isHumanReviewSignal } from '../lib/humanReview'
 
 const MAX_NOTIFICATIONS = 30
 const FETCH_LIMIT = 120
@@ -81,6 +85,7 @@ export function NotificationsProvider({
   const brokerLabelsRef = useRef<Record<string, string>>({})
   const rawRowsRef = useRef<TradeExecutionLogRow[]>([])
   const knownLogIdsRef = useRef(new Set<string>())
+  const knownSignalIdsRef = useRef(new Set<string>())
   const notificationIdsRef = useRef(new Set<string>())
   const soundEnabled = profile.notification_sound_enabled !== false
 
@@ -104,18 +109,45 @@ export function NotificationsProvider({
     [t.tradeNotifications],
   )
 
+  const mergeItems = useCallback((items: TradeNotification[]): TradeNotification[] => {
+    const seen = new Set<string>()
+    const out: TradeNotification[] = []
+    for (const item of items) {
+      if (seen.has(item.id)) continue
+      seen.add(item.id)
+      out.push(item)
+    }
+    return out
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+      .slice(0, MAX_NOTIFICATIONS)
+  }, [])
+
+  const reviewItemsFromRows = useCallback(
+    (rows: ReviewRequiredSignal[]): TradeNotification[] =>
+      rows
+        .filter(isHumanReviewSignal)
+        .map(signal =>
+          reviewNotificationFromSignal(signal, t.tradeNotifications, {
+            channelDisplayNames: channelNamesRef.current,
+            brokerLabels: brokerLabelsRef.current,
+          }),
+        ),
+    [t.tradeNotifications],
+  )
+
   const refresh = useCallback(async () => {
     if (!user?.id) {
       setItems([])
       setLoading(false)
       knownLogIdsRef.current.clear()
+      knownSignalIdsRef.current.clear()
       notificationIdsRef.current.clear()
       rawRowsRef.current = []
       return
     }
     setLoading(true)
     try {
-      const [channelsRes, brokersRes, logsRes] = await Promise.all([
+      const [channelsRes, brokersRes, logsRes, reviewRes] = await Promise.all([
         supabase
           .from('telegram_channels')
           .select('id, display_name, channel_username')
@@ -132,16 +164,29 @@ export function NotificationsProvider({
           .in('action', [...TRADE_NOTIFICATION_LOG_ACTIONS])
           .order('created_at', { ascending: false })
           .limit(FETCH_LIMIT),
+        supabase
+          .from('signals')
+          .select(REVIEW_REQUIRED_SIGNAL_SELECT)
+          .eq('user_id', user.id)
+          .eq('status', 'skipped')
+          .ilike('skip_reason', '%human review required%')
+          .order('created_at', { ascending: false })
+          .limit(FETCH_LIMIT),
       ])
       if (channelsRes.error) throw new Error(channelsRes.error.message)
       if (brokersRes.error) throw new Error(brokersRes.error.message)
       if (logsRes.error) throw new Error(logsRes.error.message)
+      if (reviewRes.error) throw new Error(reviewRes.error.message)
 
       channelNamesRef.current = buildChannelDisplayNames(channelsRes.data ?? [])
       brokerLabelsRef.current = buildBrokerLabels(brokersRes.data ?? [])
       const rows = (logsRes.data ?? []) as TradeExecutionLogRow[]
       knownLogIdsRef.current = new Set(rows.map(r => r.id))
-      const next = applyRows(rows)
+      const logItems = applyRows(rows)
+      const reviewRows = (reviewRes.data ?? []) as ReviewRequiredSignal[]
+      knownSignalIdsRef.current = new Set(reviewRows.map(s => s.id))
+      const reviewItems = reviewItemsFromRows(reviewRows)
+      const next = mergeItems([...reviewItems, ...logItems])
       notificationIdsRef.current = new Set(next.map(n => n.id))
       setItems(next)
     } catch (e) {
@@ -149,7 +194,7 @@ export function NotificationsProvider({
     } finally {
       setLoading(false)
     }
-  }, [user?.id, applyRows])
+  }, [user?.id, applyRows, reviewItemsFromRows, mergeItems])
 
   useEffect(() => {
     if (!enabled) {
@@ -203,8 +248,25 @@ export function NotificationsProvider({
               .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
               .slice(0, FETCH_LIMIT)
             const interim = applyRows(rawRowsRef.current)
-            setItems(interim.slice(0, MAX_NOTIFICATIONS))
+            setItems(prev => mergeItems([...interim, ...prev]))
             schedule()
+          },
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'signals', filter },
+          payload => {
+            const row = payload.new as ReviewRequiredSignal
+            if (!isHumanReviewSignal(row)) return
+            if (knownSignalIdsRef.current.has(row.id)) return
+            knownSignalIdsRef.current.add(row.id)
+            const item = reviewItemsFromRows([row])[0]
+            if (!item) return
+            // Silent by design: HumanReviewContext already plays the sound and
+            // opens the review modal for review-required signals; the
+            // notification lands in the dropdown and the bell shows the amber
+            // review dot.
+            setItems(prev => mergeItems([item, ...prev]))
           },
         )
         .subscribe()
@@ -215,7 +277,7 @@ export function NotificationsProvider({
       if (debounceTimer) clearTimeout(debounceTimer)
       if (channel) void supabase.removeChannel(channel)
     }
-  }, [enabled, user?.id, refresh, soundEnabled, applyRows])
+  }, [enabled, user?.id, refresh, soundEnabled, applyRows, mergeItems, reviewItemsFromRows])
 
   const markAllRead = useCallback(() => {
     if (!user?.id) return

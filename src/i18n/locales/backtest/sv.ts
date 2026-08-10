@@ -55,6 +55,7 @@ export const backtestSv: BacktestBundleTranslations = {
     resultsTitle: 'Backtestresultat',
     resultsSubtitle: '{symbol} · {channel} · tryck på en signal för detaljer',
     newRun: 'Ny körning',
+    exportCsv: 'Exportera CSV',
     totalPips: 'Totalt pips',
     winRate: 'Vinstfrekvens',
     winLoss: 'V / F',

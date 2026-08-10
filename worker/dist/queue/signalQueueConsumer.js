@@ -7,6 +7,7 @@ exports.SignalQueueConsumerManager = exports.SignalQueueConsumer = void 0;
 const workerConfig_1 = require("../workerConfig");
 const workerMetrics_1 = require("../workerMetrics");
 const sentry_1 = require("../observability/sentry");
+const businessEvents_1 = require("../observability/businessEvents");
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const redisStreamsClient_1 = require("./redisStreamsClient");
 const signalQueueConfig_1 = require("./signalQueueConfig");
@@ -104,13 +105,17 @@ class SignalQueueConsumer {
                 (0, workerMetrics_1.incMetric)('queue_consumer_read_errors');
                 console.warn(`[signalQueue] read error lane=${this.lane}: ${this.lastError}`);
                 if (this.readErrorStreak === 3 || this.readErrorStreak % 10 === 0) {
-                    (0, sentry_1.captureWorkerWarning)(err instanceof Error ? err : new Error(this.lastError), {
-                        subsystem: 'queue',
-                        operation: 'consumer_read_repeated_failure',
-                        errorCode: 'QUEUE_READ_FAILURE',
-                        fingerprint: ['queue', 'QUEUE_READ_FAILURE', this.lane],
+                    (0, businessEvents_1.captureBusinessIssue)({
+                        category: 'queue',
+                        event: 'signal_dispatch_failed',
+                        severity: 'warning',
+                        reasonCode: 'QUEUE_READ_FAILURE',
+                        message: 'Signal queue consumer read failed repeatedly',
+                        userImpact: 'delayed',
+                        fingerprint: ['signal_dispatch_failed', 'queue_read', 'QUEUE_READ_FAILURE', this.lane],
                         context: {
                             stage: 'queue_read',
+                            operation: 'queue_read',
                             dispatch_source: 'queue',
                             retry_attempt: this.readErrorStreak,
                             extra: { lane: this.lane, stream_key: streamKey },
@@ -146,13 +151,17 @@ class SignalQueueConsumer {
                 (0, workerMetrics_1.incMetric)('queue_consumer_reclaim_errors');
                 console.warn(`[signalQueue] reclaim error lane=${this.lane}: ${this.lastError}`);
                 if (this.reclaimErrorStreak === 3 || this.reclaimErrorStreak % 10 === 0) {
-                    (0, sentry_1.captureWorkerWarning)(err instanceof Error ? err : new Error(this.lastError), {
-                        subsystem: 'queue',
-                        operation: 'consumer_reclaim_repeated_failure',
-                        errorCode: 'QUEUE_RECLAIM_FAILURE',
-                        fingerprint: ['queue', 'QUEUE_RECLAIM_FAILURE', this.lane],
+                    (0, businessEvents_1.captureBusinessIssue)({
+                        category: 'queue',
+                        event: 'signal_dispatch_failed',
+                        severity: 'warning',
+                        reasonCode: 'QUEUE_RECLAIM_FAILURE',
+                        message: 'Signal queue reclaim failed repeatedly',
+                        userImpact: 'delayed',
+                        fingerprint: ['signal_dispatch_failed', 'queue_reclaim', 'QUEUE_RECLAIM_FAILURE', this.lane],
                         context: {
                             stage: 'queue_reclaim',
+                            operation: 'queue_reclaim',
                             dispatch_source: 'queue',
                             retry_attempt: this.reclaimErrorStreak,
                             extra: { lane: this.lane, stream_key: streamKey },
@@ -166,13 +175,17 @@ class SignalQueueConsumer {
         const job = (0, signalQueuePublisher_1.parseQueueJobFields)(msg.fields);
         if (!job) {
             (0, workerMetrics_1.incMetric)('queue_malformed');
-            (0, sentry_1.captureWorkerWarning)('Malformed signal queue payload acknowledged', {
-                subsystem: 'queue',
-                operation: 'malformed_payload',
-                errorCode: 'QUEUE_MALFORMED_PAYLOAD',
-                fingerprint: ['queue', 'QUEUE_MALFORMED_PAYLOAD', this.lane],
+            (0, businessEvents_1.captureBusinessIssue)({
+                category: 'queue',
+                event: 'signal_dispatch_failed',
+                severity: 'error',
+                reasonCode: 'QUEUE_MALFORMED_PAYLOAD',
+                message: 'Malformed signal queue payload was acknowledged without dispatch',
+                userImpact: 'failed',
+                fingerprint: ['signal_dispatch_failed', 'queue_parse', 'QUEUE_MALFORMED_PAYLOAD', this.lane],
                 context: {
                     stage: 'queue_parse',
+                    operation: 'queue_parse',
                     queue_message_id: msg.id,
                     extra: { lane: this.lane, stream_key: streamKey },
                 },
@@ -277,17 +290,21 @@ class SignalQueueConsumer {
             (0, workerMetrics_1.incMetric)('queue_consume_failed');
             if (!(0, signalQueueRetry_1.shouldRetryAfterFailure)(attempts)) {
                 (0, workerMetrics_1.incMetric)('queue_dlq');
-                (0, sentry_1.captureWorkerWarning)(new Error(reason), {
-                    subsystem: 'queue',
-                    operation: 'dead_letter',
-                    errorCode: 'QUEUE_DEAD_LETTER',
-                    fingerprint: ['queue', 'QUEUE_DEAD_LETTER', job.lane],
+                (0, businessEvents_1.captureBusinessIssue)({
+                    category: 'queue',
+                    event: 'signal_queue_dead_lettered',
+                    severity: 'error',
+                    reasonCode: 'QUEUE_DEAD_LETTER',
+                    message: 'Signal queue job dead-lettered after final retry',
+                    userImpact: 'failed',
+                    fingerprint: ['signal_queue_dead_lettered', job.lane, 'QUEUE_DEAD_LETTER'],
                     context: {
                         user_id: job.user_id,
                         signal_id: job.signal_id,
                         queue_message_id: msg.id,
                         dispatch_source: 'queue',
                         stage: 'queue_dead_letter',
+                        operation: 'queue_consume',
                         retry_attempt: attempts,
                         extra: { lane: job.lane, shard_id: job.shard_id },
                     },

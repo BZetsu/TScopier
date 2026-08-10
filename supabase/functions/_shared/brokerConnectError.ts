@@ -9,6 +9,7 @@ export type BrokerConnectErrorKind =
   | 'session_expired'
   | 'credentials_rejected'
   | 'terminal_not_ready'
+  | 'rate_limited'
   | 'unknown'
 
 export interface BrokerConnectErrorOptions {
@@ -72,6 +73,7 @@ export function classifyBrokerConnectError(
   const message = String(raw ?? '').trim()
   const combined = `${message} ${opts?.errorCode ?? ''}`.trim()
   if (!message) return 'unknown'
+  if (/throttl|rate limit|too many requests|expected available in/i.test(message)) return 'rate_limited'
   if (INVESTOR.test(combined)) return 'investor_password'
   if (WRONG_PASSWORD.test(combined)) return 'wrong_password'
   if (isMtBridgeGlitchMessage(message)) return 'session_expired'
@@ -135,6 +137,8 @@ export function friendlyBrokerConnectError(
       return 'Could not log in with these MT details. Verify your account number, trading password, and exact server name from MetaTrader.'
     case 'terminal_not_ready':
       return 'We could not load your account from the broker yet. If you just connected, wait a minute and try again. Otherwise verify your MT login, password, and server name match MetaTrader exactly.'
+    case 'rate_limited':
+      return 'Too many connection requests in a short time. Please wait about a minute and try again.'
     case 'session_expired':
       if (isMtBridgeGlitchMessage(raw)) {
         return 'Broker connection dropped after a trade-server glitch. Use Reconnect — your login details are usually still correct.'

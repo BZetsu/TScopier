@@ -7,6 +7,7 @@ import { ThemeToggle } from '../ui/ThemeToggle'
 import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { useLocale, useT } from '../../context/LocaleContext'
 import { HELP_LINKS } from '../../lib/helpLinks'
+import { marketingUrl } from '../../lib/site'
 import { MarketingAuthCta } from './MarketingAuthCta'
 
 type NavItemKey = 'product' | 'features' | 'pricing' | 'faq' | 'docs'
@@ -17,13 +18,15 @@ type NavItem = {
   external?: boolean
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { key: 'product', href: '#product' },
-  { key: 'features', href: '#features' },
-  { key: 'pricing', href: '/pricing' },
-  { key: 'faq', href: '#faq' },
-  { key: 'docs', href: HELP_LINKS.documentation, external: true },
-]
+function marketingNavItems(): NavItem[] {
+  return [
+    { key: 'product', href: '#product' },
+    { key: 'features', href: '#features' },
+    { key: 'pricing', href: marketingUrl('/pricing') },
+    { key: 'faq', href: '#faq' },
+    { key: 'docs', href: HELP_LINKS.documentation, external: true },
+  ]
+}
 
 const SCROLL_THRESHOLD_PX = 24
 const SCROLL_DELTA_PX = 8
@@ -147,7 +150,7 @@ export function MarketingHeader() {
             className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-5 lg:gap-6 xl:gap-8 md:flex"
             aria-label="Main"
           >
-            {NAV_ITEMS.map(item => (
+            {marketingNavItems().map(item => (
               <MarketingNavLink
                 key={item.key}
                 item={item}
@@ -183,7 +186,7 @@ export function MarketingHeader() {
             )}
             aria-label="Main mobile"
           >
-            {NAV_ITEMS.map(item => (
+            {marketingNavItems().map(item => (
               <MarketingNavLink
                 key={item.key}
                 item={item}

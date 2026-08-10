@@ -93,33 +93,33 @@ async function fetchPerformancePayload(userId: string): Promise<PerformanceCache
   const balance: Record<string, number> = {}
   const baselineById: Record<string, number> = {}
 
-  await Promise.all(
-    linked.map(async account => {
-      if (!isFxsocketLinkedBroker(account)) {
-        const eq = account.last_equity ?? account.last_balance
-        const bal = account.last_balance ?? account.last_equity
-        if (eq != null && Number.isFinite(Number(eq))) equity[account.id] = Number(eq)
-        if (bal != null && Number.isFinite(Number(bal))) balance[account.id] = Number(bal)
-        return
+  for (const account of linked) {
+    if (!isFxsocketLinkedBroker(account)) {
+      const eq = account.last_equity ?? account.last_balance
+      const bal = account.last_balance ?? account.last_equity
+      if (eq != null && Number.isFinite(Number(eq))) equity[account.id] = Number(eq)
+      if (bal != null && Number.isFinite(Number(bal))) balance[account.id] = Number(bal)
+      continue
+    }
+    try {
+      const { account: refreshed, summary } = await fxsocketBroker.refreshSummary(account.id)
+      const eq = summary?.equity ?? refreshed.last_equity ?? effectiveAccountSummaryBalance(summary) ?? refreshed.last_balance
+      const bal = refreshed.last_balance ?? effectiveAccountSummaryBalance(summary) ?? refreshed.last_equity ?? summary?.equity
+      if (eq != null && Number.isFinite(Number(eq))) equity[account.id] = Number(eq)
+      if (bal != null && Number.isFinite(Number(bal))) balance[account.id] = Number(bal)
+      const storedBaseline = refreshed.performance_baseline_balance ?? account.performance_baseline_balance
+      if (storedBaseline != null && Number.isFinite(Number(storedBaseline)) && Number(storedBaseline) > 0) {
+        baselineById[account.id] = Number(storedBaseline)
       }
-      try {
-        const { account: refreshed, summary } = await fxsocketBroker.refreshSummary(account.id)
-        const eq = summary?.equity ?? refreshed.last_equity ?? effectiveAccountSummaryBalance(summary) ?? refreshed.last_balance
-        const bal = refreshed.last_balance ?? effectiveAccountSummaryBalance(summary) ?? refreshed.last_equity ?? summary?.equity
-        if (eq != null && Number.isFinite(Number(eq))) equity[account.id] = Number(eq)
-        if (bal != null && Number.isFinite(Number(bal))) balance[account.id] = Number(bal)
-        const storedBaseline = refreshed.performance_baseline_balance ?? account.performance_baseline_balance
-        if (storedBaseline != null && Number.isFinite(Number(storedBaseline)) && Number(storedBaseline) > 0) {
-          baselineById[account.id] = Number(storedBaseline)
-        }
-      } catch {
-        const eq = account.last_equity ?? account.last_balance
-        const bal = account.last_balance ?? account.last_equity
-        if (eq != null && Number.isFinite(Number(eq))) equity[account.id] = Number(eq)
-        if (bal != null && Number.isFinite(Number(bal))) balance[account.id] = Number(bal)
-      }
-    }),
-  )
+    } catch {
+      const eq = account.last_equity ?? account.last_balance
+      const bal = account.last_balance ?? account.last_equity
+      if (eq != null && Number.isFinite(Number(eq))) equity[account.id] = Number(eq)
+      if (bal != null && Number.isFinite(Number(bal))) balance[account.id] = Number(bal)
+    }
+    // Avoid parallel FxSocket refresh storms for users with many linked accounts.
+    await new Promise(r => setTimeout(r, 800))
+  }
 
   const accounts = linked.map(a => {
     const baseline = baselineById[a.id]

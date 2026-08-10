@@ -4,6 +4,7 @@ export interface TradeNotificationsTranslations {
     modificationCompleted: string
     layeringCompleted: string
     tradesClosed: string
+    reviewRequired: string
   }
   bodies: {
     executionBatch: string
@@ -20,6 +21,7 @@ export interface TradeNotificationsTranslations {
     tradesClosedTp: string
     tradesClosedGeneric: string
     tradesClosedSingle: string
+    reviewRequired: string
   }
   sides: {
     buy: string

@@ -203,12 +203,16 @@ export function CopierLogDetailModal({
                 {timeline.map((row, idx) => (
                   <li
                     key={`${row.created_at}-${row.action}-${idx}`}
-                    className="flex gap-3 text-sm"
+                    className={clsx(
+                      'flex gap-3 text-sm',
+                      row.status === 'failed' && 'text-error-700 dark:text-error-300',
+                      row.status === 'skipped' && 'text-warning-700 dark:text-warning-300',
+                    )}
                   >
                     <span className="text-xs text-neutral-400 whitespace-nowrap tabular-nums shrink-0 pt-0.5">
                       {new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                     </span>
-                    <span className="text-neutral-700 dark:text-neutral-200">
+                    <span className="min-w-0 break-words">
                       {summarizeExecutionLogRow(row, copierLogs)}
                     </span>
                   </li>

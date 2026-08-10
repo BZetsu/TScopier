@@ -27,7 +27,59 @@ export function joinOrigin(origin: string, path: string): string {
   return p === '/' ? origin : `${origin}${p}`
 }
 
+function isLocalDevHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.localhost')
+}
+
+/** Append or replace `site=` for local dual-shell navigation (same Vite origin). */
+function withDevSite(path: string, site: 'app' | 'marketing'): string {
+  const normalized = normalizePath(path)
+  const url = new URL(normalized, 'http://local.invalid')
+  url.searchParams.set('site', site)
+  return `${url.pathname}${url.search}${url.hash}`
+}
+
+/**
+ * Merge extra query params into a path that may already include a query string.
+ * Avoids broken URLs like `/pricing?site=marketing?ref=x`.
+ */
+export function withQuery(path: string, params: Record<string, string | null | undefined>): string {
+  const normalized = normalizePath(path)
+  const url = new URL(normalized, 'http://local.invalid')
+  for (const [key, value] of Object.entries(params)) {
+    if (value == null || value === '') continue
+    url.searchParams.set(key, value)
+  }
+  return `${url.pathname}${url.search}${url.hash}`
+}
+
+function isLocalBrowser(): boolean {
+  return typeof window !== 'undefined' && isLocalDevHost(window.location.hostname)
+}
+
+/**
+ * Absolute origin for the product app (Stripe success URLs, etc.).
+ * On localhost always use the current origin so checkout does not bounce to prod.
+ */
+export function appAbsoluteOrigin(): string {
+  if (isLocalBrowser()) return window.location.origin
+  return APP_ORIGIN
+}
+
+export function appAbsoluteUrl(path = '/'): string {
+  if (isLocalBrowser()) {
+    // Keep site=app so Stripe success remounts the product shell, not marketing.
+    const localPath = appUrl(path)
+    return `${window.location.origin}${localPath}`
+  }
+  return joinOrigin(APP_ORIGIN, normalizePath(path))
+}
+
 export function appUrl(path = '/'): string {
+  if (typeof window !== 'undefined' && isLocalDevHost(window.location.hostname)) {
+    // Always pin site=app so a full reload does not flip back to marketing via VITE_DEV_SITE.
+    return withDevSite(path, 'app')
+  }
   if (typeof window !== 'undefined' && isAppHost()) {
     return normalizePath(path)
   }
@@ -35,14 +87,14 @@ export function appUrl(path = '/'): string {
 }
 
 export function marketingUrl(path = '/'): string {
+  if (typeof window !== 'undefined' && isLocalDevHost(window.location.hostname)) {
+    // Always pin site=marketing so /pricing does not remount the auth-gated app shell.
+    return withDevSite(path, 'marketing')
+  }
   if (typeof window !== 'undefined' && !isAppHost()) {
     return normalizePath(path)
   }
   return joinOrigin(MARKETING_ORIGIN, path)
-}
-
-function isLocalDevHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.localhost')
 }
 
 function devSiteOverride(): 'app' | 'marketing' | null {

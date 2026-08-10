@@ -12,13 +12,13 @@ test('hasLegacySymbolDecoration: empty settings', () => {
   assert.equal(hasLegacySymbolDecoration({ symbol_prefix: '', symbol_suffix: '' }), false)
 })
 
-test('hasLegacySymbolDecoration: prefix suffix or map', () => {
+test('hasLegacySymbolDecoration: prefix suffix only — maps are not legacy', () => {
   assert.equal(hasLegacySymbolDecoration({ symbol_suffix: '+' }), true)
   assert.equal(hasLegacySymbolDecoration({ symbol_prefix: '#' }), true)
-  assert.equal(hasLegacySymbolDecoration({ symbol_mapping: { XAUUSD: 'GOLD' } }), true)
+  assert.equal(hasLegacySymbolDecoration({ symbol_mapping: { XAUUSD: 'GOLD' } }), false)
 })
 
-test('stripSymbolDecoration clears decoration fields', () => {
+test('stripSymbolDecoration clears prefix/suffix but keeps mapping', () => {
   const out = stripSymbolDecoration({
     fixed_lot: 0.1,
     symbol_prefix: '#',
@@ -28,7 +28,7 @@ test('stripSymbolDecoration clears decoration fields', () => {
   assert.equal(out.fixed_lot, 0.1)
   assert.equal(out.symbol_prefix, '')
   assert.equal(out.symbol_suffix, '')
-  assert.deepEqual(out.symbol_mapping, {})
+  assert.deepEqual(out.symbol_mapping, { EURUSD: 'EURUSD.R' })
 })
 
 test('clearLegacySymbolDecorationIfPresent: updates db and in-memory broker', async () => {

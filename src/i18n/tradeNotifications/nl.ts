@@ -6,6 +6,7 @@ export const tradeNotificationsNl: TradeNotificationsTranslations = {
     modificationCompleted: 'TRADE-WIJZIGING VOLTOOID',
     layeringCompleted: 'LAYERING VOLTOOID',
     tradesClosed: 'SOMMIGE TRADES GESLOTEN',
+    reviewRequired: 'SIGNAAL WACHT OP GOEDKEURING',
   },
   bodies: {
     executionBatch: 'Er zijn {count} {side}-trades geopend in {broker} vanuit {channel}.',
@@ -23,6 +24,7 @@ export const tradeNotificationsNl: TradeNotificationsTranslations = {
     tradesClosedTp: '{count} trades zijn gesloten in {broker} vanwege {reason} vanuit {channel}.',
     tradesClosedGeneric: '{count} trades zijn gesloten in {broker} vanuit {channel}.',
     tradesClosedSingle: 'Een trade is gesloten in {broker} vanuit {channel}.',
+    reviewRequired: 'Een signaal van {channel} wacht op uw goedkeuring.',
   },
   sides: {
     buy: 'koop',

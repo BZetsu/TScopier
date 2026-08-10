@@ -41,9 +41,13 @@ function signalWindowForSymbol(
   }
 }
 
-export async function fetchUtcOffsetSeconds(fx: FxsocketClient, accountId: string): Promise<number> {
+export async function fetchUtcOffsetSeconds(
+  fx: FxsocketClient,
+  accountId: string,
+  platform?: string | null,
+): Promise<number> {
   try {
-    const tz = await fx.serverTimezone(accountId)
+    const tz = await fx.serverTimezone(accountId, platform)
     const offset = Number(tz.utcOffsetSeconds ?? tz.utc_offset_seconds ?? 0)
     return Number.isFinite(offset) ? offset : 0
   } catch {
@@ -69,7 +73,7 @@ export async function fetchBarsForSymbol(
       timeframe,
       from: query.from,
       to: query.to,
-    })
+    }, ctx.platform)
     const pts = fxsocketBarsToMidPoints(bars, utcOffsetSeconds)
     return {
       pts,
@@ -111,7 +115,7 @@ export async function fetchTicksForSymbol(
       symbol: brokerSymbol,
       from: query.from,
       to: query.to,
-    })
+    }, ctx.platform)
     const pts = fxsocketTicksToMidPoints(ticks, utcOffsetSeconds)
     return {
       pts,
@@ -236,7 +240,7 @@ export async function preloadMarketData(
   configFromMs: number,
   configToMs: number,
 ): Promise<PreloadedMarketData> {
-  const utcOffsetSeconds = await fetchUtcOffsetSeconds(fx, ctx.fxsocketAccountId)
+  const utcOffsetSeconds = await fetchUtcOffsetSeconds(fx, ctx.fxsocketAccountId, ctx.platform)
   const seriesBySymbol = new Map<string, PricePoint[]>()
   const fetchLog: string[] = []
   let apiCalls = 0

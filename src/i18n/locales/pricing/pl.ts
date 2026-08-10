@@ -15,8 +15,9 @@ export const pricingPl: PricingBundleTranslations = {
     extraAccountUnit: '$10/konto/mies.',
     extraAccountUnitAnnual: '$96/konto/rok',
     subscribe: 'Subskrybuj',
-    startTrial: 'Rozpocznij 10-dniowy bezpłatny okres próbny',
-    trialDays: '10-dniowy bezpłatny okres próbny',
+    startTrial: 'Subskrybuj',
+    trialDays: '30-dniowa gwarancja zwrotu pieniędzy',
+    moneyBackGuarantee: '30-dniowa gwarancja zwrotu pieniędzy',
     features: 'Funkcje',
     popular: 'Najpopularniejszy',
     basicFeatures: [

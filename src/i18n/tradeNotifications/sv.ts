@@ -6,6 +6,7 @@ export const tradeNotificationsSv: TradeNotificationsTranslations = {
     modificationCompleted: 'HANDELSÄNDRING SLUTFÖRD',
     layeringCompleted: 'LAYERING SLUTFÖRT',
     tradesClosed: 'VISSA AFFÄRER STÄNGDA',
+    reviewRequired: 'SIGNAL VÄNTAR PÅ GODKÄNNANDE',
   },
   bodies: {
     executionBatch: '{count} {side}-affärer öppnades i {broker} från {channel}.',
@@ -23,6 +24,7 @@ export const tradeNotificationsSv: TradeNotificationsTranslations = {
     tradesClosedTp: '{count} affärer stängdes i {broker} på grund av {reason} från {channel}.',
     tradesClosedGeneric: '{count} affärer stängdes i {broker} från {channel}.',
     tradesClosedSingle: 'En affär stängdes i {broker} från {channel}.',
+    reviewRequired: 'En signal från {channel} väntar på ditt godkännande.',
   },
   sides: {
     buy: 'köp',

@@ -14,7 +14,7 @@ export function getSubscribeCtaLabel(t: Translations, opts: SubscribeCtaOptions)
   if (opts.isPastDue) return pw.updatePayment
   if (opts.effectivePlan === 'basic') return pw.upgradeCta
   if (opts.hasTrialExpired) return pw.purchaseSubscriptionCta
-  return t.pricing.startTrial
+  return t.pricing.subscribe
 }
 
 /** True when trial_ends_at is set and that timestamp is in the past. */

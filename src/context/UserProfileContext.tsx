@@ -17,6 +17,7 @@ import {
   loadUserProfile,
   resolveUserIsAdmin,
   saveUserProfile,
+  updateUserProfileFields,
   type UserProfile,
 } from '../lib/userProfile'
 import { isOAuthUser } from '../lib/emailVerification'
@@ -50,6 +51,7 @@ function sanitizeProfile(row: Partial<ProfileFields> | null | undefined): Profil
     base_currency: BASE_CURRENCY_CODES.has(currency) ? currency : 'USD',
     timezone: base.timezone?.trim() || EMPTY_USER_PROFILE.timezone,
     notification_sound_enabled: base.notification_sound_enabled !== false,
+    notification_email_enabled: base.notification_email_enabled !== false,
     copier_paused: base.copier_paused === true,
   }
 }
@@ -102,6 +104,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             base_currency: row.base_currency,
             timezone: row.timezone,
             notification_sound_enabled: row.notification_sound_enabled ?? true,
+            notification_email_enabled: row.notification_email_enabled ?? true,
             copier_paused: row.copier_paused ?? false,
           }),
         )
@@ -174,14 +177,29 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
   const persistProfile = useCallback(
     async (patch?: Partial<ProfileFields>) => {
       if (!user) return
+      const displayName =
+        [patch?.first_name ?? profile.first_name, patch?.last_name ?? profile.last_name]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || patch?.display_name || profile.display_name
+
+      // Partial patches (e.g. copier_paused) use UPDATE to avoid full-row upsert
+      // sending columns that may be missing from older DBs / schema cache.
+      if (patch && Object.keys(patch).length > 0) {
+        const fieldPatch: Partial<ProfileFields> = {
+          ...patch,
+          ...(patch.first_name != null || patch.last_name != null
+            ? { display_name: displayName }
+            : {}),
+        }
+        await updateUserProfileFields(user.id, fieldPatch)
+        setProfile(prev => sanitizeProfile({ ...prev, ...fieldPatch }))
+        return
+      }
+
       const merged = sanitizeProfile({
         ...profile,
-        ...patch,
-        display_name:
-          [patch?.first_name ?? profile.first_name, patch?.last_name ?? profile.last_name]
-            .filter(Boolean)
-            .join(' ')
-            .trim() || patch?.display_name || profile.display_name,
+        display_name: displayName,
       })
       await saveUserProfile(user.id, merged)
       setProfile(merged)

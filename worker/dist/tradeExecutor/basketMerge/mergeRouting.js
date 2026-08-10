@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.revisionRefreshSafeSkipOutcome = revisionRefreshSafeSkipOutcome;
 exports.revisionRefreshWithoutOpenBasketOutcome = revisionRefreshWithoutOpenBasketOutcome;
 exports.tryParameterFollowUpMergeModifyOnly = tryParameterFollowUpMergeModifyOnly;
 exports.tryMergeSignalIntoExistingOpenTrade = tryMergeSignalIntoExistingOpenTrade;
@@ -16,23 +17,26 @@ const signalRevision_1 = require("../../signalRevision");
 const signalPriceInference_1 = require("../../signalPriceInference");
 const helpers_1 = require("./helpers");
 const slTpRefresh_1 = require("./slTpRefresh");
+function revisionRefreshSafeSkipOutcome() {
+    return { handled: true, success: false };
+}
 function revisionRefreshWithoutOpenBasketOutcome(sameSignalRefresh) {
-    return sameSignalRefresh
-        ? { handled: true, success: false }
-        : { handled: false };
+    return sameSignalRefresh ? revisionRefreshSafeSkipOutcome() : { handled: false };
 }
 async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
     const { signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid, strictEntryPrefetch, commentPrefix, } = args;
+    const sameSignalRefresh = args.sameSignalRefresh === true;
+    const revisionSafeSkip = () => revisionRefreshSafeSkipOutcome();
     if (!(0, fxsocketClient_1.hasFxsocketConfigured)())
-        return { handled: false };
+        return sameSignalRefresh ? revisionSafeSkip() : { handled: false };
     if ((0, signalPriceInference_1.parsedHasReEnterIntent)(parsed))
-        return { handled: false };
+        return sameSignalRefresh ? revisionSafeSkip() : { handled: false };
     if (!(0, multiTradeMerge_1.shouldRouteAsBasketParameterRefresh)(parsed) && args.sameSignalRefresh !== true) {
         return { handled: false };
     }
     const api = ctx.apiFor(broker);
     if (!api)
-        return { handled: false };
+        return sameSignalRefresh ? revisionSafeSkip() : { handled: false };
     if ((0, channelMessageFilters_1.isChannelSlTpUpdateBlocked)((0, channelMessageFilters_1.normalizeChannelMessageFiltersMap)(broker.channel_message_filters), signal.channel_id, parsed)) {
         void ctx.supabase.from('trade_execution_logs').insert({
             user_id: signal.user_id,
@@ -50,9 +54,8 @@ async function tryParameterFollowUpMergeModifyOnly(ctx, args) {
     }
     const a = String(parsed.action ?? '').toLowerCase();
     if (a !== 'buy' && a !== 'sell')
-        return { handled: false };
+        return sameSignalRefresh ? revisionSafeSkip() : { handled: false };
     const direction = a === 'buy' ? 'buy' : 'sell';
-    const sameSignalRefresh = args.sameSignalRefresh === true;
     let anchor = sameSignalRefresh
         ? await (0, multiTradeMerge_1.resolveOpenBasketAnchorForSameSignal)(ctx.supabase, {
             userId: signal.user_id,

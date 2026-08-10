@@ -15,8 +15,9 @@ export const pricingNl: PricingBundleTranslations = {
     extraAccountUnit: '$10/account/maand',
     extraAccountUnitAnnual: '$96/account/jaar',
     subscribe: 'Abonneren',
-    startTrial: 'Start 10-daagse gratis proefperiode',
-    trialDays: '10-daagse gratis proefperiode',
+    startTrial: 'Abonneren',
+    trialDays: '30 dagen geld-terug-garantie',
+    moneyBackGuarantee: '30 dagen geld-terug-garantie',
     features: 'Functies',
     popular: 'Meest populair',
     basicFeatures: [

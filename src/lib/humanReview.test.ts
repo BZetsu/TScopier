@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  formatReviewRemaining,
   HUMAN_REVIEW_WINDOW_MS,
   isHumanReviewSignal,
   reviewParsedLevels,
@@ -46,6 +47,20 @@ describe('reviewRemainingMs', () => {
 
   it('returns 0 for a missing timestamp', () => {
     expect(reviewRemainingMs(undefined)).toBe(0)
+  })
+})
+
+describe('formatReviewRemaining', () => {
+  it('labels expired windows', () => {
+    expect(formatReviewRemaining(0)).toBe('expired')
+  })
+
+  it('formats seconds', () => {
+    expect(formatReviewRemaining(45_000)).toBe('45s left')
+  })
+
+  it('formats minutes and seconds', () => {
+    expect(formatReviewRemaining(150_000)).toBe('2m 30s left')
   })
 })
 

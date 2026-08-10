@@ -1,38 +1,40 @@
-import { useState } from 'react'
-import { X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { ArrowRight, ShieldAlert, X } from 'lucide-react'
 import { useHumanReview } from '../../context/HumanReviewContext'
-import { HUMAN_REVIEW_WINDOW_MS } from '../../lib/humanReview'
+import {
+  formatReviewRemaining,
+  reviewRemainingMs,
+} from '../../lib/humanReview'
 
-function formatRemaining(ms: number): string {
-  if (ms <= 0) return 'expired'
-  const totalSec = Math.ceil(ms / 1000)
-  const sec = totalSec % 60
-  const min = Math.floor(totalSec / 60)
-  return min > 0 ? `${min}m ${sec}s left` : `${sec}s left`
-}
-
+/** Auto-opens when an AI signal is escalated for review. Informational only —
+ * approve/dismiss happen on the Live Trades page. */
 export function HumanReviewModal() {
-  const { pending, isOpen, closeModal, approve, dismiss } = useHumanReview()
-  const [approvingId, setApprovingId] = useState<string | null>(null)
-  const [errorBySignal, setErrorBySignal] = useState<Record<string, string>>({})
+  const { pending, isOpen, closeModal } = useHumanReview()
+  const navigate = useNavigate()
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!isOpen) return
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [isOpen])
+
+  useEffect(() => {
+    if (isOpen && pending.length === 0) closeModal()
+  }, [isOpen, pending.length, closeModal])
 
   if (!isOpen) return null
 
-  const handleApprove = async (signalId: string) => {
-    setApprovingId(signalId)
-    setErrorBySignal(prev => ({ ...prev, [signalId]: '' }))
-    const error = await approve(signalId)
-    setApprovingId(null)
-    if (error) setErrorBySignal(prev => ({ ...prev, [signalId]: error }))
-  }
+  const item = pending[0]
+  if (!item) return null
 
-  const handleDismiss = (signalId: string) => {
-    setErrorBySignal(prev => {
-      const next = { ...prev }
-      delete next[signalId]
-      return next
-    })
-    dismiss(signalId)
+  const remainingMs = reviewRemainingMs(item.signal.created_at, now)
+  const expired = remainingMs <= 0
+
+  const handleGo = () => {
+    closeModal()
+    navigate('/account-trades')
   }
 
   return (
@@ -42,104 +44,52 @@ export function HumanReviewModal() {
         aria-hidden
         onClick={closeModal}
       />
-      <div className="relative flex max-h-[85vh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-lg sm:rounded-3xl dark:bg-neutral-900">
-        <div className="flex items-center gap-3 border-b border-neutral-100 px-4 py-4 dark:border-neutral-800">
-          <h2 className="flex-1 text-base font-semibold text-neutral-900 dark:text-neutral-50">
-            Signal review required
-          </h2>
+      <div className="relative w-full sm:max-w-md overflow-hidden rounded-t-3xl sm:rounded-3xl border border-amber-200 dark:border-amber-800/70 bg-white shadow-2xl dark:bg-neutral-900">
+        <div className="flex items-center gap-3 border-b border-amber-100 bg-amber-50 px-5 py-4 dark:border-amber-900/50 dark:bg-amber-950/40">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500 text-white">
+            <ShieldAlert className="h-5 w-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+              Signal review required
+            </h2>
+            <p className={`mt-0.5 text-sm font-semibold tabular-nums ${expired ? 'text-amber-600 dark:text-amber-400' : 'text-amber-700 dark:text-amber-300'}`}>
+              {expired ? 'expired — approval window passed' : formatReviewRemaining(remainingMs)}
+            </p>
+          </div>
           <button
             type="button"
             onClick={closeModal}
             aria-label="Close"
-            className="rounded-xl p-2 text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+            className="rounded-xl p-2 text-neutral-400 hover:bg-amber-100 dark:hover:bg-amber-900/40"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          {pending.length === 0 ? (
-            <div className="px-4 py-10 text-center text-sm text-neutral-500 dark:text-neutral-400">
-              No signals waiting for review.
-            </div>
-          ) : (
-            <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
-              {pending.map(item => {
-                const { signal, levels } = item
-                const expired = item.remainingMs <= 0
-                const error = errorBySignal[signal.id]
-                return (
-                  <li key={signal.id} className="px-4 py-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-neutral-900 dark:text-neutral-50">
-                          {signal.raw_message}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
-                          {levels.symbol ? (
-                            <span className="rounded-md bg-neutral-100 px-2 py-0.5 font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-                              {levels.symbol}
-                            </span>
-                          ) : null}
-                          {levels.action ? (
-                            <span className="rounded-md bg-neutral-100 px-2 py-0.5 font-medium uppercase text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-                              {levels.action}
-                            </span>
-                          ) : null}
-                          {levels.entry ? (
-                            <span className="rounded-md bg-neutral-100 px-2 py-0.5 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-                              Entry {levels.entry}
-                            </span>
-                          ) : null}
-                          {levels.sl ? (
-                            <span className="rounded-md bg-neutral-100 px-2 py-0.5 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-                              SL {levels.sl}
-                            </span>
-                          ) : null}
-                          {levels.tp ? (
-                            <span className="rounded-md bg-neutral-100 px-2 py-0.5 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-                              TP {levels.tp}
-                            </span>
-                          ) : null}
-                        </div>
-                        <p className={`mt-2 text-xs ${expired ? 'text-amber-600 dark:text-amber-400' : 'text-neutral-400 dark:text-neutral-500'}`}>
-                          {expired ? 'expired — approval window passed' : formatRemaining(item.remainingMs)}
-                        </p>
-                        {error ? (
-                          <p className="mt-2 break-words text-xs text-red-600 dark:text-red-400">
-                            {error}
-                          </p>
-                        ) : null}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <button
-                          type="button"
-                          disabled={approvingId === signal.id || expired}
-                          onClick={() => { void handleApprove(signal.id) }}
-                          className="rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          {approvingId === signal.id ? 'Approving…' : 'Approve'}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={approvingId === signal.id}
-                          onClick={() => handleDismiss(signal.id)}
-                          className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-                        >
-                          Dismiss
-                        </button>
-                      </div>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </div>
-
-        <div className="border-t border-neutral-100 px-4 py-3 text-xs text-neutral-400 dark:border-neutral-800 dark:text-neutral-500">
-          Approvals are valid for {Math.round(HUMAN_REVIEW_WINDOW_MS / 60000)} minutes after the signal
-          and only while the market is still at the signal entry price.
+        <div className="p-5">
+          <p className="text-sm text-neutral-600 dark:text-neutral-300">
+            A signal from your channel was escalated because the AI wasn't sure about
+            it. Review it on the Live Trades page to approve or dismiss it before the
+            window closes.
+          </p>
+          <div className="mt-4 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleGo}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-600"
+            >
+              Go to Live Trades
+              <ArrowRight className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={closeModal}
+              className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            >
+              Not now
+            </button>
+          </div>
         </div>
       </div>
     </div>

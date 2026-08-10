@@ -150,20 +150,17 @@ export function tradeDurationMs(
   return end - start
 }
 
-/** Pip P/L from signal TP/SL levels (TelegramBacktester convention). */
+/** Pip P/L from signal TP/SL levels (TelegramBacktester convention).
+ * Always recalculate from levels so gold uses trader pips (1 pip = 0.1),
+ * not stale stored cent-point values from older runs.
+ */
 export function tradePipPnl(
   trade: Pick<
     BacktestTradeRow,
     'pnl' | 'lot_size' | 'outcome' | 'symbol' | 'direction' | 'entry_price' | 'exit_price' | 'tp_levels' | 'sl' | 'tps_hit' | 'details'
   >,
 ): number | null {
-  const details = trade.details as { pipPnl?: number } | undefined
-  const fromDetails = details?.pipPnl
-  if (fromDetails != null && Number.isFinite(fromDetails)) {
-    return fromDetails
-  }
-
-  return computePipsFromSignalOutcome({
+  const recomputed = computePipsFromSignalOutcome({
     symbol: trade.symbol,
     direction: trade.direction,
     entry: trade.entry_price,
@@ -172,12 +169,35 @@ export function tradePipPnl(
     outcome: trade.outcome,
     tpsHit: trade.tps_hit,
   })
+  if (recomputed != null) return recomputed
+
+  const details = trade.details as { pipPnl?: number } | undefined
+  const fromDetails = details?.pipPnl
+  if (fromDetails != null && Number.isFinite(fromDetails)) {
+    return fromDetails
+  }
+  return null
 }
 
 export function formatPipValue(pips: number | null): string {
   if (pips == null || !Number.isFinite(pips)) return '—'
   const sign = pips >= 0 ? '+' : ''
   return `${sign}${pips.toFixed(1)}p`
+}
+
+/** Sum recomputed trader-pip P/L across trades (ignores stale stored totals). */
+export function sumTradePipPnl(
+  trades: Array<Parameters<typeof tradePipPnl>[0]>,
+): number | null {
+  let sum = 0
+  let hasAny = false
+  for (const trade of trades) {
+    const p = tradePipPnl(trade)
+    if (p == null) continue
+    sum += p
+    hasAny = true
+  }
+  return hasAny ? sum : null
 }
 
 export function formatEntryPrice(price: number): string {

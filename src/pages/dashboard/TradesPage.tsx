@@ -10,8 +10,11 @@ import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
 import { Alert } from '../../components/ui/Alert'
 import { TradeDetailModal } from '../../components/trades/TradeDetailModal'
+import { AwaitingApprovalSection } from '../../components/trades/AwaitingApprovalSection'
+import { SignalReviewDetailModal } from '../../components/trades/SignalReviewDetailModal'
 import { lossTextClass } from '../../lib/pnlDisplay'
 import type { MtTrade } from '../../lib/fxsocketBroker'
+import type { Signal } from '../../types/database'
 import {
   formatTradeLots,
   formatTradePrice,
@@ -31,6 +34,7 @@ export function TradesPage() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<PageSizeOption>(10)
   const [selectedTrade, setSelectedTrade] = useState<MtTrade | null>(null)
+  const [selectedReviewSignal, setSelectedReviewSignal] = useState<Signal | null>(null)
 
   const filters: { value: Filter; label: string; count: number }[] = useMemo(
     () => [
@@ -116,6 +120,8 @@ export function TradesPage() {
       />
 
       {error && !showInitialSkeleton && <Alert className="mb-4 px-4 py-2.5">{error}</Alert>}
+
+      <AwaitingApprovalSection onOpenSignal={setSelectedReviewSignal} />
 
       <Card padding="none">
         {showInitialSkeleton ? (
@@ -209,6 +215,11 @@ export function TradesPage() {
         trade={selectedTrade}
         userId={user?.id}
         onClose={() => setSelectedTrade(null)}
+      />
+
+      <SignalReviewDetailModal
+        signal={selectedReviewSignal}
+        onClose={() => setSelectedReviewSignal(null)}
       />
     </PageShell>
   )

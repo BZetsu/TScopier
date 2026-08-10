@@ -2,8 +2,8 @@ import { computePipsFromSignalOutcome } from "./pip.ts"
 import type { BacktestRunConfig, BacktestSummary, SimulatedTradeResult } from "./types.ts"
 
 export function tradePipPnlFromSim(r: SimulatedTradeResult): number | null {
-  if (r.pipPnl != null && Number.isFinite(r.pipPnl)) return r.pipPnl
-  return computePipsFromSignalOutcome({
+  // Prefer live recalculation so gold uses trader pips (0.1), not stale stored cent-points.
+  const recomputed = computePipsFromSignalOutcome({
     symbol: r.symbol,
     direction: r.direction,
     entry: r.entryPrice,
@@ -12,6 +12,9 @@ export function tradePipPnlFromSim(r: SimulatedTradeResult): number | null {
     outcome: r.outcome,
     tpsHit: r.tpsHit,
   })
+  if (recomputed != null) return recomputed
+  if (r.pipPnl != null && Number.isFinite(r.pipPnl)) return r.pipPnl
+  return null
 }
 
 export function buildTpslSummary(

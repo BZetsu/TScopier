@@ -10,7 +10,6 @@ import {
   looksLikeTradeRecapCommentary,
   looksLikeResultsOrSuggestedCommentary,
 } from './signalCommentaryGuard'
-import { messageHasImperativeEntryPhrase } from './signalImperativeEntry'
 import {
   entryMissingSlTpRequiresNow,
   messageHasExplicitSlTpLabels,

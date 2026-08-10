@@ -58,3 +58,20 @@ test('resolveBrokerSymbolFromInventory: userDecorated returns requested when mis
   const resolved = resolveBrokerSymbolFromInventory(noopCtx, inv, 'XAUUSD+', { userDecorated: true })
   assert.equal(resolved, 'XAUUSD+')
 })
+
+test('resolveBrokerSymbolFromInventory: XAUUSD maps to GOLD# on XM-style brokers', () => {
+  const inv = inventory(['EURUSD', 'GOLD#', 'GOLD24-7#', 'BarrickGold', 'XAUEUR#'])
+  const resolved = resolveBrokerSymbolFromInventory(noopCtx, inv, 'XAUUSD')
+  assert.equal(resolved, 'GOLD#')
+})
+
+test('resolveBrokerSymbolFromInventory: GOLD maps to GOLD#', () => {
+  const inv = inventory(['GOLD#'])
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inv, 'GOLD'), 'GOLD#')
+})
+
+test('resolveBrokerSymbolFromInventory: does not pick BarrickGold for XAUUSD', () => {
+  const inv = inventory(['BarrickGold', 'Gold Fields', 'GoldmSachs'])
+  const resolved = resolveBrokerSymbolFromInventory(noopCtx, inv, 'XAUUSD')
+  assert.equal(resolved, 'XAUUSD')
+})

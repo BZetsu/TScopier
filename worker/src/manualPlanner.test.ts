@@ -480,7 +480,33 @@ test('planMultiManualOrders: explicit cap consolidates legs, volume + TP split p
   assert.ok(plan.orders.every(o => /:tp\d+/.test(String(o.comment ?? ''))))
 })
 
-test('planMultiManualOrders: empty finalTps falls back to one full-lot immediate (teaser)', () => {
+test('planMultiManualOrders: empty finalTps without range uses one full-lot immediate (teaser)', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 10,
+    multi_trade_max_orders: 10,
+    range_trading: false,
+    tp_lots: [{ label: 'TP', lot: 0, percent: 100, enabled: true }],
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [], sl: null },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual,
+    channelKeywords: null,
+    manualLot: 0.4,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:44sClub:979b6ac0',
+  })
+  assert.equal(plan.orders.length, 1)
+  assert.ok(Math.abs(Number(plan.orders[0]?.volume) - 0.4) < 1e-9)
+  assert.equal(plan.fallback_reason, 'multi_trade_fallback_empty_tps')
+  assert.equal((plan.virtualPendings ?? []).length, 0)
+  // Comment stays the single-order prefix (no :tp1/:tp2 clones).
+  assert.equal(plan.orders[0]?.comment, 'TScopier:44sClub:979b6ac0')
+})
+
+test('planMultiManualOrders: empty finalTps with range emits one order per instant leg', () => {
   const manual: ManualSettings = {
     ...baseManual,
     multi_trade_leg_percent: 10,
@@ -501,11 +527,48 @@ test('planMultiManualOrders: empty finalTps falls back to one full-lot immediate
     ctx: baseCtx,
     commentPrefix: 'TScopier:44sClub:979b6ac0',
   })
-  assert.equal(plan.orders.length, 1)
-  assert.ok(Math.abs(Number(plan.orders[0]?.volume) - 0.4) < 1e-9)
+  // 10 legs @ 0.04; 30% reserved → 3 range + 7 immediate → 7×0.04 (not 1×0.28)
+  assert.equal(plan.orders.length, 7)
+  assert.ok(plan.orders.every(o => Math.abs(Number(o.volume) - 0.04) < 1e-9))
+  const immVol = plan.orders.reduce((s, o) => s + Number(o.volume), 0)
+  assert.ok(Math.abs(immVol - 0.28) < 1e-9)
+  assert.equal((plan.virtualPendings ?? []).length, 3)
+  assert.ok((plan.virtualPendings ?? []).every(v => Math.abs(Number(v.volume) - 0.04) < 1e-9))
   assert.equal(plan.fallback_reason, 'multi_trade_fallback_empty_tps')
-  // Comment stays the single-order prefix (no :tp1/:tp2 clones).
-  assert.equal(plan.orders[0]?.comment, 'TScopier:44sClub:979b6ac0')
+  assert.ok(plan.orders.every(o => /:tp\d+/.test(String(o.comment ?? ''))))
+})
+
+test('planMultiManualOrders: empty finalTps staging-like range fires 6×leg not 1×bundle', () => {
+  const manual: ManualSettings = {
+    ...baseManual,
+    multi_trade_leg_percent: 6,
+    multi_trade_max_orders: 16,
+    range_trading: true,
+    range_percent: 60,
+    range_step_pips: 0,
+    range_distance_pips: 100,
+    range_layering_type: 'auto',
+    tp_lots: [{ label: 'TP', lot: 0, percent: 100, enabled: true }],
+  }
+  const plan = planManualOrders({
+    parsed: { ...baseParsed, tp: [], sl: null, entry_price: 64969.04 },
+    resolvedSymbol: 'BTCUSD',
+    baseOperation: 'Sell',
+    manual,
+    channelKeywords: null,
+    manualLot: 2,
+    ctx: { ...baseCtx, digits: 2 },
+    commentPrefix: 'TScopier:SIGNALSTESTE:73a33d33',
+  })
+  // 16 legs @ 0.12; 60% reserved → 10 range + 6 immediate → 6×0.12 (not 1×0.72)
+  assert.equal(plan.orders.length, 6)
+  assert.ok(plan.orders.every(o => Math.abs(Number(o.volume) - 0.12) < 1e-9))
+  const immVol = plan.orders.reduce((s, o) => s + Number(o.volume), 0)
+  assert.ok(Math.abs(immVol - 0.72) < 1e-9)
+  assert.equal((plan.virtualPendings ?? []).length, 10)
+  assert.ok((plan.virtualPendings ?? []).every(v => Math.abs(Number(v.volume) - 0.12) < 1e-9))
+  assert.equal(plan.rangeLayering?.plannedImmediateLegs, 6)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 10)
 })
 
 test('planMultiManualOrders: cap of 2 emits one consolidated order per TP', () => {

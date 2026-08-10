@@ -30,6 +30,7 @@ import {
 } from './fxContract'
 import { auditOrderClose } from '../orderCloseAudit'
 import { isBrokerSimulatorEnforced } from '../brokerExecutionMode'
+import { formatFxHttpFailureMessage } from '../brokerTradeError'
 
 export type MtPlatform = 'MT4' | 'MT5'
 
@@ -190,7 +191,20 @@ export class FxClient {
     if (res.status < 200 || res.status >= 300) {
       // 5xx may mean the terminal never processed it; 504 (gateway timeout) is ambiguous.
       const ambiguous = res.status === 504 || res.status === 408
-      throw new FxHttpError(`HTTP ${res.status}`, res.status, res.body, ambiguous)
+      const requestBody = serialized
+        ? (() => { try { return JSON.parse(serialized) as unknown } catch { return undefined } })()
+        : undefined
+      throw new FxHttpError(
+        formatFxHttpFailureMessage({
+          status: res.status,
+          body: res.body,
+          requestBody,
+          url,
+        }),
+        res.status,
+        res.body,
+        ambiguous,
+      )
     }
     return res.body
   }

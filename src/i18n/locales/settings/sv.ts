@@ -46,6 +46,8 @@ export const settingsSv: SettingsBundleTranslations = {
       confirmPassword: 'Bekräfta lösenord',
       notificationSound: 'Ljud för handelsnotiser',
       notificationSoundDescription: 'Spela upp ett ljud när en affär genomförs, ändras eller stängs.',
+      notificationEmail: 'E-postaviseringar',
+      notificationEmailDescription: 'Skicka ett e-postmeddelande när en signal kräver din granskning.',
     },
     placeholders: {
       address: 'Gata, byggnad, postnummer…',

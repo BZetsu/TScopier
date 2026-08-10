@@ -24,16 +24,13 @@ exports.resolveBrokerSymbol = resolveBrokerSymbol;
 const fxsocketClient_1 = require("../fxsocketClient");
 const brokerConnectionStatus_1 = require("../brokerConnectionStatus");
 const brokerTerminalHealth_1 = require("../brokerTerminalHealth");
-const brokerSignalReplay_1 = require("../brokerSignalReplay");
 const helpers_1 = require("./helpers");
 const derivSymbols_1 = require("../derivSymbols");
 const brokerSymbolDecoration_1 = require("./brokerSymbolDecoration");
 const types_1 = require("./types");
-const HEARTBEAT_FAILURES_BEFORE_DOWN = Math.max(2, Number(process.env.BROKER_HEARTBEAT_FAILURES_BEFORE_DOWN ?? 4) || 4);
 const HEARTBEAT_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.BROKER_HEARTBEAT_CONCURRENCY ?? 2) || 2));
 const HEARTBEAT_BATCH_GAP_MS = Math.max(0, Math.min(2000, Number(process.env.BROKER_HEARTBEAT_BATCH_GAP_MS ?? 250) || 250));
 const SYMBOL_KEEPALIVE_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.SYMBOL_KEEPALIVE_CONCURRENCY ?? 2) || 2));
-const heartbeatFailCounts = new Map();
 const symbolInventoryReadyHandled = new Set();
 const SYMBOL_AUTO_MATCH_PROBES = ['EURUSD', 'XAUUSD', 'GBPUSD', 'BTCUSD'];
 function findBrokerBySessionUuid(ctx, uuid) {
@@ -86,42 +83,13 @@ function prewarmBrokerSymbolCaches(ctx, broker) {
     }
 }
 async function pingBrokerSessionInner(ctx, broker, api, uuid, opts) {
-    const now = Date.now();
-    const last = ctx.sessionPingAt.get(uuid) ?? 0;
-    if (!opts?.force && now - last < types_1.SESSION_PING_MIN_INTERVAL_MS)
-        return true;
-    if (ctx.sessionCheckInflight.has(uuid))
+    // No network keepSessionAlive — FxSocket terminals are self-hosted and stay up.
+    void api;
+    void opts;
+    if (ctx.sessionOrderBlocked.has(broker.id))
         return false;
-    const wasBlocked = ctx.sessionOrderBlocked.has(broker.id);
-    try {
-        const alive = await api.keepSessionAlive(uuid);
-        if (alive) {
-            heartbeatFailCounts.delete(uuid);
-            ctx.sessionPingAt.set(uuid, Date.now());
-            if (wasBlocked) {
-                ctx.sessionOrderBlocked.delete(broker.id);
-                void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, broker);
-            }
-            await markBrokerSessionRecovered(ctx, broker);
-            return true;
-        }
-    }
-    catch (err) {
-        if ((0, fxsocketClient_1.isApiThrottleError)(err)) {
-            const backoff = (0, fxsocketClient_1.parseApiThrottleBackoffMs)(err);
-            ctx.sessionPingAt.set(uuid, Date.now());
-            console.warn(`[tradeExecutor] keepSessionAlive throttled broker=${broker.id} uuid=${uuid}; backoff ${backoff}ms`);
-            return true;
-        }
-        /* fall through to failure count */
-    }
-    const fails = (heartbeatFailCounts.get(uuid) ?? 0) + 1;
-    heartbeatFailCounts.set(uuid, fails);
-    if (fails >= HEARTBEAT_FAILURES_BEFORE_DOWN) {
-        heartbeatFailCounts.delete(uuid);
-        await ctx.markBrokerSessionDown(broker, uuid, 'heartbeat keepSessionAlive failed');
-    }
-    return false;
+    ctx.sessionPingAt.set(uuid, Date.now());
+    return true;
 }
 function prewarmSymbolsEnabled(ctx) {
     const v = String(process.env.EXECUTOR_PREWARM_SYMBOLS ?? 'true').toLowerCase();
@@ -244,62 +212,27 @@ async function markBrokerSessionDown(ctx, broker, uuid, reason) {
  * once the session recovers. Called from every heartbeat success path.
  */
 async function markBrokerSessionRecovered(ctx, broker) {
-    if (broker.connection_status === 'connected')
-        return;
+    // Always write connected (force) so sticky connection_error_kind left by
+    // edge refresh_summary / partial patches cannot survive a healthy heartbeat.
     broker.connection_status = 'connected';
-    await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(ctx.supabase, broker.id, 'connected');
+    await (0, brokerConnectionStatus_1.writeBrokerConnectionStatus)(ctx.supabase, broker.id, 'connected', { force: true });
 }
 async function ensureBrokerSession(ctx, api, uuid, broker, opts) {
-    const now = Date.now();
-    const last = ctx.sessionPingAt.get(uuid) ?? 0;
-    const blocked = ctx.sessionOrderBlocked.has(broker.id);
-    if (!opts?.force && !blocked && now - last < types_1.SESSION_PING_MIN_INTERVAL_MS)
-        return true;
-    const alive = await api.keepSessionAlive(uuid);
-    if (alive) {
-        ctx.sessionPingAt.set(uuid, now);
-        if (blocked)
-            void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, broker);
-        ctx.sessionOrderBlocked.delete(broker.id);
-        await markBrokerSessionRecovered(ctx, broker);
-        return true;
-    }
-    await ctx.markBrokerSessionDown(broker, uuid, blocked
-        ? 'session blocked after prior OrderSend disconnect'
-        : 'keepSessionAlive failed before OrderSend');
-    return false;
+    // FxSocket self-hosted terminals need no proactive checkConnect. Only skip when
+    // a prior real OrderSend disconnect blocked this broker.
+    void api;
+    void opts;
+    if (ctx.sessionOrderBlocked.has(broker.id))
+        return false;
+    ctx.sessionPingAt.set(uuid, Date.now());
+    return true;
 }
 async function ensureBrokerSessionLiveFast(ctx, api, uuid, broker) {
-    const now = Date.now();
-    const last = ctx.sessionPingAt.get(uuid) ?? 0;
-    const blocked = ctx.sessionOrderBlocked.has(broker.id);
-    if (!blocked && now - last < types_1.SESSION_PING_MIN_INTERVAL_MS)
-        return true;
-    const inflight = ctx.sessionCheckInflight.get(uuid);
-    if (inflight)
-        return inflight;
-    const check = (async () => {
-        try {
-            const alive = await api.keepSessionAlive(uuid);
-            if (alive) {
-                ctx.sessionPingAt.set(uuid, Date.now());
-                if (blocked)
-                    void (0, brokerSignalReplay_1.replayParsedSignalsForBroker)(ctx, broker);
-                ctx.sessionOrderBlocked.delete(broker.id);
-                await markBrokerSessionRecovered(ctx, broker);
-                return true;
-            }
-            await ctx.markBrokerSessionDown(broker, uuid, blocked
-                ? 'session blocked after prior OrderSend disconnect'
-                : 'keepSessionAlive failed before live OrderSend');
-            return false;
-        }
-        finally {
-            ctx.sessionCheckInflight.delete(uuid);
-        }
-    })();
-    ctx.sessionCheckInflight.set(uuid, check);
-    return check;
+    void api;
+    if (ctx.sessionOrderBlocked.has(broker.id))
+        return false;
+    ctx.sessionPingAt.set(uuid, Date.now());
+    return true;
 }
 function brokersWarmForLiveEntry(ctx, brokers, signalSymbol) {
     if (!brokers.length)

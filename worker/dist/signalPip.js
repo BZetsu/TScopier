@@ -69,6 +69,3 @@ function signalPipPrice(symbol) {
     const mult = getPipMultiplierForSymbol(symbol);
     return mult > 0 ? 1 / mult : 0.0001;
 }
-function roundSignalPips(pips) {
-    return Math.round(pips * 100) / 100;
-}

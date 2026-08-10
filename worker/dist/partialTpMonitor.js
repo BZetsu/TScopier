@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PartialTpMonitor = void 0;
 exports.isPartialTpTriggered = isPartialTpTriggered;
+exports.isPartialTpBenignBrokerError = isPartialTpBenignBrokerError;
 const node_os_1 = __importDefault(require("node:os"));
 const fxsocketClient_1 = require("./fxsocketClient");
 const monitorIdleGate_1 = require("./monitorIdleGate");
@@ -32,6 +33,19 @@ function isPartialTpTriggered(isBuy, triggerPrice, bid, ask) {
     if (!Number.isFinite(bid) || !Number.isFinite(ask))
         return false;
     return isBuy ? bid >= triggerPrice : ask <= triggerPrice;
+}
+/**
+ * Broker replies that mean "the parent position is already gone" for a
+ * partial-TP /OrderClose attempt. When matched, the partial leg is cancelled
+ * and the parent trade closed instead of retrying forever.
+ *
+ * `unknown ticket` must be here: FxSocket replies "unknown ticket" when it no
+ * longer knows the position (closed by SL/broker TP/user). Without it the
+ * monitor rolled the leg back to `pending` and retried every ~400ms for days
+ * (prod incident 2026-08-10, trade 1278201 — 505 errors in 14.5 min).
+ */
+function isPartialTpBenignBrokerError(message) {
+    return /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order|unknown\s+ticket/i.test(message);
 }
 class PartialTpMonitor {
     constructor(supabase) {
@@ -280,7 +294,7 @@ class PartialTpMonitor {
             // "trade not found" / "position already closed" — the parent trade
             // closed under us (SL, broker TP, manual). Cancel the partial; the
             // remaining slice rode to broker TP already, nothing left to do.
-            const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i.test(msg);
+            const benign = isPartialTpBenignBrokerError(msg);
             if (benign) {
                 console.log(`[partialTpMonitor] parent gone signal=${partial.signal_id} ticket=${ticketNum}: ${msg}`);
                 await this.supabase

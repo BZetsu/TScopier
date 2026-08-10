@@ -14,6 +14,7 @@ import { PageLoader } from './components/layout/PageLoader'
 import { ReferralCodeRedirect } from './pages/auth/ReferralCodeRedirect'
 import { VerifyEmailPage } from './pages/auth/VerifyEmailPage'
 import { AuthConfirmedPage } from './pages/auth/AuthConfirmedPage'
+import { EmailUnsubscribePage } from './pages/auth/EmailUnsubscribePage'
 import { GoogleAnalyticsRouteTracker } from './components/analytics/GoogleAnalyticsRouteTracker'
 import { CookieConsentBanner } from './components/marketing/CookieConsentBanner'
 import { AppTopBannersProvider } from './context/AppTopBannersProvider'
@@ -111,7 +112,11 @@ export default function App() {
           <Route path="/signup" element={<AuthLayout />} />
           <Route path="/forgot-password" element={<AuthLayout />} />
           <Route path="/reset-password" element={<AuthLayout />} />
+          <Route path="/email-unsubscribe" element={<EmailUnsubscribePage />} />
           <Route path="/:referralCode" element={<ReferralCodeRedirect />} />
+
+          {/* Public pricing — paywall / acquisition (no auth required). */}
+          <Route path="/pricing" element={<LazyPage><AppPricingPage /></LazyPage>} />
 
           <Route element={<VerifyEmailLayout />}>
             <Route path="/verify-email" element={<VerifyEmailPage />} />
@@ -134,7 +139,6 @@ export default function App() {
           >
             <Route path="/welcome" element={<Navigate to="/dashboard" replace />} />
             <Route element={<AppShell />}>
-            <Route path="/pricing" element={<LazyPage><AppPricingPage /></LazyPage>} />
             <Route path="/dashboard/*" element={<DashboardRouteAnchor />} />
             <Route path="/brokers" element={<LazyPage><AccountConfigPage /></LazyPage>} />
             <Route path="/account-configuration" element={<Navigate to="/brokers" replace />} />

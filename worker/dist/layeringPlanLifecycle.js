@@ -4,6 +4,7 @@ exports.convergeLayeringPlanAfterLegTerminal = convergeLayeringPlanAfterLegTermi
 exports.markLayeringPlanInvalid = markLayeringPlanInvalid;
 exports.cancelLayeringPlan = cancelLayeringPlan;
 exports.recoverCancellingLayeringPlans = recoverCancellingLayeringPlans;
+const businessEvents_1 = require("./observability/businessEvents");
 const TERMINAL_LEG_STATUSES = new Set(['fired', 'filled', 'cancelled', 'expired', 'failed']);
 const OPEN_NATIVE_SUBMISSION_STATUSES = new Set(['planned', 'submission_claimed', 'submission_ambiguous', 'reconciliation_required', 'submitted']);
 function terminalLeg(row) {
@@ -173,6 +174,21 @@ async function markLayeringPlanInvalid(supabase, planId, reason) {
         .in('status', ['prepared', 'activating', 'active', 'cancelling', 'cancellation_pending', 'entries_complete'])
         .select('layer_plan_id')
         .maybeSingle();
+    if (!error && data) {
+        (0, businessEvents_1.captureBusinessIssue)({
+            category: 'layering',
+            event: 'layering_plan_invalid',
+            severity: 'error',
+            reasonCode: reason,
+            message: 'Layering plan was marked invalid',
+            userImpact: 'failed',
+            context: {
+                layer_plan_id: planId,
+                operation: 'mark_layering_plan_invalid',
+                extra: { reason },
+            },
+        });
+    }
     return !error && Boolean(data);
 }
 async function cancelLayeringPlan(supabase, planId, reason, opts) {
@@ -349,6 +365,27 @@ async function cancelLayeringPlan(supabase, planId, reason, opts) {
             .update({ status: pendingStatus, updated_at: now, cancellation_reason: reason })
             .eq('layer_plan_id', planId)
             .in('status', ['cancelling', 'cancellation_pending']);
+        const firstLeg = (legs ?? [])[0];
+        (0, businessEvents_1.captureBusinessIssue)({
+            category: 'layering',
+            event: manualReviewNative ? 'layering_manual_review_required' : 'layering_cancellation_pending',
+            severity: manualReviewNative ? 'error' : 'warning',
+            reasonCode: manualReviewNative ? 'LAYERING_CANCELLATION_MANUAL_REVIEW' : 'LAYERING_CANCELLATION_PENDING',
+            message: 'Layering plan cancellation could not be fully confirmed at broker',
+            userImpact: manualReviewNative ? 'manual_review_required' : 'delayed',
+            context: {
+                user_id: typeof firstLeg?.user_id === 'string' ? firstLeg.user_id : null,
+                signal_id: typeof firstLeg?.signal_id === 'string' ? firstLeg.signal_id : null,
+                broker_account_id: typeof firstLeg?.broker_account_id === 'string' ? firstLeg.broker_account_id : null,
+                layer_plan_id: planId,
+                operation: 'cancel_layering_plan',
+                extra: {
+                    plan_status: pendingStatus,
+                    reason,
+                    ambiguous_execution: true,
+                },
+            },
+        });
         return pendingStatus;
     }
     await supabase

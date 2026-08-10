@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, PanelLeftClose, PanelLeftOpen, Menu, X, type LucideIcon } from 'lucide-react'
+import { ChevronDown, PanelLeftClose, PanelLeftOpen, Menu, X, Sparkles, type LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
 import { getAppRouteIcon } from '../../lib/appNavIcons'
 import { TscopierLogo } from '../ui/TscopierLogo'
@@ -19,6 +19,7 @@ import { UserAvatar } from './UserAvatar'
 import { DashboardKeepAlive } from './DashboardKeepAlive'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { useSubscription } from '../../context/SubscriptionContext'
+import { useAssistant } from '../../context/AssistantContext'
 import { useHasOpenTrades } from '../../hooks/useHasOpenTrades'
 import { useHasHighImpactNewsToday } from '../../hooks/useHasHighImpactNewsToday'
 import { useNeedsWelcome } from '../../hooks/useNeedsWelcome'
@@ -46,9 +47,10 @@ export function AppLayout() {
   const userMenuRef = useRef<HTMLDivElement>(null)
   const userMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { profile } = useUserProfile()
-  const { planName, hasActiveSubscription, effectivePlan, openUpgrade, isPastDue, hasTrialExpired, loading: subscriptionGateLoading } =
+  const { planName, hasActiveSubscription, checkoutSyncPending, effectivePlan, openUpgrade, isPastDue, hasTrialExpired, loading: subscriptionGateLoading } =
     useSubscription()
-  const navLocked = !subscriptionGateLoading && !hasActiveSubscription
+  const { openAssistant } = useAssistant()
+  const navLocked = !subscriptionGateLoading && !hasActiveSubscription && !checkoutSyncPending
   const subscribeCta = getSubscribeCtaLabel(t, {
     isPastDue,
     effectivePlan,
@@ -157,8 +159,15 @@ export function AppLayout() {
   useEffect(() => {
     if (!navLocked) return
     if (isRouteAllowedWithoutSubscription(location.pathname)) return
-    navigate('/dashboard', { replace: true })
+    navigate('/pricing', { replace: true })
   }, [navLocked, location.pathname, navigate])
+
+  // After Stripe success, paywall may have raced to /pricing before webhook sync — send back.
+  useEffect(() => {
+    if (!checkoutSyncPending) return
+    if (location.pathname !== '/pricing') return
+    navigate('/dashboard', { replace: true })
+  }, [checkoutSyncPending, location.pathname, navigate])
 
   useEffect(() => {
     document.documentElement.classList.add('app-viewport-lock')
@@ -456,6 +465,19 @@ export function AppLayout() {
             <AppSearchMobileTrigger />
             <LanguageSwitcher />
             <ThemeToggle />
+            <button
+              type="button"
+              onClick={() => {
+                setNotificationsOpen(false)
+                setUserMenuOpen(false)
+                openAssistant()
+              }}
+              aria-label={t.nav.assistant.ariaLabel}
+              title={t.nav.assistant.title}
+              className="rounded-lg p-2 text-neutral-600 transition-colors hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            >
+              <Sparkles className="h-5 w-5" />
+            </button>
             <NotificationBell
               open={notificationsOpen}
               onOpen={() => {

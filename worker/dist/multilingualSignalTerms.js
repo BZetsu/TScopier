@@ -77,6 +77,7 @@ exports.COMMON_TP_TERMS = [
 /** Common entry zone / price labels. */
 exports.COMMON_ENTRY_TERMS = [
     'منطقة الدخول', 'نقطة الدخول', 'سعر الدخول', // ar
+    'price', 'limit price', // common pending-order label (PRICE: 4256)
 ];
 const MULTILINGUAL_DIRECTION_TERMS = [
     'buy', 'sell', 'long', 'short',

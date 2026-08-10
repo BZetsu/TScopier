@@ -5,8 +5,9 @@ import { pipValueTextClass } from '../../lib/pnlDisplay'
 import { interpolate } from '../../i18n/interpolate'
 import { useT } from '../../context/LocaleContext'
 import { supabase } from '../../lib/supabase'
+import { normalizeBacktestTradeRow } from '../../lib/backtestApi'
 import type { BacktestRunRow } from '../../lib/backtestTypes'
-import { formatPipValue, parseSummary } from '../../lib/backtestDisplay'
+import { formatPipValue, parseSummary, sumTradePipPnl } from '../../lib/backtestDisplay'
 
 export type BacktestHistoryRow = Pick<
   BacktestRunRow,
@@ -39,6 +40,7 @@ export function BacktestHistoryModal({
   const t = useT()
   const bt = t.backtest
   const [runs, setRuns] = useState<BacktestHistoryRow[]>([])
+  const [pipsByRunId, setPipsByRunId] = useState<Record<string, number | null>>({})
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
 
@@ -106,10 +108,49 @@ export function BacktestHistoryModal({
         .order('created_at', { ascending: false })
         .limit(50)
       if (error) throw new Error(error.message)
-      setRuns((data ?? []) as BacktestHistoryRow[])
+      const historyRows = (data ?? []) as BacktestHistoryRow[]
+      setRuns(historyRows)
+
+      const runIds = historyRows.map(r => r.id)
+      if (runIds.length === 0) {
+        setPipsByRunId({})
+        return
+      }
+
+      // Recompute trader-pip totals from trade levels so gold history is not stuck on
+      // old cent-point summary.totalPips (1 pip = 0.01).
+      const { data: tradeRows, error: tradeErr } = await supabase
+        .from('backtest_trades')
+        .select('id, run_id, symbol, direction, signal_at, entry_price, exit_price, sl, tp_levels, outcome, tps_hit, pnl, lot_size, details')
+        .in('run_id', runIds)
+      if (tradeErr) throw new Error(tradeErr.message)
+
+      const byRun = new Map<string, ReturnType<typeof normalizeBacktestTradeRow>[]>()
+      for (const raw of tradeRows ?? []) {
+        const runId = String((raw as { run_id?: string }).run_id ?? '')
+        if (!runId) continue
+        const list = byRun.get(runId) ?? []
+        list.push(normalizeBacktestTradeRow(raw as Record<string, unknown>))
+        byRun.set(runId, list)
+      }
+
+      const next: Record<string, number | null> = {}
+      for (const run of historyRows) {
+        const trades = byRun.get(run.id)
+        if (trades && trades.length > 0) {
+          next[run.id] = sumTradePipPnl(trades)
+        } else {
+          const summary = parseSummary(run.summary)
+          next[run.id] = summary?.totalPips != null && Number.isFinite(summary.totalPips)
+            ? summary.totalPips
+            : null
+        }
+      }
+      setPipsByRunId(next)
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e))
       setRuns([])
+      setPipsByRunId({})
     } finally {
       setLoading(false)
     }
@@ -182,8 +223,7 @@ export function BacktestHistoryModal({
             <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
               {runs.map(run => {
                 const badge = statusBadge(run.status)
-                const summary = parseSummary(run.summary)
-                const pips = summary?.totalPips
+                const pips = pipsByRunId[run.id]
                 const cfg = run.config as BacktestRunRow['config']
                 const dateRange =
                   cfg?.dateFrom && cfg?.dateTo ? `${cfg.dateFrom} → ${cfg.dateTo}` : '—'

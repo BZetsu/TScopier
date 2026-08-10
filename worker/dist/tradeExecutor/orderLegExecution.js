@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.collapseIdenticalImmediateLegs = void 0;
 exports.sendImmediateLegs = sendImmediateLegs;
 const fxsocketClient_1 = require("../fxsocketClient");
 const brokerConnectError_1 = require("../brokerConnectError");
@@ -49,6 +50,10 @@ const materializeBrokerRangePendingLegs_1 = require("./materializeBrokerRangePen
 const pipelineTimestamps_1 = require("../pipelineTimestamps");
 const ensureSignalRow_1 = require("../ensureSignalRow");
 const sentry_1 = require("../observability/sentry");
+const businessEvents_1 = require("../observability/businessEvents");
+const deferredBusinessEvents_1 = require("../observability/deferredBusinessEvents");
+const collapseIdenticalImmediateLegs_1 = require("./collapseIdenticalImmediateLegs");
+Object.defineProperty(exports, "collapseIdenticalImmediateLegs", { enumerable: true, get: function () { return collapseIdenticalImmediateLegs_1.collapseIdenticalImmediateLegs; } });
 async function sendImmediateLegs(input) {
     const { ctx, signal, parsed, broker, manual, api, uuid, symbol, requestedSymbol, mapping, params, legs, liveEntryFast, pipelineT0, strictEntryPrefetch, channelDelayMs, channelDelaySkipped, deferVirtualAnchor, deferBrokerRangePendingMaterialize, brokerPendingMode, prepAnchor, prepAnchorSource, virtualPendings, plan, materializedVirtuals, strictBrokerPlaced, strictDeferred, op, channelKeywords, baseLot, syncMultiLegTps, prep, } = input;
     if (legs.length === 0) {
@@ -61,10 +66,49 @@ async function sendImmediateLegs(input) {
                 failureReason: manualPlanner_1.SKIP_REASON_ENTRY_NOT_OPENED,
             };
     }
-    if (manual.trade_style !== 'multi' && legs.length > 1) {
-        console.error(`[tradeExecutor] single trade_style aborting ${legs.length} legs signal=${signal.id} broker=${broker.id}`);
+    // Drop identical full-lot clones only (not granular multi/range legs).
+    const collapsed = (0, collapseIdenticalImmediateLegs_1.collapseIdenticalImmediateLegs)(legs, { baseLot });
+    let workingLegs = collapsed.legs;
+    if (collapsed.collapsed > 0) {
+        console.warn(`[tradeExecutor] duplicate_leg_collapsed removed=${collapsed.collapsed}`
+            + ` kept=${workingLegs.length} signal=${signal.id} broker=${broker.id}`);
+        try {
+            await ctx.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                broker_account_id: broker.id,
+                action: 'duplicate_leg_collapsed',
+                status: 'info',
+                request_payload: {
+                    removed: collapsed.collapsed,
+                    kept: workingLegs.length,
+                },
+            });
+        }
+        catch { /* best-effort */ }
     }
-    const sendLegs = manual.trade_style !== 'multi' && legs.length > 1 ? legs.slice(0, 1) : legs;
+    if (manual.trade_style !== 'multi' && workingLegs.length > 1) {
+        console.error(`[tradeExecutor] single_style_multi_leg_blocked ${workingLegs.length} legs`
+            + ` signal=${signal.id} broker=${broker.id}`);
+        try {
+            await ctx.supabase.from('trade_execution_logs').insert({
+                user_id: signal.user_id,
+                signal_id: signal.id,
+                broker_account_id: broker.id,
+                action: 'single_style_multi_leg_blocked',
+                status: 'failed',
+                request_payload: { leg_count: workingLegs.length },
+                error_message: `single trade_style refused ${workingLegs.length} immediate legs`,
+            });
+        }
+        catch { /* best-effort */ }
+        return {
+            channelDelayMs,
+            channelDelaySkipped,
+            failureReason: 'single_style_multi_leg_blocked',
+        };
+    }
+    const sendLegs = workingLegs;
     const totalCount = sendLegs.length;
     const orderLogContext = {
         signal_symbol: parsed.symbol ?? null,
@@ -178,6 +222,24 @@ async function sendImmediateLegs(input) {
                             attempt: attemptNo,
                         },
                     }, { deferLog: true });
+                    (0, businessEvents_1.addBusinessBreadcrumb)({
+                        category: 'broker',
+                        event: 'broker_request_started',
+                        context: {
+                            user_id: signal.user_id,
+                            signal_id: signal.id,
+                            channel_id: signal.channel_id,
+                            telegram_message_id: signal.telegram_message_id,
+                            broker_account_id: broker.id,
+                            execution_attempt_id: correlation.execution_attempt_id,
+                            broker_request_id: correlation.broker_request_id,
+                            symbol: sendArgs.symbol,
+                            operation: sendArgs.operation,
+                            execution_mechanism: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+                            retry_attempt: attemptNo,
+                            user_impact: 'none',
+                        },
+                    });
                     const r = await sendPromise;
                     if (!r.ok || !r.ticket)
                         throw new Error(r.message || `v2 order_send rejected (${r.retcodeName})`);
@@ -205,6 +267,24 @@ async function sendImmediateLegs(input) {
                             attempt: attemptNo,
                         },
                     }, { deferLog: true });
+                    (0, businessEvents_1.addBusinessBreadcrumb)({
+                        category: 'broker',
+                        event: 'broker_request_started',
+                        context: {
+                            user_id: signal.user_id,
+                            signal_id: signal.id,
+                            channel_id: signal.channel_id,
+                            telegram_message_id: signal.telegram_message_id,
+                            broker_account_id: broker.id,
+                            execution_attempt_id: correlation.execution_attempt_id,
+                            broker_request_id: correlation.broker_request_id,
+                            symbol: sendArgs.symbol,
+                            operation: sendArgs.operation,
+                            execution_mechanism: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+                            retry_attempt: attemptNo,
+                            user_impact: 'none',
+                        },
+                    });
                     const raw = await sendPromise;
                     result = {
                         ticket: raw.ticket,
@@ -233,11 +313,14 @@ async function sendImmediateLegs(input) {
                 }
                 console.error(`[tradeExecutor] OrderSend failed signal=${signal.id} broker=${broker.id} leg=${leg.idx + 1}/${totalCount} op=${sendArgs.operation} price=${sendArgs.price ?? 0}:`, lastAttemptError);
                 if ((0, fxsocketClient_1.isOrderOpTimedOutMessage)(lastAttemptError)) {
-                    (0, sentry_1.captureWorkerError)(err instanceof Error ? err : new Error(lastAttemptError), {
-                        subsystem: 'broker',
-                        operation: 'order_send_ambiguous',
-                        errorCode: 'ORDER_SEND_TIMEOUT',
-                        fingerprint: ['broker', 'ORDER_SEND_TIMEOUT', useV2 ? 'fxsocket_v2' : 'fxsocket_v1'],
+                    (0, businessEvents_1.captureBusinessIssue)({
+                        category: 'broker',
+                        event: 'broker_order_ambiguous',
+                        severity: 'error',
+                        reasonCode: 'BROKER_TIMEOUT',
+                        message: 'Broker OrderSend timed out; outcome requires reconciliation',
+                        userImpact: 'manual_review_required',
+                        fingerprint: ['broker_order_ambiguous', 'order_send', 'BROKER_TIMEOUT', useV2 ? 'fxsocket_v2' : 'fxsocket_v1'],
                         context: {
                             user_id: signal.user_id,
                             signal_id: signal.id,
@@ -249,12 +332,50 @@ async function sendImmediateLegs(input) {
                             dispatch_source: signal.dispatch_source,
                             stage: 'order_send',
                             retry_attempt: attempt + 1,
+                            symbol: sendArgs.symbol,
+                            operation: sendArgs.operation,
+                            execution_mechanism: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
                             extra: {
                                 path: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
                                 operation: sendArgs.operation,
                                 symbol: sendArgs.symbol,
                                 leg: leg.idx + 1,
                                 total: totalCount,
+                            },
+                        },
+                    });
+                }
+                else {
+                    const reasonCode = (0, businessEvents_1.classifyBrokerFailureReason)(lastAttemptError);
+                    (0, businessEvents_1.captureBusinessIssue)({
+                        category: 'trade',
+                        event: reasonCode === 'INSUFFICIENT_MARGIN'
+                            ? 'trade_copy_failed'
+                            : reasonCode === 'SYMBOL_UNSUPPORTED'
+                                ? 'trade_copy_blocked'
+                                : 'broker_order_rejected',
+                        severity: reasonCode === 'BROKER_RATE_LIMITED' ? 'warning' : 'error',
+                        reasonCode,
+                        message: 'Broker rejected trade copy order',
+                        userImpact: 'failed',
+                        context: {
+                            user_id: signal.user_id,
+                            signal_id: signal.id,
+                            channel_id: signal.channel_id,
+                            telegram_message_id: signal.telegram_message_id,
+                            broker_account_id: broker.id,
+                            execution_attempt_id: correlation.execution_attempt_id,
+                            broker_request_id: correlation.broker_request_id,
+                            dispatch_source: signal.dispatch_source,
+                            stage: 'order_send',
+                            retry_attempt: attempt + 1,
+                            symbol: sendArgs.symbol,
+                            operation: sendArgs.operation,
+                            execution_mechanism: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+                            extra: {
+                                leg: leg.idx + 1,
+                                total: totalCount,
+                                stable_broker_reason: reasonCode,
                             },
                         },
                     });
@@ -407,6 +528,28 @@ async function sendImmediateLegs(input) {
                         },
                         error_message: message,
                     });
+                    (0, businessEvents_1.captureBusinessIssue)({
+                        category: 'layering',
+                        event: 'layering_plan_activation_failed',
+                        severity: 'error',
+                        reasonCode: 'LAYERING_FIRST_FILL_ACTIVATION_FAILED',
+                        message: 'Broker accepted entry but first-fill layer activation failed',
+                        userImpact: 'manual_review_required',
+                        context: {
+                            user_id: signal.user_id,
+                            signal_id: signal.id,
+                            channel_id: signal.channel_id,
+                            broker_account_id: broker.id,
+                            trade_id: tradeRowId,
+                            symbol: sendArgs.symbol,
+                            operation: sendArgs.operation,
+                            layering_mode: prep.layeringRuntime.mode,
+                            extra: {
+                                broker_ticket_present: result.ticket != null,
+                                trade_row_id_present: tradeRowId != null,
+                            },
+                        },
+                    });
                     throw err;
                 }
             }
@@ -464,11 +607,14 @@ async function sendImmediateLegs(input) {
                 return first.data?.id ?? null;
             }
             console.error(`[tradeExecutor] trades INSERT failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${first.error.message}`);
-            (0, sentry_1.captureWorkerError)(first.error, {
-                subsystem: 'persistence',
-                operation: 'broker_success_trade_persist_failed',
-                errorCode: 'BROKER_SUCCESS_DB_FAILURE',
-                fingerprint: ['persistence', 'BROKER_SUCCESS_DB_FAILURE', 'trades_insert'],
+            (0, businessEvents_1.captureBusinessIssue)({
+                category: 'persistence',
+                event: 'broker_success_persistence_failed',
+                severity: 'error',
+                reasonCode: 'BROKER_SUCCESS_DB_FAILURE',
+                message: 'Broker accepted order but trade row persistence failed',
+                userImpact: 'manual_review_required',
+                fingerprint: ['broker_success_persistence_failed', 'trades_insert', 'BROKER_SUCCESS_DB_FAILURE'],
                 context: {
                     user_id: signal.user_id,
                     signal_id: signal.id,
@@ -480,6 +626,7 @@ async function sendImmediateLegs(input) {
                         broker_ticket_present: result.ticket != null,
                         leg: leg.idx + 1,
                         total: totalCount,
+                        symbol: sendArgs.symbol,
                     },
                 },
             });
@@ -508,11 +655,14 @@ async function sendImmediateLegs(input) {
                 .maybeSingle();
             if (retry.error) {
                 console.error(`[tradeExecutor] trades INSERT retry failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}: ${retry.error.message}`);
-                (0, sentry_1.captureWorkerError)(retry.error, {
-                    subsystem: 'persistence',
-                    operation: 'broker_success_trade_persist_retry_failed',
-                    errorCode: 'BROKER_SUCCESS_DB_FAILURE',
-                    fingerprint: ['persistence', 'BROKER_SUCCESS_DB_FAILURE', 'trades_insert_retry'],
+                (0, businessEvents_1.captureBusinessIssue)({
+                    category: 'persistence',
+                    event: 'broker_success_persistence_failed',
+                    severity: 'error',
+                    reasonCode: 'BROKER_SUCCESS_DB_FAILURE',
+                    message: 'Broker accepted order but trade row persistence retry failed',
+                    userImpact: 'manual_review_required',
+                    fingerprint: ['broker_success_persistence_failed', 'trades_insert_retry', 'BROKER_SUCCESS_DB_FAILURE'],
                     context: {
                         user_id: signal.user_id,
                         signal_id: signal.id,
@@ -520,6 +670,7 @@ async function sendImmediateLegs(input) {
                         telegram_message_id: signal.telegram_message_id,
                         broker_account_id: broker.id,
                         stage: 'post_broker_success_persistence_retry',
+                        symbol: sendArgs.symbol,
                         extra: { broker_ticket_present: result.ticket != null },
                     },
                 });
@@ -547,17 +698,32 @@ async function sendImmediateLegs(input) {
                 }
             })().catch(err => {
                 console.error(`[tradeExecutor] post-fill persist failed signal=${signal.id} broker=${broker.id} ticket=${result.ticket}:`, err instanceof Error ? err.message : String(err));
-                (0, sentry_1.captureWorkerError)(err instanceof Error ? err : new Error(String(err)), {
-                    subsystem: 'persistence',
-                    operation: 'post_fill_persist_failed',
-                    errorCode: 'BROKER_SUCCESS_DB_FAILURE',
-                    fingerprint: ['persistence', 'BROKER_SUCCESS_DB_FAILURE', 'post_fill_background'],
+                (0, deferredBusinessEvents_1.captureDeferredBusinessFailure)({
+                    category: 'persistence',
+                    event: 'broker_success_persistence_failed',
+                    severity: 'error',
+                    reasonCode: 'BROKER_SUCCESS_DB_FAILURE',
+                    message: 'Broker accepted order but deferred trade persistence failed',
+                    userImpact: 'manual_review_required',
+                    operation: 'post_fill_background_persistence',
+                    err,
+                    fingerprint: ['broker_success_persistence_failed', 'post_fill_background', 'BROKER_SUCCESS_DB_FAILURE'],
                     context: {
                         user_id: signal.user_id,
                         signal_id: signal.id,
+                        channel_id: signal.channel_id,
+                        telegram_message_id: signal.telegram_message_id,
                         broker_account_id: broker.id,
-                        stage: 'post_fill_background',
-                        extra: { broker_ticket_present: result.ticket != null },
+                        broker_request_id: `${signal.id}:${broker.id}:${leg.idx}`,
+                        trade_id: filledLeg.tradeRowId,
+                        symbol: sendArgs.symbol,
+                        side: isBuy ? 'buy' : 'sell',
+                        execution_mechanism: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+                        extra: {
+                            broker_ticket_present: result.ticket != null,
+                            leg: leg.idx + 1,
+                            total: totalCount,
+                        },
                     },
                 });
             });
@@ -597,6 +763,33 @@ async function sendImmediateLegs(input) {
         if (liveEntryFast) {
             void runBrokerMaterialize().catch(err => {
                 console.error(`[tradeExecutor] deferred broker range pending failed signal=${signal.id} broker=${broker.id}:`, err);
+                (0, deferredBusinessEvents_1.captureDeferredBusinessFailure)({
+                    category: 'layering',
+                    event: 'layering_materialization_failed',
+                    severity: 'error',
+                    reasonCode: 'BROKER_PENDING_MATERIALIZATION_FAILED',
+                    message: 'Deferred broker-pending layer materialization failed after entry success',
+                    userImpact: 'partial',
+                    operation: 'deferred_broker_pending_materialize',
+                    err,
+                    context: {
+                        user_id: signal.user_id,
+                        signal_id: signal.id,
+                        channel_id: signal.channel_id,
+                        telegram_message_id: signal.telegram_message_id,
+                        broker_account_id: broker.id,
+                        symbol,
+                        side: plan.isBuy === false ? 'sell' : 'buy',
+                        execution_mechanism: 'broker_pending_order',
+                        layering_mode: plan.rangeLayering?.rangeLayeringType ?? 'pending_order',
+                        extra: {
+                            targeted_count: virtualPendings.length,
+                            successful_count: 0,
+                            failed_count: virtualPendings.length,
+                            anchor_source: anchorSource,
+                        },
+                    },
+                });
             });
             materializedBrokerPendings = true;
         }
@@ -620,6 +813,32 @@ async function sendImmediateLegs(input) {
             fillAnchor,
         }).catch(err => {
             console.error(`[tradeExecutor] deferred virtual pending failed signal=${signal.id} broker=${broker.id}:`, err);
+            (0, deferredBusinessEvents_1.captureDeferredBusinessFailure)({
+                category: 'layering',
+                event: 'layering_materialization_failed',
+                severity: 'error',
+                reasonCode: 'VIRTUAL_MATERIALIZATION_FAILED',
+                message: 'Deferred virtual layer materialization failed after entry success',
+                userImpact: 'partial',
+                operation: 'deferred_virtual_pending_materialize',
+                err,
+                context: {
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    channel_id: signal.channel_id,
+                    telegram_message_id: signal.telegram_message_id,
+                    broker_account_id: broker.id,
+                    symbol,
+                    side: plan.isBuy === false ? 'sell' : 'buy',
+                    execution_mechanism: 'virtual_pending_monitor',
+                    layering_mode: plan.rangeLayering?.rangeLayeringType ?? 'virtual_pending',
+                    extra: {
+                        targeted_count: virtualPendings.length,
+                        successful_count: 0,
+                        failed_count: virtualPendings.length,
+                    },
+                },
+            });
         });
     }
     if (liveEntryFast && filledLegs.length > 0) {
@@ -658,6 +877,30 @@ async function sendImmediateLegs(input) {
             },
         }).catch(err => {
             console.error(`[tradeExecutor] postFillFollowUp failed signal=${signal.id}:`, err);
+            (0, deferredBusinessEvents_1.captureDeferredBusinessFailure)({
+                category: 'trade',
+                event: 'post_fill_follow_up_failed',
+                severity: 'error',
+                reasonCode: 'POST_FILL_FOLLOW_UP_FAILED',
+                message: 'Deferred post-fill SL/TP follow-up failed after entry success',
+                userImpact: 'partial',
+                operation: 'post_fill_follow_up',
+                err,
+                context: {
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    channel_id: signal.channel_id,
+                    telegram_message_id: signal.telegram_message_id,
+                    broker_account_id: broker.id,
+                    symbol,
+                    side: op.toLowerCase().includes('sell') ? 'sell' : 'buy',
+                    execution_mechanism: useV2 ? 'fxsocket_v2' : 'fxsocket_v1',
+                    extra: {
+                        targeted_count: filledLegs.length,
+                        broker_database_state_may_disagree: true,
+                    },
+                },
+            });
         });
     }
     const anyImmediateOpened = sendResults.some(r => r.status === 'fulfilled' && r.value === true);
@@ -688,6 +931,30 @@ async function sendImmediateLegs(input) {
         if (liveEntryFast) {
             void ctx.syncMultiBasketLegTakeProfits(syncArgs).catch(err => {
                 console.error(`[tradeExecutor] syncMultiBasketLegTakeProfits failed signal=${signal.id}:`, err);
+                (0, deferredBusinessEvents_1.captureDeferredBusinessFailure)({
+                    category: 'management',
+                    event: 'basket_tp_sync_failed',
+                    severity: 'error',
+                    reasonCode: 'BASKET_TP_SYNC_FAILED',
+                    message: 'Deferred multi-leg take-profit synchronization failed after entry success',
+                    userImpact: 'partial',
+                    operation: 'sync_multi_basket_leg_take_profits',
+                    err,
+                    context: {
+                        user_id: signal.user_id,
+                        signal_id: signal.id,
+                        channel_id: signal.channel_id,
+                        telegram_message_id: signal.telegram_message_id,
+                        broker_account_id: broker.id,
+                        symbol,
+                        side: op.toLowerCase().includes('sell') ? 'sell' : 'buy',
+                        extra: {
+                            targeted_count: sendLegs.length,
+                            successful_count: null,
+                            failed_count: null,
+                        },
+                    },
+                });
             });
         }
         else {

@@ -297,10 +297,17 @@ export function withChannelTradingConfig<T extends BrokerChannelTradingFields>(
  */
 export async function persistHealedChannelConfigs(
   supabase: SupabaseClient,
+  userId: string,
   brokerId: string,
   originalRaw: unknown,
   healedConfigs: Record<string, unknown>,
 ): Promise<void> {
+  if (!userId) {
+    console.warn(
+      `[channelTradingConfig] skip persist healed configs broker=${brokerId}: missing user_id`,
+    )
+    return
+  }
   const originalMap = normalizeChannelTradingConfigsMap(originalRaw)
   for (const [channelId, raw] of Object.entries(healedConfigs)) {
     const key = normalizeChannelUuid(channelId)
@@ -311,6 +318,7 @@ export async function persistHealedChannelConfigs(
     const { error } = await supabase
       .from('broker_channel_trading_configs')
       .upsert({
+        user_id: userId,
         broker_account_id: brokerId,
         channel_id: key,
         copier_mode: cfg.copier_mode ?? 'manual',

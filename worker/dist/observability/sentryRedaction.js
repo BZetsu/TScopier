@@ -7,14 +7,22 @@ const MAX_DEPTH = 6;
 const MAX_ARRAY_ITEMS = 25;
 const MAX_OBJECT_KEYS = 60;
 const MAX_STRING_LENGTH = 1200;
-const SENSITIVE_KEY_RE = /(?:password|passwd|pwd|secret|token|bearer|cookie|set-cookie|authorization|api[_-]?key|auth[_-]?key|api[_-]?hash|service[_-]?role|session[_-]?string|phone[_-]?code[_-]?hash|phone|email|client[_-]?secret|private[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|worker[_-]?internal[_-]?token|redis[_-]?token|openai[_-]?key|fxsocket|mt4|mt5|broker[_-]?(?:password|login|credential|secret|token)|balance|equity|request[_-]?body|response[_-]?body|raw[_-]?message|telegram[_-]?text|message[_-]?text)/i;
+const SENSITIVE_KEY_RE = /(?:password|passwd|pwd|secret|token|bearer|cookie|set-cookie|authorization|api[_-]?key|auth[_-]?key|api[_-]?hash|service[_-]?role|session[_-]?string|phone[_-]?code[_-]?hash|phone|email|bvn|nin|identity[_-]?number|account[_-]?number|bank[_-]?account|client[_-]?secret|private[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|worker[_-]?internal[_-]?token|redis[_-]?token|openai[_-]?key|fxsocket|mt4|mt5|broker[_-]?(?:password|login|credential|secret|token)|balance|equity|free[_-]?margin|margin[_-]?free|request[_-]?body|response[_-]?body|raw[_-]?message|telegram[_-]?text|message[_-]?text|raw[_-]?telegram|signal[_-]?payload|broker[_-]?payload|layering[_-]?plan[_-]?snapshot)/i;
 const SENSITIVE_QUERY_KEYS = /(?:token|key|secret|password|auth|authorization|cookie|session|code|hash|email|phone)/i;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi;
 const API_KEY_RE = /\b(?:fxs|sk|rk|pk|sb|supabase|openai)[A-Za-z0-9_-]{16,}\b/gi;
 const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g;
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
-const PHONE_RE = /(?<!\d)\+?\d[\d\s().-]{7,}\d(?!\d)/g;
+const PHONE_CANDIDATE_RE = /(?<!\d)\+?\d[\d\s().-]{7,}\d(?!\d)/g;
+function redactPhones(input) {
+    return input.replace(PHONE_CANDIDATE_RE, (match) => {
+        const digitCount = match.replace(/\D/g, '').length;
+        if (digitCount < 9 || digitCount > 15)
+            return match;
+        return '[REDACTED_PHONE]';
+    });
+}
 function truncate(value) {
     if (value.length <= MAX_STRING_LENGTH)
         return value;
@@ -45,7 +53,7 @@ function redactStringForSentry(value) {
         .replace(BEARER_RE, 'Bearer [REDACTED]')
         .replace(API_KEY_RE, '[REDACTED_KEY]')
         .replace(EMAIL_RE, '[REDACTED_EMAIL]')
-        .replace(PHONE_RE, '[REDACTED_PHONE]'));
+        .replace(PHONE_CANDIDATE_RE, redactPhones));
 }
 function looksSerializedJson(value) {
     const trimmed = value.trim();

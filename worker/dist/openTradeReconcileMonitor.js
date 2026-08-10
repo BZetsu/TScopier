@@ -5,7 +5,7 @@ const fxsocketClient_1 = require("./fxsocketClient");
 const mtApiByAccount_1 = require("./mtApiByAccount");
 const monitorIdleGate_1 = require("./monitorIdleGate");
 const openTradeReconcile_1 = require("./openTradeReconcile");
-const sentry_1 = require("./observability/sentry");
+const businessEvents_1 = require("./observability/businessEvents");
 const ACTIVE_MS = (0, monitorIdleGate_1.monitorActiveIntervalMs)('OPEN_TRADE_RECONCILE_TICK_MS', 30000);
 const IDLE_MS = (0, monitorIdleGate_1.monitorIdleIntervalMs)('OPEN_TRADE_RECONCILE_IDLE_MS', 120000);
 const BATCH_LIMIT = 500;
@@ -111,14 +111,18 @@ class OpenTradeReconcileMonitor {
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 console.warn(`[openTradeReconcileMonitor] reconcile failed broker=${broker.id}: ${msg}`);
-                (0, sentry_1.captureWorkerWarning)(err instanceof Error ? err : new Error(msg), {
-                    subsystem: 'broker',
-                    operation: 'open_trade_reconcile_failed',
-                    errorCode: 'OPEN_TRADE_RECONCILE_FAILED',
-                    fingerprint: ['broker', 'OPEN_TRADE_RECONCILE_FAILED', 'open_trade_reconcile'],
+                (0, businessEvents_1.captureBusinessIssue)({
+                    category: 'reconciliation',
+                    event: 'reconciliation_failed',
+                    severity: 'warning',
+                    reasonCode: 'OPEN_TRADE_RECONCILE_FAILED',
+                    message: 'Open trade reconciliation failed for broker account',
+                    userImpact: 'manual_review_required',
+                    fingerprint: ['reconciliation_failed', 'open_trade_reconcile', 'OPEN_TRADE_RECONCILE_FAILED'],
                     context: {
                         broker_account_id: broker.id,
                         stage: 'open_trade_reconcile',
+                        operation: 'open_trade_reconcile',
                         extra: { tracked_open_trades: openForBroker.length },
                     },
                 });

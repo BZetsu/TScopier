@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { isPartialTpTriggered } from './partialTpMonitor'
+import { isPartialTpBenignBrokerError, isPartialTpTriggered } from './partialTpMonitor'
 
 // Single-mode trades ride to the LAST configured-bucket TP at the broker.
 // The earlier TPs are partial-closes fired by the worker: a long basket's
@@ -34,4 +34,24 @@ test('isPartialTpTriggered: rejects invalid inputs', () => {
   assert.equal(isPartialTpTriggered(true, NaN, 1855, 1855.05), false)
   assert.equal(isPartialTpTriggered(true, 1855, NaN, 1855.05), false)
   assert.equal(isPartialTpTriggered(false, 1845, 1840, NaN), false)
+})
+
+test('isPartialTpBenignBrokerError: unknown ticket is benign (prod incident 2026-08-10)', () => {
+  assert.equal(isPartialTpBenignBrokerError('unknown ticket'), true)
+  assert.equal(isPartialTpBenignBrokerError('OrderClose: unknown ticket'), true)
+  assert.equal(isPartialTpBenignBrokerError('UNKNOWN TICKET'), true)
+})
+
+test('isPartialTpBenignBrokerError: existing benign replies still match', () => {
+  assert.equal(isPartialTpBenignBrokerError('trade not found'), true)
+  assert.equal(isPartialTpBenignBrokerError('position already closed'), true)
+  assert.equal(isPartialTpBenignBrokerError('invalid ticket'), true)
+  assert.equal(isPartialTpBenignBrokerError('no such order'), true)
+})
+
+test('isPartialTpBenignBrokerError: real broker failures stay retryable', () => {
+  assert.equal(isPartialTpBenignBrokerError('Insufficient funds'), false)
+  assert.equal(isPartialTpBenignBrokerError('trade context busy'), false)
+  assert.equal(isPartialTpBenignBrokerError('Invalid stops'), false)
+  assert.equal(isPartialTpBenignBrokerError('HTTP 500'), false)
 })

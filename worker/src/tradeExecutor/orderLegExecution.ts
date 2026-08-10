@@ -9,6 +9,7 @@ import type { ChannelKeywords, ManualSettings, PlannerResult, VirtualPendingLeg 
 import { autoManagementTradeSnapshot } from '../autoManagement'
 import { stripInvalidStopsForSide } from '../channelActiveTradeParams'
 import { isInvalidStopsError } from '../orderModifySafe'
+import { humanizeOrderSendError } from '../brokerTradeError'
 import { trailingTradeRowSnapshot } from '../trailingStop'
 import { applyPostFillFollowUp, type PostFillTradeLeg } from '../postFillFollowUp'
 import type { TradeExecutorContext } from './context'
@@ -33,29 +34,9 @@ import {
   classifyBrokerFailureReason,
 } from '../observability/businessEvents'
 import { captureDeferredBusinessFailure } from '../observability/deferredBusinessEvents'
+import { collapseIdenticalImmediateLegs } from './collapseIdenticalImmediateLegs'
 
-/** Collapse legs that are identical clones (same op/symbol/volume/comment). */
-export function collapseIdenticalImmediateLegs(legs: Leg[]): { legs: Leg[]; collapsed: number } {
-  const seen = new Set<string>()
-  const out: Leg[] = []
-  let collapsed = 0
-  for (const leg of legs) {
-    const a = leg.args
-    const key = [
-      String(a.operation ?? ''),
-      String(a.symbol ?? ''),
-      String(Number(a.volume) || 0),
-      String(a.comment ?? ''),
-    ].join('|')
-    if (seen.has(key)) {
-      collapsed += 1
-      continue
-    }
-    seen.add(key)
-    out.push(leg)
-  }
-  return { legs: out, collapsed }
-}
+export { collapseIdenticalImmediateLegs }
 
 /** Normalized broker fill shape shared by the v1 client and the v2 fxClient. */
 type NormalizedFill = {
@@ -121,9 +102,9 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       }
   }
 
-  // Drop identical full-lot clones (Luis teaser pattern: N× same Buy/volume/comment).
-  const collapsed = collapseIdenticalImmediateLegs(legs)
-  const workingLegs = collapsed.legs
+  // Drop identical full-lot clones only (not granular multi/range legs).
+  const collapsed = collapseIdenticalImmediateLegs(legs, { baseLot })
+  let workingLegs = collapsed.legs
   if (collapsed.collapsed > 0) {
     console.warn(
       `[tradeExecutor] duplicate_leg_collapsed removed=${collapsed.collapsed}`
@@ -367,7 +348,10 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
         break
       } catch (err) {
         setPipelineTimestamp(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'broker_response_received_at', Date.now())
-        lastAttemptError = err instanceof Error ? err.message : String(err)
+        lastAttemptError = humanizeOrderSendError(
+          err instanceof Error ? err.message : String(err),
+          sendArgs.symbol,
+        )
         const hasStops = (Number(sendArgs.stoploss) || 0) > 0 || (Number(sendArgs.takeprofit) || 0) > 0
         if (attempt === 0 && isInvalidStopsError(lastAttemptError) && hasStops) {
           console.warn(
@@ -1028,7 +1012,10 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
     .find((r): r is PromiseRejectedResult => r.status === 'rejected')
     ?.reason
   if (rejectedSendReason != null) {
-    lastSendError = rejectedSendReason instanceof Error ? rejectedSendReason.message : String(rejectedSendReason)
+    lastSendError = humanizeOrderSendError(
+      rejectedSendReason instanceof Error ? rejectedSendReason.message : String(rejectedSendReason),
+      symbol,
+    )
   }
   const parsedTpCount = (parsed.tp ?? []).filter(
     (t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0,

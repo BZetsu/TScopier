@@ -6,6 +6,7 @@ export const tradeNotificationsJa: TradeNotificationsTranslations = {
     modificationCompleted: '取引変更が完了しました',
     layeringCompleted: 'レイヤリングが完了しました',
     tradesClosed: '一部の取引が決済されました',
+    reviewRequired: '承認待ちのシグナル',
   },
   bodies: {
     executionBatch: '{channel}から{broker}で{side}の取引が{count}件新規建玉されました。',
@@ -22,6 +23,7 @@ export const tradeNotificationsJa: TradeNotificationsTranslations = {
     tradesClosedTp: '{channel}から{broker}で{reason}により{count}件の取引が決済されました。',
     tradesClosedGeneric: '{channel}から{broker}で{count}件の取引が決済されました。',
     tradesClosedSingle: '{channel}から{broker}で取引が1件決済されました。',
+    reviewRequired: '{channel}からのシグナルが承認待ちです。',
   },
   sides: {
     buy: '買い',

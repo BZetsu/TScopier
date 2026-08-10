@@ -235,7 +235,11 @@ function withChannelTradingConfig(broker, channelId) {
  * Only writes channels whose original config was missing or incomplete — after
  * the first write, subsequent calls find the DB already populated and skip.
  */
-async function persistHealedChannelConfigs(supabase, brokerId, originalRaw, healedConfigs) {
+async function persistHealedChannelConfigs(supabase, userId, brokerId, originalRaw, healedConfigs) {
+    if (!userId) {
+        console.warn(`[channelTradingConfig] skip persist healed configs broker=${brokerId}: missing user_id`);
+        return;
+    }
     const originalMap = normalizeChannelTradingConfigsMap(originalRaw);
     for (const [channelId, raw] of Object.entries(healedConfigs)) {
         const key = normalizeChannelUuid(channelId);
@@ -248,6 +252,7 @@ async function persistHealedChannelConfigs(supabase, brokerId, originalRaw, heal
         const { error } = await supabase
             .from('broker_channel_trading_configs')
             .upsert({
+            user_id: userId,
             broker_account_id: brokerId,
             channel_id: key,
             copier_mode: cfg.copier_mode ?? 'manual',

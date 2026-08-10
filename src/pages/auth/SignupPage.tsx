@@ -18,6 +18,10 @@ import {
 } from '../../lib/referralCapture'
 import { isEmailVerified } from '../../lib/emailVerification'
 import { marketingUrl } from '../../lib/site'
+import {
+  capturePendingPlanFromUrl,
+  postAuthAppPath,
+} from '../../lib/pendingPlanSelection'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -62,13 +66,15 @@ export function SignupPage() {
     const fromUrl = captureReferralFromUrl(location.search)
     const stored = fromUrl ?? loadStoredReferralCode()
     if (stored) setReferralCode(stored)
+    capturePendingPlanFromUrl(location.search)
   }, [location.search])
 
   const handleGoogleSignIn = async () => {
     setError('')
     setGoogleLoading(true)
     const normalizedRef = normalizeReferralCode(referralCode)
-    const redirectUrl = new URL(`${window.location.origin}/dashboard`)
+    capturePendingPlanFromUrl(location.search)
+    const redirectUrl = new URL(`${window.location.origin}${postAuthAppPath()}`)
     if (referralCodeLooksValid(normalizedRef)) {
       redirectUrl.searchParams.set('ref', normalizedRef)
     }

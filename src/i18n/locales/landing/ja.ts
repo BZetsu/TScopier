@@ -9,7 +9,7 @@ export const landingJa: LandingTranslations = {
     faq: 'FAQ',
     docs: 'ドキュメント',
     signIn: 'ログイン',
-    getStarted: '無料で始める',
+    getStarted: 'プランを選ぶ',
     dashboard: 'ダッシュボード',
     menuOpen: 'メニューを開く',
     menuClose: 'メニューを閉じる',
@@ -18,7 +18,7 @@ export const landingJa: LandingTranslations = {
     headline: 'インテリジェントなAI Telegramシグナルコピープラットフォーム',
     subheadline:
       'TScopierはオールインワンのTelegramシグナルコピープラットフォームです。Telegramを接続し、トレードシグナルをMT4/MT5に直接コピー。複雑な設定、EA、VPSは不要です。',
-    primaryCta: '無料ではじめる',
+    primaryCta: 'プランを選ぶ',
     secondaryCta: 'ログイン',
     imageAlt: '残高、当日損益、取引結果、口座成長チャートを表示したTScopierダッシュボード',
     previewUrl: 'app.tscopier.ai/dashboard',
@@ -608,7 +608,7 @@ export const landingJa: LandingTranslations = {
     subtitle: '一般的なTelegram copierと、速度・可視性・拡張性を重視したクラウド基盤を比較。',
     otherLabel: '他社copier',
     tscopierLabel: 'TScopier',
-    cta: '無料で開始',
+    cta: 'プランを選ぶ',
     rows: [
       {
         aspect: 'セットアップ',
@@ -769,7 +769,7 @@ export const landingJa: LandingTranslations = {
       {
         question: '無料トライアルはありますか？',
         answer:
-          'Advancedには申込時に10日間の無料トライアルが含まれます。Basicは初日から$9.99/月（年払いは$95.90/年）で課金されます。ダッシュボードの閲覧は可能ですが、ライブコピーには有効なプランが必要です。',
+          '無料トライアルはありません。BasicまたはAdvancedを選び、チェックアウトで支払い後にオンボーディングを開始します。全プランに30日間の返金保証が付きます。',
       },
       {
         question: '月払いと年払いの違いは？',
@@ -811,13 +811,13 @@ export const landingJa: LandingTranslations = {
   },
   pricingSnippet: {
     basic: 'Basic — $9.99/月',
-    advanced: 'Advanced — 10日間無料、その後 $39.99/月',
+    advanced: 'Advanced — $39.99/月',
   },
   footer: {
     cta: {
       title: '手動作業なしでシグナルコピーを始めませんか？',
       subtitle: 'Telegramを接続し、MT4またはMT5を紐づけるだけ。数分でコピー運用を開始できます。',
-      primary: '10日間の無料トライアルを始める',
+      primary: 'プランを選ぶ',
       secondary: 'ログイン',
     },
     tagline: 'MetaTrader口座向けの超高速Telegramシグナルcopier。',

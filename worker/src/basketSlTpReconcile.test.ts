@@ -106,7 +106,7 @@ describe('internal rebalance SL guard', () => {
 })
 
 describe('basketLegModifyMergeFailed', () => {
-  it('completes when unfixable legs were skipped (market moved)', () => {
+  it('keeps reconcile open when unfixable legs were skipped', () => {
     assert.equal(
       basketLegModifyMergeFailed({
         openLegs: 32,
@@ -116,7 +116,7 @@ describe('basketLegModifyMergeFailed', () => {
         skippedNoTicket: 0,
         skippedUnfixable: 2,
       }),
-      false,
+      true,
     )
   })
 
@@ -131,6 +131,20 @@ describe('basketLegModifyMergeFailed', () => {
         skippedUnfixable: 0,
       }),
       true,
+    )
+  })
+
+  it('completes when every leg modified with no skips or failures', () => {
+    assert.equal(
+      basketLegModifyMergeFailed({
+        openLegs: 32,
+        attempted: 32,
+        modified: 32,
+        failed: 0,
+        skippedNoTicket: 0,
+        skippedUnfixable: 0,
+      }),
+      false,
     )
   })
 })
@@ -244,7 +258,7 @@ describe('runBasketLegModifies wrong-side guard', () => {
     assert.equal(summary.skippedUnfixable, 1)
     assert.equal(summary.failed, 0)
     assert.equal(legErrors.length, 0)
-    assert.equal(basketLegModifyMergeFailed(summary), false)
+    assert.equal(basketLegModifyMergeFailed(summary), true)
     const skipped = inserts.find(
       (row) => (row as { status?: string }).status === 'skipped',
     ) as { request_payload?: { skip_reason?: string } } | undefined

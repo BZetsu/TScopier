@@ -27,11 +27,12 @@ const rangeLayerTillClose_1 = require("./rangeLayerTillClose");
 const copierPause_1 = require("./copierPause");
 const rangePendingFireGuard_1 = require("./rangePendingFireGuard");
 const brokerConnectError_1 = require("./brokerConnectError");
+const orderModifySafe_1 = require("./orderModifySafe");
 const rangePendingBasketCleanup_1 = require("./rangePendingBasketCleanup");
 const gapFillReanchor_1 = require("./gapFillReanchor");
 const layerConcurrentFire_1 = require("./layerConcurrentFire");
 const workerMetrics_1 = require("./workerMetrics");
-const sentry_1 = require("./observability/sentry");
+const businessEvents_1 = require("./observability/businessEvents");
 const layeringPlanPersistence_1 = require("./manualPlanning/layeringPlanPersistence");
 const layeringModeRollout_1 = require("./manualPlanning/layeringModeRollout");
 const layeringPlanLifecycle_1 = require("./layeringPlanLifecycle");
@@ -116,8 +117,9 @@ function fillWithinTriggerBand(args) {
     return ok ? { ok: true } : { ok: false, reason: 'fill_outside_trigger_band' };
 }
 const rangeBasketLayeringLock_1 = require("./rangeBasketLayeringLock");
-Object.defineProperty(exports, "evaluateTpTouch", { enumerable: true, get: function () { return rangeBasketLayeringLock_1.evaluateTpTouch; } });
-Object.defineProperty(exports, "shouldLockBasketLayering", { enumerable: true, get: function () { return rangeBasketLayeringLock_1.shouldLockBasketLayering; } });
+var rangeBasketLayeringLock_2 = require("./rangeBasketLayeringLock");
+Object.defineProperty(exports, "evaluateTpTouch", { enumerable: true, get: function () { return rangeBasketLayeringLock_2.evaluateTpTouch; } });
+Object.defineProperty(exports, "shouldLockBasketLayering", { enumerable: true, get: function () { return rangeBasketLayeringLock_2.shouldLockBasketLayering; } });
 class VirtualPendingMonitor {
     constructor(supabase) {
         this.supabase = supabase;
@@ -565,18 +567,24 @@ class VirtualPendingMonitor {
         catch (err) {
             console.warn(`[virtualPendingMonitor] enqueue reconcile failed leg=${leg.id}:`
                 + ` ${err instanceof Error ? err.message : String(err)}`);
-            (0, sentry_1.captureWorkerWarning)(err instanceof Error ? err : new Error(String(err)), {
-                subsystem: 'range',
-                operation: 'basket_reconcile_enqueue_failed',
-                errorCode: 'BASKET_RECONCILE_ENQUEUE_FAILED',
-                fingerprint: ['range', 'BASKET_RECONCILE_ENQUEUE_FAILED', 'range_fill_follow_up'],
+            (0, businessEvents_1.captureBusinessIssue)({
+                category: 'reconciliation',
+                event: 'deferred_trade_follow_up_failed',
+                severity: 'warning',
+                reasonCode: 'BASKET_RECONCILE_ENQUEUE_FAILED',
+                message: 'Range fill reconcile enqueue failed after follow-up failure',
+                userImpact: 'delayed',
                 context: {
                     user_id: leg.user_id,
                     signal_id: leg.signal_id,
                     broker_account_id: leg.broker_account_id,
                     pending_leg_id: leg.id,
                     basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
-                    stage: 'range_reconcile_enqueue',
+                    layer_plan_id: leg.layer_plan_id ?? null,
+                    layer_step_idx: leg.step_idx,
+                    symbol: leg.symbol,
+                    side: leg.is_buy ? 'buy' : 'sell',
+                    operation: 'range_fill_reconcile_enqueue',
                 },
             });
         }
@@ -894,11 +902,20 @@ class VirtualPendingMonitor {
                 await (0, layeringPlanLifecycle_1.convergeLayeringPlanAfterLegTerminal)(this.supabase, leg.layer_plan_id);
             }
             const latencyMs = Date.now() - t0;
-            console.log(`[virtualPendingMonitor] virtual leg fired signal=${leg.signal_id} stepIdx=${leg.step_idx} trigger=${leg.trigger_price} ref=${refPrice} ticket=${result.ticket} latency=${latencyMs}ms`);
+            console.log(`[virtualPendingMonitor] virtual leg fired signal=${leg.signal_id} stepIdx=${leg.step_idx} trigger=${leg.trigger_price} ref=${refPrice} ticket=${result.ticket} latency=${latencyMs}ms`
+                + (result.openedNaked ? ' naked=1' : ''));
             const entryPx = result.openPrice ?? refPrice ?? null;
-            const openSl = result.stopLoss ?? args.stoploss ?? null;
+            const desiredSl = Number(args.stoploss) > 0 ? Number(args.stoploss) : null;
+            const desiredTp = Number(args.takeprofit) > 0 ? Number(args.takeprofit) : null;
+            const brokerSl = Number(result.stopLoss) > 0 ? Number(result.stopLoss) : null;
+            const brokerTp = Number(result.takeProfit) > 0 ? Number(result.takeProfit) : null;
+            // Persist only what the broker actually has. Intended stops on a naked
+            // open must not be written yet — that made skipAlreadySynced / follow-up
+            // think the leg was done while MT still had SL=0/TP=0.
+            const persistSl = result.openedNaked ? null : (brokerSl ?? desiredSl);
+            const persistTp = result.openedNaked ? null : (brokerTp ?? desiredTp);
             const manual = await this.loadManualSettingsForLeg(leg.broker_account_id, channelIdForTrade);
-            const autoBeCols = (0, autoManagement_1.autoManagementTradeSnapshot)(manual, entryPx, openSl);
+            const autoBeCols = (0, autoManagement_1.autoManagementTradeSnapshot)(manual, entryPx, desiredSl ?? persistSl);
             const { data: insTrade, error: insErr } = await this.supabase.from('trades').insert({
                 user_id: leg.user_id,
                 signal_id: leg.signal_id,
@@ -908,8 +925,8 @@ class VirtualPendingMonitor {
                 symbol: leg.symbol,
                 direction: leg.is_buy ? 'buy' : 'sell',
                 entry_price: entryPx,
-                sl: openSl,
-                tp: result.takeProfit ?? args.takeprofit ?? null,
+                sl: persistSl,
+                tp: persistTp,
                 lot_size: result.lots ?? args.volume,
                 status: 'open',
                 opened_at: new Date().toISOString(),
@@ -924,21 +941,25 @@ class VirtualPendingMonitor {
                 // Surface it as an orphan so ops/reconcile can reconcile it from the
                 // broker (reconcile-by-anchor cannot see a leg missing from `trades`).
                 console.warn(`[virtualPendingMonitor] trades insert failed leg=${leg.id}: ${insErr.message}`);
-                (0, sentry_1.captureWorkerError)(insErr, {
-                    subsystem: 'range',
-                    operation: 'range_broker_success_trade_persist_failed',
-                    errorCode: 'BROKER_SUCCESS_DB_FAILURE',
-                    fingerprint: ['range', 'BROKER_SUCCESS_DB_FAILURE', 'range_leg_trade_insert'],
+                (0, businessEvents_1.captureBusinessIssue)({
+                    category: 'persistence',
+                    event: 'broker_success_persistence_failed',
+                    severity: 'error',
+                    reasonCode: 'BROKER_SUCCESS_DB_FAILURE',
+                    message: 'Range layer broker fill succeeded but trade row persistence failed',
+                    userImpact: 'manual_review_required',
+                    fingerprint: ['broker_success_persistence_failed', 'range_leg_trade_insert', 'BROKER_SUCCESS_DB_FAILURE'],
                     context: {
                         user_id: leg.user_id,
                         signal_id: leg.signal_id,
                         broker_account_id: leg.broker_account_id,
                         pending_leg_id: leg.id,
                         basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+                        layer_plan_id: leg.layer_plan_id ?? null,
+                        layer_step_idx: leg.step_idx,
                         stage: 'range_post_broker_success_persistence',
+                        symbol: leg.symbol,
                         extra: {
-                            symbol: leg.symbol,
-                            step_idx: leg.step_idx,
                             broker_ticket_present: result.ticket != null,
                         },
                     },
@@ -966,6 +987,76 @@ class VirtualPendingMonitor {
                 && Number.isFinite(ticketNum)
                 && ticketNum > 0
                 && (0, fxsocketClient_1.hasFxsocketConfigured)()) {
+                // Naked open (invalid-stops fallback or broker ignored stops): assign now.
+                if (result.openedNaked && (desiredSl || desiredTp)) {
+                    try {
+                        const outcome = await (0, orderModifySafe_1.modifyLegSlTpWithFallback)(api, leg.metaapi_account_id, ticketNum, desiredSl ?? 0, desiredTp ?? 0, desiredTp ? { deepestTp: desiredTp } : undefined);
+                        if (outcome.ok) {
+                            const dbPatch = {};
+                            if (outcome.slApplied && outcome.appliedSl > 0)
+                                dbPatch.sl = outcome.appliedSl;
+                            if (outcome.tpApplied && outcome.appliedTp > 0)
+                                dbPatch.tp = outcome.appliedTp;
+                            if (Object.keys(dbPatch).length > 0) {
+                                await this.supabase.from('trades').update(dbPatch).eq('id', tradeRowId);
+                            }
+                            console.log(`[virtualPendingMonitor] post-naked stops assigned leg=${leg.id} ticket=${ticketNum}`
+                                + ` sl=${outcome.appliedSl || 0} tp=${outcome.appliedTp || 0} mode=${outcome.mode}`);
+                        }
+                        else {
+                            console.warn(`[virtualPendingMonitor] post-naked stops failed leg=${leg.id} ticket=${ticketNum}:`
+                                + ` ${outcome.error ?? 'unknown'}`);
+                            (0, businessEvents_1.captureBusinessIssue)({
+                                category: 'management',
+                                event: 'deferred_trade_follow_up_failed',
+                                severity: 'error',
+                                reasonCode: 'RANGE_LEG_POST_NAKED_STOPS_FAILED',
+                                message: 'Range layer opened naked and follow-up SL/TP assignment failed',
+                                userImpact: 'partial',
+                                context: {
+                                    user_id: leg.user_id,
+                                    signal_id: leg.signal_id,
+                                    broker_account_id: leg.broker_account_id,
+                                    pending_leg_id: leg.id,
+                                    trade_id: tradeRowId,
+                                    basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+                                    layer_plan_id: leg.layer_plan_id ?? null,
+                                    layer_step_idx: leg.step_idx,
+                                    symbol: leg.symbol,
+                                    side: leg.is_buy ? 'buy' : 'sell',
+                                    operation: 'range_leg_post_naked_stops',
+                                    extra: { broker_database_state_may_disagree: true },
+                                },
+                            });
+                            await this.enqueueReconcileForLegBasket(leg, channelIdForTrade);
+                        }
+                    }
+                    catch (assignErr) {
+                        console.warn(`[virtualPendingMonitor] post-naked stops error leg=${leg.id}:`, assignErr);
+                        (0, businessEvents_1.captureBusinessIssue)({
+                            category: 'management',
+                            event: 'deferred_trade_follow_up_failed',
+                            severity: 'error',
+                            reasonCode: 'RANGE_LEG_POST_NAKED_STOPS_FAILED',
+                            message: 'Range layer opened naked and follow-up SL/TP assignment failed',
+                            userImpact: 'partial',
+                            context: {
+                                user_id: leg.user_id,
+                                signal_id: leg.signal_id,
+                                broker_account_id: leg.broker_account_id,
+                                pending_leg_id: leg.id,
+                                trade_id: tradeRowId,
+                                basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+                                layer_plan_id: leg.layer_plan_id ?? null,
+                                layer_step_idx: leg.step_idx,
+                                symbol: leg.symbol,
+                                side: leg.is_buy ? 'buy' : 'sell',
+                                operation: 'range_leg_post_naked_stops',
+                            },
+                        });
+                        await this.enqueueReconcileForLegBasket(leg, channelIdForTrade);
+                    }
+                }
                 try {
                     await (0, basketModFollowUp_1.tryApplyBasketFollowUpToNewFill)(this.supabase, api, {
                         userId: leg.user_id,
@@ -976,13 +1067,35 @@ class VirtualPendingMonitor {
                         ticket: ticketNum,
                         tradeRowId,
                         entryPrice: entryPx,
-                        existingSl: result.stopLoss ?? args.stoploss ?? null,
-                        existingTp: result.takeProfit ?? args.takeprofit ?? null,
+                        // Force follow-up OrderModify when the broker open was naked.
+                        existingSl: result.openedNaked ? null : (brokerSl ?? desiredSl),
+                        existingTp: result.openedNaked ? null : (brokerTp ?? desiredTp),
                         isBuy: leg.is_buy,
                     });
                 }
                 catch (hookErr) {
                     console.warn(`[virtualPendingMonitor] SL/TP follow-up for range leg=${leg.id} signal=${leg.signal_id}:`, hookErr);
+                    (0, businessEvents_1.captureBusinessIssue)({
+                        category: 'management',
+                        event: 'deferred_trade_follow_up_failed',
+                        severity: 'error',
+                        reasonCode: 'RANGE_LEG_SL_TP_FOLLOW_UP_FAILED',
+                        message: 'Range layer SL/TP follow-up failed after layer execution',
+                        userImpact: 'partial',
+                        context: {
+                            user_id: leg.user_id,
+                            signal_id: leg.signal_id,
+                            broker_account_id: leg.broker_account_id,
+                            pending_leg_id: leg.id,
+                            trade_id: tradeRowId,
+                            basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+                            layer_plan_id: leg.layer_plan_id ?? null,
+                            layer_step_idx: leg.step_idx,
+                            symbol: leg.symbol,
+                            side: leg.is_buy ? 'buy' : 'sell',
+                            operation: 'range_leg_sl_tp_follow_up',
+                        },
+                    });
                     await this.enqueueReconcileForLegBasket(leg, channelIdForTrade);
                 }
                 // Brief pause so the new trade row is visible before the basket-wide rebalance query.
@@ -992,6 +1105,32 @@ class VirtualPendingMonitor {
                 }
                 catch (rebalErr) {
                     console.warn(`[virtualPendingMonitor] TP rebalance after range fill leg=${leg.id} signal=${leg.signal_id}:`, rebalErr);
+                    (0, businessEvents_1.captureBusinessIssue)({
+                        category: 'management',
+                        event: 'basket_tp_sync_failed',
+                        severity: 'warning',
+                        reasonCode: 'RANGE_LEG_TP_REBALANCE_FAILED',
+                        message: 'Range layer basket TP rebalance failed after layer execution',
+                        userImpact: 'delayed',
+                        context: {
+                            user_id: leg.user_id,
+                            signal_id: leg.signal_id,
+                            broker_account_id: leg.broker_account_id,
+                            pending_leg_id: leg.id,
+                            trade_id: tradeRowId,
+                            basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+                            layer_plan_id: leg.layer_plan_id ?? null,
+                            layer_step_idx: leg.step_idx,
+                            symbol: leg.symbol,
+                            side: leg.is_buy ? 'buy' : 'sell',
+                            operation: 'range_leg_tp_rebalance',
+                        },
+                    });
+                    await this.enqueueReconcileForLegBasket(leg, channelIdForTrade);
+                }
+                // Always enqueue reconcile after a naked open so the monitor retries
+                // if OrderModify raced the fill.
+                if (result.openedNaked) {
                     await this.enqueueReconcileForLegBasket(leg, channelIdForTrade);
                 }
             }
@@ -1011,6 +1150,9 @@ class VirtualPendingMonitor {
                         trigger_price: leg.trigger_price,
                         ref_price: refPrice,
                         fill_price: entryPx,
+                        opened_naked: result.openedNaked === true,
+                        desired_sl: desiredSl,
+                        desired_tp: desiredTp,
                     },
                     response_payload: { ticket: result.ticket, latency_ms: latencyMs, claimed_by: this.hostId },
                 });
@@ -1060,6 +1202,27 @@ class VirtualPendingMonitor {
                 }
                 catch (reanchorErr) {
                     console.warn(`[virtualPendingMonitor] gap-fill reanchor failed leg=${leg.id} signal=${leg.signal_id}:`, reanchorErr);
+                    (0, businessEvents_1.captureBusinessIssue)({
+                        category: 'layering',
+                        event: 'deferred_trade_follow_up_failed',
+                        severity: 'warning',
+                        reasonCode: 'RANGE_LEG_REANCHOR_FAILED',
+                        message: 'Range layer gap-fill reanchor failed after layer execution',
+                        userImpact: 'delayed',
+                        context: {
+                            user_id: leg.user_id,
+                            signal_id: leg.signal_id,
+                            broker_account_id: leg.broker_account_id,
+                            pending_leg_id: leg.id,
+                            basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+                            layer_plan_id: leg.layer_plan_id ?? null,
+                            layer_step_idx: leg.step_idx,
+                            symbol: leg.symbol,
+                            side: leg.is_buy ? 'buy' : 'sell',
+                            operation: 'range_leg_reanchor',
+                            extra: { broker_database_state_may_disagree: true },
+                        },
+                    });
                 }
             }
             timestamps.layer_reconciled_at = Date.now();
@@ -1109,19 +1272,26 @@ class VirtualPendingMonitor {
                 request_payload: { leg_id: leg.id, step_idx: leg.step_idx, claimed_by: this.hostId },
                 error_message: msg,
             });
-            (0, sentry_1.captureWorkerError)(err instanceof Error ? err : new Error(msg), {
-                subsystem: 'range',
-                operation: 'range_leg_fire_failed',
-                errorCode: 'RANGE_LEG_FIRE_FAILED',
-                fingerprint: ['range', 'RANGE_LEG_FIRE_FAILED', 'final'],
+            (0, businessEvents_1.captureBusinessIssue)({
+                category: 'layering',
+                event: 'layering_leg_execution_failed',
+                severity: 'error',
+                reasonCode: 'RANGE_LEG_FIRE_FAILED',
+                message: 'Virtual range layer leg failed after final broker attempt',
+                userImpact: 'failed',
+                fingerprint: ['layering_leg_execution_failed', 'range_leg_fire', 'RANGE_LEG_FIRE_FAILED'],
                 context: {
                     user_id: leg.user_id,
                     signal_id: leg.signal_id,
                     broker_account_id: leg.broker_account_id,
                     pending_leg_id: leg.id,
                     basket_id: `${leg.signal_id}:${leg.broker_account_id}`,
+                    layer_plan_id: leg.layer_plan_id ?? null,
+                    layer_step_idx: leg.step_idx,
                     stage: 'range_leg_fire',
-                    extra: { symbol: leg.symbol, step_idx: leg.step_idx },
+                    symbol: leg.symbol,
+                    operation: 'range_leg_fire',
+                    extra: { error: msg.slice(0, 180) },
                 },
             });
             (0, workerMetrics_1.incMetric)('range_layer_execution_failed');
@@ -1396,26 +1566,32 @@ class VirtualPendingMonitor {
     /**
      * Send a market order; if the broker rejects with "Invalid stops" despite our
      * clamp/sanitize passes, retry once with SL=0 and TP=0 so the leg actually
-     * opens. The user has explicitly opted into averaging-down by enabling range
-     * trading — opening the leg without stops is strictly preferable to silently
-     * dropping it. Subsequent SL/TP management can be done by the signal-modify
-     * flow once the position is on the books.
+     * opens. Caller must then OrderModify the intended stops — do not trust DB
+     * alone, which previously recorded intended SL/TP while the broker stayed naked.
      */
     async sendWithStopsFallback(leg, args) {
         const api = (0, mtApiByAccount_1.apiForFxsocketAccount)(this.platformByUuid, leg.metaapi_account_id);
         if (!api)
             throw new Error('api unavailable');
+        const requestedSl = Number(args.stoploss) || 0;
+        const requestedTp = Number(args.takeprofit) || 0;
+        const requestedStops = requestedSl > 0 || requestedTp > 0;
         try {
-            return await api.orderSend(leg.metaapi_account_id, args);
+            const result = await api.orderSend(leg.metaapi_account_id, args);
+            const brokerSl = Number(result.stopLoss) || 0;
+            const brokerTp = Number(result.takeProfit) || 0;
+            const openedNaked = requestedStops && !(brokerSl > 0) && !(brokerTp > 0);
+            return { ...result, openedNaked };
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             const isInvalidStops = /invalid\s+stops/i.test(msg);
-            const hasStops = (Number(args.stoploss) || 0) > 0 || (Number(args.takeprofit) || 0) > 0;
+            const hasStops = requestedStops;
             if (isInvalidStops && hasStops) {
                 console.warn(`[virtualPendingMonitor] retry without stops leg=${leg.id} signal=${leg.signal_id} stepIdx=${leg.step_idx} reason="${msg}" (sl=${args.stoploss} tp=${args.takeprofit})`);
                 const fallback = { ...args, stoploss: 0, takeprofit: 0 };
-                return await api.orderSend(leg.metaapi_account_id, fallback);
+                const result = await api.orderSend(leg.metaapi_account_id, fallback);
+                return { ...result, openedNaked: true };
             }
             throw err;
         }

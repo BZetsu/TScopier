@@ -20,6 +20,7 @@ export interface UserProfile {
   email_verified_at?: string | null
   referred_by_user_id?: string | null
   notification_sound_enabled?: boolean
+  notification_email_enabled?: boolean
   copier_paused?: boolean
   created_at?: string
   updated_at?: string
@@ -39,6 +40,7 @@ export const EMPTY_USER_PROFILE: Omit<UserProfile, 'user_id'> = {
     ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     : 'UTC',
   notification_sound_enabled: true,
+  notification_email_enabled: true,
   copier_paused: false,
 }
 
@@ -78,6 +80,26 @@ export async function saveUserProfile(
   const { error } = await supabase
     .from('user_profiles')
     .upsert({ user_id: userId, ...safePatch }, { onConflict: 'user_id' })
+  if (error) throw new Error(error.message)
+}
+
+/** Patch only the provided columns (avoids full-row upsert schema mismatches). */
+export async function updateUserProfileFields(
+  userId: string,
+  patch: Partial<Omit<UserProfile, 'user_id' | 'created_at' | 'updated_at'>>,
+): Promise<void> {
+  const {
+    is_admin: _isAdmin,
+    admin_until: _adminUntil,
+    subscription_status: _subscriptionStatus,
+    referred_by_user_id: _referredByUserId,
+    email_verified_at: _emailVerifiedAt,
+    ...safePatch
+  } = patch
+  const { error } = await supabase
+    .from('user_profiles')
+    .update({ ...safePatch, updated_at: new Date().toISOString() })
+    .eq('user_id', userId)
   if (error) throw new Error(error.message)
 }
 

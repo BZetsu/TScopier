@@ -160,25 +160,41 @@ async function placeOrAdoptPending(args) {
     if (Number(roundedLot.toFixed(8)) !== Number(row.volume.toFixed(8))) {
         return { ok: false, reason: 'broker_pending_invalid_lot' };
     }
+    const plannedSl = row.stoploss != null && Number(row.stoploss) > 0 ? Number(row.stoploss) : 0;
+    const plannedTp = row.takeprofit != null && Number(row.takeprofit) > 0 ? Number(row.takeprofit) : 0;
     const sendArgs = {
         symbol: prep.symbol,
         operation: args.operation,
         volume: row.volume,
         price: row.trigger_price,
-        // Resting limits are naked — SL/TP applied on fill (tp_lots redistribute).
-        stoploss: 0,
-        takeprofit: 0,
+        stoploss: plannedSl,
+        takeprofit: plannedTp,
         slippage: row.slippage,
         comment: args.reference,
         expertID: row.expert_id ?? 909090,
     };
     const clamped = (0, helpers_1.clampOrderStops)(sendArgs, prep.params);
-    let result;
+    let result = null;
+    let sendErrMsg = null;
     try {
         result = await prep.api.orderSend(prep.uuid, clamped.args);
     }
     catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        sendErrMsg = err instanceof Error ? err.message : String(err);
+        const hasStops = (Number(clamped.args.stoploss) || 0) > 0
+            || (Number(clamped.args.takeprofit) || 0) > 0;
+        if (/invalid\s+stops/i.test(sendErrMsg) && hasStops) {
+            try {
+                result = await prep.api.orderSend(prep.uuid, { ...clamped.args, stoploss: 0, takeprofit: 0 });
+                sendErrMsg = null;
+            }
+            catch (nakedErr) {
+                sendErrMsg = nakedErr instanceof Error ? nakedErr.message : String(nakedErr);
+            }
+        }
+    }
+    if (!result) {
+        const msg = sendErrMsg ?? 'broker_pending_send_failed';
         if ((0, fxsocketClient_1.isOrderOpTimedOutMessage)(msg)) {
             const reconciled = await reconcileByReference(prep, args.reference).catch(() => null);
             if (reconciled && brokerOrderMatchesLayer({
