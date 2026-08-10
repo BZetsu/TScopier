@@ -185,6 +185,7 @@ export const channelWorkerAr: ChannelWorkerTranslations = {
   dispatchSkipped: 'لم يُنسخ هذا الإشعار ({reason}).',
   errorTicketNotFound: 'لم تُعثر على التذكرة {ticket}',
   errorSymbolNotFound: 'لم يُعثر على الرمز: {symbol}',
+  errorBrokerRejectedGeneric: 'رفض الوسيط هذا الأمر — تحقق من تعيين الرموز والاتصال ثم أعد المحاولة',
   errorBrokerBridgeUnavailable:
     'جسر الوسيط غير متاح مؤقتًا — فعّل Algo Trading في MT5 وتأكد من جاهزية Trade EA في إعدادات الحساب',
   errorTradeEaNotReady:

@@ -184,6 +184,7 @@ export const channelWorkerSv: ChannelWorkerTranslations = {
   dispatchSkipped: 'Kopierade inte den här signalen ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} hittades inte',
   errorSymbolNotFound: 'Symbol hittades inte: {symbol}',
+  errorBrokerRejectedGeneric: 'Mäklaren avvisade ordern — kontrollera symbolmappning och anslutning, försök sedan igen',
   errorBrokerBridgeUnavailable:
     'Broker bridge temporarily unavailable — enable Algo Trading on MT5 and confirm Trade EA ready in Account Configuration',
   errorTradeEaNotReady:

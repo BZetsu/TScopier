@@ -184,6 +184,7 @@ export const channelWorkerNl: ChannelWorkerTranslations = {
   dispatchSkipped: 'Dit signaal is niet gekopieerd ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} niet gevonden',
   errorSymbolNotFound: 'Symbool niet gevonden: {symbol}',
+  errorBrokerRejectedGeneric: 'Broker heeft deze order afgewezen — controleer symbol mapping en verbinding, probeer daarna opnieuw',
   errorBrokerBridgeUnavailable:
     'Broker bridge temporarily unavailable — enable Algo Trading on MT5 and confirm Trade EA ready in Account Configuration',
   errorTradeEaNotReady:

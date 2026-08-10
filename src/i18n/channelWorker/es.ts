@@ -186,6 +186,7 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
   dispatchSkipped: 'No se copió la señal ({reason}).',
   errorTicketNotFound: 'Ticket {ticket} no encontrado',
   errorSymbolNotFound: 'Símbolo no encontrado: {symbol}',
+  errorBrokerRejectedGeneric: 'El bróker rechazó esta orden — revisa el mapeo de símbolos y la conexión, luego inténtalo de nuevo',
   errorBrokerBridgeUnavailable:
     'Puente del bróker temporalmente no disponible — abra Configuración de cuenta → salud del bróker, active Algo Trading en MT5 y espere Trade EA en verde',
   errorTradeEaNotReady:

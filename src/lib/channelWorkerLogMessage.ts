@@ -199,7 +199,7 @@ function signalActionFromLog(row: ChannelWorkerLogRow): string {
   return logAction
 }
 
-function translateBrokerError(message: string, cw: ChannelWorkerTranslations): string {
+function translateBrokerError(message: string, cw: ChannelWorkerTranslations, symbolHint?: string | null): string {
   const bridgeMsg = formatBrokerBridgeErrorMessage(message, {
     bridgeUnavailable: cw.errorBrokerBridgeUnavailable,
     tradeEaNotReady: cw.errorTradeEaNotReady,
@@ -212,6 +212,21 @@ function translateBrokerError(message: string, cw: ChannelWorkerTranslations): s
   if (ticket) return interpolate(cw.errorTicketNotFound, { ticket: ticket[1] })
   const sym = message.match(/symbol not found:\s*([A-Z0-9._#+]+)/i)
   if (sym) return interpolate(cw.errorSymbolNotFound, { symbol: sym[1]!.toUpperCase() })
+  if (/symbolselect\s*failed|symbol not found on this broker/i.test(message)) {
+    const hint = String(symbolHint ?? '').trim().toUpperCase()
+    if (hint) return interpolate(cw.errorSymbolNotFound, { symbol: hint })
+    return cw.errorBrokerRejectedGeneric
+  }
+  if (/^HTTP\s*5\d\d$/i.test(message.trim()) || /broker rejected (this|the) order/i.test(message)) {
+    const hint = String(symbolHint ?? '').trim().toUpperCase()
+    if (hint && /broker rejected the order for/i.test(message)) {
+      return interpolate(cw.errorSymbolNotFound, { symbol: hint })
+    }
+    if (hint && /^HTTP\s*5\d\d$/i.test(message.trim())) {
+      return interpolate(cw.errorSymbolNotFound, { symbol: hint })
+    }
+    return cw.errorBrokerRejectedGeneric
+  }
   if (/not connected/i.test(message) || /broker session is not connected/i.test(message)) {
     return cw.errorBrokerNotConnected
   }
@@ -235,12 +250,18 @@ function isBenignStopsAlreadySetMessage(message: string | null | undefined): boo
 function errSuffix(row: ChannelWorkerLogRow, cw: ChannelWorkerTranslations): string {
   if (!row.error_message) return ''
   if (isBenignStopsAlreadySetMessage(row.error_message)) return ''
-  return interpolate(cw.errSuffix, { detail: translateBrokerError(row.error_message, cw) })
+  const payload = row.request_payload ?? {}
+  const symbolHint = String(payload.symbol ?? payload.trade_symbol ?? '').trim() || null
+  return interpolate(cw.errSuffix, { detail: translateBrokerError(row.error_message, cw, symbolHint) })
 }
 
-function translateSkipReason(reason: string, cw: ChannelWorkerTranslations): string {
+function translateSkipReason(reason: string, cw: ChannelWorkerTranslations, symbolHint?: string | null): string {
   const key = normalizeCopierSkipReasonKey(reason)
-  return cw.skipReasons[key] ?? reason.replace(/_/g, ' ')
+  if (cw.skipReasons[key]) return cw.skipReasons[key]
+  // Raw broker failures (e.g. historical "HTTP 500") — reuse trade-error copy.
+  const friendly = translateBrokerError(reason, cw, symbolHint)
+  if (friendly !== reason) return friendly
+  return reason.replace(/_/g, ' ')
 }
 
 const SYMBOL_EXEMPTED_SKIP_REASONS = new Set([
@@ -346,7 +367,9 @@ export function orderSendOutcomeSuffix(
     }
   }
 
-  return interpolate(cw.errSuffix, { detail: translateBrokerError(err, cw) })
+  return interpolate(cw.errSuffix, {
+    detail: translateBrokerError(err, cw, sentSym || signalSym || null),
+  })
 }
 
 function signalWasSkipped(row: ChannelWorkerLogRow): boolean {
@@ -357,7 +380,9 @@ function skipReasonForSignal(row: ChannelWorkerLogRow, cw: ChannelWorkerTranslat
   const raw = String(
     row.signals?.skip_reason ?? row.request_payload?.skip_reason ?? row.error_message ?? '',
   ).trim()
-  return raw ? translateSkipReason(raw, cw) : cw.notPlaced
+  const payload = row.request_payload ?? {}
+  const symbolHint = String(payload.symbol ?? payload.trade_symbol ?? '').trim() || null
+  return raw ? translateSkipReason(raw, cw, symbolHint) : cw.notPlaced
 }
 
 function isMgmtNoOpenSkipReason(row: ChannelWorkerLogRow): boolean {
@@ -663,6 +688,7 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
       const reason = translateSkipReason(
         String(payload.skip_reason ?? row.error_message ?? cw.notPlaced),
         cw,
+        String(payload.symbol ?? payload.trade_symbol ?? orderInstr ?? '').trim() || null,
       )
       return interpolate(cw.orderDidNotPlaceSkipped, { on, reason })
     }
