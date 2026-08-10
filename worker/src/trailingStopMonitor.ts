@@ -283,7 +283,7 @@ export class TrailingStopMonitor {
       return true
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i.test(msg)
+      const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order|unknown\s+ticket/i.test(msg)
         || isBenignOrderModifyError(msg)
       if (benign) {
         await this.supabase
