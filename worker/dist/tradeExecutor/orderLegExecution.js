@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.collapseIdenticalImmediateLegs = collapseIdenticalImmediateLegs;
+exports.collapseIdenticalImmediateLegs = void 0;
 exports.sendImmediateLegs = sendImmediateLegs;
 const fxsocketClient_1 = require("../fxsocketClient");
 const brokerConnectError_1 = require("../brokerConnectError");
@@ -52,28 +52,8 @@ const ensureSignalRow_1 = require("../ensureSignalRow");
 const sentry_1 = require("../observability/sentry");
 const businessEvents_1 = require("../observability/businessEvents");
 const deferredBusinessEvents_1 = require("../observability/deferredBusinessEvents");
-/** Collapse legs that are identical clones (same op/symbol/volume/comment). */
-function collapseIdenticalImmediateLegs(legs) {
-    const seen = new Set();
-    const out = [];
-    let collapsed = 0;
-    for (const leg of legs) {
-        const a = leg.args;
-        const key = [
-            String(a.operation ?? ''),
-            String(a.symbol ?? ''),
-            String(Number(a.volume) || 0),
-            String(a.comment ?? ''),
-        ].join('|');
-        if (seen.has(key)) {
-            collapsed += 1;
-            continue;
-        }
-        seen.add(key);
-        out.push(leg);
-    }
-    return { legs: out, collapsed };
-}
+const collapseIdenticalImmediateLegs_1 = require("./collapseIdenticalImmediateLegs");
+Object.defineProperty(exports, "collapseIdenticalImmediateLegs", { enumerable: true, get: function () { return collapseIdenticalImmediateLegs_1.collapseIdenticalImmediateLegs; } });
 async function sendImmediateLegs(input) {
     const { ctx, signal, parsed, broker, manual, api, uuid, symbol, requestedSymbol, mapping, params, legs, liveEntryFast, pipelineT0, strictEntryPrefetch, channelDelayMs, channelDelaySkipped, deferVirtualAnchor, deferBrokerRangePendingMaterialize, brokerPendingMode, prepAnchor, prepAnchorSource, virtualPendings, plan, materializedVirtuals, strictBrokerPlaced, strictDeferred, op, channelKeywords, baseLot, syncMultiLegTps, prep, } = input;
     if (legs.length === 0) {
@@ -86,9 +66,9 @@ async function sendImmediateLegs(input) {
                 failureReason: manualPlanner_1.SKIP_REASON_ENTRY_NOT_OPENED,
             };
     }
-    // Drop identical full-lot clones (Luis teaser pattern: N× same Buy/volume/comment).
-    const collapsed = collapseIdenticalImmediateLegs(legs);
-    const workingLegs = collapsed.legs;
+    // Drop identical full-lot clones only (not granular multi/range legs).
+    const collapsed = (0, collapseIdenticalImmediateLegs_1.collapseIdenticalImmediateLegs)(legs, { baseLot });
+    let workingLegs = collapsed.legs;
     if (collapsed.collapsed > 0) {
         console.warn(`[tradeExecutor] duplicate_leg_collapsed removed=${collapsed.collapsed}`
             + ` kept=${workingLegs.length} signal=${signal.id} broker=${broker.id}`);

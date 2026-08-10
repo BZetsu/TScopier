@@ -292,7 +292,7 @@ class TradeExecutor {
                 }
                 : row;
             const normalized = this.normalizeBrokerRow(mergedRow);
-            void (0, channelTradingConfig_1.persistHealedChannelConfigs)(this.supabase, row.id, mergedRow.channel_trading_configs, normalized.channel_trading_configs);
+            void (0, channelTradingConfig_1.persistHealedChannelConfigs)(this.supabase, row.user_id, row.id, mergedRow.channel_trading_configs, normalized.channel_trading_configs);
             this.brokersById.set(row.id, normalized);
             if (normalized.is_active) {
                 const arr = this.brokersByUser.get(row.user_id) ?? [];
@@ -357,7 +357,7 @@ class TradeExecutor {
     applyBrokerCacheRow(row) {
         const preNormalizedConfigs = row.channel_trading_configs;
         const normalized = this.normalizeBrokerRow(row);
-        void (0, channelTradingConfig_1.persistHealedChannelConfigs)(this.supabase, row.id, preNormalizedConfigs, normalized.channel_trading_configs);
+        void (0, channelTradingConfig_1.persistHealedChannelConfigs)(this.supabase, row.user_id, row.id, preNormalizedConfigs, normalized.channel_trading_configs);
         const sessionId = (0, helpers_2.brokerSessionUuid)(normalized);
         if (sessionId)
             (0, fxsocketClient_1.getFxsocketClient)()?.seedPlatformCache(sessionId, (0, fxsocketClient_1.mtPlatformFrom)(normalized.platform));
@@ -1112,7 +1112,7 @@ class TradeExecutor {
                     await (0, signalBrokerDispatchClaim_1.releaseSignalBrokerDispatchClaim)(this.supabase, signal.id, effectiveBroker.id);
                 }
                 (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'execution_claim_started_at', Date.now());
-                const claimed = await (0, signalBrokerDispatchClaim_1.claimSignalBrokerDispatch)(this.supabase, signal.id, effectiveBroker.id);
+                const claimed = await (0, signalBrokerDispatchClaim_1.claimSignalBrokerDispatch)(this.supabase, signal.id, effectiveBroker.id, signal.user_id);
                 if (!claimed) {
                     // Another worker won entry. Revisions may still refresh SL/TP once materialized.
                     if (isRevisionRefresh) {
