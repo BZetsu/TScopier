@@ -1,6 +1,11 @@
 # Project Memory
 
 ## Changelog
+### 2026-08-10 — Sentry log-noise filter (gramjs flood-wait chatter dropped before capture)
+
+- **Noise filter (worker):** `worker/src/observability/sentry.ts` `beforeSendLog` now drops high-frequency, no-diagnostic-value log lines. Default regex drops gramjs flood-waits (`Sleeping for Ns on flood wait (Caused by messages.GetHistory/GetDialogs)`) — ~60-67% of captured log lines in the Aug 9/10 prod windows. Env controls: `SENTRY_LOG_NOISE_FILTER` (default ON; `false` disables) and `SENTRY_LOG_NOISE_PATTERNS` (comma-separated extra regex sources). Tests in `sentry.test.ts` cover default drop, keep non-noise, extra patterns, disable. `worker/.env.example` documents both vars. Compiled `worker/dist/observability/sentry.js` updated.
+- **Verification:** worker `tsc --noEmit` clean; `sentry.test.ts` passes (noise + existing); build clean.
+- **Deploy note:** push to dev + staging, redeploy worker on Railway (listener + trade worker). No env vars required — filter ON by default.
 
 ### 2026-08-10 — Order-close audit persistence fixed (missing user_id/signal_id) — Notion task done, body rewritten in plain English
 
