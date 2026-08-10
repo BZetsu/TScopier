@@ -6,10 +6,12 @@ import {
   Loader2,
   Minus,
   Radio,
+  TriangleAlert,
   X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useT } from '../../context/LocaleContext'
+import { supabase } from '../../lib/supabase'
 import type { MtTrade } from '../../lib/fxsocketBroker'
 import {
   formatSignalInstructions,
@@ -17,11 +19,17 @@ import {
   type TradeSignalContext,
 } from '../../lib/tradeSignalLink'
 import {
+  fetchBrokerFailuresForTrade,
+  formatBrokerFailureRow,
+  type CopierBrokerFailureRow,
+} from '../../lib/copierLogDetail'
+import {
   formatTradeLots,
   formatTradePrice,
   getTradeDisplayMeta,
 } from '../../lib/tradeDisplay'
 import { Badge } from '../ui/Badge'
+import { ReportTradeModal } from './ReportTradeModal'
 
 interface TradeDetailModalProps {
   trade: MtTrade | null
@@ -37,16 +45,20 @@ export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalPro
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [context, setContext] = useState<TradeSignalContext | null | undefined>(undefined)
+  const [brokerFailures, setBrokerFailures] = useState<CopierBrokerFailureRow[]>([])
+  const [showReport, setShowReport] = useState(false)
 
   useEffect(() => {
     if (!trade) {
       setContext(undefined)
       setLoadError('')
       setLoading(false)
+      setBrokerFailures([])
       return
     }
     if (!userId) {
       setContext(null)
+      setBrokerFailures([])
       return
     }
 
@@ -54,11 +66,21 @@ export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalPro
     setLoading(true)
     setLoadError('')
     setContext(undefined)
+    setBrokerFailures([])
 
     void (async () => {
       try {
         const result = await resolveTradeSignalContext(userId, trade)
-        if (!cancelled) setContext(result)
+        if (cancelled) return
+        setContext(result)
+        if (result?.signal) {
+          const failures = await fetchBrokerFailuresForTrade(supabase, {
+            userId,
+            signalId: result.signal.id,
+            brokerAccountId: trade.broker_id,
+          })
+          if (!cancelled) setBrokerFailures(failures)
+        }
       } catch (e) {
         if (!cancelled) {
           setLoadError(e instanceof Error ? e.message : tr.loadSignalError)
@@ -95,6 +117,11 @@ export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalPro
     if (!linkedSignalId) return
     onClose()
     navigate(`/manage-signals?edit=${linkedSignalId}`)
+  }
+
+  const handleViewCopierLogs = () => {
+    onClose()
+    navigate('/copier-logs')
   }
 
   const instructionLines = useMemo(() => {
@@ -155,6 +182,13 @@ export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalPro
             <p className="text-xs text-neutral-400 tabular-nums">#{trade.ticket}</p>
           </div>
           <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setShowReport(true)}
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+            >
+              {tr.report}
+            </button>
             <button
               type="button"
               disabled={!linkedSignalId}
@@ -251,6 +285,46 @@ export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalPro
             </dl>
           </section>
 
+          {brokerFailures.length > 0 ? (
+            <section className="rounded-xl border border-error-200 dark:border-error-900/60 bg-error-50/60 dark:bg-error-950/20 p-4 space-y-2.5">
+              <div className="flex items-center gap-2">
+                <TriangleAlert className="w-4 h-4 text-error-600 dark:text-error-400 shrink-0" />
+                <p className="text-xs font-semibold uppercase tracking-wide text-error-800 dark:text-error-300">
+                  {tr.brokerErrorTitle}
+                </p>
+              </div>
+              <p className="text-sm text-neutral-700 dark:text-neutral-300">{tr.brokerErrorIntro}</p>
+              <ul className="space-y-2">
+                {brokerFailures.map((failure, idx) => (
+                  <li
+                    key={`${failure.created_at}-${failure.action}-${idx}`}
+                    className="flex gap-2 text-xs"
+                  >
+                    <span className="text-neutral-400 whitespace-nowrap tabular-nums shrink-0 pt-0.5">
+                      {new Date(failure.created_at).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                    <span
+                      className="text-error-700 dark:text-error-300 min-w-0 break-words"
+                      title={failure.error_message ?? undefined}
+                    >
+                      {formatBrokerFailureRow(failure, t.copierLogs)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                onClick={handleViewCopierLogs}
+                className="text-xs font-semibold text-teal-700 dark:text-teal-300 hover:underline underline-offset-2"
+              >
+                {tr.viewCopierLogs}
+              </button>
+            </section>
+          ) : null}
+
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-neutral-500 py-4">
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -328,6 +402,10 @@ export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalPro
           )}
         </div>
       </div>
+
+      {showReport && trade && (
+        <ReportTradeModal trade={trade} userId={userId} onClose={() => setShowReport(false)} />
+      )}
     </div>
   )
 }

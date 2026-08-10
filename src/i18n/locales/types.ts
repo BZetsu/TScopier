@@ -718,6 +718,26 @@ export interface TradesTranslations {
   instructionTp: string
   instructionLotSize: string
   instructionMessage: string
+  report: string
+  reportTitle: string
+  reportSubtitle: string
+  reportCategory: string
+  catWrongEntry: string
+  catWrongSl: string
+  catWrongTp: string
+  catWrongDirection: string
+  catWrongLots: string
+  catNotExecuted: string
+  catOther: string
+  reportReason: string
+  reportReasonPlaceholder: string
+  reportSubmit: string
+  reportSuccess: string
+  reportError: string
+  brokerErrorTitle: string
+  brokerErrorIntro: string
+  viewCopierLogs: string
+  cancel: string
 }
 
 export interface EconomicCalendarTranslations {
