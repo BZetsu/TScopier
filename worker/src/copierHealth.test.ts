@@ -162,15 +162,26 @@ describe('copier health model', () => {
     assert.equal(state.copierEngineStatus, 'offline')
   })
 
-  it('recovery exhaustion requires reconnect and stops copier', () => {
+  it('session invalid requires reconnect and stops copier', () => {
+    const state = resolveCopierEngineState({
+      linked: true,
+      listenerStatus: 'failed',
+      owned: true,
+      sessionInvalid: true,
+    })
+    assert.equal(state.telegramAccountStatus, 'reconnect_required')
+    assert.equal(state.copierEngineStatus, 'stopped')
+  })
+
+  it('transient recovery exhaustion marks listener offline without requiring relink', () => {
     const state = resolveCopierEngineState({
       linked: true,
       listenerStatus: 'failed',
       owned: true,
       recoveryExhausted: true,
     })
-    assert.equal(state.telegramAccountStatus, 'reconnect_required')
-    assert.equal(state.copierEngineStatus, 'stopped')
+    assert.equal(state.telegramAccountStatus, 'linked')
+    assert.equal(state.copierEngineStatus, 'offline')
   })
 
   it('user-disabled copying is stopped, not offline', () => {

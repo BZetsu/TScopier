@@ -4,7 +4,7 @@ import {
   formatFxHttpFailureMessage,
   humanizeOrderSendError,
   parseFxErrorEnvelope,
-} from './brokerTradeError.ts'
+} from './brokerTradeError'
 
 describe('parseFxErrorEnvelope', () => {
   it('reads message + MRPC code from FxSocket body', () => {
