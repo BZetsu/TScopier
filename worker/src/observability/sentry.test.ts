@@ -323,6 +323,58 @@ test('init enables the logs pipeline with a redacting beforeSendLog', () => {
   assert.equal(typeof log.message, 'string')
 })
 
+test('beforeSendLog drops gramjs flood-wait noise by default', () => {
+  const mock = enabledMock()
+  const opts = initOptions(mock) as { beforeSendLog?: (log: unknown) => unknown }
+  const fn = opts.beforeSendLog!
+  const dropped = [
+    '\x1b[33m[[T07:39:33.630] [INFO] - [Sleeping for 31s on flood wait (Caused by messages.GetHistory)]\x1b[0m',
+    '\x1b[33m[[T07:41:25.050] [INFO] - [Sleeping for 30s on flood wait (Caused by messages.GetDialogs)]\x1b[0m',
+    '[INFO] - [Sleeping for 27s on flood wait (Caused by messages.GetHistory)]',
+  ]
+  for (const message of dropped) {
+    assert.equal(fn({ level: 'info', message }), null, message)
+  }
+})
+
+test('beforeSendLog keeps non-noise logs', () => {
+  const mock = enabledMock()
+  const opts = initOptions(mock) as { beforeSendLog?: (log: unknown) => unknown }
+  const kept = opts.beforeSendLog!({
+    level: 'warn',
+    message: '[orderCloseAudit] source=fxsocket account=x ticket=1 ok=false msg=unknown ticket',
+  }) as Record<string, unknown>
+  assert.equal(typeof kept, 'object')
+  assert.equal(kept.message, '[orderCloseAudit] source=fxsocket account=x ticket=1 ok=false msg=unknown ticket')
+})
+
+test('beforeSendLog honors SENTRY_LOG_NOISE_PATTERNS extra regexes', () => {
+  const mock = setupMock({
+    SENTRY_ENABLED: 'true',
+    SENTRY_DSN: 'https://public@example.invalid/1',
+    SENTRY_LOG_NOISE_PATTERNS: 'listener_healthy,\\bheartbeat\\b',
+  } as NodeJS.ProcessEnv)
+  const opts = initOptions(mock) as { beforeSendLog?: (log: unknown) => unknown }
+  const fn = opts.beforeSendLog!
+  assert.equal(fn({ level: 'info', message: '[telegram-conn] event=listener_healthy worker=x connected=true' }), null)
+  assert.equal(fn({ level: 'info', message: '[trailingStopMonitor] heartbeat rows=3' }), null)
+})
+
+test('beforeSendLog can disable noise filtering with SENTRY_LOG_NOISE_FILTER=false', () => {
+  const mock = setupMock({
+    SENTRY_ENABLED: 'true',
+    SENTRY_DSN: 'https://public@example.invalid/1',
+    SENTRY_LOG_NOISE_FILTER: 'false',
+  } as NodeJS.ProcessEnv)
+  const opts = initOptions(mock) as { beforeSendLog?: (log: unknown) => unknown }
+  const kept = opts.beforeSendLog!({
+    level: 'info',
+    message: '[INFO] - [Sleeping for 31s on flood wait (Caused by messages.GetHistory)]',
+  }) as Record<string, unknown>
+  assert.equal(typeof kept, 'object')
+  assert.equal(kept.message, '[INFO] - [Sleeping for 31s on flood wait (Caused by messages.GetHistory)]')
+})
+
 test('captureWorkerLog maps levels, applies bounded fields, and redacts attributes', () => {
   const mock = enabledMock()
   captureWorkerLog('info', 'worker startup', {
@@ -384,6 +436,26 @@ test('safeForSentry redacts nested arrays, Error, cause, circular, phone and ema
   assert.doesNotMatch(json, /15555551212/)
   assert.doesNotMatch(json, /abcdefghijklmnopqrstuvwxyz123/)
   assert.doesNotMatch(json, /"pw"/)
+})
+
+test('safeForSentry redacts real phone numbers but preserves UUIDs, timestamps and SHAs', () => {
+  const input = {
+    message: 'call +234 801 234 5678 or (415) 555-2671 for support',
+    uuid: 'd0a7c123-4567-4c5a-b8ac-e2d78339d973',
+    ts: '2026-08-08T07:37:32.597+00:00',
+    until: '2026-08-08T07:37:32.597+00:00',
+    release: 'a35fd651b4f095fde7b8b0e5102ab2c19b',
+    order_ref: '8b0e5102-0e5102ab2c19b',
+  }
+  const safe = safeForSentry(input)
+  const json = JSON.stringify(safe)
+  assert.doesNotMatch(json, /234 801 234 5678/)
+  assert.doesNotMatch(json, /415.555-2671/)
+  assert.doesNotMatch(json, /555-2671/)
+  assert.match(json, /d0a7c123-4567-4c5a-b8ac-e2d78339d973/)
+  assert.match(json, /2026-08-08T07:37:32.597/)
+  assert.match(json, /a35fd651b4f095fde7b8b0e5102ab2c19b/)
+  assert.match(json, /8b0e5102-0e5102ab2c19b/)
 })
 
 test('Telegram message text and broker credentials are excluded', () => {

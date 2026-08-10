@@ -135,6 +135,8 @@ export function resetWorkerSentryForTests(): void {
   rejectionHandler = null
   invalidDsnWarningEmitted = false
   fatalSignatures.clear()
+  logNoiseEnabled = true
+  logNoisePatterns = [...DEFAULT_LOG_NOISE_PATTERNS]
   sentry = Sentry
 }
 
@@ -203,12 +205,47 @@ function beforeBreadcrumb(breadcrumb: unknown): unknown {
   return { category: 'worker', message: '[REDACTED_BREADCRUMB]', level: 'info' }
 }
 
+/**
+ * High-frequency log lines with no diagnostic value that would otherwise flood
+ * Sentry Logs. The dominant case is gramjs/Telegram rate-limit chatter
+ * (`Sleeping for Ns on flood wait ...`) — in the Aug 9/10 prod windows it made
+ * up ~60-67% of all captured log lines. Each entry is a RegExp tested against
+ * the raw message; a match drops the log (returns null from beforeSendLog).
+ * Extra patterns can be added via SENTRY_LOG_NOISE_PATTERNS (comma-separated
+ * regex sources) and the filter can be disabled entirely with
+ * SENTRY_LOG_NOISE_FILTER=false.
+ */
+const DEFAULT_LOG_NOISE_PATTERNS: RegExp[] = [
+  /sleeping for \d+\s*s\s*on flood wait\s*\(caused by messages\./i,
+]
+
+function compileLogNoisePatterns(env: NodeJS.ProcessEnv): RegExp[] {
+  const patterns = [...DEFAULT_LOG_NOISE_PATTERNS]
+  const raw = String(env.SENTRY_LOG_NOISE_PATTERNS ?? '').trim()
+  if (raw) {
+    for (const src of raw.split(',')) {
+      const s = src.trim()
+      if (!s) continue
+      try {
+        patterns.push(new RegExp(s, 'i'))
+      } catch {
+        // Ignore an invalid extra pattern; defaults still apply.
+      }
+    }
+  }
+  return patterns
+}
+
+let logNoiseEnabled = true
+let logNoisePatterns: RegExp[] = [...DEFAULT_LOG_NOISE_PATTERNS]
+
 function beforeSendLog(log: unknown): unknown {
   const safe = safeForSentry(log)
   if (!safe || typeof safe !== 'object' || Array.isArray(safe)) return null
   const src = safe as Record<string, unknown>
   const message = src.message
   if (typeof message !== 'string') return null
+  if (logNoiseEnabled && logNoisePatterns.some(p => p.test(message))) return null
   const attributes = src.attributes
   return {
     level: src.level ?? 'info',
@@ -231,6 +268,8 @@ export function initWorkerSentry(env: NodeJS.ProcessEnv = process.env): void {
       warnInvalidDsnOnce()
       return
     }
+    logNoiseEnabled = String(env.SENTRY_LOG_NOISE_FILTER ?? '').trim().toLowerCase() !== 'false'
+    logNoisePatterns = compileLogNoisePatterns(env)
     sentry.init({
       dsn,
       enabled: true,
