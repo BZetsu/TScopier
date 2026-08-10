@@ -217,10 +217,24 @@ describe('channelActiveTradeParams', () => {
       takeprofit: 4000,
       referencePrice: 4042.5,
       isBuy: false,
+      symbol: 'XAUUSD',
     })
     assert.equal(out.stoploss, 0)
     assert.equal(out.takeprofit, 4000)
     assert.ok(out.stripped.some(s => s.includes('too_close')))
+  })
+
+  test('stripInvalidStopsForSide keeps healthy GBPUSD sell SL/TP under pip-based floor', () => {
+    const out = stripInvalidStopsForSide({
+      stoploss: 1.354,
+      takeprofit: 1.345,
+      referencePrice: 1.34876,
+      isBuy: false,
+      symbol: 'GBPUSD',
+    })
+    assert.equal(out.stoploss, 1.354)
+    assert.equal(out.takeprofit, 1.345)
+    assert.equal(out.stripped.length, 0)
   })
 
   test('stripInvalidStopsForSide keeps healthy sell SL with explicit minDistance', () => {
