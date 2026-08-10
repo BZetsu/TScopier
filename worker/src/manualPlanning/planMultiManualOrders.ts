@@ -264,8 +264,11 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     return finalTps[finalTps.length - 1] ?? null
   }
 
-  // Teaser / no-TP signals: do not burst-split null-TP groups into N full-lot
-  // clones. One immediate market order (full lot); range virtuals may still layer.
+  // Teaser / no-TP signals: never burst-split into N *full-lot* clones.
+  // - No range: one full-lot immediate (classic teaser).
+  // - With range: one OrderSend per immediate leg at targetLeg size (matches UI
+  //   "N instant"), plus virtual range legs — never one aggregated instant
+  //   order of immediateLegs × targetLeg (that looked like a single fat fill).
   if (finalTps.length === 0) {
     const virtualPendings: VirtualPendingLeg[] = []
     if (rangeLegCount > 0) {
@@ -286,6 +289,51 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
         })
       }
     }
+    const rangeLayeringFields =
+      manual.range_trading === true && reservedRangeLegs > 0
+        ? { rangeLayering: rangeLayeringMeta! }
+        : {}
+    const emptyTpFallback = {
+      fallback_reason: 'multi_trade_fallback_empty_tps' as const,
+    }
+
+    // Range path: emit granular instant legs (same volume as layered virtuals).
+    if (rangeLegCount > 0) {
+      if (immediateLegs > 0 && targetUnits < minUnits) {
+        return {
+          orders: [],
+          delay_ms,
+          ...emptyTpFallback,
+          ...(virtualPendings.length ? { virtualPendings } : {}),
+          ...rangeLayeringFields,
+        }
+      }
+      const orders: OrderSendArgs[] = []
+      for (let i = 0; i < immediateLegs; i++) {
+        orders.push({
+          ...orderBase,
+          volume: targetLeg,
+          stoploss: roundPrice(finalSl),
+          takeprofit: roundPrice(null),
+          ...expirationFields,
+          comment: appendOrderCommentSuffix(commentPrefix, `:tp${i + 1}`),
+        })
+      }
+      return {
+        orders,
+        delay_ms,
+        anchor: { source: entryAnchor != null ? 'signal' : 'unknown', value: entryAnchor },
+        pip,
+        pipQuote,
+        isBuy,
+        ...(strictEntry ? { strictEntry } : {}),
+        ...(virtualPendings.length ? { virtualPendings } : {}),
+        ...rangeLayeringFields,
+        ...emptyTpFallback,
+      }
+    }
+
+    // No range: classic teaser — one full-lot immediate.
     const single = buildSingleOrder({
       orderBase,
       expirationFields,
@@ -305,10 +353,6 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     })
     return {
       ...single,
-      ...(virtualPendings.length ? { virtualPendings } : {}),
-      ...(manual.range_trading === true && reservedRangeLegs > 0
-        ? { rangeLayering: rangeLayeringMeta! }
-        : {}),
     }
   }
 

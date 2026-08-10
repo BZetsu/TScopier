@@ -82,7 +82,7 @@ async function processNoSubscriptionNudge(): Promise<number> {
   let sent = 0;
   for (const user of eligibleUsers as EmailRecipient[]) {
     const unsubscribeUrl = getEmailUnsubscribeUrl(
-      SUPABASE_URL,
+      APP_URL,
       SUPABASE_SERVICE_ROLE_KEY,
       user.user_id,
     );
@@ -130,7 +130,7 @@ async function processTrialExpired(): Promise<number> {
   let sent = 0;
   for (const user of eligibleUsers as EmailRecipient[]) {
     const unsubscribeUrl = getEmailUnsubscribeUrl(
-      SUPABASE_URL,
+      APP_URL,
       SUPABASE_SERVICE_ROLE_KEY,
       user.user_id,
     );

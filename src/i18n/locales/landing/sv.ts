@@ -9,7 +9,7 @@ export const landingSv: LandingTranslations = {
     faq: 'FAQ',
     docs: 'Dokument',
     signIn: 'Logga in',
-    getStarted: 'Kom igång',
+    getStarted: 'Välj en plan',
     dashboard: 'Instrumentbräda',
     menuOpen: 'Öppna menyn',
     menuClose: 'Stäng menyn',
@@ -18,7 +18,7 @@ export const landingSv: LandingTranslations = {
     headline: 'En intelligent AI-plattform för Telegram-signalkopiering',
     subheadline:
       'TScopier är en allt-i-ett-plattform för Telegram-signalkopiering som kopplar Telegram och kopierar handelssignaler direkt till MT4/MT5 — inga komplicerade inställningar, ingen EA och ingen VPS krävs.',
-    primaryCta: 'Kom igång gratis',
+    primaryCta: 'Välj en plan',
     secondaryCta: 'Logga in',
     imageAlt:
       'TScopier instrumentpanel med balans, daglig vinst, handelsresultat och kontotillväxtdiagram',
@@ -614,7 +614,7 @@ export const landingSv: LandingTranslations = {
     subtitle: 'Typiska Telegram kopiatorer kontra en molnplattform byggd för hastighet, tydlighet och skala.',
     otherLabel: 'Andra kopiatorer',
     tscopierLabel: 'TScopier',
-    cta: 'Börja gratis',
+    cta: 'Välj en plan',
     rows: [
       {
         aspect: 'Inställning',
@@ -776,7 +776,7 @@ export const landingSv: LandingTranslations = {
       {
         question: 'Finns det en gratis provperiod?',
         answer:
-          'Advanced inkluderar en 10-dagars gratis provperiod när du prenumererar. Basic faktureras från dag ett med 9,99 USD/månad (eller 95,90 USD/år med årlig fakturering). Du kan utforska instrumentpanelen innan du prenumererar, men livekopiering kräver en aktiv plan.',
+          'Vi erbjuder ingen gratis provperiod. Välj Basic eller Advanced, betala i checkout och börja sedan onboarding. Varje plan har 30 dagars pengarna-tillbaka-garanti.',
       },
       {
         question: 'Vad är skillnaden mellan månads- och årsfakturering?',
@@ -818,14 +818,14 @@ export const landingSv: LandingTranslations = {
   },
   pricingSnippet: {
     basic: 'Grundläggande â $9,99/månad',
-    advanced: 'Avancerat â 10 dagar gratis, sedan 39,99 USD/månad',
+    advanced: 'Avancerat — 39,99 USD/månad',
   },
   footer: {
     cta: {
       title: 'Är du redo att kopiera signaler utan manuellt arbete?',
       subtitle:
         'Länka Telegram, anslut MT4 eller MT5 och börja kopiera på några minuter â ingen VPS, ingen installation.',
-      primary: 'Starta din 10-dagars gratis provperiod',
+      primary: 'Välj en plan',
       secondary: 'Logga in',
     },
     tagline: 'Ultrasnabb Telegram signalkopiator för MetaTrader-konton.',

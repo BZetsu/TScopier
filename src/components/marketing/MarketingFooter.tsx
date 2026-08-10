@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { TscopierLogo } from '../ui/TscopierLogo'
 import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { useT } from '../../context/LocaleContext'
-import { appUrl } from '../../lib/site'
+import { appUrl, marketingUrl } from '../../lib/site'
 import { HELP_LINKS } from '../../lib/helpLinks'
 import { MarketingPricingHint } from './MarketingPricingHint'
 
@@ -81,7 +81,7 @@ export function MarketingFooter() {
   const productLinks: FooterLink[] = [
     { label: f.links.overview, href: '#product' },
     { label: f.links.features, href: '#features' },
-    { label: f.links.pricing, href: '/pricing' },
+    { label: f.links.pricing, href: marketingUrl('/pricing') },
     { label: f.links.howItWorks, href: '#how-it-works' },
     { label: f.links.faq, href: '#faq' },
   ]
@@ -121,7 +121,7 @@ export function MarketingFooter() {
             <div className="flex w-full shrink-0 flex-col items-center sm:w-auto sm:items-end">
               <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
                 <a
-                  href={appUrl('/signup')}
+                  href={marketingUrl('/pricing')}
                   className="inline-flex items-center justify-center gap-2 rounded-xl border border-teal-600 bg-teal-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:border-teal-700 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-950"
                 >
                   {f.cta.primary}

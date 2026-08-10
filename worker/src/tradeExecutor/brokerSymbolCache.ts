@@ -3,15 +3,12 @@ import type { ParsedSignal } from './types'
 import {
   hasFxsocketConfigured,
   FxsocketBrokerClient,
-  isApiThrottleError,
   normalizeSymbolParams,
-  parseApiThrottleBackoffMs,
   type SymbolParams,
 } from '../fxsocketClient'
 import type { ManualSettings } from '../manualPlanner'
 import { writeBrokerConnectionStatus } from '../brokerConnectionStatus'
 import { writeBrokerTerminalUnhealthy } from '../brokerTerminalHealth'
-import { replayParsedSignalsForBroker } from '../brokerSignalReplay'
 import { applySymbolMapping, brokerSessionUuid, isMtUuid, parseSymbolToTradeList } from './helpers'
 import { isDerivSyntheticSymbol, resolveDerivCanonicalToBrokerSymbol } from '../derivSymbols'
 import {
@@ -28,10 +25,6 @@ import {
   type SymbolListCacheEntry,
 } from './types'
 
-const HEARTBEAT_FAILURES_BEFORE_DOWN = Math.max(
-  2,
-  Number(process.env.BROKER_HEARTBEAT_FAILURES_BEFORE_DOWN ?? 4) || 4,
-)
 const HEARTBEAT_CONCURRENCY = Math.max(
   1,
   Math.min(8, Number(process.env.BROKER_HEARTBEAT_CONCURRENCY ?? 2) || 2),
@@ -44,7 +37,6 @@ const SYMBOL_KEEPALIVE_CONCURRENCY = Math.max(
   1,
   Math.min(8, Number(process.env.SYMBOL_KEEPALIVE_CONCURRENCY ?? 2) || 2),
 )
-const heartbeatFailCounts = new Map<string, number>()
 const symbolInventoryReadyHandled = new Set<string>()
 
 const SYMBOL_AUTO_MATCH_PROBES = ['EURUSD', 'XAUUSD', 'GBPUSD', 'BTCUSD'] as const
@@ -114,43 +106,12 @@ async function pingBrokerSessionInner(
   uuid: string,
   opts?: { force?: boolean },
 ): Promise<boolean> {
-  const now = Date.now()
-  const last = ctx.sessionPingAt.get(uuid) ?? 0
-  if (!opts?.force && now - last < SESSION_PING_MIN_INTERVAL_MS) return true
-  if (ctx.sessionCheckInflight.has(uuid)) return false
-
-  const wasBlocked = ctx.sessionOrderBlocked.has(broker.id)
-  try {
-    const alive = await api.keepSessionAlive(uuid)
-    if (alive) {
-      heartbeatFailCounts.delete(uuid)
-      ctx.sessionPingAt.set(uuid, Date.now())
-      if (wasBlocked) {
-        ctx.sessionOrderBlocked.delete(broker.id)
-        void replayParsedSignalsForBroker(ctx, broker)
-      }
-      await markBrokerSessionRecovered(ctx, broker)
-      return true
-    }
-  } catch (err) {
-    if (isApiThrottleError(err)) {
-      const backoff = parseApiThrottleBackoffMs(err)
-      ctx.sessionPingAt.set(uuid, Date.now())
-      console.warn(
-        `[tradeExecutor] keepSessionAlive throttled broker=${broker.id} uuid=${uuid}; backoff ${backoff}ms`,
-      )
-      return true
-    }
-    /* fall through to failure count */
-  }
-
-  const fails = (heartbeatFailCounts.get(uuid) ?? 0) + 1
-  heartbeatFailCounts.set(uuid, fails)
-  if (fails >= HEARTBEAT_FAILURES_BEFORE_DOWN) {
-    heartbeatFailCounts.delete(uuid)
-    await ctx.markBrokerSessionDown(broker, uuid, 'heartbeat keepSessionAlive failed')
-  }
-  return false
+  // No network keepSessionAlive — FxSocket terminals are self-hosted and stay up.
+  void api
+  void opts
+  if (ctx.sessionOrderBlocked.has(broker.id)) return false
+  ctx.sessionPingAt.set(uuid, Date.now())
+  return true
 }
 
 export function prewarmSymbolsEnabled(ctx: TradeExecutorContext, ): boolean {
@@ -267,9 +228,10 @@ export async function markBrokerSessionDown(ctx: TradeExecutorContext, broker: B
  * once the session recovers. Called from every heartbeat success path.
  */
 export async function markBrokerSessionRecovered(ctx: TradeExecutorContext, broker: BrokerRow): Promise<void> {
-    if (broker.connection_status === 'connected') return
+    // Always write connected (force) so sticky connection_error_kind left by
+    // edge refresh_summary / partial patches cannot survive a healthy heartbeat.
     broker.connection_status = 'connected'
-    await writeBrokerConnectionStatus(ctx.supabase, broker.id, 'connected')
+    await writeBrokerConnectionStatus(ctx.supabase, broker.id, 'connected', { force: true })
   }
 
 export async function ensureBrokerSession(ctx: TradeExecutorContext,
@@ -278,26 +240,13 @@ export async function ensureBrokerSession(ctx: TradeExecutorContext,
     broker: BrokerRow,
     opts?: { force?: boolean },
   ): Promise<boolean> {
-    const now = Date.now()
-    const last = ctx.sessionPingAt.get(uuid) ?? 0
-    const blocked = ctx.sessionOrderBlocked.has(broker.id)
-    if (!opts?.force && !blocked && now - last < SESSION_PING_MIN_INTERVAL_MS) return true
-    const alive = await api.keepSessionAlive(uuid)
-    if (alive) {
-      ctx.sessionPingAt.set(uuid, now)
-      if (blocked) void replayParsedSignalsForBroker(ctx, broker)
-      ctx.sessionOrderBlocked.delete(broker.id)
-      await markBrokerSessionRecovered(ctx, broker)
-      return true
-    }
-    await ctx.markBrokerSessionDown(
-      broker,
-      uuid,
-      blocked
-        ? 'session blocked after prior OrderSend disconnect'
-        : 'keepSessionAlive failed before OrderSend',
-    )
-    return false
+    // FxSocket self-hosted terminals need no proactive checkConnect. Only skip when
+    // a prior real OrderSend disconnect blocked this broker.
+    void api
+    void opts
+    if (ctx.sessionOrderBlocked.has(broker.id)) return false
+    ctx.sessionPingAt.set(uuid, Date.now())
+    return true
   }
 
 export async function ensureBrokerSessionLiveFast(ctx: TradeExecutorContext, 
@@ -305,38 +254,10 @@ export async function ensureBrokerSessionLiveFast(ctx: TradeExecutorContext,
     uuid: string,
     broker: BrokerRow,
   ): Promise<boolean> {
-    const now = Date.now()
-    const last = ctx.sessionPingAt.get(uuid) ?? 0
-    const blocked = ctx.sessionOrderBlocked.has(broker.id)
-    if (!blocked && now - last < SESSION_PING_MIN_INTERVAL_MS) return true
-
-    const inflight = ctx.sessionCheckInflight.get(uuid)
-    if (inflight) return inflight
-
-    const check = (async () => {
-      try {
-        const alive = await api.keepSessionAlive(uuid)
-        if (alive) {
-          ctx.sessionPingAt.set(uuid, Date.now())
-          if (blocked) void replayParsedSignalsForBroker(ctx, broker)
-          ctx.sessionOrderBlocked.delete(broker.id)
-          await markBrokerSessionRecovered(ctx, broker)
-          return true
-        }
-        await ctx.markBrokerSessionDown(
-          broker,
-          uuid,
-          blocked
-            ? 'session blocked after prior OrderSend disconnect'
-            : 'keepSessionAlive failed before live OrderSend',
-        )
-        return false
-      } finally {
-        ctx.sessionCheckInflight.delete(uuid)
-      }
-    })()
-    ctx.sessionCheckInflight.set(uuid, check)
-    return check
+    void api
+    if (ctx.sessionOrderBlocked.has(broker.id)) return false
+    ctx.sessionPingAt.set(uuid, Date.now())
+    return true
   }
 
 export function brokersWarmForLiveEntry(ctx: TradeExecutorContext, brokers: BrokerRow[], signalSymbol: string): boolean {

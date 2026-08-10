@@ -47,8 +47,28 @@ describe('signalBrokerDispatchClaim', () => {
         }
       },
     }
-    assert.equal(await claimSignalBrokerDispatch(supabase as never, 's1', 'b1'), false)
+    assert.equal(await claimSignalBrokerDispatch(supabase as never, 's1', 'b1', 'u1'), false)
     assert.equal(logs.length, 1)
-    assert.equal((logs[0] as { action: string }).action, 'dispatch_claim_error')
+    assert.equal((logs[0] as { action: string; user_id: string }).action, 'dispatch_claim_error')
+    assert.equal((logs[0] as { user_id: string }).user_id, 'u1')
+  })
+
+  it('claimSignalBrokerDispatch skips error log when user_id missing', async () => {
+    const logs: unknown[] = []
+    const supabase = {
+      from(table: string) {
+        return {
+          insert: async (row: unknown) => {
+            if (table === 'trade_execution_logs') {
+              logs.push(row)
+              return { error: null }
+            }
+            return { error: { code: '57014', message: 'statement timeout' } }
+          },
+        }
+      },
+    }
+    assert.equal(await claimSignalBrokerDispatch(supabase as never, 's1', 'b1'), false)
+    assert.equal(logs.length, 0)
   })
 })

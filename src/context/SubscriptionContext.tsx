@@ -24,6 +24,8 @@ import {
   type SubscriptionPlan,
 } from '../lib/planLimits'
 import { hasTrialExpired as subscriptionHasTrialExpired } from '../lib/subscriptionCta'
+import { clearPendingPlanSelection } from '../lib/pendingPlanSelection'
+import { confirmCheckoutSession } from '../lib/confirmCheckout'
 
 export interface Subscription {
   id: string
@@ -31,7 +33,7 @@ export interface Subscription {
   stripe_customer_id: string
   stripe_subscription_id: string | null
   plan: SubscriptionPlan
-  status: 'active' | 'trialing' | 'canceled' | 'past_due' | 'incomplete'
+  status: 'active' | 'trialing' | 'canceled' | 'past_due' | 'incomplete' | 'incomplete_expired'
   extra_accounts: number
   trial_ends_at: string | null
   current_period_end: string | null
@@ -53,6 +55,8 @@ interface SubscriptionContextValue {
   usage: SubscriptionUsage
   usageLoading: boolean
   hasActiveSubscription: boolean
+  /** True while waiting for Stripe webhook after checkout=success. */
+  checkoutSyncPending: boolean
   isPastDue: boolean
   /** Trial calendar end is in the past (even if Stripe status is still stuck as trialing). */
   hasTrialExpired: boolean
@@ -77,6 +81,23 @@ const emptyUsage: SubscriptionUsage = {
 
 const CHECKOUT_SYNC_PENDING_KEY = 'tscopier.checkout.sync.pending'
 
+function readCheckoutSyncPending(): boolean {
+  try {
+    return window.sessionStorage.getItem(CHECKOUT_SYNC_PENDING_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeCheckoutSyncPending(pending: boolean): void {
+  try {
+    if (pending) window.sessionStorage.setItem(CHECKOUT_SYNC_PENDING_KEY, '1')
+    else window.sessionStorage.removeItem(CHECKOUT_SYNC_PENDING_KEY)
+  } catch {
+    // ignore
+  }
+}
+
 const SubscriptionContext = createContext<SubscriptionContextValue>({
   subscription: null,
   loading: true,
@@ -85,6 +106,7 @@ const SubscriptionContext = createContext<SubscriptionContextValue>({
   usage: emptyUsage,
   usageLoading: true,
   hasActiveSubscription: false,
+  checkoutSyncPending: false,
   isPastDue: false,
   hasTrialExpired: false,
   effectivePlan: null,
@@ -128,6 +150,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   const [resolvedUserId, setResolvedUserId] = useState<string | null>(null)
   const [usage, setUsage] = useState<SubscriptionUsage>(emptyUsage)
   const [usageLoading, setUsageLoading] = useState(true)
+  const [checkoutSyncPending, setCheckoutSyncPending] = useState(readCheckoutSyncPending)
 
   const subscriptionLoading =
     authLoading || (userId != null && resolvedUserId !== userId)
@@ -193,9 +216,25 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('checkout') === 'success') {
-      window.sessionStorage.setItem(CHECKOUT_SYNC_PENDING_KEY, '1')
-      void fetchSubscription({ background: true })
+      writeCheckoutSyncPending(true)
+      setCheckoutSyncPending(true)
+      clearPendingPlanSelection()
+      const sessionId = params.get('session_id')
       params.delete('checkout')
+      // Keep session_id until confirm-checkout runs (stripped below after kickoff).
+      void (async () => {
+        try {
+          const { data: sessionData } = await supabase.auth.getSession()
+          const accessToken = sessionData.session?.access_token
+          if (accessToken) {
+            await confirmCheckoutSession({ accessToken, sessionId })
+          }
+        } catch {
+          // Polling below still retries confirm + fetch.
+        }
+        await fetchSubscription({ background: true })
+      })()
+      if (sessionId) params.delete('session_id')
     }
     const qs = params.toString()
     const next = `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`
@@ -204,42 +243,112 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     }
   }, [fetchSubscription])
 
+  const hasActiveSubscription =
+    isAdmin || isSubscriptionActive(subscription?.status, subscription?.trial_ends_at)
+
+  // Clear checkout grace once entitlement is live; keep paywall open until then.
+  useEffect(() => {
+    if (!checkoutSyncPending) return
+    if (!hasActiveSubscription) return
+    writeCheckoutSyncPending(false)
+    setCheckoutSyncPending(false)
+  }, [checkoutSyncPending, hasActiveSubscription])
+
   useEffect(() => {
     if (!userId) return
-    if (window.sessionStorage.getItem(CHECKOUT_SYNC_PENDING_KEY) !== '1') return
+    if (!checkoutSyncPending && !readCheckoutSyncPending()) return
 
     let done = false
     const markDone = () => {
+      if (done) return
       done = true
-      window.sessionStorage.removeItem(CHECKOUT_SYNC_PENDING_KEY)
+      writeCheckoutSyncPending(false)
+      setCheckoutSyncPending(false)
     }
     const runRefresh = () => {
       if (done) return
-      void fetchSubscription({ background: true })
-    }
-    const completeRefresh = () => {
-      runRefresh()
-      markDone()
+      void (async () => {
+        try {
+          const { data: sessionData } = await supabase.auth.getSession()
+          const accessToken = sessionData.session?.access_token
+          if (accessToken) {
+            await confirmCheckoutSession({ accessToken })
+          }
+        } catch {
+          // Keep polling local row.
+        }
+        await fetchSubscription({ background: true })
+      })()
     }
 
     const interactionEvents: Array<keyof WindowEventMap> = ['focus', 'pointerdown', 'keydown']
     for (const evt of interactionEvents) {
-      window.addEventListener(evt, completeRefresh, { once: true })
+      window.addEventListener(evt, runRefresh)
     }
 
-    const retryTimers = [2000, 6000, 12000].map(delay =>
+    const retryTimers = [1500, 3000, 6000, 10000, 15000].map(delay =>
       window.setTimeout(runRefresh, delay),
     )
-    const clearTimer = window.setTimeout(markDone, 20_000)
+    // Stop grace after 45s even if sync never lands (user can retry from billing).
+    const clearTimer = window.setTimeout(markDone, 45_000)
 
     return () => {
       for (const evt of interactionEvents) {
-        window.removeEventListener(evt, completeRefresh)
+        window.removeEventListener(evt, runRefresh)
       }
       retryTimers.forEach(window.clearTimeout)
       window.clearTimeout(clearTimer)
     }
-  }, [fetchSubscription, userId])
+  }, [fetchSubscription, userId, checkoutSyncPending])
+
+  // If paywall raced to /pricing before webhook sync, bounce back to dashboard.
+  useEffect(() => {
+    if (!checkoutSyncPending) return
+    if (window.location.pathname !== '/pricing') return
+    navigate('/dashboard', { replace: true })
+  }, [checkoutSyncPending, navigate])
+
+  // One-shot self-heal: paid users with a missing/incomplete local row (e.g. staging
+  // without a Stripe webhook) pull entitlement from Stripe after login.
+  useEffect(() => {
+    if (!userId || subscriptionLoading || authLoading) return
+    if (isAdmin) return
+    const status = subscription?.status
+    const placeholderCustomer =
+      Boolean(subscription?.stripe_customer_id?.startsWith('cus_staging_pending')) ||
+      Boolean(subscription?.stripe_subscription_id?.startsWith('sub_staging_pending'))
+    const shouldHeal =
+      placeholderCustomer ||
+      !hasActiveSubscription &&
+        (!subscription || status === 'incomplete' || status === 'incomplete_expired')
+    if (!shouldHeal && !readCheckoutSyncPending()) return
+    const healKey = `tscopier.entitlement.heal.${userId}`
+    try {
+      if (window.sessionStorage.getItem(healKey) === '1') return
+      window.sessionStorage.setItem(healKey, '1')
+    } catch {
+      // ignore
+    }
+    void (async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession()
+        const accessToken = sessionData.session?.access_token
+        if (!accessToken) return
+        await confirmCheckoutSession({ accessToken })
+        await fetchSubscription({ background: true })
+      } catch {
+        // ignore — user can retry from billing / checkout
+      }
+    })()
+  }, [
+    userId,
+    subscriptionLoading,
+    authLoading,
+    isAdmin,
+    hasActiveSubscription,
+    subscription,
+    fetchSubscription,
+  ])
 
   const openPricingPage = useCallback(() => {
     if (window.location.pathname === '/pricing') {
@@ -249,8 +358,6 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     navigate('/pricing')
   }, [navigate])
 
-  const hasActiveSubscription =
-    isAdmin || isSubscriptionActive(subscription?.status, subscription?.trial_ends_at)
   const isPastDue = !isAdmin && subscription?.status === 'past_due'
   // Date-aware: stuck `trialing` after trial_ends_at is inactive, so this becomes true.
   const hasTrialExpired =
@@ -338,6 +445,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         usage,
         usageLoading,
         hasActiveSubscription,
+        checkoutSyncPending,
         isPastDue,
         hasTrialExpired,
         effectivePlan: activePlan,

@@ -1157,4 +1157,29 @@ Tp2...........4040`
     assert.ok(result.parsed.tp?.includes(4040))
     assert.equal(result.parsed.entry_price, 4080)
   })
+
+  it('treats PRICE: as explicit entry for BUY LIMIT pending signals', () => {
+    const msg = `PAIR: XAUUSD
+BIAS: BUY 
+ORDER TYPE: BUY LIMIT
+
+PRICE: 4256.00
+
+SL:     4238.74
+
+TP1 : 4276.29
+TP2 : 4296.57
+TP3 : 4316.86
+TP4 : 4337.15
+
+APPLY PROPER RISK MANAGEMENT ALWAYS!`
+    const result = parseChannelMessageSync(msg, DEFAULT_CHANNEL_KEYWORDS, lexicon)
+    assert.equal(result.status, 'parsed')
+    assert.equal(result.parsed.action, 'buy')
+    assert.equal(result.parsed.symbol, 'XAUUSD')
+    assert.equal(result.parsed.entry_price, 4256)
+    assert.equal(result.parsed.sl, 4238.74)
+    assert.ok(result.parsed.tp?.includes(4276.29))
+    assert.ok(result.parsed.tp?.includes(4337.15))
+  })
 })

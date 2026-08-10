@@ -94,19 +94,6 @@ export const authAr: AuthTranslations = {
     resent: 'تم إرسال البريد!',
     backToLogin: 'العودة إلى تسجيل الدخول',
   },
-  welcome: {
-    title: 'مرحبًا بك في TScopier',
-    subtitle: 'حسابك جاهز. ابدأ تجربتك المجانية لنسخ إشارات Telegram إلى وسيطك.',
-    steps: [
-      'اربط Telegram واختر قنوات الإشارات',
-      'اربط حساب وسيط MT4/MT5',
-      'انسخ الصفقات تلقائيًا وفق إعدادات المخاطر',
-    ],
-    exploreDashboard: 'استكشف لوحة التحكم أولًا',
-    seePricing: 'عرض الأسعار',
-    errorFallback: 'تعذرت المتابعة. حاول مرة أخرى.',
-    checkoutFailed: 'تعذر بدء الدفع. حاول مرة أخرى.',
-  },
   marketing: {
     headline: 'نسخ سلس لكل إشارات Telegram',
     trustpilotLabel: 'Trustpilot',

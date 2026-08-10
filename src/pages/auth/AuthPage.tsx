@@ -19,6 +19,7 @@ import {
   verifyEmailPath,
 } from '../../lib/emailVerification'
 import { loadUserProfile } from '../../lib/userProfile'
+import { capturePendingPlanFromUrl, postAuthAppPath } from '../../lib/pendingPlanSelection'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -61,12 +62,13 @@ export function AuthPage() {
     const fromUrl = captureReferralFromUrl(window.location.search)
     const stored = fromUrl ?? loadStoredReferralCode()
     setStoredReferralCode(stored)
+    capturePendingPlanFromUrl(window.location.search)
   }, [])
 
   const handleGoogleSignIn = async () => {
     setError('')
     setGoogleLoading(true)
-    const redirectTo = new URL(`${window.location.origin}/dashboard`)
+    const redirectTo = new URL(`${window.location.origin}${postAuthAppPath()}`)
     if (storedReferralCode && referralCodeLooksValid(storedReferralCode)) {
       redirectTo.searchParams.set('ref', storedReferralCode)
     }
@@ -107,7 +109,7 @@ export function AuthPage() {
       return
     }
 
-    navigate('/dashboard')
+    navigate(postAuthAppPath())
   }
 
   return (

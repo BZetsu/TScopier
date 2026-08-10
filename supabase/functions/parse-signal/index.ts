@@ -813,6 +813,17 @@ function extractOptionalEntryAnchor(
     if (entryLevel?.[1]) entry_price = parseSignalPriceToken(entryLevel[1])
     const entryLabel = text.match(new RegExp(`\\bentry\\s*(?:price|level)?\\s*[:=]\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
     if (entry_price == null && entryLabel?.[1]) entry_price = parseSignalPriceToken(entryLabel[1])
+    // Provider formats: "PRICE: 4256" / "LIMIT PRICE 4256" / "BUY LIMIT 4256"
+    // (Use Signal Entry Price requires an explicit entry; many channels label it PRICE not ENTRY.)
+    if (entry_price == null) {
+      const priceLabel = text.match(
+        new RegExp(
+          `\\b(?:(?:limit\\s*)?price|(?:buy|sell)\\s+limit(?:\\s*order)?)\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})\\b`,
+          'i',
+        ),
+      )
+      if (priceLabel?.[1]) entry_price = parseSignalPriceToken(priceLabel[1])
+    }
     if (entry_price == null) {
       const atPx = text.match(new RegExp(`@\\s*(${SIGNAL_PRICE_NUM})\\b`))
       if (atPx?.[1]) entry_price = parseSignalPriceToken(atPx[1])

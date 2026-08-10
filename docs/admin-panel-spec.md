@@ -1,4 +1,4 @@
-# TSCopier Admin Panel — Full Specification
+# TSCopier Admn Panel — Full Specification
 
 > Copy this file into a new project and use it as the complete build reference.
 > This admin panel connects to the same Supabase instance using the service_role key (bypasses RLS).
@@ -6,7 +6,7 @@
 
 ---
 
-## Tech Stack (must match main app)
+## Techi Stack (must match main app)
 
 - **Vite** 8.x + React 19 + TypeScript 6
 - **Tailwind CSS** 3.4 (class-based dark mode, Inter font)

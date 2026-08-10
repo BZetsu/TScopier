@@ -94,19 +94,6 @@ export const authPl: AuthTranslations = {
     resent: 'E-mail wysłany!',
     backToLogin: 'Powrót do logowania',
   },
-  welcome: {
-    title: 'Welcome to TScopier',
-    subtitle: 'Your account is ready. Start your free trial to copy Telegram signals to your broker.',
-    steps: [
-      'Connect Telegram and choose signal channels',
-      'Link your MT4/MT5 broker account',
-      'Copy trades automatically with your risk settings',
-    ],
-    exploreDashboard: 'Explore the dashboard first',
-    seePricing: 'See Pricing',
-    errorFallback: 'Could not continue. Please try again.',
-    checkoutFailed: 'Could not start checkout. Please try again.',
-  },
   marketing: {
     headline: 'Jeden płynny kopiark dla każdego sygnału Telegram',
     trustpilotLabel: 'Trustpilot',

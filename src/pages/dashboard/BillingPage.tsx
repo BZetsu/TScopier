@@ -140,6 +140,7 @@ export function BillingPage() {
         canceled: bt.statusCanceled,
         past_due: bt.statusPastDue,
         incomplete: bt.statusPastDue,
+        incomplete_expired: bt.statusPastDue,
       }[subscription.status] || subscription.status
     : ''
 

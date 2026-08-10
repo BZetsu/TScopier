@@ -3,7 +3,7 @@ export function hasExecutableTradeStructure(message: string): boolean {
   const text = String(message ?? '').replace(/\s+/g, ' ').trim()
   if (!text) return false
   if (/\b(buy|sell)\s+now\b/i.test(text)) return true
-  if (/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=\-]/i.test(text)) return true
+  if (/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=-]/i.test(text)) return true
   if (/\b(?:sl|stop\s+loss)\b\s*\.\s*\d/i.test(text)) return true
   if (/(?:^|\s)(?:sl|stop\s*loss|stoploss)[_\s]*\/\s*@\s*\d/i.test(text)) return true
   if (/\b(?:sl|stop\s+loss)\b(?:\s*\([^)]*\))?\s*[^\d]{0,8}\d/i.test(text)) return true
@@ -43,7 +43,7 @@ export function looksLikeMarketNewsOrCommentary(message: string): boolean {
 
   if (macroHits >= 2) return true
 
-  const bulletLines = (text.match(/^[\-*•]\s+/gm) ?? []).length
+  const bulletLines = (text.match(/^[-*•]\s+/gm) ?? []).length
   if (bulletLines >= 3 && macroHits >= 1) return true
 
   return false
@@ -262,7 +262,7 @@ export function looksLikeProfitResultCommentary(message: string): boolean {
   if (
     /\b(?:£|\$|€)\s*\d[\d,]*(?:\.\d+)?\b/i.test(text)
     && /\bprofit\b/i.test(text)
-    && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=\-]/i.test(text)
+    && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=-]/i.test(text)
   ) {
     return true
   }
@@ -270,7 +270,7 @@ export function looksLikeProfitResultCommentary(message: string): boolean {
   if (
     /\b\d[\d,]*(?:\.\d+)?\s*(?:usd|gbp|eur|pounds?|dollars?)\b/i.test(text)
     && /\bprofit\b/i.test(text)
-    && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=\-]/i.test(text)
+    && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=-]/i.test(text)
   ) {
     return true
   }
@@ -289,7 +289,7 @@ export function looksLikeProfitResultCommentary(message: string): boolean {
     && /\b(profit|pips?\s+profit|gains?)\b/i.test(text)
     && /\b(gold|xauusd|xau|buy|sell)\b/i.test(text)
     && !/\b(buy|sell)\s+now\b/i.test(text)
-    && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=\-]/i.test(text)
+    && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=-]/i.test(text)
   ) {
     return true
   }

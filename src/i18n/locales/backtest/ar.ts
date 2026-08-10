@@ -55,6 +55,7 @@ export const backtestAr: BacktestBundleTranslations = {
     resultsTitle: 'نتائج الاختبار الرجعي',
     resultsSubtitle: '{symbol} · {channel} · انقر على إشارة لعرض التفاصيل',
     newRun: 'تشغيل جديد',
+    exportCsv: 'تصدير CSV',
     totalPips: 'إجمالي النقاط',
     winRate: 'نسبة الفوز',
     winLoss: 'ر / خ',

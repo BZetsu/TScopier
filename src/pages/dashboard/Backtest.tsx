@@ -4,6 +4,7 @@ import {
   ArrowRight,
   BarChart3,
   Crosshair,
+  Download,
   History,
   Loader2,
   Radio,
@@ -31,12 +32,13 @@ import {
   type BacktestHistoryRow,
 } from '../../components/backtest/BacktestHistoryModal'
 import { backtestDateRangeIso } from '../../lib/backtestDateRange'
+import { downloadBacktestResultsCsv } from '../../lib/backtestCsv'
 import {
   filterImportPreviewErrors,
   formatPipValue,
   parseSummary,
   sanitizeBacktestUserError,
-  tradePipPnl,
+  sumTradePipPnl,
 } from '../../lib/backtestDisplay'
 import { PageHeader } from '../../components/layout/PageHeader'
 import { PageShell } from '../../components/layout/PageShell'
@@ -137,20 +139,7 @@ export function Backtest() {
     [channels],
   )
 
-  const totalPips = useMemo(() => {
-    if (summary?.totalPips != null && Number.isFinite(summary.totalPips)) {
-      return summary.totalPips
-    }
-    let sum = 0
-    let hasAny = false
-    for (const tr of trades) {
-      const p = tradePipPnl(tr)
-      if (p == null) continue
-      sum += p
-      hasAny = true
-    }
-    return hasAny ? sum : null
-  }, [summary?.totalPips, trades])
+  const totalPips = useMemo(() => sumTradePipPnl(trades), [trades])
 
   const loadStoredSignals = useCallback(async (channelId: string, from: string, to: string) => {
     if (!user) return []
@@ -621,17 +610,33 @@ export function Backtest() {
                 })}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setStep('symbol')
-                clearResults()
-              }}
-              className="text-sm text-neutral-500 hover:text-neutral-800 flex items-center gap-1"
-            >
-              <DirectionalIcon icon={ArrowLeft} className="w-4 h-4" />
-              {bt.newRun}
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={trades.length === 0}
+                onClick={() => {
+                  const symbol = (selectedSymbol ?? 'signals').replace(/[^A-Za-z0-9._-]+/g, '-')
+                  downloadBacktestResultsCsv(trades, {
+                    filename: `backtest-${symbol}-${activeRun?.id?.slice(0, 8) ?? 'results'}.csv`,
+                  })
+                }}
+                className="text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100 flex items-center gap-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 px-2.5 py-1.5 disabled:opacity-40 disabled:pointer-events-none"
+              >
+                <Download className="w-4 h-4" />
+                {bt.exportCsv}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStep('symbol')
+                  clearResults()
+                }}
+                className="text-sm text-neutral-500 hover:text-neutral-800 flex items-center gap-1"
+              >
+                <DirectionalIcon icon={ArrowLeft} className="w-4 h-4" />
+                {bt.newRun}
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

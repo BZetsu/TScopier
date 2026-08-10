@@ -9,7 +9,7 @@ export const landingNl: LandingTranslations = {
     faq: 'FAQ',
     docs: 'Docs',
     signIn: 'Inloggen',
-    getStarted: 'Start gratis',
+    getStarted: 'Kies een plan',
     dashboard: 'Dashboard',
     menuOpen: 'Menu openen',
     menuClose: 'Menu sluiten',
@@ -18,7 +18,7 @@ export const landingNl: LandingTranslations = {
     headline: 'Één intelligent AI Telegram-signaalkopieerplatform',
     subheadline:
       'TScopier is een alles-in-één Telegram-signaalkopieerplatform dat je Telegram koppelt en handelssignalen direct naar MT4/MT5 kopieert — geen complexe setup, geen EA en geen VPS nodig.',
-    primaryCta: 'Gratis aan de slag',
+    primaryCta: 'Kies een plan',
     secondaryCta: 'Inloggen',
     imageAlt:
       'TScopier-dashboard met saldo, dagwinst, trade-resultaten en groeigrafieken van accounts',
@@ -613,7 +613,7 @@ export const landingNl: LandingTranslations = {
     subtitle: 'Typische Telegram-copiers versus een cloudplatform gebouwd voor snelheid, duidelijkheid en schaal.',
     otherLabel: 'Andere copiers',
     tscopierLabel: 'TScopier',
-    cta: 'Start gratis',
+    cta: 'Kies een plan',
     rows: [
       {
         aspect: 'Setup',
@@ -775,7 +775,7 @@ export const landingNl: LandingTranslations = {
       {
         question: 'Is er een gratis proefperiode?',
         answer:
-          'Advanced bevat een gratis proefperiode van 10 dagen zodra je abonneert. Basic wordt vanaf dag één gefactureerd tegen $9.99/maand (of $95.90/jaar met jaarlijkse facturatie). Je kunt het dashboard verkennen zonder abonnement, maar live copying vereist een actief plan.',
+          'Er is geen gratis proefperiode. Kies Basic of Advanced, betaal bij checkout en start daarna onboarding. Elk plan heeft 30 dagen geld-terug-garantie.',
       },
       {
         question: 'Wat is het verschil tussen maandelijkse en jaarlijkse facturatie?',
@@ -817,14 +817,14 @@ export const landingNl: LandingTranslations = {
   },
   pricingSnippet: {
     basic: 'Basic — $9.99/maand',
-    advanced: 'Advanced — 10 dagen gratis, daarna $39.99/maand',
+    advanced: 'Advanced — $39.99/maand',
   },
   footer: {
     cta: {
       title: 'Klaar om signalen te kopieren zonder handmatig werk?',
       subtitle:
         'Koppel Telegram, verbind MT4 of MT5 en begin binnen enkele minuten met kopieren - zonder VPS of installatie.',
-      primary: 'Start je gratis proefperiode van 10 dagen',
+      primary: 'Kies een plan',
       secondary: 'Inloggen',
     },
     tagline: 'Supersnelle Telegram-signaalcopier voor MetaTrader-accounts.',

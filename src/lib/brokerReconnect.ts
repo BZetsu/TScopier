@@ -1,25 +1,38 @@
 import type { BrokerAccount } from '../types/database'
 import { hasFxsocketBrokerSession } from './brokerLink'
 
+/** Prefer worker-marked connection_status=error over a stale fxsocket_status=connected. */
+export function brokerEffectiveConnectionStatus(
+  account: Pick<BrokerAccount, 'fxsocket_status' | 'connection_status'>,
+): string | null {
+  if (account.connection_status === 'error') {
+    return 'error'
+  }
+  if (account.connection_status === 'pending' || account.connection_status === 'recovering') {
+    return account.connection_status
+  }
+  return account.fxsocket_status ?? account.connection_status ?? null
+}
+
 export function isBrokerSessionHealthy(
   account: Pick<BrokerAccount, 'fxsocket_status' | 'connection_status'>,
 ): boolean {
-  const status = account.fxsocket_status ?? account.connection_status
+  const status = brokerEffectiveConnectionStatus(account)
   return status === 'connected' || status === 'connecting' || status === 'recovering'
 }
 
 export function isBrokerSessionConnected(
   account: Pick<BrokerAccount, 'fxsocket_status' | 'connection_status'>,
 ): boolean {
-  const status = account.fxsocket_status ?? account.connection_status
-  return status === 'connected'
+  return brokerEffectiveConnectionStatus(account) === 'connected'
 }
 
 export function brokerCanReconnect(
   account: Pick<BrokerAccount, 'fxsocket_account_id' | 'fxsocket_status' | 'connection_status'>,
 ): boolean {
-  const status = account.fxsocket_status ?? account.connection_status
-  return hasFxsocketBrokerSession(account) && status === 'error'
+  if (!hasFxsocketBrokerSession(account)) return false
+  const status = brokerEffectiveConnectionStatus(account)
+  return status === 'error' || status === 'disconnected'
 }
 
 type BrokerConnectionStatusLabels = {
@@ -37,7 +50,7 @@ function brokerConnectionDisplayPhase(
   if (account.connection_status === 'pending') return 'connecting'
   if (account.connection_status === 'recovering') return 'recovering'
 
-  const status = account.fxsocket_status ?? account.connection_status
+  const status = brokerEffectiveConnectionStatus(account)
   if (status === 'connected') return 'connected'
   if (status === 'connecting') return 'recovering'
   return 'disconnected'
@@ -60,7 +73,9 @@ export function brokerConnectionBadgeVariant(
   account: Pick<BrokerAccount, 'is_active' | 'fxsocket_status' | 'connection_status'>,
 ): 'primary' | 'neutral' | 'error' {
   if (!account.is_active) return 'neutral'
-  const status = account.fxsocket_status ?? account.connection_status
-  if (status === 'connected' || status === 'connecting' || status === 'recovering') return 'primary'
+  const status = brokerEffectiveConnectionStatus(account)
+  if (status === 'connected' || status === 'connecting' || status === 'recovering' || status === 'pending') {
+    return 'primary'
+  }
   return 'error'
 }

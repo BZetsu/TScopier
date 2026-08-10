@@ -112,7 +112,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const unsubUrl = getEmailUnsubscribeUrl(
-      SUPABASE_URL,
+      APP_URL,
       SUPABASE_SERVICE_ROLE_KEY,
       user_id,
     );
