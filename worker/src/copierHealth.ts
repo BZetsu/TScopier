@@ -60,6 +60,7 @@ export function resolveCopierEngineState(args: {
   lastSuccessfulProbeAt?: number | null
   shutdownInProgress?: boolean
   recoveryExhausted?: boolean
+  sessionInvalid?: boolean
   copierPaused?: boolean
   nowMs?: number
   offlineGraceMs?: number
@@ -89,12 +90,20 @@ export function resolveCopierEngineState(args: {
       healthReason: 'telegram_not_linked',
     }
   }
-  if (args.sessionActive === false || args.recoveryExhausted) {
+  if (args.sessionActive === false || args.sessionInvalid) {
     return {
       telegramAccountStatus: 'reconnect_required',
       workerOwnershipStatus: args.owned ? 'owned' : 'unowned',
       copierEngineStatus: 'stopped',
-      healthReason: args.recoveryExhausted ? 'recovery_exhausted' : 'telegram_session_inactive',
+      healthReason: 'telegram_session_inactive',
+    }
+  }
+  if (args.recoveryExhausted) {
+    return {
+      telegramAccountStatus: 'linked',
+      workerOwnershipStatus: args.owned ? 'owned' : 'unowned',
+      copierEngineStatus: 'offline',
+      healthReason: 'recovery_exhausted',
     }
   }
   if (!args.owned) {

@@ -84,7 +84,7 @@ Health writes are ownership-aware. Each listener instance publishes an `ownershi
 
 `COPIER_HEALTH_OFFLINE_GRACE_MS` defaults to `60000`. Invalid values fall back to 60 seconds.
 
-Within grace, a disconnected listener with a recent successful probe is shown as reconnecting/degraded. A connected listener with a stale probe is degraded only during the freshness-plus-grace allowance, then becomes offline. Beyond grace, disconnected listeners become offline. Recovery exhaustion or invalid sessions become reconnect-required/stopped immediately.
+Within grace, a disconnected listener with a recent successful probe is shown as reconnecting/degraded. A connected listener with a stale probe is degraded only during the freshness-plus-grace allowance, then becomes offline. Beyond grace, disconnected listeners become offline. Auth/session-invalid states become reconnect-required/stopped immediately. Transient listener recovery exhaustion, such as repeated malformed GramJS RPC results, is failed/offline while the Telegram account remains linked; users should only be told to reconnect Telegram when auth/session invalidation is proven.
 
 ## UI Copy
 
@@ -108,7 +108,7 @@ Copier-health business events emit only when user impact is meaningful and after
 - `listener_ownership_lost`
 - `listener_health_stale`
 
-Normal reconnect success, probes, and lease renewals do not emit issues. Repeated offline states are cooldown-limited by stable reason/category.
+Normal reconnect success, probes, and lease renewals do not emit issues. Repeated offline states are cooldown-limited by stable reason/category. For one underlying listener incident, prefer one issue-level event and use breadcrumbs or health state for secondary stage transitions.
 
 ## Deployment
 
