@@ -82,7 +82,7 @@ describe('orderCloseAudit persistence', () => {
     assert.equal(row.error_message, 'unknown ticket')
   })
 
-  it('inserts with user_id only when the trade row is missing', async () => {
+  it('skips the insert when the trade row is missing (signal_id is NOT NULL)', async () => {
     const mock = makeSupabaseMock()
     mock.state.account = { id: 'broker-uuid', user_id: 'user-1' }
     mock.state.trade = null
@@ -97,11 +97,7 @@ describe('orderCloseAudit persistence', () => {
     await flush()
     registerOrderCloseAuditSink(null)
 
-    assert.equal(mock.inserted.length, 1)
-    const row = mock.inserted[0] as Record<string, unknown>
-    assert.equal(row.user_id, 'user-1')
-    assert.equal(row.signal_id, undefined)
-    assert.equal(row.status, 'success')
+    assert.equal(mock.inserted.length, 0)
   })
 
   it('does not attempt the insert when no broker account resolves', async () => {
