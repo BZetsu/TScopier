@@ -47,7 +47,7 @@ type ChannelCloseAccum = {
 }
 
 function isBenignCloseError(message: string): boolean {
-  return /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i.test(message)
+  return /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order|unknown\s+ticket/i.test(message)
 }
 
 async function loadChannelCommentSlug(

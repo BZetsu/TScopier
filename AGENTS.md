@@ -120,6 +120,7 @@ VITE_DEV_SITE=marketing npm run dev
 - Do not overwrite `.env` without asking and confirming first.
 
 ### Diagnosis & Problem-Solving
+- **ALWAYS create and maintain a scratchpad document when diagnosing a problem** (e.g. `docs/scratchpad-<issue>-<date>.md`). Start it at the very beginning of the investigation, before touching any code or DB. Record: the facts from the report/error, the questions to answer, your hypotheses, and the evidence as you verify it. Keep it updated as the investigation progresses — it is the single source of truth for the diagnosis.
 - First and most important rule: always verify your diagnosis by searching the web for the latest solution.
 - Do NOT use assumption words like "might", "maybe", "try" — run a full diagnosis and full analysis before proposing fixes.
 - Root cause analysis before solution: fully understand the problem before proposing solutions. Examine all related components, data flow, and architecture.

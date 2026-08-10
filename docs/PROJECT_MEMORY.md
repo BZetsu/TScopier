@@ -1,6 +1,21 @@
 # Project Memory
 
 ## Changelog
+
+### 2026-08-10 — Auto-BE "unknown ticket" retry loop root-caused + fixed (Leonardo Araújo incident)
+
+- **Context (user request):** investigate the "Broker · Unknown ticket" error for Leonardo Araújo (XAUUSD, `auto_be`, signal `072a819e`). Scratchpad: `docs/scratchpad-unknown-ticket-2026-08-10.md`.
+- **Root cause (fully verified against prod DB + code):**
+  1. Signal arrived 11:49:54Z → **10 trades** opened on broker 11:49:58–11:50:01Z (NOT 5). `manual_settings`: `static_layer_count: 5` × `predefined_tp_pips: [20,40]` = 5 layers × 2 TP targets (tp 4335/4337).
+  2. First 5 (TP1=4335) hit TP on broker; reconcile batch-closed them in DB at 11:51:14.982 (identical `closed_at`, no execution log — `closeStaleOpenTrades`).
+  3. Last 5 (TP2=4337) also closed **on the broker**, but reconcile SKIPPED the DB close: the account had nothing else open, so `/OpenedOrders` returned empty → the empty-snapshot disconnect-safety guard in `openTradeReconcile.reconcileOpenTradesForBroker` (`brokerTickets.size === 0` → defer) and `v2ReconcileMonitor` refused to ghost-close. DB rows stayed `status='open'`, `auto_be_applied_at=null`.
+  4. `autoManagementMonitor` (~400ms tick) kept re-selecting those rows, fired `orderModify`, broker replied `unknown ticket`, and the benign-error regex at `autoManagementMonitor.ts:419` did NOT match it → hard failure → infinite retry.
+  5. Loop live since 17:27:35Z (still running at end of session). `tradeLogRetention` (`prune_all_trade_execution_logs`, keep=500/user every 10min) prunes old rows — explains why earliest-failure timestamps and counts kept sliding (17:27:35 → 17:37:37; counts 1042 → 616 → 680).
+- **Fix (worker only, uncommitted):** added `unknown\s+ticket` to the benign-error regex in the FIVE remaining regex sites: `autoManagementMonitor.ts:419`, `cweCloseMonitor.ts:357`, `forceCloseSignalTrades.ts:50`, `trailingStopMonitor.ts:286`, `tradeExecutor/managementExecutor.ts:2096`. (`partialTpMonitor.ts` already had it from the earlier fix.) On a benign match the trade is marked closed, ending the retry loop.
+- **Process change (user request):** AGENTS.md "Diagnosis & Problem-Solving" now mandates always creating/maintaining a scratchpad (`docs/scratchpad-<issue>-<date>.md`) at the start of any diagnosis, before touching code/DB; it is the single source of truth. Also recorded as a learning in `.superstack/learnings.md` (`always-use-a-scratchpad`), which references the scratchpad doc.
+- **Follow-ups:** deploy the worker fix (staging → Railway → main); consider revisiting the empty-snapshot reconcile deferral so a flat-but-connected account is not left with permanently-open DB rows; typecheck the worker before deploy.
+- **Notion:** task updated on board.
+
 ### 2026-08-10 — Order-close audit: `signal_id` restored as required (hybrid merge broke it) — pushed to staging
 
 - **Context (user request):** After the staging/main hybrid merge of `worker/src/orderCloseAudit.ts` (commits `886e107f` [BZetsu trade-resolved] + `9e354c57` [Osodi account-resolved], resolved in `6dbddd21`), audit inserts made `signal_id` OPTIONAL (`...(signalId ? { signal_id: signalId } : {})`). But `trade_execution_logs.signal_id` is `uuid not null` (migration `20260508190500_trade_execution_logs.sql:4`) — no migration ever relaxed it. Omitted `signal_id` → DB 23502 → audit row silently dropped, the exact bug the fix was meant to solve. Worse: `signalId` was only resolved on the account cache-miss branch, so repeat events for a known account never resolved it.

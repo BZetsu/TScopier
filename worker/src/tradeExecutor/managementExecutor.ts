@@ -2093,7 +2093,7 @@ export async function applyCloseWorseEntriesInstruction(ctx: TradeExecutorContex
           return 1
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
-          const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i.test(msg)
+          const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order|unknown\s+ticket/i.test(msg)
           if (benign) {
             await ctx.supabase
               .from('trades')
