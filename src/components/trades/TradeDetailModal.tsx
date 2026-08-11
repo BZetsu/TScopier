@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useT } from '../../context/LocaleContext'
+import { useAssistant } from '../../context/AssistantContext'
 import { supabase } from '../../lib/supabase'
 import type { MtTrade } from '../../lib/fxsocketBroker'
 import {
@@ -21,8 +22,10 @@ import {
 import {
   fetchBrokerFailuresForTrade,
   formatBrokerFailureRow,
+  getTradeFailureDisplayFromLog,
   type CopierBrokerFailureRow,
 } from '../../lib/copierLogDetail'
+import { buildTradeFailureAssistantPrompt } from '../../lib/tradeFailureDisplay'
 import {
   formatTradeLots,
   formatTradePrice,
@@ -39,6 +42,7 @@ interface TradeDetailModalProps {
 
 export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalProps) {
   const t = useT()
+  const assistant = useAssistant()
   const tr = t.trades
   const navigate = useNavigate()
   const panelRef = useRef<HTMLDivElement>(null)
@@ -110,6 +114,10 @@ export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalPro
   }, [trade, onClose])
 
   const display = useMemo(() => (trade ? getTradeDisplayMeta(trade) : null), [trade])
+  const structuredBrokerFailure = useMemo(
+    () => brokerFailures.map(row => getTradeFailureDisplayFromLog(row)).find(Boolean) ?? null,
+    [brokerFailures],
+  )
 
   const linkedSignalId = context?.signal?.id
 
@@ -122,6 +130,15 @@ export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalPro
   const handleViewCopierLogs = () => {
     onClose()
     navigate('/copier-logs')
+  }
+
+  const askAssistantAboutFailure = () => {
+    if (!structuredBrokerFailure) return
+    assistant.persistMessages(prev => [
+      ...prev,
+      { role: 'user', content: buildTradeFailureAssistantPrompt(structuredBrokerFailure) },
+    ])
+    assistant.openAssistant()
   }
 
   const instructionLines = useMemo(() => {
@@ -294,6 +311,28 @@ export function TradeDetailModal({ trade, userId, onClose }: TradeDetailModalPro
                 </p>
               </div>
               <p className="text-sm text-neutral-700 dark:text-neutral-300">{tr.brokerErrorIntro}</p>
+              {structuredBrokerFailure ? (
+                <div className="space-y-1 rounded-lg border border-error-200/80 dark:border-error-900/60 bg-white/70 dark:bg-neutral-900/40 px-3 py-2">
+                  <p className="text-sm font-semibold text-error-800 dark:text-error-200">
+                    {structuredBrokerFailure.title}
+                  </p>
+                  <p className="text-xs text-neutral-700 dark:text-neutral-300">
+                    {structuredBrokerFailure.explanation}
+                  </p>
+                  {structuredBrokerFailure.recommendedAction ? (
+                    <p className="text-xs text-neutral-600 dark:text-neutral-400">
+                      {structuredBrokerFailure.recommendedAction}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={askAssistantAboutFailure}
+                    className="text-xs font-semibold text-teal-700 dark:text-teal-300 hover:underline underline-offset-2"
+                  >
+                    Ask AI about this issue
+                  </button>
+                </div>
+              ) : null}
               <ul className="space-y-2">
                 {brokerFailures.map((failure, idx) => (
                   <li

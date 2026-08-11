@@ -9,7 +9,7 @@ import type { ChannelKeywords, ManualSettings, PlannerResult, VirtualPendingLeg 
 import { autoManagementTradeSnapshot } from '../autoManagement'
 import { stripInvalidStopsForSide } from '../channelActiveTradeParams'
 import { isInvalidStopsError } from '../orderModifySafe'
-import { humanizeOrderSendError } from '../brokerTradeError'
+import { humanizeOrderSendError, tradeFailureReasonFromBrokerMessage } from '../brokerTradeError'
 import { trailingTradeRowSnapshot } from '../trailingStop'
 import { applyPostFillFollowUp, type PostFillTradeLeg } from '../postFillFollowUp'
 import type { TradeExecutorContext } from './context'
@@ -104,7 +104,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
 
   // Drop identical full-lot clones only (not granular multi/range legs).
   const collapsed = collapseIdenticalImmediateLegs(legs, { baseLot })
-  let workingLegs = collapsed.legs
+  const workingLegs = collapsed.legs
   if (collapsed.collapsed > 0) {
     console.warn(
       `[tradeExecutor] duplicate_leg_collapsed removed=${collapsed.collapsed}`
@@ -408,7 +408,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
             category: 'trade',
             event: reasonCode === 'INSUFFICIENT_MARGIN'
               ? 'trade_copy_failed'
-              : reasonCode === 'SYMBOL_UNSUPPORTED'
+              : reasonCode === 'BROKER_SYMBOL_NOT_FOUND'
                 ? 'trade_copy_blocked'
                 : 'broker_order_rejected',
             severity: reasonCode === 'BROKER_RATE_LIMITED' ? 'warning' : 'error',
@@ -437,13 +437,27 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
             },
           })
         }
+        const tradeFailure = tradeFailureReasonFromBrokerMessage(lastAttemptError, {
+          requestedSymbol,
+          brokerSymbol: sendArgs.symbol,
+          operation: sendArgs.operation,
+        })
         await ctx.supabase.from('trade_execution_logs').insert({
           user_id: signal.user_id,
           signal_id: signal.id,
           broker_account_id: broker.id,
           action: 'order_send',
           status: 'failed',
-          request_payload: { ...sendArgs, ...orderLogContext } as unknown as Record<string, unknown>,
+          request_payload: {
+            ...sendArgs,
+            ...orderLogContext,
+            ...(tradeFailure
+              ? {
+                reason_code: tradeFailure.reasonCode,
+                trade_failure: tradeFailure,
+              }
+              : {}),
+          } as unknown as Record<string, unknown>,
           error_message: lastAttemptError,
         })
         emitPipelineEvent({

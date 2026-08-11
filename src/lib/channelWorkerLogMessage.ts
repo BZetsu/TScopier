@@ -4,6 +4,7 @@ import {
   formatBrokerBridgeErrorMessage,
   normalizeCopierSkipReasonKey,
 } from './brokerBridgeErrorDisplay'
+import { resolveTradeFailureDisplay } from './tradeFailureDisplay'
 import {
   instrumentGuessFromRawTelegram,
   isPlausibleCopierSymbol,
@@ -200,6 +201,11 @@ function signalActionFromLog(row: ChannelWorkerLogRow): string {
 }
 
 function translateBrokerError(message: string, cw: ChannelWorkerTranslations, symbolHint?: string | null): string {
+  const structured = resolveTradeFailureDisplay({
+    legacyMessage: message,
+    safeContext: symbolHint ? { requestedSymbol: symbolHint } : undefined,
+  })
+  if (structured) return structured.title
   const bridgeMsg = formatBrokerBridgeErrorMessage(message, {
     bridgeUnavailable: cw.errorBrokerBridgeUnavailable,
     tradeEaNotReady: cw.errorTradeEaNotReady,
@@ -256,6 +262,11 @@ function errSuffix(row: ChannelWorkerLogRow, cw: ChannelWorkerTranslations): str
 }
 
 function translateSkipReason(reason: string, cw: ChannelWorkerTranslations, symbolHint?: string | null): string {
+  const structured = resolveTradeFailureDisplay({
+    reasonCode: reason,
+    safeContext: symbolHint ? { requestedSymbol: symbolHint } : undefined,
+  })
+  if (structured) return structured.title
   const key = normalizeCopierSkipReasonKey(reason)
   if (cw.skipReasons[key]) return cw.skipReasons[key]
   // Raw broker failures (e.g. historical "HTTP 500") — reuse trade-error copy.

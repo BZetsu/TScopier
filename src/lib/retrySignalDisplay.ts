@@ -2,6 +2,7 @@ import { interpolate } from '../i18n/interpolate'
 import type { CopierLogsTranslations } from '../i18n/locales/types'
 import type { Signal } from '../types/database'
 import { COPIER_SKIP_REASON_LABELS, resolveCopierSkipReasonKey } from './copierSkipReasonLabels'
+import { resolveTradeFailureDisplay, type TradeFailureDisplay } from './tradeFailureDisplay'
 
 const RETRYABLE_SKIP_REASONS = new Set([
   'entry_not_opened',
@@ -31,10 +32,15 @@ export function formatCopierSkipReason(
   )
 }
 
-export function isCopierSignalRetryEligible(signal: Signal): boolean {
+export function isCopierSignalRetryEligible(
+  signal: Signal,
+  structuredFailure?: Pick<TradeFailureDisplay, 'retryable'> | null,
+): boolean {
   const parsed = signal.parsed_data as { action?: string } | null
   const action = String(parsed?.action ?? '').toLowerCase()
   if (action !== 'buy' && action !== 'sell') return false
+  const reasonDisplay = structuredFailure ?? resolveTradeFailureDisplay({ reasonCode: signal.skip_reason })
+  if (reasonDisplay?.retryable === false) return false
   if (signal.status === 'failed') return true
   if (signal.status === 'skipped') {
     const reason = String(signal.skip_reason ?? '').trim().toLowerCase()
