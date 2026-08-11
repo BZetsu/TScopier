@@ -3,6 +3,186 @@
  * Prefer stable prefixes like `Symbol not found: XAUUSD` so the dashboard i18n can match them.
  */
 
+export type TradeFailureCategory = 'signal' | 'broker' | 'account' | 'risk' | 'system'
+
+export type TradeFailureReason = {
+  reasonCode: string
+  category: TradeFailureCategory
+  title: string
+  explanation: string
+  recommendedAction?: string
+  retryable: boolean
+  userActionRequired: boolean
+  safeContext?: Record<string, unknown>
+}
+
+export const SIGNAL_MISSING_REQUIRED_SL = 'SIGNAL_MISSING_REQUIRED_SL'
+export const BROKER_SYMBOL_NOT_FOUND = 'BROKER_SYMBOL_NOT_FOUND'
+
+function cleanSymbol(value: unknown): string | undefined {
+  const s = typeof value === 'string' ? value.trim().toUpperCase() : ''
+  return s ? s.replace(/\s+/g, '') : undefined
+}
+
+function displayInstrument(symbol?: string): string {
+  const s = cleanSymbol(symbol)
+  if (!s) return 'the requested instrument'
+  if (s === 'XAUUSD' || s === 'XAU' || s === 'GOLD') return 'GOLD/XAUUSD'
+  return s
+}
+
+function tradeFailureCopy(
+  reasonCode: string,
+  safeContext?: Record<string, unknown>,
+): Omit<TradeFailureReason, 'reasonCode' | 'safeContext'> | null {
+  const requestedSymbol = cleanSymbol(safeContext?.requestedSymbol)
+  const instrument = displayInstrument(requestedSymbol)
+  switch (reasonCode) {
+    case SIGNAL_MISSING_REQUIRED_SL: {
+      const withheld = safeContext?.withheldByProvider === true
+      return {
+        category: 'signal',
+        title: 'Trade not copied - Stop Loss missing',
+        explanation: withheld
+          ? 'The signal did not include a usable Stop Loss price. The provider appears to have reserved the Stop Loss for premium/VIP subscribers.'
+          : 'The signal did not include a usable Stop Loss price required by the current copier configuration.',
+        recommendedAction: 'Check the original signal before copying this trade.',
+        retryable: false,
+        userActionRequired: true,
+      }
+    }
+    case BROKER_SYMBOL_NOT_FOUND:
+    case 'SYMBOL_UNSUPPORTED':
+      return {
+        category: 'broker',
+        title: 'Trade not copied - Broker symbol not found',
+        explanation: `We could not find the matching ${instrument} instrument on your broker account. Your broker may use a different symbol name.`,
+        recommendedAction: 'Check the instrument name in your broker terminal, then contact support if a custom symbol mapping is required.',
+        retryable: false,
+        userActionRequired: true,
+      }
+    case 'INSUFFICIENT_MARGIN':
+      return {
+        category: 'account',
+        title: 'Trade not copied - Not enough margin',
+        explanation: 'Your broker rejected the order because the account did not have enough free margin for the requested lot size.',
+        recommendedAction: 'Lower the lot size or add funds before copying this signal again.',
+        retryable: false,
+        userActionRequired: true,
+      }
+    case 'MARKET_CLOSED':
+      return {
+        category: 'broker',
+        title: 'Trade not copied - Market closed',
+        explanation: 'The broker reported that this market was closed or unavailable when the copier tried to place the order.',
+        recommendedAction: 'Wait until the market is open for this instrument.',
+        retryable: true,
+        userActionRequired: false,
+      }
+    case 'INVALID_LOT':
+      return {
+        category: 'risk',
+        title: 'Trade not copied - Invalid lot size',
+        explanation: 'The broker rejected the configured lot size for this instrument.',
+        recommendedAction: 'Check the account lot size settings and the broker minimum/step size for this symbol.',
+        retryable: false,
+        userActionRequired: true,
+      }
+    case 'BROKER_ACCOUNT_UNAVAILABLE':
+      return {
+        category: 'account',
+        title: 'Trade not copied - Broker not connected',
+        explanation: 'The broker account was not connected or authorized when the copier tried to place the trade.',
+        recommendedAction: 'Open Account Configuration and reconnect the broker account.',
+        retryable: true,
+        userActionRequired: true,
+      }
+    case 'BROKER_TIMEOUT':
+      return {
+        category: 'system',
+        title: 'Broker response timed out',
+        explanation: 'The broker did not confirm the order result in time. The copier must reconcile the account before treating this as safe to retry.',
+        recommendedAction: 'Check the trade status before retrying. Do not retry automatically if the broker outcome is unclear.',
+        retryable: false,
+        userActionRequired: true,
+      }
+    case 'BROKER_RATE_LIMITED':
+      return {
+        category: 'broker',
+        title: 'Trade delayed - Broker rate limited',
+        explanation: 'The broker temporarily rejected requests because too many requests were sent in a short period.',
+        recommendedAction: 'Wait a moment before retrying.',
+        retryable: true,
+        userActionRequired: false,
+      }
+    case 'BROKER_ORDER_REJECTED':
+      return {
+        category: 'broker',
+        title: 'Trade not copied - Broker rejected order',
+        explanation: 'The broker rejected this order. The exact broker reason was not recognized as a more specific condition.',
+        recommendedAction: 'Review the broker account, symbol, lot size, and stop levels before retrying.',
+        retryable: false,
+        userActionRequired: true,
+      }
+    default:
+      return null
+  }
+}
+
+export function tradeFailureReasonFromCode(
+  reasonCode: string,
+  safeContext?: Record<string, unknown>,
+): TradeFailureReason | null {
+  const code = String(reasonCode ?? '').trim().toUpperCase()
+  if (!code) return null
+  const copy = tradeFailureCopy(code, safeContext)
+  if (!copy) return null
+  return {
+    reasonCode: code === 'SYMBOL_UNSUPPORTED' ? BROKER_SYMBOL_NOT_FOUND : code,
+    ...copy,
+    ...(safeContext ? { safeContext } : {}),
+  }
+}
+
+export function tradeFailureReasonFromBrokerMessage(
+  message: string,
+  safeContext?: Record<string, unknown>,
+): TradeFailureReason | null {
+  const lower = String(message ?? '').toLowerCase()
+  if (
+    /symbolselect/.test(lower)
+    || (/symbol|instrument/.test(lower) && /not found|unknown|disabled|unsupported|invalid|select\s*failed/.test(lower))
+  ) {
+    return tradeFailureReasonFromCode(BROKER_SYMBOL_NOT_FOUND, safeContext)
+  }
+  if (/margin|not enough money|insufficient funds/.test(lower)) {
+    return tradeFailureReasonFromCode('INSUFFICIENT_MARGIN', safeContext)
+  }
+  if (/market.*closed|off quotes|trade disabled/.test(lower)) {
+    return tradeFailureReasonFromCode('MARKET_CLOSED', safeContext)
+  }
+  if (/invalid volume|lot|minimum volume|min lot/.test(lower)) {
+    return tradeFailureReasonFromCode('INVALID_LOT', safeContext)
+  }
+  if (/timeout|timed out|operation timeout/.test(lower)) {
+    return tradeFailureReasonFromCode('BROKER_TIMEOUT', safeContext)
+  }
+  if (/not connected|disconnected|session|auth|unauthorized|forbidden|invalid api/.test(lower)) {
+    return tradeFailureReasonFromCode('BROKER_ACCOUNT_UNAVAILABLE', safeContext)
+  }
+  if (/rate limit|too many requests/.test(lower)) {
+    return tradeFailureReasonFromCode('BROKER_RATE_LIMITED', safeContext)
+  }
+  return null
+}
+
+export function isStopLossWithheldByProvider(message: string | null | undefined): boolean {
+  const text = String(message ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return false
+  return /\b(?:sl|s\/l|stop\s*loss|stoploss|risk)\b.{0,40}\b(?:premium|vip|subscriber|subscribe|members?|paid|private)\b/i.test(text)
+    || /\b(?:premium|vip|subscriber|subscribe|members?|paid|private)\b.{0,40}\b(?:sl|s\/l|stop\s*loss|stoploss|risk)\b/i.test(text)
+}
+
 export function parseFxErrorEnvelope(body: unknown): { message: string; code?: string } {
   if (body && typeof body === 'object') {
     const o = body as Record<string, unknown>

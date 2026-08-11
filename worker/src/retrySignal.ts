@@ -11,6 +11,7 @@ import type { SignalRow } from './tradeExecutor/types'
 import { SKIP_REASON_ENTRY_NOT_OPENED } from './manualPlanner'
 import { applySymbolMapping, brokerHasLinkedSession, brokerSessionUuid } from './tradeExecutor/helpers'
 import { channelMatchesBrokerSignal } from './brokerChannelFilter'
+import { tradeFailureReasonFromCode } from './brokerTradeError'
 
 export const SIGNAL_RETRY_DISPATCH_SOURCE = 'signal_retry'
 export const AI_REVIEW_MAX_AGE_MS = 2 * 60_000
@@ -85,6 +86,47 @@ export type RetrySignalResult = {
   reason?: string
 }
 
+export type StructuredRetryability = { retryable: boolean } | null
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+export function structuredRetryabilityFromPayload(payload: unknown): StructuredRetryability {
+  if (!isRecord(payload)) return null
+  const embedded = payload.trade_failure
+  if (isRecord(embedded) && typeof embedded.retryable === 'boolean') {
+    return { retryable: embedded.retryable }
+  }
+  const reasonCode = typeof payload.reason_code === 'string'
+    ? payload.reason_code
+    : typeof payload.skip_reason === 'string'
+      ? payload.skip_reason
+      : null
+  if (!reasonCode) return null
+  const reason = tradeFailureReasonFromCode(reasonCode)
+  return reason ? { retryable: reason.retryable } : null
+}
+
+async function loadLatestStructuredRetryability(
+  supabase: SupabaseClient,
+  signal: { id: string; user_id: string },
+): Promise<StructuredRetryability> {
+  const { data, error } = await supabase
+    .from('trade_execution_logs')
+    .select('request_payload')
+    .eq('signal_id', signal.id)
+    .eq('user_id', signal.user_id)
+    .order('created_at', { ascending: false })
+    .limit(10)
+  if (error || !data) return null
+  for (const row of data as { request_payload?: unknown }[]) {
+    const retryability = structuredRetryabilityFromPayload(row.request_payload)
+    if (retryability) return retryability
+  }
+  return null
+}
+
 async function resetSignalForRetry(
   supabase: SupabaseClient,
   args: { userId: string; signalId: string },
@@ -119,14 +161,16 @@ function toDispatchRow(signal: NonNullable<Awaited<ReturnType<typeof loadSignalB
   }
 }
 
-function isRetryableSignal(signal: {
+export function isRetryableSignal(signal: {
   status: string
   skip_reason: string | null
   parsed_data: { action?: string } | null
+  structuredRetryability?: StructuredRetryability
 }): boolean {
   const action = String(signal.parsed_data?.action ?? '').toLowerCase()
   if (!isEntryAction(action)) return false
   const status = String(signal.status).toLowerCase()
+  if (signal.structuredRetryability?.retryable === false) return false
   if (status === 'failed') return true
   if (status !== 'skipped') return false
   const reason = String(signal.skip_reason ?? '').trim().toLowerCase()
@@ -143,7 +187,8 @@ export async function retrySignal(
   if (!existing || existing.user_id !== args.userId) {
     return { ok: false, reason: 'signal_not_found' }
   }
-  if (!isRetryableSignal(existing)) {
+  const structuredRetryability = await loadLatestStructuredRetryability(supabase, existing)
+  if (!isRetryableSignal({ ...existing, structuredRetryability })) {
     return { ok: false, reason: 'signal_not_retryable' }
   }
 

@@ -510,7 +510,43 @@ test('channelWorkerLogMessage: Symbol not found uses mapping guidance', () => {
     { 'ch-1': 'Gold Trader Mo' },
   )
   assert.ok(message?.includes('XAUUSD'))
-  assert.ok(message?.includes('GOLD#') || message?.includes('different name'))
+  assert.ok(message?.includes('Broker symbol not found') || message?.includes('different name'))
+})
+
+test('channelWorkerLogMessage: structured missing SL reason uses central friendly copy', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'dispatch_skipped',
+      status: 'skipped',
+      request_payload: {
+        skip_reason: 'SIGNAL_MISSING_REQUIRED_SL',
+        reason_code: 'SIGNAL_MISSING_REQUIRED_SL',
+        trade_failure: {
+          reasonCode: 'SIGNAL_MISSING_REQUIRED_SL',
+          category: 'signal',
+          title: 'Trade not copied - Stop Loss missing',
+          explanation: 'The signal did not include a usable Stop Loss price. The provider appears to have reserved the Stop Loss for premium/VIP subscribers.',
+          recommendedAction: 'Check the original signal before copying this trade.',
+          retryable: false,
+          userActionRequired: true,
+          safeContext: { missingField: 'stop_loss', withheldByProvider: true },
+        },
+      },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+        status: 'skipped',
+        skip_reason: 'SIGNAL_MISSING_REQUIRED_SL',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Gold Trader Mo' },
+  )
+  assert.ok(message)
+  assert.match(message!, /Stop Loss missing/i)
+  assert.doesNotMatch(message!, /SIGNAL_MISSING_REQUIRED_SL/)
 })
 
 test('channelWorkerLogMessage: hides unlinked channel mgmt-style skipped remap', () => {

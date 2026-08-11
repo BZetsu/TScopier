@@ -1,9 +1,14 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  BROKER_SYMBOL_NOT_FOUND,
+  SIGNAL_MISSING_REQUIRED_SL,
   formatFxHttpFailureMessage,
   humanizeOrderSendError,
+  isStopLossWithheldByProvider,
   parseFxErrorEnvelope,
+  tradeFailureReasonFromBrokerMessage,
+  tradeFailureReasonFromCode,
 } from './brokerTradeError'
 
 describe('parseFxErrorEnvelope', () => {
@@ -54,5 +59,64 @@ describe('humanizeOrderSendError', () => {
 
   it('normalizes SymbolSelect failed', () => {
     assert.equal(humanizeOrderSendError('SymbolSelect failed', 'gold#'), 'Symbol not found: GOLD#')
+  })
+})
+
+describe('isStopLossWithheldByProvider', () => {
+  it('recognizes premium/VIP stop-loss wording', () => {
+    assert.equal(isStopLossWithheldByProvider('GOLD BUY TP 2400 SL premium'), true)
+    assert.equal(isStopLossWithheldByProvider('XAUUSD buy\nSL for premium members\nTP 2440'), true)
+    assert.equal(isStopLossWithheldByProvider('subscribe for SL details'), true)
+    assert.equal(isStopLossWithheldByProvider('VIP stop loss available after payment'), true)
+  })
+
+  it('does not treat numeric SL or generic premium wording as withheld SL', () => {
+    assert.equal(isStopLossWithheldByProvider('GOLD BUY SL 2290 TP 2400'), false)
+    assert.equal(isStopLossWithheldByProvider('Premium signal GOLD BUY TP 2400'), false)
+  })
+})
+
+describe('tradeFailureReasonFromCode', () => {
+  it('builds structured missing-SL copy without inventing a stop loss', () => {
+    const reason = tradeFailureReasonFromCode(SIGNAL_MISSING_REQUIRED_SL, {
+      missingField: 'stop_loss',
+      withheldByProvider: true,
+    })
+    assert.equal(reason?.reasonCode, SIGNAL_MISSING_REQUIRED_SL)
+    assert.equal(reason?.category, 'signal')
+    assert.equal(reason?.retryable, false)
+    assert.equal(reason?.userActionRequired, true)
+    assert.match(reason?.explanation ?? '', /premium\/VIP subscribers/i)
+    assert.doesNotMatch(reason?.explanation ?? '', /\b\d+(?:\.\d+)?\b/)
+  })
+
+  it('maps legacy SYMBOL_UNSUPPORTED to the broker-symbol user contract', () => {
+    const reason = tradeFailureReasonFromCode('SYMBOL_UNSUPPORTED', {
+      requestedSymbol: 'XAUUSD',
+    })
+    assert.equal(reason?.reasonCode, BROKER_SYMBOL_NOT_FOUND)
+    assert.match(reason?.explanation ?? '', /GOLD\/XAUUSD/)
+    assert.equal(reason?.retryable, false)
+  })
+})
+
+describe('tradeFailureReasonFromBrokerMessage', () => {
+  it('maps known broker messages into deterministic reasons', () => {
+    assert.equal(
+      tradeFailureReasonFromBrokerMessage('SymbolSelect failed', { requestedSymbol: 'XAUUSD' })?.reasonCode,
+      BROKER_SYMBOL_NOT_FOUND,
+    )
+    assert.equal(
+      tradeFailureReasonFromBrokerMessage('not enough money')?.reasonCode,
+      'INSUFFICIENT_MARGIN',
+    )
+    assert.equal(
+      tradeFailureReasonFromBrokerMessage('market closed')?.reasonCode,
+      'MARKET_CLOSED',
+    )
+    assert.equal(
+      tradeFailureReasonFromBrokerMessage('invalid volume')?.reasonCode,
+      'INVALID_LOT',
+    )
   })
 })
