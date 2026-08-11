@@ -217,7 +217,7 @@ export function classifyBrokerFailureReason(message: string): string {
     /symbolselect/.test(lower)
     || (/symbol|instrument/.test(lower) && /not found|unknown|disabled|unsupported|invalid|select\s*failed/.test(lower))
   ) {
-    return 'SYMBOL_UNSUPPORTED'
+    return 'BROKER_SYMBOL_NOT_FOUND'
   }
   if (/timeout|timed out|operation timeout/.test(lower)) return 'BROKER_TIMEOUT'
   if (/not connected|disconnected|session|auth|unauthorized|forbidden|invalid api/.test(lower)) return 'BROKER_ACCOUNT_UNAVAILABLE'

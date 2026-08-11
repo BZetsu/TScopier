@@ -6,6 +6,10 @@ import {
   COPIER_SKIP_REASON_LABELS,
   resolveCopierSkipReasonKey,
 } from './copierSkipReasonLabels'
+import {
+  resolveTradeFailureDisplay,
+  type TradeFailureDisplay,
+} from './tradeFailureDisplay'
 
 export type CopierExecutionLogRow = {
   action: string
@@ -19,6 +23,7 @@ export type CopierBrokerFailureRow = {
   action: string
   status: string
   error_message: string | null
+  request_payload: Record<string, unknown> | null
   created_at: string
 }
 
@@ -43,7 +48,7 @@ export async function fetchBrokerFailuresForTrade(
 
   const { data, error } = await supabase
     .from('trade_execution_logs')
-    .select('action, status, error_message, created_at')
+    .select('action, status, error_message, request_payload, created_at')
     .in('signal_id', signalIds)
     .eq('user_id', args.userId)
     .eq('broker_account_id', args.brokerAccountId)
@@ -60,6 +65,8 @@ export function formatBrokerFailureRow(
   row: CopierBrokerFailureRow,
   copierLogs: CopierLogsTranslations,
 ): string {
+  const structured = getTradeFailureDisplayFromLog(row)
+  if (structured) return structured.title
   const err = String(row.error_message ?? '').trim()
   if (row.action === 'order_send' && err) {
     return formatCopierSkipReasonShort(err, copierLogs)
@@ -67,6 +74,16 @@ export function formatBrokerFailureRow(
   const actionLabel = row.action.replace(/_/g, ' ')
   if (err) return `${actionLabel}: ${formatCopierSkipReasonShort(err, copierLogs)}`
   return actionLabel
+}
+
+export function getTradeFailureDisplayFromLog(row: {
+  error_message: string | null
+  request_payload: Record<string, unknown> | null
+}): TradeFailureDisplay | null {
+  return resolveTradeFailureDisplay({
+    payload: row.request_payload,
+    legacyMessage: row.error_message,
+  })
 }
 
 export function formatCopierSkipReasonShort(
@@ -151,6 +168,8 @@ export function summarizeExecutionLogRow(
   copierLogs: CopierLogsTranslations,
 ): string {
   const payload = row.request_payload ?? {}
+  const structured = getTradeFailureDisplayFromLog(row)
+  if (structured) return structured.title
   const skipReason = String(payload.skip_reason ?? row.error_message ?? '').trim()
   if (row.action === 'dispatch_skipped' && skipReason) {
     return formatCopierSkipReasonShort(skipReason, copierLogs)

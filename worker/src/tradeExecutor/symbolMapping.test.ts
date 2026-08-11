@@ -32,6 +32,12 @@ test('resolveBrokerSymbolFromInventory: fuzzy maps XAUUSD to XAUUSD+ when only s
   assert.equal(resolved, 'XAUUSD+')
 })
 
+test('resolveBrokerSymbolFromInventory: exact XAUUSD remains exact when available', () => {
+  const inv = inventory(['XAUUSD', 'XAUUSDm'])
+  const resolved = resolveBrokerSymbolFromInventory(noopCtx, inv, 'XAUUSD')
+  assert.equal(resolved, 'XAUUSD')
+})
+
 test('resolveBrokerSymbolFromInventory: fuzzy maps BTCUSD to BTCUSDm', () => {
   const inv = inventory(['BTCUSDm'])
   const resolved = resolveBrokerSymbolFromInventory(noopCtx, inv, 'BTCUSD')
@@ -63,6 +69,12 @@ test('resolveBrokerSymbolFromInventory: XAUUSD maps to GOLD# on XM-style brokers
   const inv = inventory(['EURUSD', 'GOLD#', 'GOLD24-7#', 'BarrickGold', 'XAUEUR#'])
   const resolved = resolveBrokerSymbolFromInventory(noopCtx, inv, 'XAUUSD')
   assert.equal(resolved, 'GOLD#')
+})
+
+test('resolveBrokerSymbolFromInventory: XAUUSD maps to GOLD.pro when that is the broker metal symbol', () => {
+  const inv = inventory(['EURUSD', 'GOLD.pro', 'BarrickGold'])
+  const resolved = resolveBrokerSymbolFromInventory(noopCtx, inv, 'XAUUSD')
+  assert.equal(resolved, 'GOLD.pro')
 })
 
 test('resolveBrokerSymbolFromInventory: GOLD maps to GOLD#', () => {
