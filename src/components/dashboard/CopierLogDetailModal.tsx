@@ -3,15 +3,18 @@ import { Loader2, X } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
 import { useT } from '../../context/LocaleContext'
+import { useAssistant } from '../../context/AssistantContext'
 import { en } from '../../i18n/locales/en'
 import {
   fetchCopierLogExecutionDetails,
   formatCopierSkipReasonDetail,
   formatCopierSkipReasonShort,
   formatParsedLevels,
+  getTradeFailureDisplayFromLog,
   summarizeExecutionLogRow,
   type CopierExecutionLogRow,
 } from '../../lib/copierLogDetail'
+import { buildTradeFailureAssistantPrompt, resolveTradeFailureDisplay } from '../../lib/tradeFailureDisplay'
 import { tradeSignalActionLabel, type TradeSignalSummaryLabels } from '../../lib/copierLogDisplay'
 import type { Signal } from '../../types/database'
 import { Badge } from '../ui/Badge'
@@ -41,6 +44,7 @@ export function CopierLogDetailModal({
   retryEligible?: boolean
 }) {
   const t = useT()
+  const assistant = useAssistant()
   const copierLogs = t.copierLogs
   const dm = copierLogs.detailModal ?? DEFAULT_DETAIL_MODAL
   const [timeline, setTimeline] = useState<CopierExecutionLogRow[] | null>(null)
@@ -70,9 +74,25 @@ export function CopierLogDetailModal({
 
   const reasonShort = formatCopierSkipReasonShort(signal?.skip_reason, copierLogs)
   const reasonDetail = formatCopierSkipReasonDetail(signal?.skip_reason, copierLogs)
+  const structuredFailure = useMemo(() => {
+    const fromTimeline = timeline
+      ?.map(row => getTradeFailureDisplayFromLog(row))
+      .find(Boolean)
+    if (fromTimeline) return fromTimeline
+    return resolveTradeFailureDisplay({ reasonCode: signal?.skip_reason })
+  }, [signal?.skip_reason, timeline])
   const actionLabel = action
     ? tradeSignalActionLabel(action, summaryLabels)
     : '—'
+
+  const askAssistantAboutFailure = () => {
+    if (!structuredFailure) return
+    assistant.persistMessages(prev => [
+      ...prev,
+      { role: 'user', content: buildTradeFailureAssistantPrompt(structuredFailure) },
+    ])
+    assistant.openAssistant()
+  }
 
   useEffect(() => {
     if (!signal) {
@@ -113,6 +133,7 @@ export function CopierLogDetailModal({
   const rawMessage = signal.raw_message?.trim() || (signal.raw_image_url ? '(image)' : '—')
   const technicalCode = signal.skip_reason?.trim() || '—'
   const showReason = signal.status === 'skipped' || signal.status === 'failed' || Boolean(signal.skip_reason)
+  const effectiveRetryEligible = retryEligible && structuredFailure?.retryable !== false
 
   return (
     <div
@@ -161,12 +182,27 @@ export function CopierLogDetailModal({
             <DetailRow label={dm.receivedAt} value={receivedAt} />
             {showReason ? (
               <>
-                <DetailRow label={dm.reason} value={reasonShort} emphasize />
-                {reasonDetail ? (
+                <DetailRow label={dm.reason} value={structuredFailure?.title ?? reasonShort} emphasize />
+                {structuredFailure ? (
+                  <p className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
+                    <span className="font-medium text-neutral-700 dark:text-neutral-200">{dm.whatHappened}: </span>
+                    {structuredFailure.explanation}
+                    {structuredFailure.recommendedAction ? ` ${structuredFailure.recommendedAction}` : ''}
+                  </p>
+                ) : reasonDetail ? (
                   <p className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
                     <span className="font-medium text-neutral-700 dark:text-neutral-200">{dm.whatHappened}: </span>
                     {reasonDetail}
                   </p>
+                ) : null}
+                {structuredFailure ? (
+                  <button
+                    type="button"
+                    onClick={askAssistantAboutFailure}
+                    className="text-xs font-semibold text-teal-700 dark:text-teal-300 hover:underline underline-offset-2"
+                  >
+                    Ask AI about this issue
+                  </button>
                 ) : null}
                 {technicalCode !== '—' && technicalCode !== reasonShort ? (
                   <DetailRow label={dm.technicalCode} value={technicalCode} mono />
@@ -203,12 +239,16 @@ export function CopierLogDetailModal({
                 {timeline.map((row, idx) => (
                   <li
                     key={`${row.created_at}-${row.action}-${idx}`}
-                    className="flex gap-3 text-sm"
+                    className={clsx(
+                      'flex gap-3 text-sm',
+                      row.status === 'failed' && 'text-error-700 dark:text-error-300',
+                      row.status === 'skipped' && 'text-warning-700 dark:text-warning-300',
+                    )}
                   >
                     <span className="text-xs text-neutral-400 whitespace-nowrap tabular-nums shrink-0 pt-0.5">
                       {new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                     </span>
-                    <span className="text-neutral-700 dark:text-neutral-200">
+                    <span className="min-w-0 break-words">
                       {summarizeExecutionLogRow(row, copierLogs)}
                     </span>
                   </li>
@@ -219,7 +259,7 @@ export function CopierLogDetailModal({
             )}
           </section>
 
-          {retryEligible && onRetry ? (
+          {effectiveRetryEligible && onRetry ? (
             <Button
               type="button"
               variant="secondary"

@@ -199,7 +199,13 @@ function looksLikeChannelManagementUpdate(text, channelKeywords, lexicon) {
         || /\b(?:sl|stop\s*loss|stoploss|risk|stop)\s+to\s+(?:be|entry|breakeven|break\s*even)\b/i.test(t)
         || /\b(?:adjust|move|set|change|update|make|bring)\s+(?:sl|stop\s*loss|stoploss|risk)\b/i.test(t)
         || /\b(?:sl|stop\s*loss|stoploss|risk)\s+to\s+\d/i.test(t)
-        || /\b(close\s+partial|closing\s+partial|take\s+partial|partial\s+(?:lot|lots|lotsize|position|trade))\b/i.test(t)
+        // TP modifications: "take profit of 30 pips", "add a take profit", "30 pips take profit to gold sell",
+        // "set tp to 2660". Structured entries are excluded by the early looksLikeStructuredEntrySignal check,
+        // and bare "TP 4256" (entry-level TP) requires a preposition so it stays an entry.
+        || /\b(?:adjust|move|set|change|update|make|bring|add)\s+(?:a\s+)?(?:take\s+profit|tp|target)\b/i.test(t)
+        || /\b(?:take\s+profit|tp|target)\s+(?:of|to|at)\s*\d/i.test(t)
+        || /\b\d{1,3}(?:\.\d+)?\s*(?:pips?|points?)\s+(?:take\s+profit|tp|profit|target)\b/i.test(t)
+        || /\b(?:close\s+partial|closing\s+partial|take\s+partial|partial\s+(?:lot|lots|lotsize|position|trade))\b/i.test(t)
         || /\bsecure\s+\d+\s*%\s*profit/i.test(t)
         || /\btake\s+profit\s+(?:target\s+)?(?:is\s+)?hit\b/i.test(t)
         || /\bclose\s+(?:half|50%|25%|partials?)\b/i.test(t)

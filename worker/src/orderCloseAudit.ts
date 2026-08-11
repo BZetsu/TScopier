@@ -17,7 +17,7 @@ export type OrderCloseAuditEvent = {
 type AuditSink = (event: OrderCloseAuditEvent & { stack: string }) => void
 
 let sink: AuditSink | null = null
-const userIdByFxAccount = new Map<string, string>()
+const accountByFxAccount = new Map<string, { userId: string; brokerAccountId: string }>()
 
 /** Register from worker boot so closes can persist to trade_execution_logs. */
 export function registerOrderCloseAuditSink(next: AuditSink | null): void {
@@ -27,24 +27,47 @@ export function registerOrderCloseAuditSink(next: AuditSink | null): void {
 export function registerOrderCloseAuditSupabase(supabase: SupabaseClient): void {
   registerOrderCloseAuditSink((event) => {
     void (async () => {
-      let userId = userIdByFxAccount.get(event.accountId)
-      if (!userId) {
+      // The audit event only carries the FxSocket account id + ticket, but
+      // trade_execution_logs requires user_id (NOT NULL) and signal_id (NOT
+      // NULL). Resolve user_id + broker_account id from broker_accounts
+      // (fxsocket_account_id), then signal_id from the owning trades row
+      // (broker_account_id + metaapi order id). Both are required — if either
+      // cannot be resolved the DB write is skipped (console trail remains).
+      let account = accountByFxAccount.get(event.accountId)
+      if (!account) {
         const { data } = await supabase
           .from('broker_accounts')
-          .select('user_id')
+          .select('id, user_id')
           .eq('fxsocket_account_id', event.accountId)
           .maybeSingle()
-        userId = (data as { user_id?: string } | null)?.user_id ?? undefined
-        if (userId) userIdByFxAccount.set(event.accountId, userId)
+        const row = data as { id?: string; user_id?: string } | null
+        if (row?.id && row?.user_id) {
+          account = { brokerAccountId: row.id, userId: row.user_id }
+          accountByFxAccount.set(event.accountId, account)
+        }
       }
-      if (!userId) {
+      if (!account) {
         console.warn(
-          `[orderCloseAudit] skip persist — no user_id for fx account=${event.accountId}`,
+          `[orderCloseAudit] skip persist — no broker_account for fx account=${event.accountId}`,
+        )
+        return
+      }
+      const { data: trade } = await supabase
+        .from('trades')
+        .select('signal_id')
+        .eq('broker_account_id', account.brokerAccountId)
+        .eq('metaapi_order_id', String(event.ticket))
+        .maybeSingle()
+      const signalId = ((trade as { signal_id?: string | null } | null)?.signal_id) ?? null
+      if (!signalId) {
+        console.warn(
+          `[orderCloseAudit] skip persist — no trade row for account=${event.accountId} ticket=${event.ticket}; audit not persisted`,
         )
         return
       }
       const { error } = await supabase.from('trade_execution_logs').insert({
-        user_id: userId,
+        user_id: account.userId,
+        signal_id: signalId,
         action: 'order_close_audit',
         status: event.ok === false ? 'failed' : 'success',
         request_payload: {

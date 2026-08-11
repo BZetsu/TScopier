@@ -4,6 +4,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.incMetric = incMetric;
 exports.observeMetric = observeMetric;
 exports.getMetricsSnapshot = getMetricsSnapshot;
+exports.resetMetricsForTest = resetMetricsForTest;
 const counters = new Map();
 function incMetric(name, delta = 1) {
     counters.set(name, (counters.get(name) ?? 0) + delta);
@@ -23,4 +24,7 @@ function observeMetric(name, value, buckets = DEFAULT_BUCKETS_MS) {
 }
 function getMetricsSnapshot() {
     return Object.fromEntries(counters.entries());
+}
+function resetMetricsForTest() {
+    counters.clear();
 }

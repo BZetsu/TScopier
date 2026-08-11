@@ -145,6 +145,8 @@ Copier-health business events are emitted only for meaningful user impact:
 
 Temporary reconnects, watchdog probes, lease renewals, and reconnects that succeed within the grace window are not issue events. Offline health alerts are cooldown-limited by stable reason/category, not by user-specific identifiers.
 
+Malformed GramJS RPC recovery exhaustion is one underlying Telegram listener incident. Emit `telegram_recovery_exhausted` with reason code `GRAMJS_MALFORMED_RPC_RESULT`; record the failed/offline copier-health transition without also emitting a duplicate `telegram_listener_failed` issue for the same malformed-RPC exhaustion.
+
 Use breadcrumbs for stage context such as signal receipt, parsing, queue consumption, durable claim acquisition, broker request start/response, retry scheduling, reconnect requests, and reconciliation start.
 
 ## Support Flow: "My Trade Did Not Copy"

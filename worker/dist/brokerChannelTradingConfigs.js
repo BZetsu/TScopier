@@ -8,7 +8,7 @@ exports.applyBrokerChannelTradingConfigRow = applyBrokerChannelTradingConfigRow;
 exports.fetchFreshBrokerForChannel = fetchFreshBrokerForChannel;
 const channelTradingConfig_1 = require("./channelTradingConfig");
 const copyLimitTypes_1 = require("./copyLimitTypes");
-const BROKER_CHANNEL_TRADING_CONFIG_SELECT = 'broker_account_id,channel_id,copier_mode,manual_settings,ai_settings,copy_limit_state';
+const BROKER_CHANNEL_TRADING_CONFIG_SELECT = 'broker_account_id,channel_id,copier_mode,manual_settings,ai_settings,copy_limit_state,updated_at';
 function ensurePersistedManualSettings(settings) {
     const schemaVersion = Number(settings.schema_version ?? 1);
     return {

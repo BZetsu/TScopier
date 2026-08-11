@@ -4,6 +4,7 @@ exports.hasExecutableTradeStructure = hasExecutableTradeStructure;
 exports.looksLikeMarketNewsOrCommentary = looksLikeMarketNewsOrCommentary;
 exports.looksLikeRetrospectiveTradeDiscussion = looksLikeRetrospectiveTradeDiscussion;
 exports.looksLikeCasualNonTradeMessage = looksLikeCasualNonTradeMessage;
+exports.looksLikeResultsOrSuggestedCommentary = looksLikeResultsOrSuggestedCommentary;
 exports.looksLikePositionStatusCommentary = looksLikePositionStatusCommentary;
 exports.looksLikePastTradeCelebrationCommentary = looksLikePastTradeCelebrationCommentary;
 exports.looksLikeTradeRecapCommentary = looksLikeTradeRecapCommentary;
@@ -16,7 +17,7 @@ function hasExecutableTradeStructure(message) {
         return false;
     if (/\b(buy|sell)\s+now\b/i.test(text))
         return true;
-    if (/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=\-]/i.test(text))
+    if (/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=-]/i.test(text))
         return true;
     if (/\b(?:sl|stop\s+loss)\b\s*\.\s*\d/i.test(text))
         return true;
@@ -71,7 +72,7 @@ function looksLikeMarketNewsOrCommentary(message) {
     const macroHits = macroIndicators.filter(Boolean).length;
     if (macroHits >= 2)
         return true;
-    const bulletLines = (text.match(/^[\-*•]\s+/gm) ?? []).length;
+    const bulletLines = (text.match(/^[-*•]\s+/gm) ?? []).length;
     if (bulletLines >= 3 && macroHits >= 1)
         return true;
     return false;
@@ -122,6 +123,12 @@ function looksLikeCasualNonTradeMessage(message) {
     const text = String(message ?? '').replace(/\s+/g, ' ').trim();
     if (!text)
         return false;
+    // Results/promotional posts can contain trade-shaped labels such as
+    // "TP1+20PIPS" or "SL suggested". These markers describe an outcome or
+    // proposal, not an instruction to open a new position, so they must win
+    // before the generic executable-structure checks below.
+    if (looksLikeResultsOrSuggestedCommentary(text))
+        return true;
     if (looksLikeMarketNewsOrCommentary(text))
         return true;
     if (/\bgold\s+(watches|watch|jewelry|jewellery|chain|ring|bar|coin|necklace|bracelet)\b/i.test(text)) {
@@ -147,6 +154,19 @@ function looksLikeCasualNonTradeMessage(message) {
     if (looksLikePositionStatusCommentary(text))
         return true;
     return false;
+}
+/** Result, promotion, or advisory language that must not open a trade. */
+function looksLikeResultsOrSuggestedCommentary(message) {
+    const text = String(message ?? '').replace(/\s+/g, ' ').trim();
+    if (!text)
+        return false;
+    const resultMarkers = /\b(?:results?|recap|performance|total\s+pips?|pips?\s+total|join\s+(?:our\s+)?vip|vip\s+(?:results?|performance)|hits?\s+tp\s*\d*|tp\s*\d*\s*(?:hit|reached)|tp\s*\d*\s*[+=]\s*\d+(?:\.\d+)?\s*pips?)\b/i;
+    const arabicResultMarkers = /(?:نتائج|حصيلة|أداء|اجمالي\s*(?:النقاط|البيب|البيبات)|إجمالي\s*(?:النقاط|البيب|البيبات)|انضم(?:ام)?|ضرب(?:ت)?\s*(?:الهدف|tp)|الهدف\s*(?:تحقق|ضرب))/iu;
+    if (resultMarkers.test(text) || arabicResultMarkers.test(text))
+        return true;
+    const advisoryStop = /(?:\b(?:suggested|suggestion|suggest|recommended|potential|possible|could|may)\b.{0,40}\b(?:sl|stop\s*loss|tp|take\s*profit|target)\b|\b(?:sl|stop\s*loss|tp|take\s*profit|target)\b(?!\s*[:=]\s*\d).{0,40}\b(?:suggested|suggestion|suggest|recommended)\b)/i;
+    const arabicAdvisoryStop = /(?:مقترح(?:ة)?|اقتراح|محتمل|قد)\s*.{0,40}(?:وقف\s*الخسارة|وقف|الهدف|tp)/iu;
+    return advisoryStop.test(text) || arabicAdvisoryStop.test(text);
 }
 /**
  * Position updates / conditional tense about trades already in flight
@@ -253,12 +273,12 @@ function looksLikeProfitResultCommentary(message) {
         return true;
     if (/\b(?:£|\$|€)\s*\d[\d,]*(?:\.\d+)?\b/i.test(text)
         && /\bprofit\b/i.test(text)
-        && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=\-]/i.test(text)) {
+        && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=-]/i.test(text)) {
         return true;
     }
     if (/\b\d[\d,]*(?:\.\d+)?\s*(?:usd|gbp|eur|pounds?|dollars?)\b/i.test(text)
         && /\bprofit\b/i.test(text)
-        && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=\-]/i.test(text)) {
+        && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=-]/i.test(text)) {
         return true;
     }
     if (/\btook my\b/i.test(text)
@@ -271,7 +291,7 @@ function looksLikeProfitResultCommentary(message) {
         && /\b(profit|pips?\s+profit|gains?)\b/i.test(text)
         && /\b(gold|xauusd|xau|buy|sell)\b/i.test(text)
         && !/\b(buy|sell)\s+now\b/i.test(text)
-        && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=\-]/i.test(text)) {
+        && !/\b(?:sl|tp|stop\s+loss|take\s+profit)\s*[:=-]/i.test(text)) {
         return true;
     }
     return false;

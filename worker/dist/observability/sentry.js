@@ -42,6 +42,8 @@ exports.initWorkerSentry = initWorkerSentry;
 exports.setWorkerGlobalTags = setWorkerGlobalTags;
 exports.captureWorkerError = captureWorkerError;
 exports.captureWorkerWarning = captureWorkerWarning;
+exports.captureWorkerMessage = captureWorkerMessage;
+exports.captureWorkerLog = captureWorkerLog;
 exports.addWorkerBreadcrumb = addWorkerBreadcrumb;
 exports.flushWorkerSentry = flushWorkerSentry;
 exports.captureWorkerFatalError = captureWorkerFatalError;
@@ -67,10 +69,17 @@ let invalidDsnWarningEmitted = false;
 const fatalErrors = new WeakSet();
 const fatalSignatures = new Map();
 const ALLOWED_BREADCRUMB_CATEGORIES = new Set([
+    'account',
+    'auth',
     'broker',
+    'copier',
+    'layering',
+    'management',
     'persistence',
     'queue',
     'range',
+    'reconciliation',
+    'trade',
     'telegram',
     'worker',
 ]);
@@ -159,6 +168,8 @@ function resetWorkerSentryForTests() {
     rejectionHandler = null;
     invalidDsnWarningEmitted = false;
     fatalSignatures.clear();
+    logNoiseEnabled = true;
+    logNoisePatterns = [...DEFAULT_LOG_NOISE_PATTERNS];
     sentry = Sentry;
 }
 function sanitizeTags(tags) {
@@ -228,6 +239,58 @@ function beforeBreadcrumb(breadcrumb) {
     }
     return { category: 'worker', message: '[REDACTED_BREADCRUMB]', level: 'info' };
 }
+/**
+ * High-frequency log lines with no diagnostic value that would otherwise flood
+ * Sentry Logs. The dominant case is gramjs/Telegram rate-limit chatter
+ * (`Sleeping for Ns on flood wait ...`) — in the Aug 9/10 prod windows it made
+ * up ~60-67% of all captured log lines. Each entry is a RegExp tested against
+ * the raw message; a match drops the log (returns null from beforeSendLog).
+ * Extra patterns can be added via SENTRY_LOG_NOISE_PATTERNS (comma-separated
+ * regex sources) and the filter can be disabled entirely with
+ * SENTRY_LOG_NOISE_FILTER=false.
+ */
+const DEFAULT_LOG_NOISE_PATTERNS = [
+    /sleeping for \d+\s*s\s*on flood wait\s*\(caused by messages\./i,
+];
+function compileLogNoisePatterns(env) {
+    const patterns = [...DEFAULT_LOG_NOISE_PATTERNS];
+    const raw = String(env.SENTRY_LOG_NOISE_PATTERNS ?? '').trim();
+    if (raw) {
+        for (const src of raw.split(',')) {
+            const s = src.trim();
+            if (!s)
+                continue;
+            try {
+                patterns.push(new RegExp(s, 'i'));
+            }
+            catch {
+                // Ignore an invalid extra pattern; defaults still apply.
+            }
+        }
+    }
+    return patterns;
+}
+let logNoiseEnabled = true;
+let logNoisePatterns = [...DEFAULT_LOG_NOISE_PATTERNS];
+function beforeSendLog(log) {
+    const safe = (0, sentryRedaction_1.safeForSentry)(log);
+    if (!safe || typeof safe !== 'object' || Array.isArray(safe))
+        return null;
+    const src = safe;
+    const message = src.message;
+    if (typeof message !== 'string')
+        return null;
+    if (logNoiseEnabled && logNoisePatterns.some(p => p.test(message)))
+        return null;
+    const attributes = src.attributes;
+    return {
+        level: src.level ?? 'info',
+        message: String(message).slice(0, 512),
+        attributes: attributes && typeof attributes === 'object' && !Array.isArray(attributes)
+            ? (0, sentryRedaction_1.safeForSentry)(attributes)
+            : undefined,
+    };
+}
 function initWorkerSentry(env = process.env) {
     if (initialized)
         return;
@@ -244,21 +307,25 @@ function initWorkerSentry(env = process.env) {
             warnInvalidDsnOnce();
             return;
         }
+        logNoiseEnabled = String(env.SENTRY_LOG_NOISE_FILTER ?? '').trim().toLowerCase() !== 'false';
+        logNoisePatterns = compileLogNoisePatterns(env);
         sentry.init({
             dsn,
             enabled: true,
             environment: environmentFromEnv(env),
             release: releaseFromEnv(env),
             defaultIntegrations: false,
-            integrations: [],
+            integrations: [Sentry.consoleLoggingIntegration()],
             tracesSampleRate: 0,
             profilesSampleRate: 0,
             skipOpenTelemetrySetup: true,
             tracePropagationTargets: [],
             sendDefaultPii: false,
             maxBreadcrumbs: 50,
+            enableLogs: true,
             beforeSend: beforeSend,
             beforeBreadcrumb: beforeBreadcrumb,
+            beforeSendLog: beforeSendLog,
         });
         enabled = true;
         setWorkerGlobalTags(env);
@@ -305,6 +372,13 @@ function applyScope(scope, opts) {
     s.setTag?.('operation', safeName(opts.operation, 'unknown'));
     const errorCode = opts.errorCode ?? 'UNKNOWN';
     s.setTag?.('error_code', safeName(errorCode, 'UNKNOWN').toUpperCase());
+    if (opts.tags) {
+        for (const [key, value] of Object.entries(opts.tags)) {
+            if (value == null)
+                continue;
+            s.setTag?.(safeName(key, 'tag'), String((0, sentryRedaction_1.safeForSentry)(value)).slice(0, 160));
+        }
+    }
     s.setContext?.('pipeline', (0, sentryContext_1.buildSafePipelineContext)({
         ...(opts.context ?? {}),
         stage: opts.context?.stage ?? opts.operation,
@@ -341,6 +415,52 @@ function captureWorkerWarning(messageOrError, opts) {
             else
                 sentry.captureMessage(String((0, sentryRedaction_1.safeForSentry)(String(messageOrError ?? 'warning'))), 'warning');
         });
+    }
+    catch {
+        // best-effort only
+    }
+}
+function captureWorkerMessage(message, opts) {
+    if (!enabled)
+        return;
+    try {
+        const errorCode = opts.errorCode ?? 'MESSAGE';
+        sentry.withScope(scope => {
+            applyScope(scope, { ...opts, errorCode });
+            sentry.captureMessage(String((0, sentryRedaction_1.safeForSentry)(message)).slice(0, 240), opts.level ?? 'warning');
+        });
+    }
+    catch {
+        // best-effort only
+    }
+}
+function captureWorkerLog(level, message, opts) {
+    if (!enabled)
+        return;
+    try {
+        const attributes = {
+            subsystem: safeName(opts.subsystem, 'unknown'),
+            operation: safeName(opts.operation, 'unknown'),
+        };
+        if (opts.errorCode)
+            attributes.error_code = safeName(opts.errorCode, 'UNKNOWN').toUpperCase();
+        const tags = sanitizeTags(opts.tags);
+        if (tags)
+            Object.assign(attributes, tags);
+        if (opts.attributes && typeof opts.attributes === 'object' && !Array.isArray(opts.attributes)) {
+            const safeAttributes = (0, sentryRedaction_1.safeForSentry)(opts.attributes);
+            if (safeAttributes && typeof safeAttributes === 'object' && !Array.isArray(safeAttributes)) {
+                Object.assign(attributes, safeAttributes);
+            }
+        }
+        const safeMessage = String((0, sentryRedaction_1.safeForSentry)(message)).slice(0, 512);
+        const log = sentry.logger;
+        if (level === 'info')
+            log.info(safeMessage, attributes);
+        else if (level === 'warn')
+            log.warn(safeMessage, attributes);
+        else
+            log.error(safeMessage, attributes);
     }
     catch {
         // best-effort only

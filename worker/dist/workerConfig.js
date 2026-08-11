@@ -47,11 +47,15 @@ const role = parseRole(process.env.WORKER_ROLE);
 const runsTradeRole = role === 'all' || role === 'trade' || role === 'trade_entry' || role === 'trade_mgmt';
 /**
  * FxSocket terminals stay connected server-side; REST calls authenticate per request.
- * Background keepSessionAlive polling is opt-in (legacy MetaApi-style warm-up).
- * One heartbeat loop per shard is enough — trade_mgmt shares FxSocket sessions with trade_entry.
+ * Background keepSessionAlive sweeps are permanently disabled — they caused false
+ * "disconnected" marks under throttle / v1 lag. Ignore BROKER_SESSION_BACKGROUND_HEARTBEAT.
  */
-const runsBrokerSessionHeartbeat = parseEnvBool(process.env.BROKER_SESSION_BACKGROUND_HEARTBEAT, false)
-    && (role === 'all' || role === 'trade' || role === 'trade_entry');
+const heartbeatEnvRequested = parseEnvBool(process.env.BROKER_SESSION_BACKGROUND_HEARTBEAT, false);
+if (heartbeatEnvRequested) {
+    console.warn('[workerConfig] BROKER_SESSION_BACKGROUND_HEARTBEAT is set but ignored — '
+        + 'FxSocket self-hosted terminals do not need keepSessionAlive sweeps');
+}
+const runsBrokerSessionHeartbeat = false;
 exports.workerConfig = {
     role,
     instanceId: String(process.env.WORKER_INSTANCE_ID

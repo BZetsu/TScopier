@@ -595,32 +595,19 @@ class FxsocketBrokerClient {
         return;
     }
     async ensureConnected(id) {
-        const alive = await this.keepSessionAlive(id);
-        if (!alive)
-            throw new FxsocketApiError('Broker session is not connected', 502);
+        // FxSocket terminals are self-hosted; REST auth is per-request — no keepalive probe.
+        void id;
     }
     async keepSessionAlive(id) {
-        const status = await this.keepSessionAliveDetailed(id);
-        return status === 'alive';
+        void id;
+        return true;
     }
     async keepSessionAliveDetailed(id) {
-        try {
-            await this.checkConnect(id);
-            return 'alive';
-        }
-        catch (first) {
-            if (isMtSessionGoneError(first)) {
-                console.warn(`[fxsocketClient] MT session gone id=${id} — ${exports.MT_SESSION_EXPIRED_HINT}`);
-                return 'session_gone';
-            }
-            const msg = first instanceof Error ? first.message : String(first);
-            console.warn(`[fxsocketClient] CheckConnect failed id=${id}: ${msg}`);
-            return 'token_reconnect_failed';
-        }
+        void id;
+        // No checkConnect — self-hosted FxSocket terminals do not need MetaApi-style keepalive.
+        return 'alive';
     }
     async verifyTradingReady(id) {
-        if (!await this.keepSessionAlive(id))
-            return false;
         try {
             const summary = await this.accountSummary(id);
             const hasSummary = summary != null
@@ -883,9 +870,6 @@ class FxsocketBrokerClient {
                     const retryable = (0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg) || isTransientMtApiError(err);
                     if (!retryable || attempt >= MAX_ATTEMPTS - 1)
                         throw err;
-                    if ((0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg)) {
-                        await this.keepSessionAlive(id).catch(() => { });
-                    }
                     const jitterMs = 600 + Math.random() * 900 + attempt * 400;
                     console.warn(`[fxsocketClient] OrderSend retry id=${id} symbol=${args.symbol} attempt=${attempt + 1}/${MAX_ATTEMPTS}: ${msg}`);
                     await new Promise(r => setTimeout(r, jitterMs));
@@ -950,9 +934,6 @@ class FxsocketBrokerClient {
                         || isOrderOpTimedOutMessage(msg);
                     if (!retryable || attempt >= MAX_ATTEMPTS - 1)
                         throw err;
-                    if ((0, brokerConnectError_1.isMtBridgeGlitchMessage)(msg)) {
-                        await this.keepSessionAlive(id).catch(() => { });
-                    }
                     const jitterMs = 600 + Math.random() * 900 + attempt * 400;
                     console.warn(`[fxsocketClient] OrderModify retry id=${id} ticket=${args.ticket}`
                         + ` attempt=${attempt + 1}/${MAX_ATTEMPTS}: ${msg}`);

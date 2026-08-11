@@ -36,6 +36,11 @@ import {
 } from '../signalEntryPriceGuard'
 import { pipCalculator } from '../pipCalculator'
 import {
+  SIGNAL_MISSING_REQUIRED_SL,
+  isStopLossWithheldByProvider,
+  tradeFailureReasonFromCode,
+} from '../brokerTradeError'
+import {
   convertPipOffsetToPrice,
   convertPipOffsetsToPrices,
   resolvePipSize,
@@ -131,6 +136,42 @@ export type PreparedEntry = {
 export type PrepareEntryResult =
   | { ok: false; outcome: SendOrderOutcome }
   | { ok: true; prep: PreparedEntry }
+
+function positiveNumber(value: unknown): number | null {
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+function parsedEntryAnchorForFallback(parsed: ParsedSignal): number | null {
+  const entry = resolvedParsedEntryPrice(parsed)
+  if (entry != null) return entry
+  const zone = resolvedParsedEntryZone(parsed)
+  return zone != null ? (zone.lo + zone.hi) / 2 : null
+}
+
+function configuredFallbackSlPossible(parsed: ParsedSignal, manual: ManualSettings): boolean {
+  const anchor = parsedEntryAnchorForFallback(parsed)
+  if (manual.use_predefined_sl_pips === true && positiveNumber(manual.predefined_sl_pips) != null && anchor != null) {
+    return true
+  }
+  const firstTp = (parsed.tp ?? []).map(positiveNumber).find((n): n is number => n != null)
+  return manual.rr_for_sl_enabled === true
+    && positiveNumber(manual.rr_for_sl) != null
+    && firstTp != null
+    && anchor != null
+}
+
+export function missingRequiredSlFailure(parsed: ParsedSignal, manual: ManualSettings): {
+  withheldByProvider: boolean
+} | null {
+  if (positiveNumber(parsed.sl) != null) return null
+  const withheldByProvider = isStopLossWithheldByProvider(parsed.raw_instruction)
+  if (manual.add_new_trades_to_existing === false && !parsedSignalHasExplicitStops(parsed)) {
+    if (withheldByProvider && configuredFallbackSlPossible(parsed, manual)) return null
+    return { withheldByProvider }
+  }
+  return null
+}
 
 /** Fill missing symbol for re-enter posts that omit instrument name. */
 async function resolveReEnterSymbolFromChannel(
@@ -313,6 +354,21 @@ export async function prepareEntryExecution(
   }
   const baseLot = roundLot(computeLot(broker, parsed), params)
   const sameSignalRefresh = sendOpts?.sameSignalRefresh === true
+  const missingSl = isManual && !sameSignalRefresh ? missingRequiredSlFailure(parsed, manual) : null
+  if (missingSl) {
+    const tradeFailure = tradeFailureReasonFromCode(SIGNAL_MISSING_REQUIRED_SL, {
+      missingField: 'stop_loss',
+      withheldByProvider: missingSl.withheldByProvider,
+      requestedSymbol,
+      brokerSymbol: symbol,
+    })
+    await ctx.logSendSkipped(signal, broker, SIGNAL_MISSING_REQUIRED_SL, {
+      symbol,
+      reason_code: SIGNAL_MISSING_REQUIRED_SL,
+      ...(tradeFailure ? { trade_failure: tradeFailure } : {}),
+    })
+    return { ok: false, outcome: { finalizeSkipReason: SIGNAL_MISSING_REQUIRED_SL } }
+  }
 
   // A Telegram revision is never a new entry. Route it through the
   // modify-only path before any entry-zone, teaser, range, or OrderSend logic.
@@ -778,7 +834,7 @@ export async function prepareEntryExecution(
   const absLegCap = basketLegCap != null && basketLegCap > 0
     ? Math.min(500, Math.floor(basketLegCap))
     : 500
-  let capped = plan.orders.slice(0, absLegCap)
+  const capped = plan.orders.slice(0, absLegCap)
   if (capped.length < plan.orders.length) {
     console.warn(
       `[tradeExecutor] capped immediate legs ${plan.orders.length} → ${capped.length} signal=${signal.id} broker=${broker.id}`,
@@ -991,7 +1047,7 @@ export async function prepareEntryExecution(
   // `capped.length === 1` (single mode → one order). We attach it to that
   // single leg so the post-INSERT path can fan out the partials.
   const volumeRounded = effectiveCapped.map(o => ({ ...o, volume: roundLot(o.volume, params) }))
-  let legs: Leg[] = volumeRounded.map((args, idx) => ({
+  const legs: Leg[] = volumeRounded.map((args, idx) => ({
     args,
     idx,
     ...(idx === 0 && plan.partialTps?.length ? { partialTps: plan.partialTps } : {}),

@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- Added structured, user-facing trade failure reasons for premium/missing Stop Loss signals and broker symbol-not-found outcomes, reusing the existing broker formatter, metal symbol resolver, Copier Log/Trade Detail surfaces, and global assistant.
 - Added Phase A foundation for range-layering modes: `legacy`, `static`, and `dynamic` manual-settings fields, backward-compatible legacy defaults, immutable layer-plan metadata persistence, and a disabled-by-default execution feature gate.
 - Added Phase B pure Static/Dynamic layer-plan calculators, price normalization/deduplication helpers, deterministic lot allocation, and calculator documentation without integrating them into execution.
 - Added Phase C immutable Static/Dynamic layering-plan persistence with deterministic plan IDs, versioned snapshots, idempotent prepared-plan storage, restart recovery helpers, and non-executable funded-leg materialization tests without enabling broker execution.

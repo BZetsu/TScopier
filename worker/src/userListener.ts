@@ -434,6 +434,7 @@ export class UserListener {
   private lastAuthKeyDupPollErrorAt = 0
   private lastAuthKeyDupLogAt = 0
   private lastSavedSession: string
+  private readonly canRecreateClient: boolean
   private clientGeneration = 0
   private stopping = false
   private channelInvalidFailures = new Map<string, ChannelInvalidFailureState>()
@@ -521,10 +522,17 @@ export class UserListener {
     supabase: SupabaseClient,
     adoptedClient?: TelegramClient,
     private onAuthKeyDuplicatedRecoveryExhausted?: AuthKeyDuplicatedExhaustedHandler,
+    private readonly clientFactory: (sessionString: string) => TelegramClient = buildClient,
   ) {
     this.userId = userId
     this.supabase = supabase
-    this.client = adoptedClient ?? buildClient(sessionString)
+    this.canRecreateClient = !adoptedClient
+    this.client = adoptedClient ?? this.clientFactory(sessionString)
+    this.attachClientErrorHandler()
+    this.lastSavedSession = sessionString
+  }
+
+  private attachClientErrorHandler(): void {
     this.client.onError = async (err: Error) => {
       if (isMalformedRpcResult(err)) {
         await this.noteMalformedRpcResult(err)
@@ -550,7 +558,6 @@ export class UserListener {
         this.requestReconnect('update_loop_timeout')
       }
     }
-    this.lastSavedSession = sessionString
   }
 
   /** Immediate trade dispatch after parse (avoids waiting on Supabase Realtime). */
@@ -1083,17 +1090,17 @@ export class UserListener {
     this.currentEditEventBuilder = editBuilder
   }
 
-  private removeCurrentHandler() {
+  private removeCurrentHandler(client: TelegramClient = this.client) {
     if (this.currentHandler && this.currentEventBuilder) {
       try {
-        this.client.removeEventHandler(this.currentHandler, this.currentEventBuilder)
+        client.removeEventHandler(this.currentHandler, this.currentEventBuilder)
       } catch {
         // ignore
       }
     }
     if (this.currentEditHandler && this.currentEditEventBuilder) {
       try {
-        this.client.removeEventHandler(this.currentEditHandler, this.currentEditEventBuilder)
+        client.removeEventHandler(this.currentEditHandler, this.currentEditEventBuilder)
       } catch {
         // ignore
       }
@@ -4169,7 +4176,7 @@ export class UserListener {
     if (this.malformedRpcRecoveryCount > malformedRpcResultMaxRecoveries()) {
       console.error(
         `[userListener] malformed Telegram RPC result recovery exhausted for ${this.userId}`
-        + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()}) — invalidating session`,
+        + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()})`,
       )
       captureBusinessIssue({
         category: 'telegram',
@@ -4192,21 +4199,14 @@ export class UserListener {
         attempts: this.malformedRpcRecoveryCount,
       })
       this.updateHealth('malformed_rpc_recovery_exhausted', { force: true, recoveryExhausted: true })
-      maybeCaptureCopierOffline({
-        userId: this.userId,
-        listenerStatus: 'failed',
-        reasonCode: 'GRAMJS_MALFORMED_RPC_RESULT',
-        reason: 'malformed_rpc_recovery_exhausted',
-        manualReview: true,
-      })
-      setImmediate(() => this.onAuthKeyDuplicatedRecoveryExhausted?.(this.userId, 'malformed_rpc_result'))
       return
     }
     console.warn(
       `[userListener] malformed Telegram RPC result for ${this.userId}`
       + ` (${this.malformedRpcRecoveryCount}/${malformedRpcResultMaxRecoveries()})`
-      + ' — GramJS internal error, not reconnecting',
+      + ' — reconnecting Telegram client',
     )
+    await this.requestReconnect('malformed_rpc_result')
   }
 
   private scheduleDeferredRetry(cycleId: string): void {
@@ -4232,9 +4232,25 @@ export class UserListener {
     this.isConnected = false
     this.updateHealth(reason, { force: true })
     this.connectionTrace('disconnect_start', { source: reason, cycleId })
-    try { await this.client.disconnect() } catch { /* ignore */ }
+    const oldClient = this.client
+    let sessionSnapshot = this.lastSavedSession
+    try {
+      const saved = (oldClient.session.save() as unknown) as string
+      if (saved) sessionSnapshot = saved
+    } catch { /* keep last known persisted session */ }
+    if (reason === 'malformed_rpc_result' && this.canRecreateClient) {
+      this.removeCurrentHandler(oldClient)
+    }
+    try { await oldClient.disconnect() } catch { /* ignore */ }
     this.connectionTrace('disconnect_complete', { source: reason, cycleId })
     if (this.stopping) return
+    if (reason === 'malformed_rpc_result' && this.canRecreateClient) {
+      this.connectionTrace('client_recreate_start', { source: reason, cycleId })
+      this.client = this.clientFactory(sessionSnapshot)
+      this.lastSavedSession = sessionSnapshot
+      this.attachClientErrorHandler()
+      this.connectionTrace('client_recreate_complete', { source: reason, cycleId })
+    }
 
     const delays = authKeyDupReconnectDelaysMs(
       reconnectCooldownMs(),
@@ -4249,8 +4265,14 @@ export class UserListener {
         this.clientGeneration += 1
         this.connectionTrace('connect_start', { source: reason, cycleId, attempt: attempt + 1 })
         await this.client.connect()
+        this.connectionTrace('probe_start', { source: reason, cycleId, attempt: attempt + 1 })
+        await tgInvoke(this.client, new Api.updates.GetState())
         this.isConnected = true
         this.lastSuccessfulPollAt = Date.now()
+        if (reason === 'malformed_rpc_result') {
+          this.malformedRpcRecoveryCount = 0
+          this.lastMalformedRpcRecoveryAt = 0
+        }
         this.updateHealth('reconnect_success', { force: true })
         lastErr = undefined
         this.connectionTrace('recovery_complete', { source: reason, cycleId, attempt: attempt + 1 })
@@ -4279,34 +4301,39 @@ export class UserListener {
     }
 
     if (!this.isConnected) {
+      const malformedRpcReconnect = reason === 'malformed_rpc_result'
       console.error(
         `[userListener] reconnect failed for ${this.userId} cycle=${cycleId}:`,
         redactTelegramConnectionLog(lastErr ?? 'unknown'),
       )
-      captureBusinessIssue({
-        category: 'telegram',
-        event: 'telegram_listener_failed',
-        severity: 'error',
-        reasonCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
-        message: 'Telegram reconnect attempts exhausted and listener deferred retry',
-        userImpact: 'delayed',
-        fingerprint: ['telegram_listener_failed', 'reconnect', 'TELEGRAM_RECONNECT_EXHAUSTED', reason],
-        context: {
-          user_id: this.userId,
-          stage: 'reconnect',
-          operation: 'telegram_reconnect',
-          extra: { reason, cycle_id: cycleId, attempts: delays.length },
-        },
-      })
+      if (!malformedRpcReconnect) {
+        captureBusinessIssue({
+          category: 'telegram',
+          event: 'telegram_listener_failed',
+          severity: 'error',
+          reasonCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
+          message: 'Telegram reconnect attempts exhausted and listener deferred retry',
+          userImpact: 'delayed',
+          fingerprint: ['telegram_listener_failed', 'reconnect', 'TELEGRAM_RECONNECT_EXHAUSTED', reason],
+          context: {
+            user_id: this.userId,
+            stage: 'reconnect',
+            operation: 'telegram_reconnect',
+            extra: { reason, cycle_id: cycleId, attempts: delays.length },
+          },
+        })
+      }
       this.connectionTrace('recovery_invalidated', { source: reason, cycleId, attempts: delays.length })
       this.updateHealth('reconnect_exhausted', { force: true })
-      maybeCaptureCopierOffline({
-        userId: this.userId,
-        listenerStatus: 'failed',
-        reasonCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
-        reason,
-        sinceMs: this.lastReconnectAt || null,
-      })
+      if (!malformedRpcReconnect) {
+        maybeCaptureCopierOffline({
+          userId: this.userId,
+          listenerStatus: 'failed',
+          reasonCode: 'TELEGRAM_RECONNECT_EXHAUSTED',
+          reason,
+          sinceMs: this.lastReconnectAt || null,
+        })
+      }
       this.scheduleDeferredRetry(cycleId)
       return
     }

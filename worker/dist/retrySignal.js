@@ -3,19 +3,72 @@
  * Re-dispatch failed/skipped entry signals from Copier Logs.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.RETRYABLE_SIGNAL_SKIP_REASONS = exports.SIGNAL_RETRY_DISPATCH_SOURCE = void 0;
+exports.RETRYABLE_SIGNAL_SKIP_REASONS = exports.AI_REVIEW_PRICE_PASSED_REASON = exports.AI_REVIEW_EXPIRED_REASON = exports.AI_REVIEW_MAX_AGE_MS = exports.SIGNAL_RETRY_DISPATCH_SOURCE = void 0;
 exports.retrySignal = retrySignal;
 const signalEntryZoneSanity_1 = require("./signalEntryZoneSanity");
 const signalRevision_1 = require("./signalRevision");
 const tradeSignalActions_1 = require("./tradeSignalActions");
 const manualPlanner_1 = require("./manualPlanner");
+const helpers_1 = require("./tradeExecutor/helpers");
+const brokerChannelFilter_1 = require("./brokerChannelFilter");
 exports.SIGNAL_RETRY_DISPATCH_SOURCE = 'signal_retry';
+exports.AI_REVIEW_MAX_AGE_MS = 2 * 60000;
+exports.AI_REVIEW_EXPIRED_REASON = 'ai_review_expired';
+exports.AI_REVIEW_PRICE_PASSED_REASON = 'ai_review_price_passed';
 exports.RETRYABLE_SIGNAL_SKIP_REASONS = new Set([
     manualPlanner_1.SKIP_REASON_ENTRY_NOT_OPENED,
     signalEntryZoneSanity_1.ENTRY_ZONE_FAR_FROM_MARKET_REASON,
     'broker_session_not_connected',
     'entry_zone_far_from_market',
+    'ai classified as uncertain; human review required',
 ]);
+function reviewAgeAllowed(createdAt, now = Date.now()) {
+    const createdMs = Date.parse(createdAt);
+    return Number.isFinite(createdMs) && now - createdMs >= 0 && now - createdMs <= exports.AI_REVIEW_MAX_AGE_MS;
+}
+async function reviewPriceAllowed(executor, signal) {
+    const parsed = signal.parsed_data;
+    const action = String(parsed?.action ?? '').toLowerCase();
+    const symbol = String(parsed?.symbol ?? '').trim();
+    const entry = Number(parsed?.entry_price);
+    const zoneLow = Number(parsed?.entry_zone_low);
+    const zoneHigh = Number(parsed?.entry_zone_high);
+    if (!symbol || (action !== 'buy' && action !== 'sell'))
+        return false;
+    const hasZone = Number.isFinite(zoneLow) && Number.isFinite(zoneHigh) && zoneLow > 0 && zoneHigh > 0;
+    if (!hasZone && (!Number.isFinite(entry) || entry <= 0))
+        return false;
+    const brokers = (executor.brokersByUser.get(signal.user_id) ?? []).filter(b => b.is_active && (0, helpers_1.brokerHasLinkedSession)(b) && (0, brokerChannelFilter_1.channelMatchesBrokerSignal)(b, signal.channel_id));
+    if (brokers.length === 0)
+        return false;
+    for (const broker of brokers) {
+        const uuid = (0, helpers_1.brokerSessionUuid)(broker);
+        const api = uuid ? executor.apiFor(broker) : null;
+        if (!uuid || !api)
+            return false;
+        const brokerSymbol = (0, helpers_1.applySymbolMapping)(symbol, broker).symbol;
+        const params = await executor.getSymbolParams(uuid, brokerSymbol).catch(() => null);
+        const point = Number(params?.point ?? 0);
+        const tolerancePips = Math.max(0, Number((broker.manual_settings ?? {}).signal_entry_pip_tolerance ?? 10));
+        if (!Number.isFinite(point) || point <= 0)
+            return false;
+        const tolerance = tolerancePips * point;
+        const quote = await api.quote(uuid, brokerSymbol).catch(() => null);
+        if (!quote || !Number.isFinite(quote.bid) || !Number.isFinite(quote.ask))
+            return false;
+        const ref = action === 'buy' ? quote.ask : quote.bid;
+        const within = hasZone
+            ? ref >= Math.min(zoneLow, zoneHigh) - tolerance && ref <= Math.max(zoneLow, zoneHigh) + tolerance
+            : Math.abs(ref - entry) <= tolerance;
+        if (!within)
+            return false;
+    }
+    return true;
+}
+async function expireReviewSignal(supabase, signal, reason) {
+    await supabase.from('signals').update({ status: 'skipped', skip_reason: reason })
+        .eq('id', signal.id).eq('user_id', signal.user_id).eq('status', 'skipped');
+}
 async function resetSignalForRetry(supabase, args) {
     const { data, error } = await supabase
         .from('signals')
@@ -67,6 +120,16 @@ async function retrySignal(executor, args) {
     }
     if (!isRetryableSignal(existing)) {
         return { ok: false, reason: 'signal_not_retryable' };
+    }
+    if (String(existing.skip_reason ?? '').trim().toLowerCase() === 'ai classified as uncertain; human review required') {
+        if (!reviewAgeAllowed(existing.created_at)) {
+            await expireReviewSignal(supabase, existing, exports.AI_REVIEW_EXPIRED_REASON);
+            return { ok: false, reason: exports.AI_REVIEW_EXPIRED_REASON };
+        }
+        if (!(await reviewPriceAllowed(executor, existing))) {
+            await expireReviewSignal(supabase, existing, exports.AI_REVIEW_PRICE_PASSED_REASON);
+            return { ok: false, reason: exports.AI_REVIEW_PRICE_PASSED_REASON };
+        }
     }
     if (existing.status !== 'parsed') {
         const reset = await resetSignalForRetry(supabase, { userId: args.userId, signalId: args.signalId });

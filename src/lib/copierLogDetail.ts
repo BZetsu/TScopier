@@ -6,6 +6,10 @@ import {
   COPIER_SKIP_REASON_LABELS,
   resolveCopierSkipReasonKey,
 } from './copierSkipReasonLabels'
+import {
+  resolveTradeFailureDisplay,
+  type TradeFailureDisplay,
+} from './tradeFailureDisplay'
 
 export type CopierExecutionLogRow = {
   action: string
@@ -13,6 +17,73 @@ export type CopierExecutionLogRow = {
   error_message: string | null
   request_payload: Record<string, unknown> | null
   created_at: string
+}
+
+export type CopierBrokerFailureRow = {
+  action: string
+  status: string
+  error_message: string | null
+  request_payload: Record<string, unknown> | null
+  created_at: string
+}
+
+/**
+ * Fetch failed broker executions for a trade's signal family: the linked entry
+ * signal plus its management child signals (parent_signal_id → entry).
+ * Broker rejections are logged as `trade_execution_logs` rows with
+ * `status='failed'` under the signal that triggered them.
+ */
+export async function fetchBrokerFailuresForTrade(
+  supabase: SupabaseClient,
+  args: { userId: string; signalId: string; brokerAccountId: string },
+): Promise<CopierBrokerFailureRow[]> {
+  const { data: children } = await supabase
+    .from('signals')
+    .select('id')
+    .eq('user_id', args.userId)
+    .eq('parent_signal_id', args.signalId)
+    .limit(50)
+
+  const signalIds = [args.signalId, ...((children ?? []) as { id: string }[]).map(c => c.id)]
+
+  const { data, error } = await supabase
+    .from('trade_execution_logs')
+    .select('action, status, error_message, request_payload, created_at')
+    .in('signal_id', signalIds)
+    .eq('user_id', args.userId)
+    .eq('broker_account_id', args.brokerAccountId)
+    .eq('status', 'failed')
+    .order('created_at', { ascending: false })
+    .limit(10)
+
+  if (error || !data?.length) return []
+  return data as CopierBrokerFailureRow[]
+}
+
+/** Friendly one-line summary of a failed broker execution log row. */
+export function formatBrokerFailureRow(
+  row: CopierBrokerFailureRow,
+  copierLogs: CopierLogsTranslations,
+): string {
+  const structured = getTradeFailureDisplayFromLog(row)
+  if (structured) return structured.title
+  const err = String(row.error_message ?? '').trim()
+  if (row.action === 'order_send' && err) {
+    return formatCopierSkipReasonShort(err, copierLogs)
+  }
+  const actionLabel = row.action.replace(/_/g, ' ')
+  if (err) return `${actionLabel}: ${formatCopierSkipReasonShort(err, copierLogs)}`
+  return actionLabel
+}
+
+export function getTradeFailureDisplayFromLog(row: {
+  error_message: string | null
+  request_payload: Record<string, unknown> | null
+}): TradeFailureDisplay | null {
+  return resolveTradeFailureDisplay({
+    payload: row.request_payload,
+    legacyMessage: row.error_message,
+  })
 }
 
 export function formatCopierSkipReasonShort(
@@ -97,6 +168,8 @@ export function summarizeExecutionLogRow(
   copierLogs: CopierLogsTranslations,
 ): string {
   const payload = row.request_payload ?? {}
+  const structured = getTradeFailureDisplayFromLog(row)
+  if (structured) return structured.title
   const skipReason = String(payload.skip_reason ?? row.error_message ?? '').trim()
   if (row.action === 'dispatch_skipped' && skipReason) {
     return formatCopierSkipReasonShort(skipReason, copierLogs)

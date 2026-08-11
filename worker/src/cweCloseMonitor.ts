@@ -354,7 +354,7 @@ export class CweCloseMonitor {
       // "trade not found" / "position already closed" — treat as success,
       // the trade is gone either way. Conservative match list so we never
       // swallow a real error.
-      const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i.test(msg)
+      const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order|unknown\s+ticket/i.test(msg)
       if (benign) {
         console.log(
           `[cweCloseMonitor] trade already gone signal=${trade.signal_id ?? 'n/a'} ticket=${ticketNum}: ${msg}`,

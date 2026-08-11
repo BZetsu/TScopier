@@ -14,7 +14,7 @@ exports.validateListenerQueueConfig = validateListenerQueueConfig;
 const tradeSignalActions_1 = require("./tradeSignalActions");
 const signalQueueConfig_1 = require("./queue/signalQueueConfig");
 const workerConfig_1 = require("./workerConfig");
-const sentry_1 = require("./observability/sentry");
+const businessEvents_1 = require("./observability/businessEvents");
 const PUSH_MAX_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.TRADE_SIGNAL_PUSH_MAX_ATTEMPTS ?? 3)));
 const PUSH_RETRY_BASE_MS = Math.max(25, Math.min(500, Number(process.env.TRADE_SIGNAL_PUSH_RETRY_BASE_MS ?? 75)));
 const SUPABASE_URL = String(process.env.SUPABASE_URL ?? '').trim();
@@ -76,24 +76,29 @@ function isRetryablePushStatus(status) {
     return status >= 500 || status === 429 || status === 408;
 }
 function logPushFailed(row, baseUrl, action, reason, attempt) {
-    (0, sentry_1.captureWorkerWarning)('trade worker dispatch push failed after retries', {
-        subsystem: 'queue',
-        operation: 'trade_worker_push_failed',
-        errorCode: 'TRADE_WORKER_PUSH_FAILED',
-        fingerprint: ['queue', 'TRADE_WORKER_PUSH_FAILED', action],
+    (0, businessEvents_1.captureBusinessIssue)({
+        category: 'queue',
+        event: 'signal_dispatch_failed',
+        severity: 'error',
+        reasonCode: 'TRADE_WORKER_PUSH_FAILED',
+        message: 'Telegram signal was accepted but dispatch to trade worker failed after retries',
+        userImpact: 'failed',
+        fingerprint: ['signal_dispatch_failed', 'trade_worker_push', 'TRADE_WORKER_PUSH_FAILED', action],
         context: {
             user_id: row.user_id,
             signal_id: row.id,
             channel_id: row.channel_id,
+            telegram_message_id: row.telegram_message_id,
             dispatch_source: row.dispatch_source ?? 'listener_push',
+            operation: 'trade_worker_push',
             retry_attempt: attempt,
-        },
-        extra: {
-            action,
-            attempt,
-            max_attempts: PUSH_MAX_ATTEMPTS,
-            reason,
-            target: baseUrl,
+            extra: {
+                action,
+                attempt,
+                max_attempts: PUSH_MAX_ATTEMPTS,
+                reason,
+                target_configured: Boolean(baseUrl),
+            },
         },
     });
     console.warn(JSON.stringify({
@@ -204,6 +209,7 @@ async function pushParsedSignalToTradeWorkerInner(row, opts) {
         reply_to_message_id: row.reply_to_message_id ?? null,
         created_at: row.created_at,
         pipeline_ts: row.pipeline_ts,
+        dispatch_source: row.dispatch_source ?? null,
         revision_prior_action: row.revision_prior_action ?? null,
     };
     void logPushAttemptToDb(row, 'success', {

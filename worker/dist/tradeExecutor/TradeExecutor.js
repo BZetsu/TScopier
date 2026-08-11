@@ -40,6 +40,7 @@ const normalizeManualSettings_1 = require("../manualPlanning/normalizeManualSett
 const effectiveBrokerBalance_1 = require("../effectiveBrokerBalance");
 const channelTradingConfig_1 = require("../channelTradingConfig");
 const brokerChannelTradingConfigs_1 = require("../brokerChannelTradingConfigs");
+const lightConfigCache_1 = require("../lightConfigCache");
 const helpers_1 = require("./basketMerge/helpers");
 const signalBrokerDispatchClaim_1 = require("./signalBrokerDispatchClaim");
 const signalRangeEntryHelpers_1 = require("../signalRangeEntryHelpers");
@@ -66,6 +67,7 @@ const managementExecutor = __importStar(require("./managementExecutor"));
 const singleEntryExecutor_1 = require("./singleEntryExecutor");
 const rangeTradeExecutor_1 = require("./rangeTradeExecutor");
 const copierPause_1 = require("../copierPause");
+const deferredBusinessEvents_1 = require("../observability/deferredBusinessEvents");
 class TradeExecutor {
     constructor(supabase, sessionManager) {
         this.supabase = supabase;
@@ -97,6 +99,7 @@ class TradeExecutor {
         this.symbolListCache = new Map();
         /** Cached channel rows keyed by `telegram_channels.id` — refreshed on demand. */
         this.channelMetaCache = new Map();
+        this.lightConfigCache = new lightConfigCache_1.LightConfigCache();
         this.sessionPingAt = new Map();
         /** Coalesce concurrent session checks per MT uuid (burst fan-out). */
         this.sessionCheckInflight = new Map();
@@ -123,6 +126,7 @@ class TradeExecutor {
         }
     }
     apiFor(broker) {
+        void broker;
         return (0, fxsocketClient_1.getFxsocketClient)();
     }
     apiForUuid(uuid) {
@@ -288,7 +292,7 @@ class TradeExecutor {
                 }
                 : row;
             const normalized = this.normalizeBrokerRow(mergedRow);
-            void (0, channelTradingConfig_1.persistHealedChannelConfigs)(this.supabase, row.id, mergedRow.channel_trading_configs, normalized.channel_trading_configs);
+            void (0, channelTradingConfig_1.persistHealedChannelConfigs)(this.supabase, row.user_id, row.id, mergedRow.channel_trading_configs, normalized.channel_trading_configs);
             this.brokersById.set(row.id, normalized);
             if (normalized.is_active) {
                 const arr = this.brokersByUser.get(row.user_id) ?? [];
@@ -353,7 +357,7 @@ class TradeExecutor {
     applyBrokerCacheRow(row) {
         const preNormalizedConfigs = row.channel_trading_configs;
         const normalized = this.normalizeBrokerRow(row);
-        void (0, channelTradingConfig_1.persistHealedChannelConfigs)(this.supabase, row.id, preNormalizedConfigs, normalized.channel_trading_configs);
+        void (0, channelTradingConfig_1.persistHealedChannelConfigs)(this.supabase, row.user_id, row.id, preNormalizedConfigs, normalized.channel_trading_configs);
         const sessionId = (0, helpers_2.brokerSessionUuid)(normalized);
         if (sessionId)
             (0, fxsocketClient_1.getFxsocketClient)()?.seedPlatformCache(sessionId, (0, fxsocketClient_1.mtPlatformFrom)(normalized.platform));
@@ -511,6 +515,22 @@ class TradeExecutor {
     subscribeChannelTradingConfigs() {
         if (this.channelTradingConfigsChannel)
             return;
+        const invalidateConfigRow = (raw) => {
+            const brokerId = String(raw?.broker_account_id ?? '');
+            const channelId = String(raw?.channel_id ?? '');
+            if (!brokerId || !channelId)
+                return;
+            const cachedBroker = this.brokersById.get(brokerId);
+            if (cachedBroker?.user_id) {
+                this.lightConfigCache.invalidateExact({
+                    userId: cachedBroker.user_id,
+                    brokerAccountId: brokerId,
+                    channelId,
+                });
+                return;
+            }
+            this.lightConfigCache.invalidateByBrokerChannel(brokerId, channelId);
+        };
         this.channelTradingConfigsChannel = this.supabase
             .channel('trade_executor_broker_channel_configs')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'broker_channel_trading_configs' }, (payload) => {
@@ -519,6 +539,7 @@ class TradeExecutor {
                 const brokerId = String(payload.old?.broker_account_id ?? '');
                 if (!brokerId)
                     return;
+                invalidateConfigRow(payload.old);
                 const cached = this.brokersById.get(brokerId);
                 if (!cached)
                     return;
@@ -529,9 +550,13 @@ class TradeExecutor {
                 });
                 return;
             }
+            if (evt === 'UPDATE') {
+                invalidateConfigRow(payload.old);
+            }
             const row = payload.new;
             if (!row?.broker_account_id)
                 return;
+            invalidateConfigRow(payload.new);
             const cached = this.brokersById.get(row.broker_account_id);
             if (!cached)
                 return;
@@ -1019,7 +1044,11 @@ class TradeExecutor {
         }
         let executionBroker = broker;
         if (signal.channel_id) {
-            const fresh = await (0, brokerChannelTradingConfigs_1.fetchFreshBrokerForChannel)(this.supabase, broker, signal.channel_id);
+            // Production safety boundary: this light cache may wrap only the stable
+            // broker_channel_trading_configs refresh. Claims, idempotency,
+            // broker readiness, prices, order state, and kill switches stay live
+            // below this point and must not be added to the cache.
+            const fresh = await (0, lightConfigCache_1.fetchBrokerForChannelWithLightConfigCache)(this.lightConfigCache, this.supabase, broker, signal.channel_id);
             if (fresh.channel_trading_configs !== broker.channel_trading_configs) {
                 this.applyBrokerCacheRow(fresh);
                 executionBroker = this.brokersById.get(broker.id) ?? fresh;
@@ -1083,7 +1112,7 @@ class TradeExecutor {
                     await (0, signalBrokerDispatchClaim_1.releaseSignalBrokerDispatchClaim)(this.supabase, signal.id, effectiveBroker.id);
                 }
                 (0, pipelineTimestamps_1.setPipelineTimestamp)(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'execution_claim_started_at', Date.now());
-                const claimed = await (0, signalBrokerDispatchClaim_1.claimSignalBrokerDispatch)(this.supabase, signal.id, effectiveBroker.id);
+                const claimed = await (0, signalBrokerDispatchClaim_1.claimSignalBrokerDispatch)(this.supabase, signal.id, effectiveBroker.id, signal.user_id);
                 if (!claimed) {
                     // Another worker won entry. Revisions may still refresh SL/TP once materialized.
                     if (isRevisionRefresh) {
@@ -1367,6 +1396,32 @@ class TradeExecutor {
         const persist = await this.persistRangePendingLegRows(insertRows, `deferred live signal=${signal.id} broker=${broker.id}`);
         if (!persist.ok) {
             console.error(`[tradeExecutor] deferred virtual persist failed signal=${signal.id} broker=${broker.id}: ${persist.lastError ?? 'unknown'}`);
+            (0, deferredBusinessEvents_1.captureDeferredBusinessFailure)({
+                category: 'layering',
+                event: 'layering_materialization_failed',
+                severity: 'error',
+                reasonCode: 'DEFERRED_VIRTUAL_MATERIALIZATION_PERSIST_FAILED',
+                message: 'Deferred virtual pending rows could not be persisted',
+                userImpact: 'partial',
+                operation: 'deferred_virtual_pending_materialize',
+                err: persist.lastError ?? 'unknown',
+                context: {
+                    user_id: signal.user_id,
+                    signal_id: signal.id,
+                    channel_id: signal.channel_id,
+                    broker_account_id: broker.id,
+                    symbol,
+                    side: plan.isBuy === false ? 'sell' : 'buy',
+                    execution_mechanism: 'virtual_pending_monitor',
+                    layering_mode: plan.rangeLayering?.rangeLayeringType ?? 'virtual_pending',
+                    extra: {
+                        targeted_count: insertRows.length,
+                        successful_count: 0,
+                        failed_count: insertRows.length,
+                        anchor_source: anchorSource,
+                    },
+                },
+            });
             return;
         }
         console.log(`[tradeExecutor] deferred virtual pendings inserted=${insertRows.length} signal=${signal.id} broker=${broker.id} symbol=${symbol} anchor=${anchor} (${anchorSource})`);

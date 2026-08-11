@@ -416,7 +416,7 @@ export class AutoManagementMonitor {
       return true
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i.test(msg)
+      const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order|unknown\s+ticket/i.test(msg)
       if (benign) {
         await this.supabase
           .from('trades')
