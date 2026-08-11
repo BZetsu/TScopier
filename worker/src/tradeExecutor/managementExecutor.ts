@@ -1186,6 +1186,12 @@ export async function applyManagement(
               // SL-first with split fallback: the breakeven SL is the protective
               // stop and must land even if the (best-effort) TP is invalid.
               const safe = await modifyLegSlTpWithFallback(api, uuid, effectiveTicket, beSl, modifyTp)
+              if (safe.positionGone) {
+                // Broker confirmed the position is gone (unknown ticket etc.):
+                // surface the original reply so the unknown-ticket handler below
+                // closes the trade instead of recording a false success.
+                throw new Error(safe.error ?? 'unknown ticket')
+              }
               if (!safe.ok || (beSl > 0 && !safe.slApplied)) {
                 throw new Error(safe.error ?? 'OrderModify failed')
               }
@@ -1324,8 +1330,13 @@ export async function applyManagement(
         })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        let benign = isBenignOrderModifyError(msg)
-        if (benign && (action === 'breakeven' || action === 'partial_breakeven')) {
+        // Broker confirmed the referenced position is gone (TP/SL hit, closed or
+        // replaced): nothing left to modify. Treat as benign and close the DB row
+        // so the sweep / reconcile fallback stop targeting a dead ticket. Mirrors
+        // autoManagementMonitor's benign handling of the same replies.
+        const positionGone = isUnknownTicketError(msg)
+        let benign = isBenignOrderModifyError(msg) || positionGone
+        if (benign && !positionGone && (action === 'breakeven' || action === 'partial_breakeven')) {
           let entry = sanitizeLevel(trade.entry_price)
           if (entry <= 0) {
             try {
@@ -1364,6 +1375,20 @@ export async function applyManagement(
             benign = false
           }
         }
+        if (positionGone) {
+          benign = true
+          await ctx.supabase
+            .from('trades')
+            .update({
+              status: 'closed',
+              closed_at: new Date().toISOString(),
+              auto_be_applied_at: new Date().toISOString(),
+            })
+            .eq('id', trade.id)
+          console.warn(
+            `[tradeExecutor] mgmt ${action} closed trade=${trade.id} ticket=${effectiveTicket}: broker position gone (${msg})`,
+          )
+        }
         if (action === 'breakeven' || action === 'partial_breakeven') {
           if (benign) {
             breakevenAppliedTradeIds.add(trade.id)
@@ -1384,6 +1409,7 @@ export async function applyManagement(
             mgmt_scope: replyScoped ? 'reply_basket' : 'channel',
             mgmt_parent_signal_id: signal.parent_signal_id,
             already_synced: benign || undefined,
+            position_gone: positionGone || undefined,
             ticket_reconciled_from: ticketReconciledFrom ?? undefined,
           },
           error_message: benign ? null : msg,

@@ -112,6 +112,14 @@ describe('modifyLegSlTpWithFallback', () => {
     assert.equal(api.calls.length, 1)
   })
 
+  it('flags position-gone replies (unknown ticket) so the caller can close the trade', async () => {
+    const api = mockApi(() => { throw new Error('unknown ticket') })
+    const out = await modifyLegSlTpWithFallback(api, 'u', 111, 4065, 4089)
+    assert.equal(out.ok, true, 'benign classification stays')
+    assert.equal(out.positionGone, true, 'caller knows the position is gone')
+    assert.equal(out.error, 'unknown ticket', 'original broker reply carried')
+  })
+
   it('SL-only request never sends a TP', async () => {
     const api = mockApi(() => 'ok')
     const out = await modifyLegSlTpWithFallback(api, 'u', 111, 4065, 0)

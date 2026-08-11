@@ -370,29 +370,34 @@ export async function prepareEntryExecution(
     return { ok: false, outcome: { finalizeSkipReason: SIGNAL_MISSING_REQUIRED_SL } }
   }
 
-  // A Telegram revision is never a new entry. Route it through the
+  // A Telegram revision is never a new entry once the first dispatch already
+  // materialized (order_send / trades / pending legs). Route those through the
   // modify-only path before any entry-zone, teaser, range, or OrderSend logic.
-  // The merge router returns handled=true for every revision outcome, including
-  // an unavailable broker/API or a missing open basket, so revisions cannot
-  // fall through into a fresh entry.
+  // BUT when the first dispatch SKIPPED without materializing anything (e.g. the
+  // channel edited the message to add the entry price), the revision carries the
+  // real entry and must fall through to the normal entry path — otherwise the
+  // edited signal can never trade.
   if (sameSignalRefresh) {
-    const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
-      signal,
-      parsed,
-      broker,
-      channelKeywords,
-      baseLot,
-      params,
-      symbol,
-      uuid,
-      strictEntryPrefetch: null,
-      commentPrefix,
-      sameSignalRefresh: true,
-      liveMgmtFast: sendOpts?.liveMgmtFast === true,
-    })
-    return {
-      ok: false,
-      outcome: { openedOrMerged: paramOutcome.handled === true && paramOutcome.success === true },
+    const revisionMaterialized = await ctx.manualDispatchAlreadyMaterialized(signal.id, broker.id)
+    if (revisionMaterialized) {
+      const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
+        signal,
+        parsed,
+        broker,
+        channelKeywords,
+        baseLot,
+        params,
+        symbol,
+        uuid,
+        strictEntryPrefetch: null,
+        commentPrefix,
+        sameSignalRefresh: true,
+        liveMgmtFast: sendOpts?.liveMgmtFast === true,
+      })
+      return {
+        ok: false,
+        outcome: { openedOrMerged: paramOutcome.handled === true && paramOutcome.success === true },
+      }
     }
   }
 
@@ -771,6 +776,11 @@ export async function prepareEntryExecution(
 
   if (plan.orders.length === 0) {
     await ctx.logSendSkipped(signal, broker, plan.skip_reason ?? 'filtered', { symbol })
+    // Nothing will be opened: release the dispatch claim so a later dispatch of
+    // the same signal (message revision after a provider edit, retry, range wake)
+    // can re-claim and execute. A stale claim left here permanently blocked
+    // edited signals (entry_not_opened incident 30ec1794).
+    await releaseSignalBrokerDispatchClaim(ctx.supabase, signal.id, broker.id)
     const entryStrict =
       isManual && plan.skip_reason === SKIP_REASON_SIGNAL_ENTRY_REQUIRED
     if (isManual && plan.skip_reason === SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED) {

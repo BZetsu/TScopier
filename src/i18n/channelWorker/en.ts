@@ -185,6 +185,10 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
       'message did not include an entry order phrase (e.g. buy now, gold sell now) or labeled SL/TP',
   },
   dispatchSkipped: 'Did not copy this signal ({reason}).',
+  rangeRebalanceSkippedNamed: 'Skipped {symbol} take-profit rebalance ({reason})',
+  rangeRebalanceSkippedGeneric: 'Skipped take-profit rebalance ({reason})',
+  rangeRebalanceFailedNamed: 'Could not rebalance take profits {on}',
+  rangeRebalanceFailedGeneric: 'Could not rebalance take profits on your open trade',
   errorTicketNotFound: 'Ticket {ticket} not found',
   errorSymbolNotFound: 'Symbol {symbol} is not available on this broker — it may use a different name (e.g. GOLD# for gold on XM). Reconnect the account or contact support if this keeps failing.',
   errorBrokerRejectedGeneric:

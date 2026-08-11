@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { claimSignalBrokerDispatch, isDuplicateKeyError } from './signalBrokerDispatchClaim'
+import {
+  claimSignalBrokerDispatch,
+  isDuplicateKeyError,
+  shouldTakeOverStaleClaim,
+} from './signalBrokerDispatchClaim'
 
 describe('signalBrokerDispatchClaim', () => {
   it('isDuplicateKeyError detects postgres unique violations', () => {
@@ -70,5 +74,33 @@ describe('signalBrokerDispatchClaim', () => {
     }
     assert.equal(await claimSignalBrokerDispatch(supabase as never, 's1', 'b1'), false)
     assert.equal(logs.length, 0)
+  })
+
+  it('shouldTakeOverStaleClaim allows revision to reclaim when nothing materialized and not in-flight', () => {
+    assert.equal(
+      shouldTakeOverStaleClaim({ isRevisionRefresh: true, materialized: false, entryInFlight: false }),
+      true,
+    )
+  })
+
+  it('shouldTakeOverStaleClaim blocks take-over while the first entry is still running', () => {
+    assert.equal(
+      shouldTakeOverStaleClaim({ isRevisionRefresh: true, materialized: false, entryInFlight: true }),
+      false,
+    )
+  })
+
+  it('shouldTakeOverStaleClaim blocks take-over when the signal already materialized', () => {
+    assert.equal(
+      shouldTakeOverStaleClaim({ isRevisionRefresh: true, materialized: true, entryInFlight: false }),
+      false,
+    )
+  })
+
+  it('shouldTakeOverStaleClaim is never true for non-revision dispatches', () => {
+    assert.equal(
+      shouldTakeOverStaleClaim({ isRevisionRefresh: false, materialized: false, entryInFlight: false }),
+      false,
+    )
   })
 })

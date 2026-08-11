@@ -291,6 +291,15 @@ export async function loadRangePendingMeta(
   return { activePendingCount, maxPendingStepIdx }
 }
 
+export function rangeBasketTpRebalanceStatus(args: {
+  modified: number
+  attempted: number
+  skippedReason?: string
+}): 'skipped' | 'success' | 'failed' {
+  if (args.skippedReason) return 'skipped'
+  return args.modified > 0 || args.attempted === 0 ? 'success' : 'failed'
+}
+
 async function logRangeBasketTpRebalance(
   supabase: SupabaseClient,
   args: {
@@ -315,7 +324,7 @@ async function logRangeBasketTpRebalance(
       signal_id: args.signalId,
       broker_account_id: args.brokerAccountId,
       action: 'range_basket_tp_rebalance',
-      status: args.modified > 0 || args.attempted === 0 ? 'success' : 'failed',
+      status: rangeBasketTpRebalanceStatus(args),
       request_payload: {
         open_legs: args.openLegs,
         phase: args.phase,
