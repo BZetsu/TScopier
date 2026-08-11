@@ -65,6 +65,8 @@ interface BrokerRow {
 const ACTIVE_MS = monitorActiveIntervalMs('AUTO_MANAGEMENT_TICK_MS', 400)
 const IDLE_MS = monitorIdleIntervalMs('AUTO_MANAGEMENT_IDLE_MS', 15_000)
 const SYMBOL_CACHE_TTL_MS = 5 * 60_000
+/** Throttle failed auto_be log rows per trade so a disconnected broker cannot flood trade_execution_logs. */
+const FAILURE_LOG_THROTTLE_MS = Math.max(60_000, Number(process.env.AUTO_BE_FAILURE_LOG_THROTTLE_MS ?? 5 * 60_000))
 
 type SymbolCacheEntry = {
   digits: number
@@ -82,6 +84,7 @@ export class AutoManagementMonitor {
   private firstTickLogged = false
   private quietTicks = 0
   private symbolCache = new Map<string, SymbolCacheEntry>()
+  private failureLogCooldownUntil = new Map<string, number>()
 
   constructor(private readonly supabase: SupabaseClient) {}
 
@@ -392,6 +395,8 @@ export class AutoManagementMonitor {
 
       await this.supabase.from('trades').update(patch).eq('id', trade.id).eq('status', 'open')
 
+      this.failureLogCooldownUntil.delete(trade.id)
+
       await this.supabase.from('trade_execution_logs').insert({
         user_id: trade.user_id,
         signal_id: trade.signal_id,
@@ -418,6 +423,7 @@ export class AutoManagementMonitor {
       const msg = err instanceof Error ? err.message : String(err)
       const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order|unknown\s+ticket/i.test(msg)
       if (benign) {
+        this.failureLogCooldownUntil.delete(trade.id)
         await this.supabase
           .from('trades')
           .update({
@@ -429,15 +435,19 @@ export class AutoManagementMonitor {
         return null
       }
       console.warn(`[autoManagementMonitor] apply failed trade=${trade.id} ticket=${ticketNum}: ${msg}`)
-      await this.supabase.from('trade_execution_logs').insert({
-        user_id: trade.user_id,
-        signal_id: trade.signal_id,
-        broker_account_id: trade.broker_account_id,
-        action: 'auto_be',
-        status: 'failed',
-        request_payload: { ticket: ticketNum, symbol: trade.symbol, attempted_sl: modifySl, mode },
-        error_message: msg,
-      })
+      const now = Date.now()
+      if (now >= (this.failureLogCooldownUntil.get(trade.id) ?? 0)) {
+        this.failureLogCooldownUntil.set(trade.id, now + FAILURE_LOG_THROTTLE_MS)
+        await this.supabase.from('trade_execution_logs').insert({
+          user_id: trade.user_id,
+          signal_id: trade.signal_id,
+          broker_account_id: trade.broker_account_id,
+          action: 'auto_be',
+          status: 'failed',
+          request_payload: { ticket: ticketNum, symbol: trade.symbol, attempted_sl: modifySl, mode },
+          error_message: msg,
+        })
+      }
       return false
     }
   }

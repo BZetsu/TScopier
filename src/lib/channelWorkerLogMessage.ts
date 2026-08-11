@@ -738,6 +738,21 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
     return ''
   }
   if (logAction === 'range_basket_tp_rebalance') {
+    const on = onInstrument(instr, cw)
+    if (status === 'skipped') {
+      const reason = translateSkipReason(
+        String(payload.skipped_reason ?? row.error_message ?? cw.notPlaced),
+        cw,
+      )
+      return namedOrGeneric(
+        instr,
+        s => interpolate(cw.rangeRebalanceSkippedNamed, { symbol: s, reason }),
+        () => interpolate(cw.rangeRebalanceSkippedGeneric, { reason }),
+      )
+    }
+    if (status === 'failed') {
+      return interpolate(cw.rangeRebalanceFailedNamed, { on })
+    }
     return ''
   }
 

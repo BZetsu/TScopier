@@ -569,3 +569,66 @@ test('channelWorkerLogMessage: hides unlinked channel mgmt-style skipped remap',
   )
   assert.equal(message, null)
 })
+
+test('channelWorkerLogMessage: range basket TP rebalance skipped shows no-ladder reason', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'range_basket_tp_rebalance',
+      status: 'skipped',
+      request_payload: { skipped_reason: 'no_tp_ladder' },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+        status: 'executed',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Gold Trader Mo' },
+  )
+  assert.ok(message)
+  assert.match(message!, /Skipped XAUUSD take-profit rebalance/)
+  assert.match(message!, /no tp ladder/)
+})
+
+test('channelWorkerLogMessage: range basket TP rebalance failed shows failure line', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'range_basket_tp_rebalance',
+      status: 'failed',
+      request_payload: {},
+      response_payload: null,
+      error_message: 'invalid stops',
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+        status: 'executed',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Gold Trader Mo' },
+  )
+  assert.ok(message)
+  assert.match(message!, /Could not rebalance take profits on XAUUSD/i)
+})
+
+test('channelWorkerLogMessage: range basket TP rebalance success stays hidden', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'range_basket_tp_rebalance',
+      status: 'success',
+      request_payload: { modified: 3 },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+        status: 'executed',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Gold Trader Mo' },
+  )
+  assert.equal(message, null)
+})
