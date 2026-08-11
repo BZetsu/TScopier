@@ -8,7 +8,7 @@
  * the combined modify once, and on an "invalid stops" rejection retries SL-only
  * (protect the position first) then TP-only (best-effort).
  */
-import { isBenignOrderModifyError } from './orderModifyBenign'
+import { isBenignOrderModifyError, isPositionGoneError } from './orderModifyBenign'
 
 export type OrderModifyResultLike = {
   stopLoss?: number | null
@@ -49,6 +49,10 @@ export type SafeModifyOutcome = {
   result?: OrderModifyResultLike
   /** Set when the SL could not be applied (the critical failure). */
   error?: string
+  /** True when the broker replied the position no longer exists (unknown
+   *  ticket etc.). The modify is a no-op, but the caller should close the trade
+   *  instead of recording a plain 'already synced' success. */
+  positionGone?: boolean
 }
 
 export type SafeModifyOpts = {
@@ -96,6 +100,7 @@ export async function modifyLegSlTpWithFallback(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     if (isBenignOrderModifyError(msg)) {
+      const positionGone = isPositionGoneError(msg)
       return {
         ok: true,
         slApplied: hasSl,
@@ -103,6 +108,9 @@ export async function modifyLegSlTpWithFallback(
         appliedSl: hasSl ? stoploss : 0,
         appliedTp: hasTp ? takeprofit : 0,
         mode: 'combined',
+        // Carry the original broker reply so callers can tell a real no-op from
+        // a position that no longer exists (and close the trade).
+        ...(positionGone ? { positionGone: true, error: msg } : {}),
       }
     }
     // Only splitting helps an invalid-stops rejection, and only when both sides
@@ -116,13 +124,20 @@ export async function modifyLegSlTpWithFallback(
     let slApplied = false
     let slErr: string | undefined
     let slResult: OrderModifyResultLike | undefined
+    let positionGone = false
+    let positionGoneMsg: string | undefined
     try {
       slResult = await api.orderModify(uuid, { ticket, stoploss })
       slApplied = true
     } catch (e) {
       const m2 = e instanceof Error ? e.message : String(e)
-      if (isBenignOrderModifyError(m2)) slApplied = true
-      else slErr = m2
+      if (isBenignOrderModifyError(m2)) {
+        slApplied = true
+        if (isPositionGoneError(m2)) {
+          positionGone = true
+          positionGoneMsg = m2
+        }
+      } else slErr = m2
     }
 
     // TP best-effort: try the requested TP, then (if price passed it) the deepest
@@ -145,6 +160,10 @@ export async function modifyLegSlTpWithFallback(
         if (isBenignOrderModifyError(m3)) {
           tpApplied = true
           appliedTp = candidate
+          if (isPositionGoneError(m3)) {
+            positionGone = true
+            positionGoneMsg = positionGoneMsg ?? m3
+          }
           break
         }
         // otherwise try the next (deeper) candidate
@@ -159,7 +178,8 @@ export async function modifyLegSlTpWithFallback(
       appliedTp,
       mode: 'split',
       result: slResult,
-      error: slApplied ? undefined : (slErr ?? msg),
+      error: slApplied ? positionGoneMsg : (slErr ?? msg),
+      ...(positionGone ? { positionGone: true } : {}),
     }
   }
 }

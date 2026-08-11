@@ -14,6 +14,7 @@ import {
   resolveRangeBasketFinalTps,
   resolveRangeBasketLegCounts,
   resolveRangeTpRebalanceGate,
+  rangeBasketTpRebalanceStatus,
 } from './rangeBasketTpSync'
 import type { BasketOpenLeg } from './basketSlTpReconcile'
 
@@ -488,4 +489,23 @@ test('pickV2MergeDistributeTargets: revision repaints, normal distribute preserv
   assert.equal(preserved[0]!.takeprofit, 4070)
   const revised = pickV2MergeDistributeTargets(family, distributed, true)
   assert.equal(revised[0]!.takeprofit, 4072)
+})
+
+test('rangeBasketTpRebalanceStatus: no TP ladder skip is logged as skipped, not failed', () => {
+  assert.equal(
+    rangeBasketTpRebalanceStatus({ modified: 0, attempted: 0, skippedReason: 'no_tp_ladder' }),
+    'skipped',
+  )
+  assert.equal(
+    rangeBasketTpRebalanceStatus({ modified: 0, attempted: 0 }),
+    'success',
+  )
+  assert.equal(
+    rangeBasketTpRebalanceStatus({ modified: 0, attempted: 3 }),
+    'failed',
+  )
+  assert.equal(
+    rangeBasketTpRebalanceStatus({ modified: 2, attempted: 3 }),
+    'success',
+  )
 })
