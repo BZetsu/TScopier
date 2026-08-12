@@ -774,7 +774,8 @@ export async function prepareEntryExecution(
     }
   }
 
-  if (plan.orders.length === 0) {
+  const plannedVirtualPendings = plan.virtualPendings ?? []
+  if (plan.orders.length === 0 && plannedVirtualPendings.length === 0) {
     await ctx.logSendSkipped(signal, broker, plan.skip_reason ?? 'filtered', { symbol })
     // Nothing will be opened: release the dispatch claim so a later dispatch of
     // the same signal (message revision after a provider edit, retry, range wake)
@@ -850,7 +851,7 @@ export async function prepareEntryExecution(
       `[tradeExecutor] capped immediate legs ${plan.orders.length} → ${capped.length} signal=${signal.id} broker=${broker.id}`,
     )
   }
-  let virtualPendings = (plan.virtualPendings ?? []).slice(0, 500)
+  let virtualPendings = plannedVirtualPendings.slice(0, 500)
   if (absLegCap < 500) {
     const immBudget = plannedImmediateLegs != null && plannedImmediateLegs >= 0
       ? plannedImmediateLegs
