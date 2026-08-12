@@ -4,6 +4,23 @@
  * or when basket reconcile / parameter-follow-up runs twice on the same ticket.
  */
 
+/**
+ * Broker replies meaning the referenced position no longer exists (TP/SL hit,
+ * closed, replaced, or opened on another account). The Aug 10 fix added these to
+ * the monitor regexes; this shared predicate covers the management paths too.
+ */
+export function isPositionGoneError(message: string): boolean {
+  const m = message.trim()
+  if (!m) return false
+  return (
+    /unknown\s+ticket/i.test(m)
+    || /invalid\s+ticket/i.test(m)
+    || /\bticket\b.*\bnot\s+found/i.test(m)
+    || /no\s+such\s+order/i.test(m)
+    || /already\s+closed/i.test(m)
+  )
+}
+
 export function isBenignOrderModifyError(message: string): boolean {
   const m = message.trim()
   if (!m) return false
@@ -14,6 +31,7 @@ export function isBenignOrderModifyError(message: string): boolean {
     || /no\s+changes?\s+to\s+order/i.test(m)
     || /request\s+has\s+no\s+changes/i.test(m)
     || /same\s+parameters/i.test(m)
+    || isPositionGoneError(m)
   )
 }
 

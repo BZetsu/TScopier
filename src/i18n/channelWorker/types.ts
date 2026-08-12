@@ -145,6 +145,11 @@ export interface ChannelWorkerTranslations {
 
   dispatchSkipped: string
 
+  rangeRebalanceSkippedNamed: string
+  rangeRebalanceSkippedGeneric: string
+  rangeRebalanceFailedNamed: string
+  rangeRebalanceFailedGeneric: string
+
   skipReasons: Record<string, string>
   errorTicketNotFound: string
   errorSymbolNotFound: string

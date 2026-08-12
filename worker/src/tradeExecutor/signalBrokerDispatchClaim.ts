@@ -66,3 +66,20 @@ export async function releaseSignalBrokerDispatchClaim(
     )
   }
 }
+
+/**
+ * Safety gate for a message revision taking over a stale dispatch claim:
+ * only safe when the revision has not materialized anything AND the original
+ * dispatch is no longer executing in this worker. A skipped first dispatch
+ * (e.g. `signal_entry_range_requires_price`) must not permanently block the
+ * edited signal from executing.
+ */
+export function shouldTakeOverStaleClaim(args: {
+  isRevisionRefresh: boolean
+  materialized: boolean
+  entryInFlight: boolean
+}): boolean {
+  return args.isRevisionRefresh === true
+    && args.materialized === false
+    && args.entryInFlight === false
+}

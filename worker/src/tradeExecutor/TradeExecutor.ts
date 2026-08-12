@@ -29,11 +29,12 @@ import {
   LightConfigCache,
 } from '../lightConfigCache'
 import { manualDispatchAlreadyMaterialized } from './basketMerge/helpers'
-import { claimSignalBrokerDispatch, releaseSignalBrokerDispatchClaim } from './signalBrokerDispatchClaim'
+import { claimSignalBrokerDispatch, releaseSignalBrokerDispatchClaim, shouldTakeOverStaleClaim } from './signalBrokerDispatchClaim'
 import { hasActiveSignalRangeEntryWait, SIGNAL_RANGE_WAKE_DISPATCH_SOURCE } from '../signalRangeEntryHelpers'
 import { MESSAGE_REVISION_DISPATCH_SOURCE } from '../signalRevision'
 import {
   dispatchPriorityForAction,
+  isManagementAction,
   parsedAction,
   signalMatchesExecutorMode,
 } from '../tradeSignalActions'
@@ -107,6 +108,19 @@ import { captureDeferredBusinessFailure } from '../observability/deferredBusines
 
 export type { SignalRow } from './types'
 
+/** Parsed-signal sweep guard for management signals: at most one re-dispatch per
+ *  MIN_MS and finalize after MAX consecutive failed re-dispatches, so a
+ *  dead-ticket retry loop (e.g. `unknown ticket`) cannot hammer the broker on
+ *  every sweep tick for the whole replay window. */
+const MGMT_SWEEP_REDISPATCH_MIN_MS = Math.max(
+  1_000,
+  Number(process.env.MGMT_SWEEP_REDISPATCH_MIN_MS ?? 10_000),
+)
+const MGMT_SWEEP_MAX_REDISPATCHES = Math.max(
+  1,
+  Math.min(20, Number(process.env.MGMT_SWEEP_MAX_REDISPATCHES ?? 5)),
+)
+
 export class TradeExecutor {
   private sweepLoop: MonitorLoopHandle | null = null
   /** Cancels TScopier broker pendings past `pending_expiry_hours` (1–24) when env enabled. */
@@ -130,6 +144,9 @@ export class TradeExecutor {
   normalPriorityQueue: QueuedSignal[] = []
   queueDrainScheduled = false
   queueDraining = false
+  /** Per-signal sweep guard for management signals: last re-dispatch time + count. */
+  private mgmtSweepLastDispatch = new Map<string, number>()
+  private mgmtSweepDispatchCount = new Map<string, number>()
   symbolCache = new Map<string, SymbolCacheEntry>()
   /** Per-broker `/Symbols` cache used to map signal symbols (e.g. BTCUSD) to broker variants (BTCUSDm). */
   symbolListCache = new Map<string, SymbolListCacheEntry>()
@@ -692,10 +709,49 @@ export class TradeExecutor {
         await this.markSignalExecuted(row.id)
         continue
       }
+      const action = parsedAction(row.parsed_data)
+      if (isManagementAction(action) && !this.mgmtSweepAllowed(row.id)) continue
       this.acceptDispatchSignal(row, {
         source: 'sweep',
-        priority: dispatchPriorityForAction(parsedAction(row.parsed_data)),
+        priority: dispatchPriorityForAction(action),
       })
+    }
+  }
+
+  /**
+   * Sweep re-dispatch guard for parsed management signals: a failed mgmt action
+   * leaves the signal 'parsed' for the reconcile fallback, so without a cap the
+   * sweep re-dispatches it every tick (~3-4s) against a dead broker ticket
+   * (e.g. `unknown ticket`) for the whole replay window. Allow at most one
+   * re-dispatch per MGMT_SWEEP_REDISPATCH_MIN_MS and finalize after
+   * MGMT_SWEEP_MAX_REDISPATCHES consecutive failures.
+   */
+  private mgmtSweepAllowed(signalId: string): boolean {
+    const now = Date.now()
+    const last = this.mgmtSweepLastDispatch.get(signalId) ?? 0
+    if (now - last < MGMT_SWEEP_REDISPATCH_MIN_MS) return false
+    const count = this.mgmtSweepDispatchCount.get(signalId) ?? 0
+    if (count >= MGMT_SWEEP_MAX_REDISPATCHES) {
+      void this.finalizeStuckMgmtSignal(signalId)
+      this.mgmtSweepLastDispatch.delete(signalId)
+      this.mgmtSweepDispatchCount.delete(signalId)
+      return false
+    }
+    this.mgmtSweepLastDispatch.set(signalId, now)
+    this.mgmtSweepDispatchCount.set(signalId, count + 1)
+    return true
+  }
+
+  /** Finalize a management signal the sweep gave up on (stays 'parsed' forever otherwise). */
+  private async finalizeStuckMgmtSignal(signalId: string): Promise<void> {
+    try {
+      await this.supabase
+        .from('signals')
+        .update({ status: 'executed', skip_reason: 'mgmt_sweep_max_redispatch' })
+        .eq('id', signalId)
+        .eq('status', 'parsed')
+    } catch {
+      // best-effort
     }
   }
 
@@ -1412,7 +1468,7 @@ export class TradeExecutor {
           await releaseSignalBrokerDispatchClaim(this.supabase, signal.id, effectiveBroker.id)
         }
         setPipelineTimestamp(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'execution_claim_started_at', Date.now())
-        const claimed = await claimSignalBrokerDispatch(
+        let claimed = await claimSignalBrokerDispatch(
           this.supabase,
           signal.id,
           effectiveBroker.id,
@@ -1443,28 +1499,52 @@ export class TradeExecutor {
               }
               await new Promise(resolve => setTimeout(resolve, 100))
             }
+            // Nothing materialized: the original claim holder skipped without
+            // opening (or crashed mid-dispatch). The edited signal must still be
+            // able to execute — release the stale claim and take it over, unless
+            // this worker still has the first entry running.
+            if (shouldTakeOverStaleClaim({
+              isRevisionRefresh: true,
+              materialized: false,
+              entryInFlight: this.entryBrokerInflight.has(entryKey),
+            })) {
+              await releaseSignalBrokerDispatchClaim(this.supabase, signal.id, effectiveBroker.id)
+              claimed = await claimSignalBrokerDispatch(
+                this.supabase,
+                signal.id,
+                effectiveBroker.id,
+                signal.user_id,
+              )
+              if (claimed) {
+                console.warn(
+                  `[tradeExecutor] message revision took over stale dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`,
+                )
+              }
+            }
           }
-          const materialized = await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)
-          console.warn(
-            `[tradeExecutor] skip duplicate dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`
-            + ` materialized=${materialized}`,
-          )
-          emitPipelineEvent({
-            event: 'execution_claim_lost',
-            correlation: buildPipelineCorrelation({
-              userId: signal.user_id,
-              signalId: signal.id,
-              channelId: signal.channel_id,
-              telegramMessageId: signal.telegram_message_id,
-              brokerAccountId: effectiveBroker.id,
-              dispatchSource: signal.dispatch_source,
-            }),
-            timestamps: signal.pipeline_ts,
-            outcome: 'lost',
-            path: liveFast ? 'live_fast' : 'queued',
-            extra: { materialized },
-          })
-          return { openedOrMerged: materialized }
+          if (!claimed) {
+            const materialized = await manualDispatchAlreadyMaterialized(this, signal.id, effectiveBroker.id)
+            console.warn(
+              `[tradeExecutor] skip duplicate dispatch claim signal=${signal.id} broker=${effectiveBroker.id}`
+              + ` materialized=${materialized}`,
+            )
+            emitPipelineEvent({
+              event: 'execution_claim_lost',
+              correlation: buildPipelineCorrelation({
+                userId: signal.user_id,
+                signalId: signal.id,
+                channelId: signal.channel_id,
+                telegramMessageId: signal.telegram_message_id,
+                brokerAccountId: effectiveBroker.id,
+                dispatchSource: signal.dispatch_source,
+              }),
+              timestamps: signal.pipeline_ts,
+              outcome: 'lost',
+              path: liveFast ? 'live_fast' : 'queued',
+              extra: { materialized },
+            })
+            return { openedOrMerged: materialized }
+          }
         }
         setPipelineTimestamp(signal.pipeline_ts, 'execution_claim_acquired_at', Date.now())
         emitPipelineEvent({

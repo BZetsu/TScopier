@@ -14,8 +14,60 @@ import {
   resolveRangeBasketFinalTps,
   resolveRangeBasketLegCounts,
   resolveRangeTpRebalanceGate,
+  rangeBasketTpRebalanceStatus,
+  syncRangeBasketTakeProfits,
 } from './rangeBasketTpSync'
 import type { BasketOpenLeg } from './basketSlTpReconcile'
+import type { FxsocketBrokerClient } from './fxsocketClient'
+
+type LogRow = {
+  user_id: string
+  signal_id: string
+  broker_account_id: string
+  action: string
+  status: string
+  request_payload: Record<string, unknown>
+}
+
+function fakeSupabaseForRebalance(
+  trades: BasketOpenLeg[],
+  captured: LogRow[],
+  tables: Record<string, unknown[]> = {},
+) {
+  const all = {
+    trades,
+    range_pending_legs: [],
+    basket_sl_tp_targets: [],
+    channel_active_trade_params: [],
+    signals: [{ parsed_data: { sl: 4376, tp: [] } }],
+    ...tables,
+  }
+  function builder(table: string) {
+    const b: Record<string, unknown> = {}
+    const self = () => b
+    b.select = self
+    b.eq = self
+    b.in = self
+    b.gte = self
+    b.order = self
+    b.limit = () => Promise.resolve({ data: all[table] ?? [], error: null })
+    b.maybeSingle = () =>
+      Promise.resolve({ data: (all[table] ?? [])[0] ?? null, error: null })
+    b.insert = (row: unknown) => {
+      captured.push(row as LogRow)
+      return Promise.resolve({ data: null, error: null })
+    }
+    b.update = () => ({
+      eq: () => Promise.resolve({ data: [], error: null }),
+    })
+    return b
+  }
+  return { from: (t: string) => builder(t) }
+}
+
+const stubApi = {
+  quote: async () => ({ bid: 4390, ask: 4391 }),
+} as unknown as FxsocketBrokerClient
 
 const TP_LOTS = [
   { label: 'TP1', lot: 0, percent: 50, enabled: true },
@@ -488,4 +540,56 @@ test('pickV2MergeDistributeTargets: revision repaints, normal distribute preserv
   assert.equal(preserved[0]!.takeprofit, 4070)
   const revised = pickV2MergeDistributeTargets(family, distributed, true)
   assert.equal(revised[0]!.takeprofit, 4072)
+})
+
+test('rangeBasketTpRebalanceStatus: no TP ladder skip is logged as skipped, not failed', () => {
+  assert.equal(
+    rangeBasketTpRebalanceStatus({ modified: 0, attempted: 0, skippedReason: 'no_tp_ladder' }),
+    'skipped',
+  )
+  assert.equal(
+    rangeBasketTpRebalanceStatus({ modified: 0, attempted: 0 }),
+    'success',
+  )
+  assert.equal(
+    rangeBasketTpRebalanceStatus({ modified: 0, attempted: 3 }),
+    'failed',
+  )
+  assert.equal(
+    rangeBasketTpRebalanceStatus({ modified: 2, attempted: 3 }),
+    'success',
+  )
+})
+
+test('syncRangeBasketTakeProfits: no TP ladder skip writes status=skipped with no_tp_ladder reason', async () => {
+  const captured: LogRow[] = []
+  const family = Array.from({ length: 11 }, (_, i) => ({
+    ...openLeg(`leg${i}`, 4389.69 - i * 0.4, `2026-08-12T02:23:0${i % 10}Z`),
+    tp: 0,
+  }))
+  const supabase = fakeSupabaseForRebalance(family, captured)
+
+  await syncRangeBasketTakeProfits({
+    supabase: supabase as never,
+    api: stubApi,
+    uuid: 'uuid',
+    symbol: 'XAUUSD',
+    direction: 'buy',
+    baseLot: 0.05,
+    params: null,
+    signalId: '2ffe9304',
+    userId: 'user',
+    brokerAccountId: 'broker',
+    manual: { range_trading: true },
+    parsed: { sl: 4376, tp: [] },
+    forceLayeringRebalance: true,
+  })
+
+  const row = captured.find(r => r.action === 'range_basket_tp_rebalance')
+  assert.ok(row, 'range_basket_tp_rebalance row should be logged')
+  assert.equal(row!.status, 'skipped')
+  assert.equal(row!.request_payload.attempted, 0)
+  assert.equal(row!.request_payload.failed, 0)
+  assert.equal(row!.request_payload.skipped_reason, 'no_tp_ladder')
+  assert.equal(row!.request_payload.modified, 0)
 })
