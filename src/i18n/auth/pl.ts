@@ -11,6 +11,7 @@ export const authPl: AuthTranslations = {
   oauth: {
     continueWithGoogle: 'Kontynuuj z Google',
     orDivider: 'lub',
+    captchaRequired: 'Ukończ weryfikację bezpieczeństwa przed kontynuowaniem.',
   },
   login: {
     heading: 'Zaloguj się do TScopier',

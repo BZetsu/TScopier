@@ -24,6 +24,9 @@ verify_jwt = false
 [functions.send-password-reset-email]
 verify_jwt = false
 
+[functions.auth-before-user-created]
+verify_jwt = false
+
 [functions.stripe-webhook]
 verify_jwt = false
 

@@ -164,9 +164,9 @@ Deno.serve(async (req: Request) => {
       },
     };
 
-    // Advanced plan gets a 3-day free trial for first-time subscribers only
+    // Advanced plan gets a 5-day free trial for first-time subscribers only
     if (plan === "advanced" && !existingSub?.trial_ends_at) {
-      subscriptionData.trial_period_days = 3;
+      subscriptionData.trial_period_days = 5;
       subscriptionData.trial_settings = {
         end_behavior: {
           missing_payment_method: "create_invoice",

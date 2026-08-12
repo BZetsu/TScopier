@@ -15,9 +15,9 @@ export const pricingRu: PricingBundleTranslations = {
     extraAccountUnit: '$10/счет/месяц',
     extraAccountUnitAnnual: '$96/счет/год',
     subscribe: 'Оформить подписку',
-    startTrial: 'Начните 3-дневный бесплатный пробный период',
-    trialDays: '3-дневный бесплатный пробный период на Advanced',
-    moneyBackGuarantee: '3-дневный бесплатный пробный период на Advanced',
+    startTrial: 'Начните 5-дневный бесплатный пробный период',
+    trialDays: '5-дневный бесплатный пробный период на Advanced',
+    moneyBackGuarantee: '5-дневный бесплатный пробный период на Advanced',
     features: 'Возможности',
     popular: 'Самый популярный',
     basicFeatures: [
@@ -133,7 +133,7 @@ export const pricingRu: PricingBundleTranslations = {
       statusCanceled: 'Отменена',
       statusPastDue: 'Просрочена',
       trialEnds: 'Пробный период закончится',
-      choosePlan: 'Начните 3-дневный бесплатный пробный период',
+      choosePlan: 'Начните 5-дневный бесплатный пробный период',
     },
     checkoutFailed: 'Не удалось начать оплату. Попробуйте снова.',
     paywall: {

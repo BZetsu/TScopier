@@ -2,6 +2,13 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { buildAuthEmailHtml } from "../_shared/authEmailLayout.ts";
 import { resolveEmailLogoUrl } from "../_shared/brandEmailAssets.ts";
+import { evaluateSignupEmail } from "../_shared/emailSignupPolicy.ts";
+import {
+  AUTH_EMAIL_MAX_PER_HOUR_IP,
+  enforceIpRateLimit,
+  extractClientIp,
+  verifyTurnstileToken,
+} from "../_shared/signupAbuseGuard.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -58,7 +65,25 @@ Deno.serve(async (req: Request) => {
     const body = await req.json().catch(() => ({})) as {
       email?: string;
       redirectTo?: string;
+      captchaToken?: string;
     };
+
+    const clientIp = extractClientIp(req);
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    const ipLimitResponse = await enforceIpRateLimit(
+      req,
+      supabase,
+      "password_reset_email",
+      AUTH_EMAIL_MAX_PER_HOUR_IP,
+      corsHeaders,
+    );
+    if (ipLimitResponse) return ipLimitResponse;
+
+    const captchaOk = await verifyTurnstileToken(body.captchaToken, clientIp);
+    if (!captchaOk) {
+      return json({ error: "Captcha verification failed", code: "captcha_failed" }, 403);
+    }
 
     const targetEmail = normalizeEmail(body.email);
     if (!targetEmail) {
@@ -70,7 +95,13 @@ Deno.serve(async (req: Request) => {
         ? body.redirectTo.trim()
         : `${req.headers.get("origin") ?? "https://app.tscopier.ai"}/reset-password`;
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const emailPolicy = evaluateSignupEmail(targetEmail);
+    if (!emailPolicy.allowed) {
+      if (emailPolicy.code === "invalid_email") {
+        return json({ error: "Missing email" }, 400);
+      }
+      return json({ success: true, sent: false }, 200);
+    }
 
     const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
       type: "recovery",

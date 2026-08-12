@@ -56,6 +56,7 @@ export async function sendVerificationEmail(args: {
   email: string
   accessToken?: string | null
   redirectTo?: string
+  captchaToken?: string | null
 }): Promise<SendVerificationEmailResult> {
   const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-verification-email`
   const redirectTo = args.redirectTo ?? `${window.location.origin}/dashboard`
@@ -76,6 +77,7 @@ export async function sendVerificationEmail(args: {
     body: JSON.stringify({
       email: args.email,
       redirectTo,
+      captchaToken: args.captchaToken ?? undefined,
     }),
   })
 

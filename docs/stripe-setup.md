@@ -104,10 +104,10 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 1. Marketing **Choose a plan** → `/pricing` → select Basic/Advanced → signup/login with plan remembered → Stripe Checkout (`create-checkout-session`).
 2. Checkout metadata includes `supabase_user_id`, `plan`, `extra_accounts`.
 3. Subscription metadata mirrors checkout metadata for portal updates.
-4. **Advanced first-time free trial** — Advanced checkouts for users with no prior `trial_ends_at` get `trial_period_days: 3`. Basic is charged from day one. Existing Stripe `trialing` subscribers keep access until `trial_ends_at`. Users who already used a trial do not get a second one.
+4. **Advanced first-time free trial** — Advanced checkouts for users with no prior `trial_ends_at` get `trial_period_days: 5`. Basic is charged from day one. Existing Stripe `trialing` subscribers keep access until `trial_ends_at`. Users who already used a trial do not get a second one.
 5. Checkout always collects a card (`payment_method_collection: always`). After checkout completes, the webhook sets `payment_settings.save_default_payment_method: on_subscription` on the Stripe subscription for renewals.
 6. Success redirect: `/dashboard?checkout=success` (SubscriptionContext refreshes). Cancel → `/pricing`.
-7. Pricing pages advertise a **3-day free trial on Advanced**.
+7. Pricing pages advertise a **5-day free trial on Advanced**.
 
 ### Checkout troubleshooting
 
@@ -148,7 +148,7 @@ After payment, the app also calls `confirm-checkout` (using Stripe `session_id` 
 1. **New user (unpaid)** — after verify, redirected to `/pricing`; dashboard and other app routes blocked until paid.
 2. **Basic checkout** — complete test checkout (charged day one); `subscriptions` row `plan=basic`, `status=active`.
 3. **Second broker on Basic** — UI + `broker-metatrader` register return limit error.
-4. **Advanced checkout** — first-time Advanced subscribers get a 3-day free trial; extra accounts editor on `/billing` works; limits expand.
+4. **Advanced checkout** — first-time Advanced subscribers get a 5-day free trial; extra accounts editor on `/billing` works; limits expand.
 5. **Trial used / Basic** — Advanced after a prior trial and Basic checkout charge from day one; existing `trialing` users keep access until trial ends.
 6. **Portal cancel** — webhook sets `status=canceled`; Advanced settings blocked again.
 7. **Backtest limit** — sixth run in UTC month on Basic rejected by `backtest-run`.

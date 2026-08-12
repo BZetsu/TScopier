@@ -11,6 +11,7 @@ export const authSv: AuthTranslations = {
   oauth: {
     continueWithGoogle: 'Fortsätt med Google',
     orDivider: 'eller',
+    captchaRequired: 'Slutför säkerhetskontrollen innan du fortsätter.',
   },
   login: {
     heading: 'Logga in på TScopier',
