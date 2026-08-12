@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### 2026-08-12 — Resend flood: cooldown was per-email; add global 20/hour cap
+
+- **Why Resend looked broken:** Cooldown (60s) and per-email hourly (5) key on **email address**. Bots use a new address every time (`gaylord######@pornhub.com`, then `mamadou`, then `*@example.net`, then realistic outlook/proton names) → each send is the first for that address → cooldown never trips.
+- **IP limit was working but weak:** Prod showed several IPs each at exactly `window_count=10` (old max). Bots rotate IPs after 10 emails → dozens of Resend sends/hour.
+- **Live DB fix (prod + staging):** Migration `20260812210000_global_verification_email_rate_limit.sql` — `claim_verification_email_send` now also claims a **global** slot (`verification_email_global` / `global`, max **20/hour**). Existing edge function already calls this RPC before Resend → flood stops without waiting on deploy.
+- **Emergency:** Global counter set to 20 immediately (blocks further Resend verification sends for ~1h).
+- **Also:** Blocked `example.com/.net/.org`; cleaned latest spam waves; edge code updated (IP max 3, fail-closed missing IP, global enforce) — CLI deploy Forbidden; DB path is the live protection.
+- Files: `signupAbuseGuard.ts`, `send-verification-email/index.ts`, `emailSignupPolicy.ts`, migrations `20260812200000_*`, `20260812210000_*`, scratchpad `docs/scratchpad-resend-rate-limit-2026-08-12.md`.
+
 ### 2026-08-12 — Bots pivoted to mamadou#####@hotmail.com; block MS name+digits
 
 - **What user saw:** After pornhub cleanup, UI showed new accounts — not leftover `@pornhub`, but a new wave `mamadou######@hotmail.com` (auto-confirmed, burst signup).

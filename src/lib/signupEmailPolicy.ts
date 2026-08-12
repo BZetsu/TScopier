@@ -44,6 +44,10 @@ const DEFAULT_DISPOSABLE_DOMAINS = new Set([
   'fakeinbox.com',
   'maildrop.cc',
   'mailnesia.com',
+  // RFC 2606 reserved — bots use these as fake inboxes
+  'example.com',
+  'example.net',
+  'example.org',
 ])
 
 /** Exact adult / spam brand domains (e.g. gaylord297426@pornhub.com). */

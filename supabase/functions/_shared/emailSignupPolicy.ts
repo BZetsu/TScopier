@@ -45,6 +45,9 @@ const DEFAULT_DISPOSABLE_DOMAINS = new Set([
   "fakeinbox.com",
   "maildrop.cc",
   "mailnesia.com",
+  "example.com",
+  "example.net",
+  "example.org",
 ])
 
 const DEFAULT_BLOCKED_DOMAINS = new Set([

@@ -1,7 +1,13 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 /** Max auth-email sends per IP per rolling hour (verification + password reset). */
-export const AUTH_EMAIL_MAX_PER_HOUR_IP = 10;
+export const AUTH_EMAIL_MAX_PER_HOUR_IP = 3
+
+/** Absolute cap on verification emails across all IPs (stops IP-rotation floods). */
+export const AUTH_EMAIL_MAX_PER_HOUR_GLOBAL = 20
+
+/** Shared bucket when client IP headers are missing (do not skip rate limiting). */
+export const MISSING_IP_HASH = "missing-ip";
 
 export function extractClientIp(req: Request): string | null {
   const cfIp = req.headers.get("cf-connecting-ip")?.trim()
@@ -68,9 +74,13 @@ export async function enforceIpRateLimit(
   corsHeaders?: Record<string, string>,
 ): Promise<Response | null> {
   const ip = extractClientIp(req)
-  if (!ip) return null
-
-  const claim = await claimAuthAbuseSlot(supabase, action, ip, maxPerHour)
+  // Missing IP must still be capped — previously we skipped and bots bypassed limits.
+  const claim = await claimAuthAbuseSlot(
+    supabase,
+    action,
+    ip ?? MISSING_IP_HASH,
+    maxPerHour,
+  )
   if (claim.ok) return null
 
   return new Response(
@@ -85,6 +95,48 @@ export async function enforceIpRateLimit(
       headers: {
         "Content-Type": "application/json",
         "Retry-After": String(claim.retryAfterSeconds),
+        ...(corsHeaders ?? {}),
+      },
+    },
+  )
+}
+
+/** Global (cross-IP) hourly cap for an auth-email action. */
+export async function enforceGlobalRateLimit(
+  supabase: SupabaseClient,
+  action: string,
+  maxPerHour = AUTH_EMAIL_MAX_PER_HOUR_GLOBAL,
+  corsHeaders?: Record<string, string>,
+): Promise<Response | null> {
+  // Use literal sentinel ip_hash (not SHA-256) so this matches
+  // claim_verification_email_send → claim_auth_abuse_slot(..., 'global', ...).
+  const { data, error } = await supabase.rpc("claim_auth_abuse_slot", {
+    p_action: `${action}_global`,
+    p_ip_hash: "global",
+    p_max_per_hour: maxPerHour,
+  })
+
+  if (error) {
+    console.error("[signupAbuseGuard] global claim error:", error)
+    throw new Error(error.message)
+  }
+
+  const claim = (data ?? {}) as { ok?: boolean; retry_after_seconds?: number }
+  if (claim.ok) return null
+
+  const retryAfterSeconds = Math.max(1, Number(claim.retry_after_seconds ?? 3600))
+  return new Response(
+    JSON.stringify({
+      error: "rate_limited",
+      code: "rate_limited",
+      message: "Too many requests. Try again later.",
+      retry_after_seconds: retryAfterSeconds,
+    }),
+    {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": String(retryAfterSeconds),
         ...(corsHeaders ?? {}),
       },
     },
