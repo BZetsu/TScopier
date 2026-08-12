@@ -3,8 +3,11 @@ const EXACT_PATHS_WITHOUT_SUBSCRIPTION = new Set([
   '/pricing',
   '/billing',
   '/contact-support',
+  '/dashboard',
 ])
 
 export function isRouteAllowedWithoutSubscription(pathname: string): boolean {
-  return EXACT_PATHS_WITHOUT_SUBSCRIPTION.has(pathname)
+  if (EXACT_PATHS_WITHOUT_SUBSCRIPTION.has(pathname)) return true
+  if (pathname.startsWith('/dashboard/broker/')) return true
+  return false
 }

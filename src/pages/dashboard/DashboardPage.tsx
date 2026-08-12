@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefO
 import { Link, Outlet, useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Clock, Loader2, Plus, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
+import { SubscriptionReminderModal } from '../../components/billing/SubscriptionReminderModal'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { useSubscription } from '../../context/SubscriptionContext'
@@ -2144,6 +2145,7 @@ export function DashboardPage() {
 
   return (
     <PageShell maxWidth="xl" spacing="none" className="space-y-6">
+      <SubscriptionReminderModal />
       {showDashboardLoader ? (
         <DashboardMetricsLoader message={t.dashboard.loadingMetrics} />
       ) : (

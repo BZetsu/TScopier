@@ -13,6 +13,16 @@ This document is the permanent record of every change pulled from `upstream/main
 
 ## 1. The current state
 
+### Sync #2 — 2026-08-12
+
+- **staging tip before this sync:** `19fe13dc` (`Merge pull request #97 from tartarixinc/off-staging-free-trial`)
+- **main tip used for this sync:** `982f95e9` (`Merge pull request #101 from tartarixinc/off-staging-free-trial`)
+- **Result:** `upstream/staging` and `upstream/main` will contain the **same code tree** after push. Staging is a full ancestor of main, so the merge is a clean fast-forward-style no-conflict merge.
+- **Conflict status:** none — 0 conflicted files expected.
+- **Primary driver:** pull in the **signup-spam protection** stack (Turnstile + `auth-before-user-created` hook + `emailSignupPolicy` + IP rate limits + backoffice overview/spam-management) that landed on main via PR #99 (`fcde1094`) but never made it to dev/staging. Also brings main's trial/marketing commits (free trial 3→5 days, marketing copy) since main is a strict superset.
+
+### Sync #1 — 2026-08-08
+
 - **staging tip before this sync:** `8fed9f19` (`Merge pull request #86 from tartarixinc/off-staging-ai-assistant`, 2026-08-08 22:25 +0100)
 - **main tip used for this sync:** `cff88c39` (`Merge pull request #90 from tartarixinc/off-staging-ai-assistant`, 2026-08-08 23:49 +0100)
 - **Result:** `upstream/staging` and `upstream/main` now contain the **same code tree** (verified: `git diff` between merged tree and `upstream/main` = 0 lines). Staging was already a full ancestor of main, so the merge was a clean fast-forward-style no-conflict merge.
@@ -21,6 +31,28 @@ This document is the permanent record of every change pulled from `upstream/main
 ---
 
 ## 2. Changes pulled from main into staging
+
+### Sync #2 — 2026-08-12
+
+**Merged branch:** `merge/main-to-staging` (created from `upstream/staging`, merged `upstream/main` into it).
+**Includes all 7 commits that existed on main but not staging.** Breakdown:
+
+| # | Commit | Date | Author | What it changed | Files touched (highlights) |
+|---|--------|------|--------|----------------|----------------------------|
+| 1 | `cf917feb` | 2026-08-11 | Tartarix | Merge PR #96 (staging → main bridge) | — (merge) |
+| 2 | `7b9198c4` | 2026-08-11 | BZetsu | Promote staging to main: entry_not_opened fixes, mgmt position-gone, rebalance UI, retention migration | — (merge) |
+| 3 | `3d43ab0e` | 2026-08-12 | Tartarix | Merge PR #98 (staging → main bridge) | — (merge) |
+| 4 | `fcde1094` | 2026-08-12 | Osodi Software Co. | **Overview page + spam account management + Turnstile/signup-spam protection**: `TurnstileWidget`, `src/lib/turnstile.ts`, `emailSignupPolicy`, `auth-before-user-created` hook, `20260812140000_auth_abuse_rate_limits.sql`, `send-verification-email` / `send-password-reset-email` hardening, backoffice `admin-query`/`admin-mutate` | `src/components/auth/TurnstileWidget.tsx`, `src/lib/turnstile.ts`, `src/pages/auth/{AuthPage,SignupPage,ForgotPasswordPage}.tsx`, `supabase/functions/_shared/emailSignupPolicy.ts`, `supabase/functions/auth-before-user-created/index.ts`, `supabase/functions/send-verification-email/index.ts`, `supabase/functions/send-password-reset-email/index.ts`, `supabase/migrations/20260812140000_auth_abuse_rate_limits.sql`, `supabase/functions/admin-query/index.ts`, `supabase/functions/admin-mutate/index.ts`, `apps/backoffice/*` |
+| 5 | `77133de4` | 2026-08-12 | Tartarix | Merge PR #99 (off-staging-free-trial) | — (merge) |
+| 6 | `55e913fb` | 2026-08-12 | Osodi Software Co. | Extended Advanced free trial from 3 days to 5 days | `supabase/functions/create-checkout-session/index.ts`, `src/i18n/*`, `supabase/functions/_shared/subscriptionCampaignEmails.ts` |
+| 7 | `982f95e9` | 2026-08-12 | Tartarix | Merge PR #101 (final main tip) | — (merge) |
+
+**Net change to the codebase (vs previous staging tip `19fe13dc`):** 214 files changed, **+1,229 / −242 lines** (`git diff --stat upstream/staging upstream/main`). Major areas:
+- **Auth-spam protection (primary goal):** Turnstile widget + `captchaToken` passed to Supabase Auth, `auth-before-user-created` hook (webhook-verified, `emailSignupPolicy` rejection), IP rate-limit migration `20260812140000_auth_abuse_rate_limits.sql` (`claim_auth_abuse_slot`), verification/password-reset email hardening, verification-email resend cooldown, email-verification-bypass hardening.
+- **Backoffice:** Overview page with user statistics + signup-abuse stats + bulk ban spam action.
+- **Trial/marketing:** free trial 3→5 days, marketing/onboarding copy + modal updates.
+
+---
 
 ### Sync #1 — 2026-08-08 (performed locally, pending push)
 
@@ -66,6 +98,7 @@ This document is the permanent record of every change pulled from `upstream/main
 
 | Date | Merge commit | From | To | Conflicts? |
 |------|-------------|------|----|-----------|
+| 2026-08-12 | `518c3ab7` (`merge/m2s-sync2`) | upstream/main (`982f95e9`) | upstream/staging | None |
 | (pending push) | `merge/main-to-staging` branch, merge of `cff88c39` | upstream/main | upstream/staging | None |
 
 ---

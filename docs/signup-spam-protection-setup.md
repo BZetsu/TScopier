@@ -47,7 +47,8 @@ Apply on **both** staging (`axdcledcyhyvzrnfkwat`) and production (`sxkpcovbyafi
 
 ## 5. Deploy checklist
 
-- [ ] Migration `20260812140000_auth_abuse_rate_limits.sql` applied (staging + prod)
+- [x] Migration `20260812140000_auth_abuse_rate_limits.sql` applied (staging + prod) — 2026-08-12
+- [x] Migration `20260812160000_block_spam_signup_emails.sql` applied (staging + prod) — DB-level signup block
 - [ ] Edge functions deployed: `send-verification-email`, `send-password-reset-email`, `auth-before-user-created`, `admin-query`, `admin-mutate`
 - [ ] `TURNSTILE_SECRET_KEY` + `BEFORE_USER_CREATED_HOOK_SECRET` set on Supabase
 - [ ] `VITE_TURNSTILE_SITE_KEY` set on Netlify (redeploy frontend)

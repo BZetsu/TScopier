@@ -2,8 +2,11 @@
  * Server-side signup email policy — blocks obvious spam and disposable providers.
  */
 
+/** pornhub / porhub / prhub + digits — bots rotate the local-part spelling. */
+const PORNHUB_STYLE_LOCAL = /^p[o0]{0,1}r{1,2}n?hub\d+$/i
+
 const DEFAULT_BLOCKED_LOCAL_PATTERNS: RegExp[] = [
-  /^pornhub\d+$/i,
+  PORNHUB_STYLE_LOCAL,
   /^[0-9]{6,}$/,
   /^(.)\1{5,}$/,
 ]
