@@ -2,6 +2,20 @@
 
 ## Changelog
 
+### 2026-08-12 — `range_basket_tp_rebalance` "no TP ladder" FALSELY logged as `failed`/Major — root-caused + FIXED (signal `2ffe9304`)
+
+- **Context (user request):** admin dashboard showed `range_basket_tp_rebalance` as **Major** for signal `2ffe9304` ("GOLD BUY NOW @4391.00 / SL: 4376.00", Leonardo Araújo, Aug 12 02:20–02:36 UTC): `{phase:"layering_rebalance", failed:1, modified:0, attempted:1, open_legs:11..16, target_tp_counts:{}, force_layering_rebalance:true}` — 6 failed rows, no error message.
+- **What actually happened (correct behavior, wrong logging):** signal has NO TPs (`parsed tp:[]`). 10-leg range basket opened at 02:23 (2026-08-11 `30ec1794` edit fix worked — edited price opened), then more legs fired to 16 as price moved. Each leg firing re-ran `syncRangeBasketTakeProfits` (forceLayeringRebalance). `resolveRangeBasketFinalTps` correctly found no ladder (signal `tp:[]`, no plan TPs, no channel TP memory) → correct skip, **no broker call**. But the deployed worker logged the skip as `status:'failed'` with `attempted:1, failed:1` `target_tp_counts:{}` → admin `errors.ts:93` defaulted empty-message rows to Major.
+- **Root cause — the Aug-11 fix was PARTIALLY shipped:** commit `00674674` (main/staging) shipped `rangeBasketTpRebalanceStatus` helper, i18n keys (all 9 locales), frontend timeline handler, and a pure-unit test — but the **skip-branch call site** at `worker/src/rangeBasketTpSync.ts:754-761` was never updated. It still passed `attempted:1, failed:1` and NO `skippedReason`. The full hunk had been left uncommitted in `stash@{0}` (`wip-2026-08-11-agents-i18n-range`). Unit test passed because it tested the pure helper, not the call site.
+- **Fix (this session, branch `fix/range-rebalance-no-tp-ladder-skip` from upstream/dev):**
+  - `worker/src/rangeBasketTpSync.ts` skip branch now logs `attempted:0, failed:0, skippedReason:'no_tp_ladder'` → `rangeBasketTpRebalanceStatus` returns `'skipped'` → row becomes benign; admin shows "Skipped — no broker action. Reason: no tp ladder" and user timeline shows "Skipped {symbol} take-profit rebalance (no tp ladder)".
+  - `worker/src/rangeBasketTpSync.test.ts`: +1 **call-site** regression test driving the real `syncRangeBasketTakeProfits` skip path with a fake supabase (11 naked open legs, tp:0) asserting the inserted log row has `status:'skipped'`, `attempted:0`, `failed:0`, `skipped_reason:'no_tp_ladder'`. (The previous gap: only the pure helper was tested.)
+  - Verified: `node --import tsx --test` on rangeBasketTpSync + basketEffectiveStops + basketSlTpReconcile = 66/66 pass; worker `tsc --noEmit` clean; eslint clean on both changed files.
+- **AGENTS.md (local only, NOT committed per user instruction):** restored the Railway GraphQL-access section + scratchpad rules from `stash@{0}` into the local working tree (was missing). Stays uncommitted/local.
+- **Audit — earlier "fork-only" branches (update-loop recovery, reconnect-storm, session-sendcode, manage-button) all verified PRESENT on prod:** committed via cherry-picks/squashes (`4a0febe0`, `600ca864`, …) so hash-based `--contains` showed nothing, but file content on upstream/main/staging matches. No action needed.
+- **Deployed state:** prod/staging workers still run the pre-fix skip branch → rebalance skips will keep logging `failed` until this ships. Historical pre-fix rows stay as-is (backfill optional).
+- **Follow-ups (deployer):** commit branch → push to origin → PR to upstream/dev → staging (Railway redeploy) → main. Notion task update. Optional: drop now-applied `stash@{0}`.
+
 ### 2026-08-11 — `entry_not_opened` / `signal_entry_range_requires_price` incident FIXED: stale dispatch claim + revision routing (3 worker fixes, signal `30ec1794`)
 
 - **Context (user request):** signal `30ec1794` ("GOLD BUY NOW @4389.00\n\nSL : 4374.00", user `82756f8c` = Leonardo, channel `e8218797`, broker `fcabb782`) failed with `entry_not_opened` even though the edited message carried the price. Diagnosed via prod DB (`signals`, `trade_execution_logs`, `signal_broker_dispatch_claims`, `listener_events`) + Railway worker logs.

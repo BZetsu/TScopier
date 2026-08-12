@@ -754,9 +754,10 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
       phase: args.forceLayeringRebalance ? 'layering_rebalance' : 'unknown',
       forceLayeringRebalance: args.forceLayeringRebalance,
       modified: 0,
-      attempted: 1,
-      failed: 1,
+      attempted: 0,
+      failed: 0,
       tpCounts: {},
+      skippedReason: 'no_tp_ladder',
     })
     return
   }
