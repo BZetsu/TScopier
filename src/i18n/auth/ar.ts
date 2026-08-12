@@ -91,8 +91,22 @@ export const authAr: AuthTranslations = {
     heading: 'تحقق من بريدك الإلكتروني',
     subtitle: 'أرسلنا رابط تأكيد إلى {email}.',
     resend: 'إعادة إرسال البريد',
+    resendIn: 'إعادة الإرسال خلال {seconds}ث',
+    resendCooldown: 'يرجى الانتظار {seconds}ث قبل طلب بريد آخر.',
     resent: 'تم إرسال البريد!',
     backToLogin: 'العودة إلى تسجيل الدخول',
+  },
+  welcome: {
+    title: 'مرحبًا بك في TScopier',
+    subtitle: 'حسابك جاهز. اربط Telegram وابدأ بنسخ الإشارات إلى وسيطك.',
+    steps: [
+      'اربط Telegram واختر قنوات الإشارات',
+      'اربط حساب وسيط MT4/MT5',
+      'انسخ الصفقات تلقائيًا وفق إعدادات المخاطر',
+    ],
+    startUsing: 'ابدأ استخدام TScopier',
+    exploreDashboard: 'استكشف لوحة التحكم أولًا',
+    errorFallback: 'تعذرت المتابعة. حاول مرة أخرى.',
   },
   marketing: {
     headline: 'نسخ سلس لكل إشارات Telegram',

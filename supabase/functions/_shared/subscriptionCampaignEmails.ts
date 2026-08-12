@@ -58,7 +58,7 @@ export function buildNoSubscriptionEmail(
     bodyHtml: `
       <p style="margin:0 0 16px 0;">You created your TScopier account and finished onboarding, but <strong style="color:#0f172a;">live signal copying is still off</strong> because there is no active subscription on your account.</p>
       <p style="margin:0 0 16px 0;">Without a plan, new Telegram signals from your channels are <strong style="color:#0f172a;">not sent to your broker</strong>. Your dashboard, broker links, and channel setup remain saved — you only need a subscription to turn execution back on.</p>
-      <p style="margin:0;">Choose <strong>Advanced</strong> for the full copier (unlimited channels, range trading, unlimited backtests) with a <strong>10-day free trial</strong> for first-time subscribers, or <strong>Basic</strong> to get started with one account and essential copy features.</p>
+      <p style="margin:0;">Choose <strong>Advanced</strong> for the full copier (unlimited channels, range trading, unlimited backtests) with a <strong>3-day free trial</strong> for first-time subscribers, or <strong>Basic</strong> to get started with one account and essential copy features.</p>
     `,
     featureList: [
       "24/7 automated copying from your Telegram signal channels",
@@ -111,7 +111,7 @@ export function buildTrialExpiredEmail(
     title: "Subscribe to keep copying signals",
     greeting: name,
     bodyHtml: `
-      <p style="margin:0 0 16px 0;">Your <strong style="color:#0f172a;">10-day Advanced trial has ended</strong>. Automated trade copying is now <strong style="color:#0f172a;">paused</strong> on your account until you subscribe to a paid plan.</p>
+      <p style="margin:0 0 16px 0;">Your <strong style="color:#0f172a;">3-day Advanced trial has ended</strong>. Automated trade copying is now <strong style="color:#0f172a;">paused</strong> on your account until you subscribe to a paid plan.</p>
       <p style="margin:0 0 16px 0;">Nothing you configured is lost: your <strong>broker connections</strong>, <strong>Telegram channels</strong>, copier settings, and channel risk parameters are still saved and ready to use the moment you reactivate.</p>
       <p style="margin:0;">Subscribe to <strong>Advanced</strong> to restore unlimited channels, range trading, and advanced copier tools, or choose <strong>Basic</strong> if you only need a single account with core copy features. Because you already used your trial, checkout starts billing immediately — there is no second free trial.</p>
     `,

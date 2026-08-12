@@ -91,8 +91,22 @@ export const authJa: AuthTranslations = {
     heading: 'メールを確認してください',
     subtitle: '{email} に確認用リンクを送信しました。',
     resend: 'メールを再送信',
+    resendIn: '{seconds}秒後に再送信',
+    resendCooldown: '別のメールをリクエストする前に{seconds}秒お待ちください。',
     resent: 'メールを送信しました！',
     backToLogin: 'ログインに戻る',
+  },
+  welcome: {
+    title: 'TScopierへようこそ',
+    subtitle: 'アカウントの準備ができました。Telegramを接続して、シグナルのコピーを始めましょう。',
+    steps: [
+      'Telegramを接続し、シグナルチャンネルを選ぶ',
+      'MT4/MT5ブローカー口座を連携する',
+      'リスク設定に従って自動でトレードをコピーする',
+    ],
+    startUsing: 'TScopierを使い始める',
+    exploreDashboard: '先にダッシュボードを見る',
+    errorFallback: '続行できませんでした。もう一度お試しください。',
   },
   marketing: {
     headline: 'すべてのTelegramシグナルに対応するシームレスなコピー',
