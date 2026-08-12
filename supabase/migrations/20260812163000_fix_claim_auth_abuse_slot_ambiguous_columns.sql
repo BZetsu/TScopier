@@ -1,25 +1,7 @@
 /*
-  IP-based rate limits for auth-related edge functions (verification email, password reset).
-  claim_auth_abuse_slot() is called with a hashed client IP before Resend is invoked.
+  Fix claim_auth_abuse_slot: PL/pgSQL locals action_key/ip_hash shadowed table columns,
+  causing "column reference action_key is ambiguous" on signup verification email.
 */
-
-CREATE TABLE IF NOT EXISTS public.auth_abuse_rate_limits (
-  action_key text NOT NULL,
-  ip_hash text NOT NULL,
-  window_started_at timestamptz NOT NULL DEFAULT now(),
-  window_count integer NOT NULL DEFAULT 0,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (action_key, ip_hash)
-);
-
-COMMENT ON TABLE public.auth_abuse_rate_limits IS
-  'Rolling hourly caps per action + hashed client IP for auth email abuse prevention.';
-
-ALTER TABLE public.auth_abuse_rate_limits ENABLE ROW LEVEL SECURITY;
-
-REVOKE ALL ON TABLE public.auth_abuse_rate_limits FROM PUBLIC;
-REVOKE ALL ON TABLE public.auth_abuse_rate_limits FROM anon, authenticated;
-GRANT ALL ON TABLE public.auth_abuse_rate_limits TO service_role;
 
 CREATE OR REPLACE FUNCTION public.claim_auth_abuse_slot(
   p_action text,
@@ -87,9 +69,3 @@ BEGIN
   RETURN jsonb_build_object('ok', true);
 END;
 $$;
-
-REVOKE ALL ON FUNCTION public.claim_auth_abuse_slot(text, text, integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.claim_auth_abuse_slot(text, text, integer) TO service_role;
-
-COMMENT ON FUNCTION public.claim_auth_abuse_slot(text, text, integer) IS
-  'Atomically claims an auth-abuse slot per action + hashed IP (default 10/hour).';

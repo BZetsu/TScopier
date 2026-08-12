@@ -2,6 +2,38 @@
 
 ## Changelog
 
+### 2026-08-12 — Emergency spam block: DB trigger + cleanup (spam resumed)
+
+- **Problem:** `pornhub#####@hotmail.com` bots resumed (~20 signups in last hour). `auth-before-user-created` edge function was deployed but **Auth Hook not enabled in dashboard** — signups bypassed server policy. `auth_abuse_rate_limits` migration also not yet applied on prod.
+- **Fix (live on prod + staging):** Migration `20260812160000_block_spam_signup_emails.sql` — `BEFORE INSERT` trigger on `auth.users` mirrors `emailSignupPolicy` (pornhub pattern, numeric locals, disposable domains, repeated-char locals). Blocks bots even without dashboard hook/CAPTCHA. Also applied `20260812140000_auth_abuse_rate_limits.sql` on prod + staging.
+- **Cleanup:** Deleted 20 new `pornhub*@hotmail.com` accounts from prod.
+- **Still manual (dashboard):** Enable Supabase Auth CAPTCHA (Turnstile), wire `before-user-created` hook, set `TURNSTILE_SECRET_KEY` + `BEFORE_USER_CREATED_HOOK_SECRET`, Netlify `VITE_TURNSTILE_SITE_KEY` + redeploy frontend. See `docs/signup-spam-protection-setup.md`.
+
+### 2026-08-12 — Skip pricing + subscription reminder modal
+
+- **"Not now" button** on `/pricing` header (top-right) lets users skip to dashboard without subscribing.
+- **Dashboard allowed without subscription** — added `/dashboard` (and `/dashboard/broker/*`) to `subscriptionNavAccess.ts`.
+- **`SubscriptionReminderModal`** — shown once per session (4h cooldown) on dashboard when no active subscription. Shows "No active subscription — copying signals requires an active subscription" with:
+  - "Start your 5-day free trial" (if user never trialed, i.e. `trial_ends_at` is null) or "Subscribe now" (if already trialed)
+  - "View pricing" secondary button
+  - Close (X) button + backdrop dismiss
+- Files: `src/pages/pricing/AppPricingPage.tsx`, `src/lib/subscriptionNavAccess.ts`, `src/components/billing/SubscriptionReminderModal.tsx`, `src/pages/dashboard/DashboardPage.tsx`
+
+### 2026-08-12 — Strong password policy on signup
+
+- **Policy:** New `src/lib/passwordPolicy.ts` — min 6 chars, uppercase, lowercase, number, symbol; blocks common weak passwords. Enforced on signup + reset-password flows before Supabase auth calls.
+- **i18n:** Updated `passwordHint`, `passwordTooShort` (8 chars), added `passwordTooWeak` across all auth locales.
+
+### 2026-08-12 — Signup spam: friendly blocked-email errors + porhub variant
+
+- **UX:** Signup now validates email against spam policy **before** `auth.signUp` and maps Supabase’s generic `Database error saving new user` to **“This email address is not allowed”** (i18n in all auth locales). Files: `src/lib/signupEmailPolicy.ts`, `SignupPage.tsx`.
+- **Policy:** Broadened pornhub-style block to `porhub` / `prhub` typo variants (`p[o0]{0,1}r{1,2}n?hub\d+`) in `emailSignupPolicy.ts` + DB trigger (migration `20260812170000`, applied prod + staging).
+
+### 2026-08-12 — Fix signup broken by claim_auth_abuse_slot ambiguous columns
+
+- **Bug:** Legitimate signups failed with `column reference "action_key" is ambiguous` during verification email send. `claim_auth_abuse_slot` used PL/pgSQL locals named `action_key`/`ip_hash` that shadowed `auth_abuse_rate_limits` columns (notably in `ON CONFLICT`).
+- **Fix:** Renamed locals to `v_action_key`/`v_ip_hash`. Migration `20260812163000_fix_claim_auth_abuse_slot_ambiguous_columns.sql` applied prod + staging.
+
 ### 2026-08-12 — Advanced free trial extended to 5 days
 
 - **Change:** `trial_period_days` 3 → 5 in `create-checkout-session` (Advanced, first-time only). Updated all marketing/pricing i18n (EN + 8 locales), campaign emails, and docs (`stripe-setup.md`, `marketing-site.md`).

@@ -17,6 +17,14 @@ Deno.test("evaluateSignupEmail blocks pornhub spam pattern", () => {
   }
 });
 
+Deno.test("evaluateSignupEmail blocks porhub typo variant", () => {
+  const result = evaluateSignupEmail("porhub94274@hotmail.com");
+  assertEquals(result.allowed, false);
+  if (!result.allowed) {
+    assertEquals(result.code, "blocked_email");
+  }
+});
+
 Deno.test("evaluateSignupEmail blocks disposable domains", () => {
   const result = evaluateSignupEmail("test@mailinator.com");
   assertEquals(result.allowed, false);
