@@ -194,9 +194,9 @@ export const en: Translations = {
     extraAccountUnit: '$10/account/month',
     extraAccountUnitAnnual: '$96/account/year',
     subscribe: 'Subscribe',
-    startTrial: 'Start your 3-day free trial',
-    trialDays: '3-day free trial on Advanced',
-    moneyBackGuarantee: '3-day free trial on Advanced',
+    startTrial: 'Start your 5-day free trial',
+    trialDays: '5-day free trial on Advanced',
+    moneyBackGuarantee: '5-day free trial on Advanced',
     features: 'Features',
     popular: 'Most Popular',
     basicFeatures: [
@@ -309,7 +309,7 @@ export const en: Translations = {
       statusCanceled: 'Canceled',
       statusPastDue: 'Past due',
       trialEnds: 'Trial ends',
-      choosePlan: 'Start your 3-day free trial',
+      choosePlan: 'Start your 5-day free trial',
     },
     checkoutFailed: 'Could not start checkout. Please try again.',
     paywall: {

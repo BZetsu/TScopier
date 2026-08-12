@@ -19,7 +19,7 @@ export const landingPl: LandingTranslations = {
     subheadline:
       'TScopier to kompleksowa platforma do kopiowania sygnałów z Telegrama, która łączy Telegram i kopiuje sygnały handlowe bezpośrednio na MT4/MT5 — bez skomplikowanych konfiguracji, bez EA i bez VPS.',
     socialProof: 'Ocena #1 cloudowy kopiark sygnałów Telegram',
-    primaryCta: 'Rozpocznij 3-dniowy bezpłatny okres próbny',
+    primaryCta: 'Rozpocznij 5-dniowy bezpłatny okres próbny',
     secondaryCta: 'Zaloguj się',
     imageAlt:
       'TScopier panel kontrolny z saldem, dziennym zyskiem, wynikami handlu i wykresami wzrostu konta',
@@ -615,7 +615,7 @@ export const landingPl: LandingTranslations = {
     subtitle: 'Typowe kopiarki Telegram a platforma chmurowa zbudowana pod kątem szybkości, przejrzystości i skali.',
     otherLabel: 'Inne kopiarki',
     tscopierLabel: 'TScopier',
-    cta: 'Rozpocznij 3-dniowy bezpłatny okres próbny',
+    cta: 'Rozpocznij 5-dniowy bezpłatny okres próbny',
     rows: [
       {
         aspect: 'Konfiguracja',
@@ -758,7 +758,7 @@ export const landingPl: LandingTranslations = {
       {
         feature: 'Bezpłatny okres próbny',
         basic: 'no',
-        advanced: '3 dni',
+        advanced: '5 dni',
         custom: 'Niestandardowe',
       },
       {
@@ -777,7 +777,7 @@ export const landingPl: LandingTranslations = {
       {
         question: 'Czy istnieje bezpłatny okres próbny?',
         answer:
-          'Tak. Advanced obejmuje 3-dniowy bezpłatny okres próbny dla nowych subskrybentów (karta wymagana przy checkout; rozliczenie zaczyna się po okresie próbnym). Basic jest płatny od pierwszego dnia.',
+          'Tak. Advanced obejmuje 5-dniowy bezpłatny okres próbny dla nowych subskrybentów (karta wymagana przy checkout; rozliczenie zaczyna się po okresie próbnym). Basic jest płatny od pierwszego dnia.',
       },
       {
         question: 'Jaka jest różnica między rozliczeniami miesięcznymi i rocznymi?',
@@ -826,7 +826,7 @@ export const landingPl: LandingTranslations = {
       title: 'Gotowy do kopiowania sygnałów bez pracy ręcznej?',
       subtitle:
         'Link Telegram, podłącz MT4 lub MT5 i rozpocznij kopiowanie w ciągu kilku minut — bez VPS, bez instalacji.',
-      primary: 'Rozpocznij 3-dniowy bezpłatny okres próbny',
+      primary: 'Rozpocznij 5-dniowy bezpłatny okres próbny',
       secondary: 'Zaloguj się',
     },
     tagline: 'Ultraszybka kopiarka sygnału Telegram dla kont MetaTrader.',

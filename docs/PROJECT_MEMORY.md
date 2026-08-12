@@ -2,6 +2,23 @@
 
 ## Changelog
 
+### 2026-08-12 — Advanced free trial extended to 5 days
+
+- **Change:** `trial_period_days` 3 → 5 in `create-checkout-session` (Advanced, first-time only). Updated all marketing/pricing i18n (EN + 8 locales), campaign emails, and docs (`stripe-setup.md`, `marketing-site.md`).
+- **Deploy:** Redeploy `create-checkout-session` to staging + prod; Netlify rebuild for frontend copy. Existing `trialing` users keep their current `trial_ends_at`.
+
+### 2026-08-12 — Additional manual spam bot cleanup (screenshot batch)
+
+- **Action:** Deleted **15** more bot accounts from production that survived the bulk `pornhub` cleanup — nonsense names (`123 123`, `gay lord`, `test test`), garbage emails (`gaylord@*`, `qweeee*@hotmail.com`, `123qwe*@hotmail.com`), all with 0 brokers/trades/subs.
+- **Kept:** Markus Frei (`herrmarkus.frei@gmail.com`), Comlan Comlan (`ccomlan07@gmail.com`, onboarding completed), Nelson Dimgba (`jayrowe65.out@gmail.com`, active subscription).
+
+### 2026-08-12 — Production spam bot account cleanup
+
+- **Action:** Deleted **2,883** bot signup accounts from production (`sxkpcovbyaficvtkpsdo`) via SQL batches. Pattern matched `emailSignupPolicy` rules: `pornhub#####@hotmail.com` (2,881), numeric-only local parts (2), disposable domains (0 on prod).
+- **Verified before delete:** 0 brokers, 0 trades, 0 subscriptions, 0 admin audit refs on matched accounts. Cascade removed `user_profiles` rows; 0 orphan profiles after cleanup.
+- **Remaining prod users:** 254 legitimate accounts. Staging left unchanged (only `tartarix-test*@yopmail.com` test accounts matched disposable-domain rule).
+- **Follow-up:** Ensure Turnstile + `auth-before-user-created` hook are live so new bots cannot re-register.
+
 ### 2026-08-12 — Signup spam protection (Turnstile + server hardening)
 
 - **Problem:** Bots mass-registering (e.g. `pornhub#####@hotmail.com`), triggering verification emails that bounce and hurt Resend reputation.

@@ -19,7 +19,7 @@ export const landingEn: LandingTranslations = {
     subheadline:
       'TScopier is an All-In-One Telegram Signal Copier Platform that connects your Telegram and copy trading signals directly to your MT4/MT5 — no complicated setups, no EA, and no VPS required.',
     socialProof: 'Rated #1 Cloud-based Telegram Signal Copier',
-    primaryCta: 'Start your 3-day free trial',
+    primaryCta: 'Start your 5-day free trial',
     secondaryCta: 'Sign in',
     imageAlt:
       'TScopier dashboard with balance, daily profit, trade outcomes, and account growth charts',
@@ -615,7 +615,7 @@ export const landingEn: LandingTranslations = {
     subtitle: 'Typical Telegram copiers vs a cloud platform built for speed, clarity, and scale.',
     otherLabel: 'Other copiers',
     tscopierLabel: 'TScopier',
-    cta: 'Start your 3-day free trial',
+    cta: 'Start your 5-day free trial',
     rows: [
       {
         aspect: 'Setup',
@@ -758,7 +758,7 @@ export const landingEn: LandingTranslations = {
       {
         feature: 'Free trial',
         basic: 'no',
-        advanced: '3 days',
+        advanced: '5 days',
         custom: 'Custom',
       },
       {
@@ -777,7 +777,7 @@ export const landingEn: LandingTranslations = {
       {
         question: 'Is there a free trial?',
         answer:
-          'Yes. Advanced includes a 3-day free trial for first-time subscribers (card required at checkout; billing starts after the trial). Basic is charged from day one. Basic is $9.99/month (or $95.90/year). Advanced is $39.99/month (or $383.90/year).',
+          'Yes. Advanced includes a 5-day free trial for first-time subscribers (card required at checkout; billing starts after the trial). Basic is charged from day one. Basic is $9.99/month (or $95.90/year). Advanced is $39.99/month (or $383.90/year).',
       },
       {
         question: 'What is the difference between monthly and annual billing?',
@@ -826,7 +826,7 @@ export const landingEn: LandingTranslations = {
       title: 'Ready to copy signals without the manual work?',
       subtitle:
         'Link Telegram, connect MT4 or MT5, and start copying in minutes — no VPS, no install.',
-      primary: 'Start your 3-day free trial',
+      primary: 'Start your 5-day free trial',
       secondary: 'Sign in',
     },
     tagline: 'Ultra-fast Telegram signal copier for MetaTrader accounts.',
