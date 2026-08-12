@@ -9,9 +9,19 @@
 - **Cleanup:** Deleted 20 new `pornhub*@hotmail.com` accounts from prod.
 - **Still manual (dashboard):** Enable Supabase Auth CAPTCHA (Turnstile), wire `before-user-created` hook, set `TURNSTILE_SECRET_KEY` + `BEFORE_USER_CREATED_HOOK_SECRET`, Netlify `VITE_TURNSTILE_SITE_KEY` + redeploy frontend. See `docs/signup-spam-protection-setup.md`.
 
+### 2026-08-12 — Skip pricing + subscription reminder modal
+
+- **"Not now" button** on `/pricing` header (top-right) lets users skip to dashboard without subscribing.
+- **Dashboard allowed without subscription** — added `/dashboard` (and `/dashboard/broker/*`) to `subscriptionNavAccess.ts`.
+- **`SubscriptionReminderModal`** — shown once per session (4h cooldown) on dashboard when no active subscription. Shows "No active subscription — copying signals requires an active subscription" with:
+  - "Start your 5-day free trial" (if user never trialed, i.e. `trial_ends_at` is null) or "Subscribe now" (if already trialed)
+  - "View pricing" secondary button
+  - Close (X) button + backdrop dismiss
+- Files: `src/pages/pricing/AppPricingPage.tsx`, `src/lib/subscriptionNavAccess.ts`, `src/components/billing/SubscriptionReminderModal.tsx`, `src/pages/dashboard/DashboardPage.tsx`
+
 ### 2026-08-12 — Strong password policy on signup
 
-- **Policy:** New `src/lib/passwordPolicy.ts` — min 8 chars, uppercase, lowercase, number, symbol; blocks common weak passwords. Enforced on signup + reset-password flows before Supabase auth calls.
+- **Policy:** New `src/lib/passwordPolicy.ts` — min 6 chars, uppercase, lowercase, number, symbol; blocks common weak passwords. Enforced on signup + reset-password flows before Supabase auth calls.
 - **i18n:** Updated `passwordHint`, `passwordTooShort` (8 chars), added `passwordTooWeak` across all auth locales.
 
 ### 2026-08-12 — Signup spam: friendly blocked-email errors + porhub variant
