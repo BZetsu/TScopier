@@ -2,6 +2,11 @@
 
 ## Changelog
 
+### 2026-08-12 — Cleanup hotmail/outlook/proton spam wave
+
+- Deleted **31** prod spam accounts created today on `hotmail.com` / `outlook.com` / `outlook.co.uk` / `proton.me` (0 brokers, 0 subs).
+- Kept **4** older hotmail users with brokers/subscriptions: `alexrd0657@`, `tommy.vdl@`, `davidebugno@`, `dacosta_daniela@`.
+
 ### 2026-08-12 — Block hotmail/outlook/proton signup domains
 
 - **Temporary:** Reject signups from `hotmail.com`, `outlook.com`, `outlook.co.uk`, `proton.me`.
