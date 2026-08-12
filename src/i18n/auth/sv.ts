@@ -91,8 +91,22 @@ export const authSv: AuthTranslations = {
     heading: 'Kontrollera din e-post',
     subtitle: 'Vi har precis skickat en verifieringslänk till {email}.',
     resend: 'Skicka igen',
+    resendIn: 'Skicka igen om {seconds}s',
+    resendCooldown: 'Vänta {seconds}s innan du begär ett nytt mejl.',
     resent: 'E-post skickad!',
     backToLogin: 'Tillbaka till inloggning',
+  },
+  welcome: {
+    title: 'Välkommen till TScopier',
+    subtitle: 'Ditt konto är klart. Anslut Telegram och börja kopiera signaler till din mäklare.',
+    steps: [
+      'Anslut Telegram och välj signalkanaler',
+      'Länka ditt MT4/MT5-mäklarkonto',
+      'Kopiera affärer automatiskt med dina riskinställningar',
+    ],
+    startUsing: 'Börja använda TScopier',
+    exploreDashboard: 'Utforska instrumentpanelen först',
+    errorFallback: 'Kunde inte fortsätta. Försök igen.',
   },
   marketing: {
     headline: 'En smidig kopierare för varje Telegram-signal',

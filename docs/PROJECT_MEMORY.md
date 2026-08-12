@@ -2,36 +2,85 @@
 
 ## Changelog
 
-### 2026-08-12 — `range_basket_tp_rebalance` "no TP ladder" FALSELY logged as `failed`/Major — root-caused + FIXED (signal `2ffe9304`)
+### 2026-08-12 — Marketing nav responsive for long locale labels
 
-- **Context (user request):** admin dashboard showed `range_basket_tp_rebalance` as **Major** for signal `2ffe9304` ("GOLD BUY NOW @4391.00 / SL: 4376.00", Leonardo Araújo, Aug 12 02:20–02:36 UTC): `{phase:"layering_rebalance", failed:1, modified:0, attempted:1, open_legs:11..16, target_tp_counts:{}, force_layering_rebalance:true}` — 6 failed rows, no error message.
-- **What actually happened (correct behavior, wrong logging):** signal has NO TPs (`parsed tp:[]`). 10-leg range basket opened at 02:23 (2026-08-11 `30ec1794` edit fix worked — edited price opened), then more legs fired to 16 as price moved. Each leg firing re-ran `syncRangeBasketTakeProfits` (forceLayeringRebalance). `resolveRangeBasketFinalTps` correctly found no ladder (signal `tp:[]`, no plan TPs, no channel TP memory) → correct skip, **no broker call**. But the deployed worker logged the skip as `status:'failed'` with `attempted:1, failed:1` `target_tp_counts:{}` → admin `errors.ts:93` defaulted empty-message rows to Major.
-- **Root cause — the Aug-11 fix was PARTIALLY shipped:** commit `00674674` (main/staging) shipped `rangeBasketTpRebalanceStatus` helper, i18n keys (all 9 locales), frontend timeline handler, and a pure-unit test — but the **skip-branch call site** at `worker/src/rangeBasketTpSync.ts:754-761` was never updated. It still passed `attempted:1, failed:1` and NO `skippedReason`. The full hunk had been left uncommitted in `stash@{0}` (`wip-2026-08-11-agents-i18n-range`). Unit test passed because it tested the pure helper, not the call site.
-- **Fix (this session, branch `fix/range-rebalance-no-tp-ladder-skip` from upstream/dev):**
-  - `worker/src/rangeBasketTpSync.ts` skip branch now logs `attempted:0, failed:0, skippedReason:'no_tp_ladder'` → `rangeBasketTpRebalanceStatus` returns `'skipped'` → row becomes benign; admin shows "Skipped — no broker action. Reason: no tp ladder" and user timeline shows "Skipped {symbol} take-profit rebalance (no tp ladder)".
-  - `worker/src/rangeBasketTpSync.test.ts`: +1 **call-site** regression test driving the real `syncRangeBasketTakeProfits` skip path with a fake supabase (11 naked open legs, tp:0) asserting the inserted log row has `status:'skipped'`, `attempted:0`, `failed:0`, `skipped_reason:'no_tp_ladder'`. (The previous gap: only the pure helper was tested.)
-  - Verified: `node --import tsx --test` on rangeBasketTpSync + basketEffectiveStops + basketSlTpReconcile = 66/66 pass; worker `tsc --noEmit` clean; eslint clean on both changed files.
-- **AGENTS.md (local only, NOT committed per user instruction):** restored the Railway GraphQL-access section + scratchpad rules from `stash@{0}` into the local working tree (was missing). Stays uncommitted/local.
-- **Audit — earlier "fork-only" branches (update-loop recovery, reconnect-storm, session-sendcode, manage-button) all verified PRESENT on prod:** committed via cherry-picks/squashes (`4a0febe0`, `600ca864`, …) so hash-based `--contains` showed nothing, but file content on upstream/main/staging matches. No action needed.
-- **Deployed state:** prod/staging workers still run the pre-fix skip branch → rebalance skips will keep logging `failed` until this ships. Historical pre-fix rows stay as-is (backfill optional).
-- **Follow-ups (deployer):** commit branch → push to origin → PR to upstream/dev → staging (Railway redeploy) → main. Notion task update. Optional: drop now-applied `stash@{0}`.
+- Replaced absolute-centered desktop nav with flex layout so links no longer overlap logo / language / CTAs when translations are longer.
+- Desktop nav + header CTA from `lg` up; hamburger until then. Long trial CTA truncates with title tooltip.
+- Nav header CTA label: **Sign up** (`nav.getStarted`); hero keeps trial CTA via `hero.primaryCta`.
+- Files: `MarketingHeader.tsx`, `MarketingAuthCta.tsx`, landing `nav.getStarted`.
 
-### 2026-08-11 — `entry_not_opened` / `signal_entry_range_requires_price` incident FIXED: stale dispatch claim + revision routing (3 worker fixes, signal `30ec1794`)
+### 2026-08-12 — Hero: classic “30,000 traders already joined” replaces Trustpilot
 
-- **Context (user request):** signal `30ec1794` ("GOLD BUY NOW @4389.00\n\nSL : 4374.00", user `82756f8c` = Leonardo, channel `e8218797`, broker `fcabb782`) failed with `entry_not_opened` even though the edited message carried the price. Diagnosed via prod DB (`signals`, `trade_execution_logs`, `signal_broker_dispatch_claims`, `listener_events`) + Railway worker logs.
-- **Verified timeline (UTC):** 12:07:21 listener dispatches ORIGINAL message (NO price — provider posts "GOLD BUY NOW" then edits 19s later) → 12:07:23 worker claims `signal_broker_dispatch_claims`, planner skips `signal_entry_range_requires_price` (correct for no-price + range-strict), **claim never released** → 12:07:40 provider EDITS message adding `@4389.00` (`telegram_edit_date_seen=12:07:40`) → 12:07:41 `message revision dispatch source=live_edit` with valid `entry_price=4389` → 12:07:49 + 12:07:53 worker: `skip duplicate dispatch claim … materialized=false` → revision gives up → final `failed/entry_not_opened`.
-- **Root cause — THREE stacked worker bugs:**
-  1. **Stale claim on skip** (`worker/src/tradeExecutor/entryPrepare.ts:772-781`): the planner-skip path (`plan.orders.length === 0`, incl. `signal_entry_range_requires_price`) returned WITHOUT `releaseSignalBrokerDispatchClaim`. Only `rangeEntryDeferred` (line 1026) and range-wake (`TradeExecutor.ts:1412`) released claims. A skipped dispatch therefore held the claim forever, permanently blocking the post-edit revision.
-  2. **Revision never reclaims** (`worker/src/tradeExecutor/TradeExecutor.ts:1421-1467`): when a revision found an existing claim + nothing materialized after the 5s poll, it logged `skip duplicate dispatch claim materialized=false` and returned `{openedOrMerged:false}` — no attempt to take the stale claim over.
-  3. **Revision routed to modify-only unconditionally** (`entryPrepare.ts:378-397`): the Aug-5 duplication fix (`26e09770`) made EVERY `sameSignalRefresh` revision route to `tryParameterFollowUpMergeModifyOnly` and return — even when the first dispatch had SKIPPED and nothing was materialized. `shouldBlockNewEntryOnRevision` (messageRevisionEntryGuard) already encoded the correct rule (block only when materialized) but was unreachable for revisions (line 378 returned first). So even with bugs 1+2 fixed, the edited signal could never open.
-- **Fixes (worker only):**
-  - **Fix 1 (entryPrepare.ts):** skip path now calls `releaseSignalBrokerDispatchClaim` before returning — a skipped dispatch must not hold the claim.
-  - **Fix 2 (TradeExecutor.ts + signalBrokerDispatchClaim.ts):** new exported pure `shouldTakeOverStaleClaim({isRevisionRefresh, materialized, entryInFlight})` (true only when revision + not materialized + entry not in-flight). In the revision claim-lost branch, after the 5s poll, release the stale claim and re-claim once; if re-claimed, proceed with the entry instead of giving up. Covers orphaned claims (crashes, other skip paths).
-  - **Fix 3 (entryPrepare.ts:378):** the modify-only routing now only runs when `manualDispatchAlreadyMaterialized(signal, broker)` is true. A revision with nothing materialized falls through to the normal entry path (past `shouldBlockNewEntryOnRevision`, which stays true to its name) so the edited price can actually open. Aug-4 duplication protection preserved: once materialized, revisions still go modify-only.
-- **Tests:** `signalBrokerDispatchClaim.test.ts` +4 (shouldTakeOverStaleClaim matrix). Existing `revisionIdempotency`, `messageRevisionEntryGuard`, `dispatch.entryFailure` all pass. Worker `tsc --noEmit` clean; eslint clean on 4 changed files; 297 tradeExecutor+manualPlanning tests pass.
-- **Files:** `worker/src/tradeExecutor/entryPrepare.ts`, `worker/src/tradeExecutor/TradeExecutor.ts`, `worker/src/tradeExecutor/signalBrokerDispatchClaim.ts`, `worker/src/tradeExecutor/signalBrokerDispatchClaim.test.ts`.
-- **Blast radius observed (same channel/user, Aug 11):** at least 8 signals with the identical skip+stale-claim pattern (`6eabc5f8`, `f433d66c`, `30ec1794`, `c5f152e8`, `dd4fc62a`, `2c625a42`, `45933a45`, `a3c7fffe`, `13556772` …); 92 `entry_not_opened` failures on channel `e8218797` since Aug 1. Same stale-claim pattern seen in the 8/10 `7de8d9c7` logs.
-- **Follow-ups:** (1) commit + push to staging, deploy worker on Railway, verify next edited signal opens; (2) promote to main after staging validation; (3) the first dispatch skip (pre-edit, no price) is BY DESIGN for range-strict mode — consider telling providers to include the price initially, but the edit path now works regardless.
+- Commented out Excellent/Trustpilot widget at top of marketing hero; shows `hero.socialProof` instead (now “Rated #1 Cloud-based Telegram Signal Copier”).
+- Hero headline: “Telegram Signals. Copied Automatically.”
+- Files: `HeroSection.tsx`, landing locale `hero.socialProof` / `hero.headline`.
+
+### 2026-08-12 — Stop treating verify-email as a referral code
+
+- **Bug:** Signup “Referral code” field showed `verify-email` because `/:referralCode` could capture that path and redirect to `/signup?ref=verify-email`.
+- **Fix:** reserved path blocklist in `referralCodeLooksValid`; clear stored reserved codes; move `/:referralCode` after real routes in `App.tsx`.
+- **Files:** `referralCapture.ts`, `referralCapture.test.ts`, `App.tsx`, `MarketingApp.tsx`.
+
+### 2026-08-12 — Marketing CTA: Start your 3-day free trial
+
+- Replaced “Get started for free” with “Start your 3-day free trial” on marketing nav/hero/comparison/footer CTAs and paywall `choosePlan` (all landing + relevant pricing locales). Still links to `/signup`.
+
+### 2026-08-12 — Welcome Modal: Start Using TScopier → Channels
+
+- Pricing already shown earlier in onboarding, so Welcome Modal no longer offers trial/pricing CTAs.
+- Primary: **Start Using TScopier** → completes onboarding and navigates to `/channels` (Telegram connect).
+- Secondary: **Explore dashboard first** → completes onboarding and stays on dashboard.
+- Files: `WelcomeModal.tsx`, `src/i18n/auth/*`.
+
+### 2026-08-12 — Fix Check-your-email page flicker
+
+- **Cause:** `VerifyEmailPage` called `refreshProfile()` whenever `profileLoading` became false, while `UserProfileProvider` already loads the profile — infinite refresh loop for logged-in unverified users (redirect from app gates).
+- **Fix:** removed that effect; keep only redirect-when-verified. Prefer `?email=` for the subtitle so it does not flash when the session clears.
+- **Files:** `src/pages/auth/VerifyEmailPage.tsx`, scratchpad `docs/scratchpad-verify-email-flicker-2026-08-12.md`.
+
+### 2026-08-12 — Verification email resend cooldown (abuse protection)
+
+- **Limits:** 60s between sends per email; max 5 per rolling hour. Enforced server-side via `claim_verification_email_send` + `email_verification_sends` table before Resend is called. Returns HTTP 429 + `retry_after_seconds`.
+- **UI:** Verify-email “Resend” disabled with countdown (`Resend in Ns`); sessionStorage keeps countdown across refresh; signup no longer falls back to `auth.resend` on cooldown.
+- **Files:** migration `20260812130000_verification_email_resend_cooldown.sql`, `send-verification-email/index.ts`, `sendVerificationEmail.ts`, `VerifyEmailPage.tsx`, `SignupPage.tsx`, auth i18n.
+- **Deploy:** migration applied staging + prod; edge function deploy required for enforcement to go live.
+
+### 2026-08-12 — Email verification bypass: auto-confirm was marking profiles verified
+
+- **Bug:** Users could sign up / log in and use the app without clicking the verification email.
+- **Root cause:** Supabase “Confirm email” is off on staging and prod (auth confirms within ~15ms of signup). Trigger `sync_email_verified_on_confirm` copied that into `user_profiles.email_verified_at`, so frontend gates (`isEmailVerified` / `ProtectedRoute` / `EmailVerificationGate`) allowed access.
+- **Fix:** Migration `20260812120000_harden_email_verified_sync.sql` — ignore confirms within 2s of `created_at`; `mark_email_verified()` writes `now()`. Applied on staging + prod. Staging auto-synced `email_verified_at` cleared for retest; prod existing users grandfathered.
+- **Code:** `supabase/functions/send-verification-email/index.ts` prefers `signup` generateLink with `magiclink` fallback (redeploy when approved).
+- **Follow-up (ops):** Enable **Confirm email** in Supabase Auth → Providers → Email on staging (`axdcledcyhyvzrnfkwat`) and prod (`sxkpcovbyaficvtkpsdo`). Until then, password login still succeeds at Auth, but the app redirects to `/verify-email` until the link is clicked.
+- **Scratchpad:** `docs/scratchpad-email-verification-bypass-2026-08-12.md`.
+
+### 2026-08-12 — Welcome Modal trial CTA reliably opens Stripe Checkout
+
+- **Bug:** Welcome Modal “Start your 3-day free trial” called `completeOnboarding()` (profile refresh) before creating the Stripe session, which cleared `needsWelcome` and unmounted the modal mid-flow, so users often never reached Stripe Hosted Checkout.
+- **Fix:** `startFreeTrial` now creates the Advanced monthly checkout session first via `startPlanCheckout`, marks `onboarding_completed_at` with a non-blocking `updateUserProfileFields`, then `window.location.assign(stripeUrl)`. Uses `appAbsoluteUrl` for success/cancel like the pricing page.
+- **File:** `src/components/onboarding/WelcomeModal.tsx`.
+
+### 2026-08-11 — Signup-first + Welcome Modal restored
+
+- **Marketing CTAs:** “Get started for free” (hero/header/comparison/footer) goes to `appUrl('/signup')`, not `/pricing`. Pricing-page plan buttons still stash `pendingPlanSelection` and auto-checkout after auth.
+- **Welcome Modal:** restored `src/components/onboarding/WelcomeModal.tsx` + `auth.welcome` i18n. Shown when email verified and `onboarding_completed_at` is null. Primary starts Advanced monthly checkout (3-day trial CTA); secondary opens `/pricing`; tertiary explores dashboard. Each path sets `onboarding_completed_at`.
+- **Gate:** `useNeedsWelcome` restored; skips welcome when a pending plan exists so pricing auto-checkout is not interrupted. `AppShell` lazy-loads the modal and forces `/dashboard` while welcome is needed.
+- **Files:** `MarketingAuthCta.tsx`, `ComparisonSection.tsx`, `MarketingFooter.tsx`, `WelcomeModal.tsx`, `useNeedsWelcome.ts`, `AppShell.tsx`, `src/i18n/auth/*`, `docs/marketing-site.md`.
+
+### 2026-08-11 — Pricing CTAs: Advanced trial button + Get started for free
+
+- **Advanced plan CTA:** marketing pricing card uses `pricing.startTrial` → “Start your 3-day free trial” (Basic stays `Subscribe`). App Advanced checkout via `getSubscribeCtaLabel` also defaults to `startTrial` (still uses update-payment / upgrade / purchase labels when past due, on Basic, or trial expired).
+- **Marketing primary CTA:** landing `nav.getStarted`, `hero.primaryCta`, comparison CTA, and footer primary changed from “Choose a plan” to “Get started for free” (all landing locales). Billing `paywall.choosePlan` aligned in en/es/fr + pricing locale packs.
+- **Files:** `PricingPlansSection.tsx`, `subscriptionCta.ts`, pricing/landing i18n, `docs/marketing-site.md`.
+
+### 2026-08-11 — Restore Advanced 3-day free trial (replace money-back messaging)
+
+- **Context (user request):** bring back the free trial. Decisions locked: **Advanced only**, first-time only (`!trial_ends_at`); **replace** 30-day money-back copy with trial messaging; Basic stays paid from day one. Length set to **3 days** (not 10).
+- **Checkout:** restored `trial_period_days: 3` + `trial_settings.end_behavior.missing_payment_method: create_invoice` in `supabase/functions/create-checkout-session/index.ts` for Advanced when `existingSub.trial_ends_at` is null. Card collection remains `always`. Webhook / `confirm-checkout` already sync Stripe `trial_end` → `subscriptions.trial_ends_at`.
+- **Copy:** pricing `trialDays` / `moneyBackGuarantee` and landing FAQ answers updated across locales; EN comparison table row changed from money-back to Free trial (Basic no / Advanced 3 days). Campaign emails updated to 3-day Advanced trial.
+- **Docs:** `docs/stripe-setup.md`, `docs/marketing-site.md`, `docs/PROJECT_MEMORY-MARTINS.md` invariants updated.
+- **Deploy:** `create-checkout-session` redeployed to staging (`axdcledcyhyvzrnfkwat`) and prod (`sxkpcovbyaficvtkpsdo`) with `trial_period_days: 3`. No migration.
+- **Verify:** fresh Advanced → `trialing` + `trial_ends_at` ~3d; Advanced after prior trial → no second trial; Basic → charged day one; pricing UI shows trial, not money-back. Frontend/i18n still needs a Netlify rebuild for marketing copy.
 
 ### 2026-08-11 — `entry_not_opened` missing-logs root cause CONFIRMED: retention priority ordering inverted (ASC) + auto_be failure flood; Fix 1 applied to staging, Fix 2 (worker throttle) written
 

@@ -155,15 +155,20 @@ export function SignupPage() {
         redirectTo,
       })
       if (!sent.ok) {
-        const fallback = await supabase.auth.resend({
-          type: 'signup',
-          email,
-          options: { emailRedirectTo: redirectTo },
-        })
-        if (fallback.error) {
-          setError(sent.error ?? fallback.error.message)
-          setLoading(false)
-          return
+        // Do not fall back on cooldown/rate-limit — that would bypass abuse controls.
+        if (sent.code === 'cooldown' || sent.code === 'rate_limited') {
+          // First signup send already counted; continue to verify page with countdown.
+        } else {
+          const fallback = await supabase.auth.resend({
+            type: 'signup',
+            email,
+            options: { emailRedirectTo: redirectTo },
+          })
+          if (fallback.error) {
+            setError(sent.error ?? fallback.error.message)
+            setLoading(false)
+            return
+          }
         }
       }
     }

@@ -9,16 +9,17 @@ export const landingAr: LandingTranslations = {
     faq: 'الأسئلة الشائعة',
     docs: 'التوثيق',
     signIn: 'تسجيل الدخول',
-    getStarted: 'اختر خطة',
+    getStarted: 'إنشاء حساب',
     dashboard: 'لوحة التحكم',
     menuOpen: 'فتح القائمة',
     menuClose: 'إغلاق القائمة',
   },
   hero: {
-    headline: 'منصة ذكية واحدة بالذكاء الاصطناعي لنسخ إشارات Telegram',
+    headline: 'إشارات Telegram. تُنسخ تلقائيًا.',
     subheadline:
       'TScopier منصة شاملة لنسخ إشارات Telegram تربط Telegram وتنسخ إشارات التداول مباشرة إلى MT4/MT5 — بلا إعدادات معقدة، بلا EA، وبلا VPS.',
-    primaryCta: 'اختر خطة',
+    socialProof: 'مصنف رقم 1 كناسخ إشارات Telegram سحابي',
+    primaryCta: 'ابدأ تجربتك المجانية لمدة 3 أيام',
     secondaryCta: 'تسجيل الدخول',
     imageAlt:
       'لوحة تحكم TScopier تعرض الرصيد والربح اليومي ونتائج التداول ومخططات نمو الحساب',
@@ -614,7 +615,7 @@ export const landingAr: LandingTranslations = {
     subtitle: 'نساخ Telegram التقليديون مقابل منصة سحابية مبنية للسرعة والشفافية والتوسع.',
     otherLabel: 'نساخ آخرون',
     tscopierLabel: 'TScopier',
-    cta: 'اختر خطة',
+    cta: 'ابدأ تجربتك المجانية لمدة 3 أيام',
     rows: [
       {
         aspect: 'الإعداد',
@@ -757,7 +758,7 @@ export const landingAr: LandingTranslations = {
       {
         feature: 'تجربة مجانية',
         basic: 'no',
-        advanced: '10 أيام',
+        advanced: '3 أيام',
         custom: 'مخصص',
       },
       {
@@ -776,7 +777,7 @@ export const landingAr: LandingTranslations = {
       {
         question: 'هل توجد تجربة مجانية؟',
         answer:
-          'لا نقدم تجربة مجانية. اختر Basic أو Advanced وادفع عند الدفع ثم ابدأ الإعداد. كل خطة تشمل ضمان استرداد خلال 30 يومًا.',
+          'نعم. يتضمن Advanced تجربة مجانية لمدة 3 أيام للمشتركين الجدد (يلزم إدخال البطاقة عند الدفع؛ وتبدأ الفوترة بعد انتهاء التجربة). يُحاسب Basic من اليوم الأول.',
       },
       {
         question: 'ما الفرق بين الفوترة الشهرية والسنوية؟',
@@ -825,7 +826,7 @@ export const landingAr: LandingTranslations = {
       title: 'مستعد لنسخ الإشارات دون عمل يدوي؟',
       subtitle:
         'اربط Telegram، وصِل MT4 أو MT5، وابدأ النسخ خلال دقائق — بلا VPS، بلا تثبيت.',
-      primary: 'اختر خطة',
+      primary: 'ابدأ تجربتك المجانية لمدة 3 أيام',
       secondary: 'تسجيل الدخول',
     },
     tagline: 'ناسخ إشارات Telegram فائق السرعة لحسابات MetaTrader.',

@@ -113,7 +113,6 @@ export default function App() {
           <Route path="/forgot-password" element={<AuthLayout />} />
           <Route path="/reset-password" element={<AuthLayout />} />
           <Route path="/email-unsubscribe" element={<EmailUnsubscribePage />} />
-          <Route path="/:referralCode" element={<ReferralCodeRedirect />} />
 
           {/* Public pricing — paywall / acquisition (no auth required). */}
           <Route path="/pricing" element={<LazyPage><AppPricingPage /></LazyPage>} />
@@ -176,6 +175,9 @@ export default function App() {
             </Route>
           </Route>
           </Route>
+
+          {/* After all real routes so paths like /verify-email are never treated as refs. */}
+          <Route path="/:referralCode" element={<ReferralCodeRedirect />} />
         </Routes>
       </div>
         </div>

@@ -15,9 +15,9 @@ export const pricingPl: PricingBundleTranslations = {
     extraAccountUnit: '$10/konto/mies.',
     extraAccountUnitAnnual: '$96/konto/rok',
     subscribe: 'Subskrybuj',
-    startTrial: 'Subskrybuj',
-    trialDays: '30-dniowa gwarancja zwrotu pieniędzy',
-    moneyBackGuarantee: '30-dniowa gwarancja zwrotu pieniędzy',
+    startTrial: 'Rozpocznij 3-dniowy bezpłatny okres próbny',
+    trialDays: '3-dniowy bezpłatny okres próbny na Advanced',
+    moneyBackGuarantee: '3-dniowy bezpłatny okres próbny na Advanced',
     features: 'Funkcje',
     popular: 'Najpopularniejszy',
     basicFeatures: [
@@ -133,7 +133,7 @@ export const pricingPl: PricingBundleTranslations = {
       statusCanceled: 'Anulowana',
       statusPastDue: 'Zaległa',
       trialEnds: 'Koniec okresu próbnego',
-      choosePlan: 'Wybierz plan',
+      choosePlan: 'Rozpocznij 3-dniowy bezpłatny okres próbny',
     },
     checkoutFailed: 'Nie udało się rozpocząć płatności. Spróbuj ponownie.',
     paywall: {

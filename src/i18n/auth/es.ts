@@ -92,9 +92,23 @@ export const authEs: AuthTranslations = {
     heading: 'Revisa tu correo',
     subtitle: 'Acabamos de enviar un enlace de verificación a {email}.',
     resend: 'Reenviar correo',
+    resendIn: 'Reenviar en {seconds}s',
+    resendCooldown: 'Espera {seconds}s antes de solicitar otro correo.',
     resent: 'Correo enviado!',
     backToLogin: 'Volver al inicio de sesión',
     confirmLinkExpired: 'Este enlace de confirmación expiró o ya fue usado. Inicia sesión o solicita un nuevo correo.',
+  },
+  welcome: {
+    title: 'Bienvenido a TScopier',
+    subtitle: 'Tu cuenta está lista. Conecta Telegram y empieza a copiar señales a tu bróker.',
+    steps: [
+      'Conecta Telegram y elige canales de señales',
+      'Vincula tu cuenta MT4/MT5',
+      'Copia operaciones automáticamente con tu configuración de riesgo',
+    ],
+    startUsing: 'Empezar a usar TScopier',
+    exploreDashboard: 'Explorar el panel primero',
+    errorFallback: 'No se pudo continuar. Inténtalo de nuevo.',
   },
   marketing: {
     headline: 'Un copiador fluido para cada señal de Telegram',

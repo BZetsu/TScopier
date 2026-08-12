@@ -1,3 +1,5 @@
+import { lazy, Suspense, useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { BrokerAccountsProvider } from '../../context/BrokerAccountsContext'
 import { NotificationsProvider } from '../../context/NotificationsContext'
 import { HumanReviewProvider } from '../../context/HumanReviewContext'
@@ -9,14 +11,25 @@ import { LiveChatProvider } from '../../context/LiveChatContext'
 import { AssistantProvider } from '../../context/AssistantContext'
 import { AssistantPanel } from '../assistant/AssistantPanel'
 import { HumanReviewModal } from '../dashboard/HumanReviewModal'
-import { useAuth } from '../../context/AuthContext'
-import { useUserProfile } from '../../context/UserProfileContext'
+import { useNeedsWelcome } from '../../hooks/useNeedsWelcome'
+
+const WelcomeModal = lazy(() =>
+  import('../onboarding/WelcomeModal').then(m => ({ default: m.WelcomeModal })),
+)
 
 /** Authenticated app shell: shared broker state + dashboard layout. */
 export function AppShell() {
-  const { loading: authLoading } = useAuth()
-  const { loading: profileLoading } = useUserProfile()
-  const deferAppBootstrap = authLoading || profileLoading
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { needsWelcome, deferAppBootstrap } = useNeedsWelcome()
+  const onDashboardRoute =
+    location.pathname === '/dashboard' || location.pathname.startsWith('/dashboard/broker/')
+
+  useEffect(() => {
+    if (needsWelcome && !onDashboardRoute) {
+      navigate('/dashboard', { replace: true })
+    }
+  }, [needsWelcome, onDashboardRoute, navigate])
 
   return (
     <BrokerAccountsProvider enabled={!deferAppBootstrap}>
@@ -30,6 +43,11 @@ export function AppShell() {
                 <AppLayout />
                 <AssistantPanel />
                 {!deferAppBootstrap ? <HumanReviewModal /> : null}
+                {needsWelcome ? (
+                  <Suspense fallback={null}>
+                    <WelcomeModal />
+                  </Suspense>
+                ) : null}
               </AssistantProvider>
             </LiveChatProvider>
           </AddTradingAccountProvider>
