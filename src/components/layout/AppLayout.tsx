@@ -23,7 +23,6 @@ import { useAssistant } from '../../context/AssistantContext'
 import { useHasOpenTrades } from '../../hooks/useHasOpenTrades'
 import { useHasHighImpactNewsToday } from '../../hooks/useHasHighImpactNewsToday'
 import { useNeedsWelcome } from '../../hooks/useNeedsWelcome'
-import { isRouteAllowedWithoutSubscription } from '../../lib/subscriptionNavAccess'
 
 type NavItem = {
   to: string
@@ -47,10 +46,9 @@ export function AppLayout() {
   const userMenuRef = useRef<HTMLDivElement>(null)
   const userMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { profile } = useUserProfile()
-  const { planName, hasActiveSubscription, checkoutSyncPending, effectivePlan, openUpgrade, isPastDue, hasTrialExpired, loading: subscriptionGateLoading } =
+  const { planName, hasActiveSubscription, checkoutSyncPending, effectivePlan, openUpgrade, isPastDue, hasTrialExpired } =
     useSubscription()
   const { openAssistant } = useAssistant()
-  const navLocked = !subscriptionGateLoading && !hasActiveSubscription && !checkoutSyncPending
   const subscribeCta = getSubscribeCtaLabel(t, {
     isPastDue,
     effectivePlan,
@@ -156,11 +154,7 @@ export function AppLayout() {
     setNotificationsOpen(false)
   }, [location.pathname])
 
-  useEffect(() => {
-    if (!navLocked) return
-    if (isRouteAllowedWithoutSubscription(location.pathname)) return
-    navigate('/pricing', { replace: true })
-  }, [navLocked, location.pathname, navigate])
+  // Subscription reminder modal on dashboard handles the nudge — no forced redirect.
 
   // After Stripe success, paywall may have raced to /pricing before webhook sync — send back.
   useEffect(() => {
@@ -271,9 +265,8 @@ export function AppLayout() {
       {navSections.map(section => {
         const sectionItems = section.items.map(item => ({
           ...item,
-          disabled: navLocked && !isRouteAllowedWithoutSubscription(item.to),
+          disabled: false,
         }))
-        if (sectionItems.every(item => item.disabled)) return null
 
         return (
         <div key={section.label}>
