@@ -4,6 +4,14 @@ Changelog entries authored / owned by Martins, kept separate from the main `PROJ
 
 ## Changelog
 
+### 2026-08-12 — Welcome Modal → Channels
+
+- CTAs: “Start Using TScopier” (→ `/channels`) and “Explore dashboard first”. Removed trial/pricing buttons from welcome.
+
+### 2026-08-12 — Fix verify-email page flicker
+
+- Removed `refreshProfile` loop tied to `profileLoading` on Check-your-email page.
+
 ### 2026-08-12 — Verification email resend cooldown
 
 - 60s cooldown + 5/hour per email (server claim + verify UI countdown).

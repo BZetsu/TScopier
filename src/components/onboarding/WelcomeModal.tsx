@@ -1,30 +1,22 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
 import { CheckCircle2 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useUserProfile } from '../../context/UserProfileContext'
-import { useSubscription } from '../../context/SubscriptionContext'
-import { saveUserProfile, updateUserProfileFields } from '../../lib/userProfile'
-import { startPlanCheckout } from '../../lib/planCheckout'
-import { clearPendingPlanSelection } from '../../lib/pendingPlanSelection'
-import { appAbsoluteUrl } from '../../lib/site'
-import { useLocale, useT } from '../../context/LocaleContext'
-import { getSubscribeCtaLabel } from '../../lib/subscriptionCta'
+import { saveUserProfile } from '../../lib/userProfile'
+import { useLocale } from '../../context/LocaleContext'
 import { Button } from '../ui/Button'
 
 /** Onboarding overlay; dashboard renders behind for a live preview. */
 export function WelcomeModal() {
-  const t = useT()
+  const navigate = useNavigate()
   const { auth } = useLocale()
   const welcomeT = auth.welcome
-  const { user, session } = useAuth()
+  const { user } = useAuth()
   const { profile, refreshProfile } = useUserProfile()
-  const { openPricingModal, isPastDue, effectivePlan, hasTrialExpired, hasActiveSubscription } =
-    useSubscription()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-
-  const trialCta = getSubscribeCtaLabel(t, { isPastDue, effectivePlan, hasTrialExpired })
 
   useEffect(() => {
     const previous = document.body.style.overflow
@@ -43,52 +35,15 @@ export function WelcomeModal() {
     await refreshProfile()
   }
 
-  const startFreeTrial = async () => {
-    if (!user) return
-    setError('')
-    setSaving(true)
-    try {
-      if (hasActiveSubscription) {
-        await completeOnboarding()
-        return
-      }
-      const token = session?.access_token
-      if (!token) throw new Error(welcomeT.checkoutFailed)
-
-      clearPendingPlanSelection()
-      // Create Stripe session first so the redirect is not lost if the modal unmounts.
-      const url = await startPlanCheckout({
-        accessToken: token,
-        plan: 'advanced',
-        interval: 'monthly',
-        successUrl: appAbsoluteUrl('/dashboard?checkout=success'),
-        cancelUrl: appAbsoluteUrl('/pricing'),
-      })
-
-      // Persist onboarding without awaiting profile refresh (refresh would unmount this modal).
-      void updateUserProfileFields(user.id, {
-        onboarding_completed_at: new Date().toISOString(),
-      }).catch(() => {
-        // Checkout redirect still proceeds; profile can sync later.
-      })
-
-      window.location.assign(url)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : welcomeT.checkoutFailed)
-      setSaving(false)
-    }
-  }
-
-  const seePricing = async () => {
+  const startUsing = async () => {
     if (!user) return
     setError('')
     setSaving(true)
     try {
       await completeOnboarding()
-      openPricingModal()
+      navigate('/channels', { replace: true })
     } catch (e) {
       setError(e instanceof Error ? e.message : welcomeT.errorFallback)
-    } finally {
       setSaving(false)
     }
   }
@@ -101,7 +56,6 @@ export function WelcomeModal() {
       await completeOnboarding()
     } catch (e) {
       setError(e instanceof Error ? e.message : welcomeT.errorFallback)
-    } finally {
       setSaving(false)
     }
   }
@@ -150,19 +104,9 @@ export function WelcomeModal() {
             size="lg"
             variant="primary"
             loading={saving}
-            onClick={() => void startFreeTrial()}
+            onClick={() => void startUsing()}
           >
-            {trialCta}
-          </Button>
-
-          <Button
-            className="mt-3 w-full"
-            size="lg"
-            variant="secondary"
-            disabled={saving}
-            onClick={() => void seePricing()}
-          >
-            {welcomeT.seePricing}
+            {welcomeT.startUsing}
           </Button>
 
           <button

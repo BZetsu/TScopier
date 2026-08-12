@@ -101,10 +101,9 @@ export interface AuthTranslations {
     title: string
     subtitle: string
     steps: string[]
-    seePricing: string
+    startUsing: string
     exploreDashboard: string
     errorFallback: string
-    checkoutFailed: string
   }
   marketing: {
     headline: string

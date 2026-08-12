@@ -2,6 +2,19 @@
 
 ## Changelog
 
+### 2026-08-12 — Welcome Modal: Start Using TScopier → Channels
+
+- Pricing already shown earlier in onboarding, so Welcome Modal no longer offers trial/pricing CTAs.
+- Primary: **Start Using TScopier** → completes onboarding and navigates to `/channels` (Telegram connect).
+- Secondary: **Explore dashboard first** → completes onboarding and stays on dashboard.
+- Files: `WelcomeModal.tsx`, `src/i18n/auth/*`.
+
+### 2026-08-12 — Fix Check-your-email page flicker
+
+- **Cause:** `VerifyEmailPage` called `refreshProfile()` whenever `profileLoading` became false, while `UserProfileProvider` already loads the profile — infinite refresh loop for logged-in unverified users (redirect from app gates).
+- **Fix:** removed that effect; keep only redirect-when-verified. Prefer `?email=` for the subtitle so it does not flash when the session clears.
+- **Files:** `src/pages/auth/VerifyEmailPage.tsx`, scratchpad `docs/scratchpad-verify-email-flicker-2026-08-12.md`.
+
 ### 2026-08-12 — Verification email resend cooldown (abuse protection)
 
 - **Limits:** 60s between sends per email; max 5 per rolling hour. Enforced server-side via `claim_verification_email_send` + `email_verification_sends` table before Resend is called. Returns HTTP 429 + `retry_after_seconds`.

@@ -98,16 +98,15 @@ export const authAr: AuthTranslations = {
   },
   welcome: {
     title: 'مرحبًا بك في TScopier',
-    subtitle: 'حسابك جاهز. ابدأ تجربتك المجانية لمدة 3 أيام أو اختر خطة لنسخ إشارات Telegram إلى وسيطك.',
+    subtitle: 'حسابك جاهز. اربط Telegram وابدأ بنسخ الإشارات إلى وسيطك.',
     steps: [
       'اربط Telegram واختر قنوات الإشارات',
       'اربط حساب وسيط MT4/MT5',
       'انسخ الصفقات تلقائيًا وفق إعدادات المخاطر',
     ],
+    startUsing: 'ابدأ استخدام TScopier',
     exploreDashboard: 'استكشف لوحة التحكم أولًا',
-    seePricing: 'عرض الأسعار',
     errorFallback: 'تعذرت المتابعة. حاول مرة أخرى.',
-    checkoutFailed: 'تعذر بدء الدفع. حاول مرة أخرى.',
   },
   marketing: {
     headline: 'نسخ سلس لكل إشارات Telegram',

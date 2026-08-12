@@ -95,7 +95,7 @@ usually means the browser opened **`app.tscopier.ai` (or was redirected there) a
 
 - [ ] `https://tscopier.ai` — landing, glass cards, dark mode, language switch
 - [ ] “Get started for free” → `app…/signup` (not pricing)
-- [ ] After verified signup → dashboard Welcome Modal → Start 3-day trial / See Pricing / Explore
+- [ ] After verified signup → dashboard Welcome Modal → Start Using TScopier (/channels) / Explore dashboard first
 - [ ] Plan Subscribe on `/pricing` → `app…/signup?plan=…` then Stripe after auth (Advanced first-time = 3-day trial; Basic paid day one; no welcome interrupt when pending plan)
 - [ ] Unpaid app login with onboarding done → paywall `/pricing`; new verified users see Welcome Modal on dashboard first
 - [ ] `https://app.tscopier.ai` — login, paid dashboard, existing flows

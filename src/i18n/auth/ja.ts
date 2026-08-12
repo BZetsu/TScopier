@@ -98,16 +98,15 @@ export const authJa: AuthTranslations = {
   },
   welcome: {
     title: 'TScopierへようこそ',
-    subtitle: 'アカウントの準備ができました。3日間の無料トライアルを始めるか、プランを選んでTelegramシグナルをブローカーにコピーしましょう。',
+    subtitle: 'アカウントの準備ができました。Telegramを接続して、シグナルのコピーを始めましょう。',
     steps: [
       'Telegramを接続し、シグナルチャンネルを選ぶ',
       'MT4/MT5ブローカー口座を連携する',
       'リスク設定に従って自動でトレードをコピーする',
     ],
+    startUsing: 'TScopierを使い始める',
     exploreDashboard: '先にダッシュボードを見る',
-    seePricing: '料金を見る',
     errorFallback: '続行できませんでした。もう一度お試しください。',
-    checkoutFailed: 'チェックアウトを開始できませんでした。もう一度お試しください。',
   },
   marketing: {
     headline: 'すべてのTelegramシグナルに対応するシームレスなコピー',

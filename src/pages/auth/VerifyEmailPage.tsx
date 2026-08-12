@@ -20,10 +20,10 @@ export function VerifyEmailPage() {
   const { auth } = useLocale()
   const verifyT = auth.verify
   const { user, session, signOut } = useAuth()
-  const { emailVerifiedAt, loading: profileLoading, refreshProfile } =
-    useUserProfile()
+  const { emailVerifiedAt, loading: profileLoading } = useUserProfile()
   const [searchParams] = useSearchParams()
-  const email = searchParams.get('email') ?? user?.email ?? ''
+  // Prefer the query string so the subtitle does not flash when the session clears.
+  const email = (searchParams.get('email') ?? '').trim() || user?.email || ''
   const redirectTo = `${window.location.origin}/auth/confirmed`
 
   const [resending, setResending] = useState(false)
@@ -45,13 +45,11 @@ export function VerifyEmailPage() {
       if (remaining <= 0) clearVerificationEmailCooldown(email)
     }, 1000)
     return () => window.clearInterval(id)
-  }, [cooldownSeconds > 0, email])
+  }, [email, cooldownSeconds <= 0 ? 0 : 1])
 
-  useEffect(() => {
-    if (profileLoading || !user) return
-    void refreshProfile()
-  }, [user, profileLoading, refreshProfile])
-
+  // UserProfileProvider already loads the profile. Do not call refreshProfile here —
+  // tying it to profileLoading caused an infinite load/refresh loop and page flicker
+  // whenever an unverified session landed on this page.
   useEffect(() => {
     if (profileLoading || !user || !isEmailVerified(user, emailVerifiedAt)) return
     navigate(postAuthAppPath(), { replace: true })

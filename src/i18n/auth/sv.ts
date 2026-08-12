@@ -98,16 +98,15 @@ export const authSv: AuthTranslations = {
   },
   welcome: {
     title: 'Välkommen till TScopier',
-    subtitle: 'Ditt konto är klart. Starta din 3-dagars gratis provperiod eller välj en plan för att kopiera Telegram-signaler till din mäklare.',
+    subtitle: 'Ditt konto är klart. Anslut Telegram och börja kopiera signaler till din mäklare.',
     steps: [
       'Anslut Telegram och välj signalkanaler',
       'Länka ditt MT4/MT5-mäklarkonto',
       'Kopiera affärer automatiskt med dina riskinställningar',
     ],
+    startUsing: 'Börja använda TScopier',
     exploreDashboard: 'Utforska instrumentpanelen först',
-    seePricing: 'Se priser',
     errorFallback: 'Kunde inte fortsätta. Försök igen.',
-    checkoutFailed: 'Kunde inte starta kassan. Försök igen.',
   },
   marketing: {
     headline: 'En smidig kopierare för varje Telegram-signal',

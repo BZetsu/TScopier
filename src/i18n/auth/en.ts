@@ -104,16 +104,15 @@ export const authEn: AuthTranslations = {
   },
   welcome: {
     title: 'Welcome to TScopier',
-    subtitle: 'Your account is ready. Start your 3-day free trial or choose a plan to copy Telegram signals to your broker.',
+    subtitle: 'Your account is ready. Connect Telegram and start copying signals to your broker.',
     steps: [
       'Connect Telegram and choose signal channels',
       'Link your MT4/MT5 broker account',
       'Copy trades automatically with your risk settings',
     ],
-    exploreDashboard: 'Explore the dashboard first',
-    seePricing: 'See Pricing',
+    startUsing: 'Start Using TScopier',
+    exploreDashboard: 'Explore dashboard first',
     errorFallback: 'Could not continue. Please try again.',
-    checkoutFailed: 'Could not start checkout. Please try again.',
   },
   marketing: {
     headline: 'One Seamless Copier for every Telegram Signal',

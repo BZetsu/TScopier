@@ -98,16 +98,15 @@ export const authPl: AuthTranslations = {
   },
   welcome: {
     title: 'Witamy w TScopier',
-    subtitle: 'Twoje konto jest gotowe. Rozpocznij 3-dniowy bezpłatny okres próbny lub wybierz plan, aby kopiować sygnały Telegram na swojego brokera.',
+    subtitle: 'Twoje konto jest gotowe. Połącz Telegram i zacznij kopiować sygnały na swojego brokera.',
     steps: [
       'Połącz Telegram i wybierz kanały sygnałów',
       'Połącz konto brokerskie MT4/MT5',
       'Kopiuj transakcje automatycznie zgodnie z ustawieniami ryzyka',
     ],
+    startUsing: 'Zacznij korzystać z TScopier',
     exploreDashboard: 'Najpierw przejrzyj panel',
-    seePricing: 'Zobacz ceny',
     errorFallback: 'Nie udało się kontynuować. Spróbuj ponownie.',
-    checkoutFailed: 'Nie udało się uruchomić płatności. Spróbuj ponownie.',
   },
   marketing: {
     headline: 'Jeden płynny kopiark dla każdego sygnału Telegram',
