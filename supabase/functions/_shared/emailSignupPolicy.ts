@@ -62,6 +62,11 @@ const DEFAULT_BLOCKED_DOMAINS = new Set([
   "onlyfans.com",
   "brazzers.com",
   "spankbang.com",
+  // Temporary: high-volume spam providers (bots rotating outlook/hotmail/proton)
+  "hotmail.com",
+  "outlook.com",
+  "outlook.co.uk",
+  "proton.me",
 ])
 
 const DEFAULT_BLOCKED_KEYWORDS = [
@@ -156,7 +161,7 @@ export function evaluateSignupEmail(raw: unknown): EmailSignupPolicyResult {
   if (blockedDomains().has(domain)) {
     return {
       allowed: false,
-      reason: "This email address is not allowed",
+      reason: "This email is not allowed.",
       code: "blocked_email",
     }
   }
@@ -165,7 +170,7 @@ export function evaluateSignupEmail(raw: unknown): EmailSignupPolicyResult {
   if (containsBlockedKeyword(localPart, keywords) || containsBlockedKeyword(domain, keywords)) {
     return {
       allowed: false,
-      reason: "This email address is not allowed",
+      reason: "This email is not allowed.",
       code: "blocked_email",
     }
   }
@@ -173,7 +178,7 @@ export function evaluateSignupEmail(raw: unknown): EmailSignupPolicyResult {
   if (MS_CONSUMER_DOMAINS.has(domain) && MS_NAME_DIGITS_LOCAL.test(localPart)) {
     return {
       allowed: false,
-      reason: "This email address is not allowed",
+      reason: "This email is not allowed.",
       code: "blocked_email",
     }
   }
@@ -182,7 +187,7 @@ export function evaluateSignupEmail(raw: unknown): EmailSignupPolicyResult {
     if (pattern.test(localPart)) {
       return {
         allowed: false,
-        reason: "This email address is not allowed",
+        reason: "This email is not allowed.",
         code: "blocked_email",
       }
     }

@@ -63,6 +63,11 @@ const DEFAULT_BLOCKED_DOMAINS = new Set([
   'onlyfans.com',
   'brazzers.com',
   'spankbang.com',
+  // Temporary: high-volume spam providers (bots rotating outlook/hotmail/proton)
+  'hotmail.com',
+  'outlook.com',
+  'outlook.co.uk',
+  'proton.me',
 ])
 
 /**
@@ -144,7 +149,8 @@ export function signupErrorPolicyCode(message: string): SignupEmailPolicyCode | 
   const lower = message.toLowerCase()
   if (lower.includes('disposable email')) return 'disposable_domain'
   if (
-    lower.includes('this email address is not allowed')
+    lower.includes('this email is not allowed')
+    || lower.includes('this email address is not allowed')
     || lower.includes('database error saving new user')
   ) {
     return 'blocked_email'

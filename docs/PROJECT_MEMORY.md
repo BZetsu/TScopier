@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-08-12 — Block hotmail/outlook/proton signup domains
+
+- **Temporary:** Reject signups from `hotmail.com`, `outlook.com`, `outlook.co.uk`, `proton.me`.
+- UI copy (EN): **This email is not allowed.**
+- Synced: `signupEmailPolicy.ts`, edge `emailSignupPolicy.ts`, DB trigger `block_spam_auth_signup` (migration `20260812230000_*`, live prod + staging).
+- Frontend i18n needs Netlify redeploy for the exact EN string; DB already blocks Auth API now.
+
 ### 2026-08-12 — Prod “Signup protection is misconfigured”
 
 - **Cause:** Frontend fail-closed (`isTurnstileMisconfigured`) shipped to prod, but Netlify never had `VITE_TURNSTILE_SITE_KEY` at build time → empty site key → signup blocked on purpose.
