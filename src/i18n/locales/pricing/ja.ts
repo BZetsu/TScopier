@@ -15,9 +15,9 @@ export const pricingJa: PricingBundleTranslations = {
     extraAccountUnit: '$10/口座/月',
     extraAccountUnitAnnual: '$96/口座/年',
     subscribe: '購読する',
-    startTrial: '登録する',
-    trialDays: '30日間返金保証',
-    moneyBackGuarantee: '30日間返金保証',
+    startTrial: '5日間の無料トライアルを始める',
+    trialDays: 'Advancedは5日間無料トライアル',
+    moneyBackGuarantee: 'Advancedは5日間無料トライアル',
     features: '機能',
     popular: '一番人気',
     basicFeatures: [
@@ -133,7 +133,7 @@ export const pricingJa: PricingBundleTranslations = {
       statusCanceled: 'キャンセル済み',
       statusPastDue: '支払い遅延',
       trialEnds: 'トライアル終了',
-      choosePlan: 'プランを選択',
+      choosePlan: '5日間の無料トライアルを始める',
     },
     checkoutFailed: 'チェックアウトを開始できませんでした。もう一度お試しください。',
     paywall: {

@@ -33,6 +33,7 @@ export default function MarketingApp() {
             <Route path="/terms" element={<TermsOfServicePage />} />
             <Route path="/privacy" element={<PrivacyPolicyPage />} />
             <Route path="/cookie-policy" element={<CookiePolicyPage />} />
+            {/* After static marketing routes so reserved paths are not treated as refs. */}
             <Route path="/:referralCode" element={<ReferralLandingRedirect />} />
             <Route path="*" element={<MarketingCatchAll />} />
           </Routes>

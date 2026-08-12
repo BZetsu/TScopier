@@ -2,7 +2,7 @@ import clsx from 'clsx'
 import { ArrowRight } from 'lucide-react'
 import { useMarketingAuthState } from '../../hooks/useMarketingAuthState'
 import { useT } from '../../context/LocaleContext'
-import { appUrl, marketingUrl, withQuery } from '../../lib/site'
+import { appUrl, withQuery } from '../../lib/site'
 import { trackMarketingEvent } from '../../lib/analytics'
 
 type MarketingAuthCtaVariant = 'hero' | 'header' | 'headerMobile'
@@ -13,7 +13,7 @@ interface MarketingAuthCtaProps {
 }
 
 const primaryBtnClass =
-  'inline-flex shrink-0 items-center justify-center rounded-lg border border-teal-600 bg-teal-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:border-teal-700 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-950'
+  'inline-flex max-w-[11rem] shrink-0 items-center justify-center truncate rounded-lg border border-teal-600 bg-teal-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:border-teal-700 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 xl:max-w-[16rem] xl:px-3 xl:text-sm 2xl:max-w-none dark:focus:ring-offset-neutral-950'
 
 const heroCtaClass =
   'group inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-600 bg-teal-600 px-9 py-4 text-lg font-semibold text-white shadow-lg shadow-teal-600/25 transition-all duration-300 hover:border-teal-500 hover:bg-teal-500 hover:shadow-[0_0_28px_rgba(45,212,191,0.55),0_0_56px_rgba(13,148,136,0.22)] sm:w-auto sm:px-11 sm:py-5 sm:text-xl'
@@ -26,9 +26,9 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
     if (typeof window === 'undefined') return null
     return new URLSearchParams(window.location.search).get('ref')?.trim() || null
   })()
-  const pricingHref = withQuery(marketingUrl('/pricing'), { ref: referralRef })
+  const signupHref = withQuery(appUrl('/signup'), { ref: referralRef })
   const loginHref = withQuery(appUrl('/login'), { ref: referralRef })
-  const onCtaClick = (action: 'signup' | 'login' | 'dashboard' | 'pricing') => {
+  const onCtaClick = (action: 'signup' | 'login' | 'dashboard') => {
     trackMarketingEvent('marketing_cta_click', {
       action,
       variant,
@@ -50,10 +50,11 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
         onClick={() => onCtaClick('dashboard')}
         className={clsx(
           variant === 'hero' && heroCtaClass,
-          variant === 'header' && primaryBtnClass,
+          variant === 'header' && clsx(primaryBtnClass, 'hidden lg:inline-flex'),
           variant === 'headerMobile' &&
             'rounded-lg px-3 py-2.5 text-sm font-medium text-teal-600 transition-colors hover:bg-teal-50 dark:text-teal-400 dark:hover:bg-teal-950/40',
         )}
+        title={variant === 'header' ? nav.dashboard : undefined}
       >
         {nav.dashboard}
         {variant === 'hero' ? (
@@ -77,8 +78,8 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
     return (
       <div className="flex w-full flex-col items-center justify-center">
         <a
-          href={pricingHref}
-          onClick={() => onCtaClick('pricing')}
+          href={signupHref}
+          onClick={() => onCtaClick('signup')}
           className={heroCtaClass}
         >
           {hero.primaryCta}
@@ -98,8 +99,8 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
           {nav.signIn}
         </a>
         <a
-          href={pricingHref}
-          onClick={() => onCtaClick('pricing')}
+          href={signupHref}
+          onClick={() => onCtaClick('signup')}
           className="mt-1 inline-flex w-full items-center justify-center rounded-lg border border-teal-600 bg-teal-600 px-3 py-2.5 text-sm font-medium text-white transition-colors hover:border-teal-700 hover:bg-teal-700"
         >
           {nav.getStarted}
@@ -113,14 +114,15 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
       <a
         href={loginHref}
         onClick={() => onCtaClick('login')}
-        className="hidden text-sm font-medium text-neutral-600 transition-colors hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100 lg:inline-block lg:px-3"
+        className="hidden whitespace-nowrap text-sm font-medium text-neutral-600 transition-colors hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100 xl:inline-block xl:px-3"
       >
         {nav.signIn}
       </a>
       <a
-        href={pricingHref}
-        onClick={() => onCtaClick('pricing')}
-        className={clsx(primaryBtnClass, 'hidden md:inline-flex')}
+        href={signupHref}
+        onClick={() => onCtaClick('signup')}
+        className={clsx(primaryBtnClass, 'hidden lg:inline-flex')}
+        title={nav.getStarted}
       >
         {nav.getStarted}
       </a>

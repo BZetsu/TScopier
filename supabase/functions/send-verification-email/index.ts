@@ -2,6 +2,13 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { buildAuthEmailHtml } from "../_shared/authEmailLayout.ts";
 import { resolveEmailLogoUrl } from "../_shared/brandEmailAssets.ts";
+import { evaluateSignupEmail } from "../_shared/emailSignupPolicy.ts";
+import {
+  AUTH_EMAIL_MAX_PER_HOUR_IP,
+  enforceIpRateLimit,
+  extractClientIp,
+  verifyTurnstileToken,
+} from "../_shared/signupAbuseGuard.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,13 +17,23 @@ const corsHeaders = {
     "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+/** Minimum seconds between verification emails for the same address. */
+const RESEND_COOLDOWN_SECONDS = 60;
+/** Max verification emails per address per rolling hour. */
+const RESEND_MAX_PER_HOUR = 5;
+
 function json(
   body: Record<string, unknown>,
   status: number,
+  extraHeaders?: HeadersInit,
 ): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      ...extraHeaders,
+    },
   });
 }
 
@@ -44,7 +61,18 @@ Deno.serve(async (req: Request) => {
       confirmUrl?: string;
       redirectTo?: string;
       email?: string;
+      captchaToken?: string;
     };
+
+    const clientIp = extractClientIp(req);
+    const ipLimitResponse = await enforceIpRateLimit(
+      req,
+      supabase,
+      "verification_email",
+      AUTH_EMAIL_MAX_PER_HOUR_IP,
+      corsHeaders,
+    );
+    if (ipLimitResponse) return ipLimitResponse;
 
     const redirectTo =
       body.redirectTo ||
@@ -53,6 +81,7 @@ Deno.serve(async (req: Request) => {
 
     let targetEmail: string | undefined;
     let firstName = "there";
+    let hasAuthedUser = false;
 
     const authHeader = req.headers.get("Authorization");
     if (authHeader) {
@@ -61,6 +90,7 @@ Deno.serve(async (req: Request) => {
         token,
       );
       if (!authError && user?.email) {
+        hasAuthedUser = true;
         targetEmail = user.email;
         firstName = (user.user_metadata?.first_name as string) || firstName;
       }
@@ -77,37 +107,113 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Missing email" }, 400);
     }
 
+    if (!hasAuthedUser) {
+      const captchaOk = await verifyTurnstileToken(body.captchaToken, clientIp);
+      if (!captchaOk) {
+        return json({ error: "Captcha verification failed", code: "captcha_failed" }, 403);
+      }
+    }
+
+    const normalizedEmail = targetEmail.trim().toLowerCase();
+    const emailPolicy = evaluateSignupEmail(normalizedEmail);
+    if (!emailPolicy.allowed) {
+      return json(
+        { error: emailPolicy.reason, code: emailPolicy.code },
+        400,
+      );
+    }
+
+    const { data: claimData, error: claimError } = await supabase.rpc(
+      "claim_verification_email_send",
+      {
+        p_email: normalizedEmail,
+        p_cooldown_seconds: RESEND_COOLDOWN_SECONDS,
+        p_max_per_hour: RESEND_MAX_PER_HOUR,
+      },
+    );
+
+    if (claimError) {
+      console.error("[send-verification-email] claim error:", claimError);
+      return json(
+        { error: "Could not rate-limit verification email", details: claimError.message },
+        500,
+      );
+    }
+
+    const claim = (claimData ?? {}) as {
+      ok?: boolean;
+      error?: string;
+      retry_after_seconds?: number;
+      cooldown_seconds?: number;
+    };
+
+    if (!claim.ok) {
+      const retryAfter = Math.max(1, Number(claim.retry_after_seconds ?? RESEND_COOLDOWN_SECONDS));
+      const code = claim.error === "rate_limited" ? "rate_limited" : "cooldown";
+      return json(
+        {
+          error: code,
+          code,
+          retry_after_seconds: retryAfter,
+          message:
+            code === "rate_limited"
+              ? "Too many verification emails. Try again later."
+              : "Please wait before requesting another verification email.",
+        },
+        429,
+        { "Retry-After": String(retryAfter) },
+      );
+    }
+
     if (firstName === "there") {
       const { data: listed } = await supabase.auth.admin.listUsers({
         page: 1,
         perPage: 50,
       });
       const match = listed?.users?.find(
-        (u) => u.email?.toLowerCase() === targetEmail,
+        (u) => u.email?.toLowerCase() === normalizedEmail,
       );
       if (match?.user_metadata?.first_name) {
         firstName = String(match.user_metadata.first_name);
       }
     }
 
-    const { data: linkData, error: linkError } = await supabase.auth.admin
-      .generateLink({
+    // Prefer a signup confirmation link. Fall back to magiclink when the user
+    // is already auth-confirmed (e.g. Confirm email disabled / auto-confirm).
+    let confirmUrl: string | undefined;
+    let linkErrorMessage: string | undefined;
+
+    const signupLink = await supabase.auth.admin.generateLink({
+      type: "signup",
+      email: normalizedEmail,
+      options: { redirectTo },
+    });
+    if (signupLink.data?.properties?.action_link) {
+      confirmUrl = signupLink.data.properties.action_link;
+    } else {
+      linkErrorMessage = signupLink.error?.message;
+      const magicLink = await supabase.auth.admin.generateLink({
         type: "magiclink",
-        email: targetEmail,
+        email: normalizedEmail,
         options: { redirectTo },
       });
+      if (magicLink.data?.properties?.action_link) {
+        confirmUrl = magicLink.data.properties.action_link;
+      } else {
+        linkErrorMessage =
+          magicLink.error?.message ?? linkErrorMessage ?? "no action_link returned";
+      }
+    }
 
-    if (linkError || !linkData?.properties?.action_link) {
+    if (!confirmUrl) {
       return json(
         {
           error: "Could not create verification link",
-          details: linkError?.message ?? "no action_link returned",
+          details: linkErrorMessage ?? "no action_link returned",
         },
         500,
       );
     }
-
-    const confirmUrl = linkData.properties.action_link;
     const logoUrl = resolveEmailLogoUrl({
       supabaseUrl,
       appUrl: Deno.env.get("VITE_APP_URL"),
@@ -132,7 +238,7 @@ Deno.serve(async (req: Request) => {
       },
       body: JSON.stringify({
         from: resendFrom,
-        to: [targetEmail],
+        to: [normalizedEmail],
         subject: "Confirm your TScopier account",
         html,
       }),
@@ -154,7 +260,11 @@ Deno.serve(async (req: Request) => {
 
     const resendData = await resendRes.json();
 
-    return json({ success: true, id: resendData.id }, 200);
+    return json({
+      success: true,
+      id: resendData.id,
+      cooldown_seconds: claim.cooldown_seconds ?? RESEND_COOLDOWN_SECONDS,
+    }, 200);
   } catch (err) {
     console.error("[send-verification-email]", err);
     return json(

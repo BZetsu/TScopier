@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -22,6 +22,8 @@ import {
   capturePendingPlanFromUrl,
   postAuthAppPath,
 } from '../../lib/pendingPlanSelection'
+import { TurnstileWidget, type TurnstileWidgetHandle } from '../../components/auth/TurnstileWidget'
+import { isTurnstileEnabled } from '../../lib/turnstile'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -61,6 +63,9 @@ export function SignupPage() {
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [error, setError] = useState('')
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileWidgetHandle>(null)
+  const captchaRequired = isTurnstileEnabled()
 
   useEffect(() => {
     const fromUrl = captureReferralFromUrl(location.search)
@@ -102,6 +107,10 @@ export function SignupPage() {
       setError(signupT.passwordMismatch)
       return
     }
+    if (captchaRequired && !captchaToken) {
+      setError(auth.oauth.captchaRequired)
+      return
+    }
 
     setLoading(true)
 
@@ -118,6 +127,7 @@ export function SignupPage() {
       password,
       options: {
         emailRedirectTo: redirectTo,
+        captchaToken: captchaToken ?? undefined,
         data: {
           first_name: trimmedFirst,
           last_name: trimmedLast,
@@ -127,6 +137,8 @@ export function SignupPage() {
     })
     if (signUpError) {
       setError(signUpError.message)
+      turnstileRef.current?.reset()
+      setCaptchaToken(null)
       setLoading(false)
       return
     }
@@ -153,15 +165,15 @@ export function SignupPage() {
         email: data.user.email ?? email,
         accessToken: data.session?.access_token,
         redirectTo,
+        captchaToken,
       })
       if (!sent.ok) {
-        const fallback = await supabase.auth.resend({
-          type: 'signup',
-          email,
-          options: { emailRedirectTo: redirectTo },
-        })
-        if (fallback.error) {
-          setError(sent.error ?? fallback.error.message)
+        if (sent.code === 'cooldown' || sent.code === 'rate_limited') {
+          // First signup send already counted; continue to verify page with countdown.
+        } else {
+          setError(sent.error)
+          turnstileRef.current?.reset()
+          setCaptchaToken(null)
           setLoading(false)
           return
         }
@@ -280,7 +292,21 @@ export function SignupPage() {
           onChange={e => setReferralCode(normalizeReferralCode(e.target.value))}
         />
 
-        <Button type="submit" loading={loading} className="w-full !mt-6" size="lg">
+        <TurnstileWidget
+          ref={turnstileRef}
+          className="flex justify-center"
+          onToken={setCaptchaToken}
+          onExpire={() => setCaptchaToken(null)}
+          onError={() => setCaptchaToken(null)}
+        />
+
+        <Button
+          type="submit"
+          loading={loading}
+          disabled={captchaRequired && !captchaToken}
+          className="w-full !mt-6"
+          size="lg"
+        >
           {signupT.submit}
         </Button>
       </form>

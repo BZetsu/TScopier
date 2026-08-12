@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { adminClient, corsHeaders, requireAuthedAdmin } from "../_shared/adminAuth.ts";
 import { writeAdminAudit } from "../_shared/adminAudit.ts";
+import { isSuspiciousSignupEmail } from "../_shared/emailSignupPolicy.ts";
 
 function bad(status: number, message: string): Response {
   return Response.json({ error: message }, { status, headers: corsHeaders });
@@ -40,6 +41,7 @@ Deno.serve(async (req: Request) => {
     "close_trade",
     "ban_user",
     "unban_user",
+    "bulk_ban_spam_users",
     "force_disconnect_broker",
     "force_reconnect_broker",
     "toggle_channel",
@@ -151,6 +153,69 @@ Deno.serve(async (req: Request) => {
       correlation_id: correlationId,
     });
     return Response.json({ ok: true }, { headers: corsHeaders });
+  }
+
+  if (action === "bulk_ban_spam_users") {
+    const dryRun = body.dry_run === true;
+    const matched: Array<{ user_id: string; email: string }> = [];
+    let page = 1;
+    const perPage = 1000;
+
+    while (page <= 20) {
+      const { data } = await supabase.auth.admin.listUsers({ page, perPage });
+      const users = data?.users ?? [];
+      if (users.length === 0) break;
+
+      for (const user of users) {
+        const email = user.email ?? "";
+        if (!email || !isSuspiciousSignupEmail(email)) continue;
+        matched.push({ user_id: user.id, email });
+      }
+
+      if (users.length < perPage) break;
+      page += 1;
+    }
+
+    if (dryRun) {
+      return Response.json({
+        ok: true,
+        dry_run: true,
+        matched_count: matched.length,
+        matched,
+      }, { headers: corsHeaders });
+    }
+
+    let bannedCount = 0;
+    const failures: Array<{ user_id: string; error: string }> = [];
+    for (const row of matched) {
+      const { error } = await supabase.auth.admin.updateUserById(row.user_id, {
+        ban_duration: "876000h",
+      });
+      if (error) {
+        failures.push({ user_id: row.user_id, error: error.message });
+        continue;
+      }
+      bannedCount += 1;
+      await writeAdminAudit(supabase, {
+        actor_user_id: adminUser.id,
+        target_user_id: row.user_id,
+        action: "ban_user",
+        entity_type: "auth.users",
+        entity_id: row.user_id,
+        reason: reason ?? "bulk_ban_spam_users",
+        request_payload: { email: row.email, bulk: true },
+        before_state: null,
+        after_state: { banned: true },
+        correlation_id: correlationId,
+      });
+    }
+
+    return Response.json({
+      ok: true,
+      matched_count: matched.length,
+      banned_count: bannedCount,
+      failures,
+    }, { headers: corsHeaders });
   }
 
   if (action === "close_trade") {

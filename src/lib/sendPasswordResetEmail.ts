@@ -4,6 +4,7 @@
 export async function sendPasswordResetEmail(args: {
   email: string
   redirectTo: string
+  captchaToken?: string | null
 }): Promise<{ ok: boolean; error?: string }> {
   const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-password-reset-email`
 
@@ -17,6 +18,7 @@ export async function sendPasswordResetEmail(args: {
     body: JSON.stringify({
       email: args.email,
       redirectTo: args.redirectTo,
+      captchaToken: args.captchaToken ?? undefined,
     }),
   })
 

@@ -15,9 +15,9 @@ export const pricingSv: PricingBundleTranslations = {
     extraAccountUnit: '$10/konto/månad',
     extraAccountUnitAnnual: '$96/konto/år',
     subscribe: 'Prenumerera',
-    startTrial: 'Prenumerera',
-    trialDays: '30 dagars pengarna-tillbaka-garanti',
-    moneyBackGuarantee: '30 dagars pengarna-tillbaka-garanti',
+    startTrial: 'Starta din 5-dagars gratis provperiod',
+    trialDays: '5 dagars gratis provperiod på Advanced',
+    moneyBackGuarantee: '5 dagars gratis provperiod på Advanced',
     features: 'Funktioner',
     popular: 'Mest populär',
     basicFeatures: [
@@ -133,7 +133,7 @@ export const pricingSv: PricingBundleTranslations = {
       statusCanceled: 'Avslutad',
       statusPastDue: 'Förfallen',
       trialEnds: 'Provperiod slutar',
-      choosePlan: 'Välj en plan',
+      choosePlan: 'Starta din 5-dagars gratis provperiod',
     },
     checkoutFailed: 'Kunde inte starta checkout. Försök igen.',
     paywall: {

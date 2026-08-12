@@ -8,6 +8,7 @@ export interface AuthTranslations {
   oauth: {
     continueWithGoogle: string
     orDivider: string
+    captchaRequired: string
   }
   login: {
     heading: string
@@ -88,12 +89,22 @@ export interface AuthTranslations {
     subtitle: string
     instructions?: string
     resend: string
+    resendIn?: string
+    resendCooldown?: string
     resent: string
     backToLogin: string
     confirming?: string
     confirmingHint?: string
     confirmPending?: string
     confirmLinkExpired?: string
+  }
+  welcome: {
+    title: string
+    subtitle: string
+    steps: string[]
+    startUsing: string
+    exploreDashboard: string
+    errorFallback: string
   }
   marketing: {
     headline: string

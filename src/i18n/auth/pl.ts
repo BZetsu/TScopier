@@ -11,6 +11,7 @@ export const authPl: AuthTranslations = {
   oauth: {
     continueWithGoogle: 'Kontynuuj z Google',
     orDivider: 'lub',
+    captchaRequired: 'Ukończ weryfikację bezpieczeństwa przed kontynuowaniem.',
   },
   login: {
     heading: 'Zaloguj się do TScopier',
@@ -91,8 +92,22 @@ export const authPl: AuthTranslations = {
     heading: 'Sprawdź e-mail',
     subtitle: 'Właśnie wysłaliśmy link weryfikacyjny na {email}.',
     resend: 'Wyślij ponownie',
+    resendIn: 'Wyślij ponownie za {seconds}s',
+    resendCooldown: 'Poczekaj {seconds}s przed kolejną prośbą o e-mail.',
     resent: 'E-mail wysłany!',
     backToLogin: 'Powrót do logowania',
+  },
+  welcome: {
+    title: 'Witamy w TScopier',
+    subtitle: 'Twoje konto jest gotowe. Połącz Telegram i zacznij kopiować sygnały na swojego brokera.',
+    steps: [
+      'Połącz Telegram i wybierz kanały sygnałów',
+      'Połącz konto brokerskie MT4/MT5',
+      'Kopiuj transakcje automatycznie zgodnie z ustawieniami ryzyka',
+    ],
+    startUsing: 'Zacznij korzystać z TScopier',
+    exploreDashboard: 'Najpierw przejrzyj panel',
+    errorFallback: 'Nie udało się kontynuować. Spróbuj ponownie.',
   },
   marketing: {
     headline: 'Jeden płynny kopiark dla każdego sygnału Telegram',

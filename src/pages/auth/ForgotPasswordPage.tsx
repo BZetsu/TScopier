@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Mail } from 'lucide-react'
 import { authRedirectUrl } from '../../lib/authRedirect'
@@ -8,6 +8,8 @@ import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 import { AuthBackHome } from '../../components/auth/AuthBackHome'
 import { useLocale } from '../../context/LocaleContext'
+import { TurnstileWidget, type TurnstileWidgetHandle } from '../../components/auth/TurnstileWidget'
+import { isTurnstileEnabled } from '../../lib/turnstile'
 
 export function ForgotPasswordPage() {
   const { auth } = useLocale()
@@ -17,20 +19,30 @@ export function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false)
   const [sent, setSent] = useState(false)
   const [error, setError] = useState('')
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileWidgetHandle>(null)
+  const captchaRequired = isTurnstileEnabled()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    if (captchaRequired && !captchaToken) {
+      setError(auth.oauth.captchaRequired)
+      return
+    }
     setLoading(true)
 
     const result = await sendPasswordResetEmail({
       email: email.trim(),
       redirectTo: authRedirectUrl('/reset-password'),
+      captchaToken,
     })
 
     setLoading(false)
     if (!result.ok) {
       setError(result.error ?? t.sendError)
+      turnstileRef.current?.reset()
+      setCaptchaToken(null)
       return
     }
 
@@ -85,7 +97,21 @@ export function ForgotPasswordPage() {
           className="py-2.5"
         />
 
-        <Button type="submit" loading={loading} className="w-full !mt-6" size="lg">
+        <TurnstileWidget
+          ref={turnstileRef}
+          className="flex justify-center"
+          onToken={setCaptchaToken}
+          onExpire={() => setCaptchaToken(null)}
+          onError={() => setCaptchaToken(null)}
+        />
+
+        <Button
+          type="submit"
+          loading={loading}
+          disabled={captchaRequired && !captchaToken}
+          className="w-full !mt-6"
+          size="lg"
+        >
           {t.submit}
         </Button>
       </form>
