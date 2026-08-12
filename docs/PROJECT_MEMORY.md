@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### 2026-08-12 — Turnstile not protecting prod (fail-open + missing Netlify key)
+
+- **Why bots bypass “captcha”:** Production JS bundle had **no Turnstile strings** → `VITE_TURNSTILE_SITE_KEY` was not set (or not redeployed) on Netlify, so the widget never renders and the client does not require a token. Setup checklist still unchecked.
+- **Second hole:** `verifyTurnstileToken` **returned true when `TURNSTILE_SECRET_KEY` was unset** (fail-open).
+- **Third hole:** `send-verification-email` **skipped captcha when a session JWT was present**.
+- **Fourth hole:** Supabase Auth CAPTCHA in dashboard still not enabled → `auth.signUp({ captchaToken })` is ignored; bots call Auth API directly.
+- **Code fixes:** fail-closed Turnstile verify; always verify on verification email; prod frontend blocks signup/login/reset if site key missing (`isTurnstileMisconfigured`).
+- **Ops still required:** set Netlify `VITE_TURNSTILE_SITE_KEY` + redeploy; `supabase secrets set TURNSTILE_SECRET_KEY=...` on prod/staging; enable Auth → CAPTCHA (Turnstile); enable before-user-created hook. See `docs/signup-spam-protection-setup.md`.
+
 ### 2026-08-12 — Resend flood: cooldown was per-email; add global 20/hour cap
 
 - **Why Resend looked broken:** Cooldown (60s) and per-email hourly (5) key on **email address**. Bots use a new address every time (`gaylord######@pornhub.com`, then `mamadou`, then `*@example.net`, then realistic outlook/proton names) → each send is the first for that address → cooldown never trips.

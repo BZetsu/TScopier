@@ -23,7 +23,7 @@ import {
   postAuthAppPath,
 } from '../../lib/pendingPlanSelection'
 import { TurnstileWidget, type TurnstileWidgetHandle } from '../../components/auth/TurnstileWidget'
-import { isTurnstileEnabled } from '../../lib/turnstile'
+import { isTurnstileEnabled, isTurnstileMisconfigured } from '../../lib/turnstile'
 import {
   evaluateSignupEmail,
   signupErrorPolicyCode,
@@ -72,6 +72,7 @@ export function SignupPage() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const turnstileRef = useRef<TurnstileWidgetHandle>(null)
   const captchaRequired = isTurnstileEnabled()
+  const captchaMisconfigured = isTurnstileMisconfigured()
 
   useEffect(() => {
     const fromUrl = captureReferralFromUrl(location.search)
@@ -117,6 +118,11 @@ export function SignupPage() {
           ? signupT.passwordTooShort
           : signupT.passwordTooWeak,
       )
+      return
+    }
+
+    if (captchaMisconfigured) {
+      setError('Signup protection is misconfigured. Please try again later.')
       return
     }
 
@@ -330,10 +336,21 @@ export function SignupPage() {
           onError={() => setCaptchaToken(null)}
         />
 
+        {captchaMisconfigured ? (
+          <Alert variant="error" className="py-2.5">
+            Signup protection is misconfigured. Please try again later.
+          </Alert>
+        ) : null}
+
         <Button
           type="submit"
           loading={loading}
-          disabled={(captchaRequired && !captchaToken) || !isPasswordStrongEnough(password) || password !== confirmPassword}
+          disabled={
+            captchaMisconfigured
+            || (captchaRequired && !captchaToken)
+            || !isPasswordStrongEnough(password)
+            || password !== confirmPassword
+          }
           className="w-full !mt-6"
           size="lg"
         >

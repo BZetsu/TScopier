@@ -1,15 +1,88 @@
-import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+e()
+  if (!email.includes("@")) return null
+  const [local, domain] = email.split("@")
+  if (!local || !domain || domain.includes(" ")) return null
+  if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(email)) return null
+  return email
+}
+
+function evaluateSignupEmail(raw: unknown): EmailSignupPolicyResult {
+  const normalizedEmail = normalizeSignupEmail(raw)
+  if (!normalizedEmail) {
+    return { allowed: false, reason: "Invalid email address", code: "invalid_email" }
+  }
+
+  const [localPart, domain] = normalizedEmail.split("@")
+  if (DEFAULT_DISPOSABLE_DOMAINS.has(domain)) {
+    return {
+      allowed: false,
+      reason: "Disposable email addresses are not allowed",
+      code: "disposable_domain",
+    }
+  }
+
+  if (blockedDomains().has(domain)) {
+    return {
+      allowed: false,
+      reason: "This email address is not allowed",
+      code: "blocked_email",
+    }
+  }
+
+  const keywords = blockedKeywords()
+  if (containsBlockedKeyword(localPart, keywords) || containsBlockedKeyword(domain, keywords)) {
+    return {
+      allowed: false,
+      reason: "This email address is not allowed",
+      code: "blocked_email",
+    }
+  }
+
+  if (MS_CONSUMER_DOMAINS.has(domain) && MS_NAME_DIGITS_LOCAL.test(localPart)) {
+    return {
+      allowed: false,
+      reason: "This email address is not allowed",
+      code: "blocked_email",
+    }
+  }
+
+  for (const pattern of blockedLocalPatterns()) {
+    if (pattern.test(localPart)) {
+      return {
+        allowed: false,
+        reason: "This email address is not allowed",
+        code: "blocked_email",
+      }
+    }
+  }
+
+  return { allowed: true, normalizedEmail }
+}
+
+/** Returns true when email matches known spam signup patterns (for admin cleanup). */
+function isSuspiciousSignupEmail(email: string): boolean {
+  const result = evaluateSignupEmail(email)
+  return !result.allowed && result.code !== "invalid_email"
+}
+
+// ---- inlined: signupAbuseGuard.ts ----
+type SupabaseClient = {
+  rpc: (
+    fn: string,
+    args?: Record<string, unknown>,
+  ) => Promise<{ data: unknown; error: { message: string } | null }>;
+};
 
 /** Max auth-email sends per IP per rolling hour (verification + password reset). */
-export const AUTH_EMAIL_MAX_PER_HOUR_IP = 3
+const AUTH_EMAIL_MAX_PER_HOUR_IP = 3
 
 /** Absolute cap on verification emails across all IPs (stops IP-rotation floods). */
-export const AUTH_EMAIL_MAX_PER_HOUR_GLOBAL = 20
+const AUTH_EMAIL_MAX_PER_HOUR_GLOBAL = 20
 
 /** Shared bucket when client IP headers are missing (do not skip rate limiting). */
-export const MISSING_IP_HASH = "missing-ip";
+const MISSING_IP_HASH = "missing-ip";
 
-export function extractClientIp(req: Request): string | null {
+function extractClientIp(req: Request): string | null {
   const cfIp = req.headers.get("cf-connecting-ip")?.trim()
   if (cfIp) return cfIp
 
@@ -23,7 +96,7 @@ export function extractClientIp(req: Request): string | null {
   return realIp || null
 }
 
-export async function hashClientIp(ip: string): Promise<string> {
+async function hashClientIp(ip: string): Promise<string> {
   const data = new TextEncoder().encode(ip)
   const digest = await crypto.subtle.digest("SHA-256", data)
   return Array.from(new Uint8Array(digest))
@@ -31,11 +104,11 @@ export async function hashClientIp(ip: string): Promise<string> {
     .join("")
 }
 
-export type AbuseClaimResult =
+type AbuseClaimResult =
   | { ok: true }
   | { ok: false; retryAfterSeconds: number }
 
-export async function claimAuthAbuseSlot(
+async function claimAuthAbuseSlot(
   supabase: SupabaseClient,
   action: string,
   ip: string,
@@ -66,7 +139,7 @@ export async function claimAuthAbuseSlot(
   }
 }
 
-export async function enforceIpRateLimit(
+async function enforceIpRateLimit(
   req: Request,
   supabase: SupabaseClient,
   action: string,
@@ -102,7 +175,7 @@ export async function enforceIpRateLimit(
 }
 
 /** Global (cross-IP) hourly cap for an auth-email action. */
-export async function enforceGlobalRateLimit(
+async function enforceGlobalRateLimit(
   supabase: SupabaseClient,
   action: string,
   maxPerHour = AUTH_EMAIL_MAX_PER_HOUR_GLOBAL,
@@ -143,12 +216,16 @@ export async function enforceGlobalRateLimit(
   )
 }
 
-export async function verifyTurnstileToken(
+async function verifyTurnstileToken(
   token: string | undefined,
   remoteIp: string | null,
 ): Promise<boolean> {
   const secret = Deno.env.get("TURNSTILE_SECRET_KEY")?.trim()
-  if (!secret) return true
+  // Fail closed: missing secret must not silently allow bots through.
+  if (!secret) {
+    console.error("[signupAbuseGuard] TURNSTILE_SECRET_KEY is not set")
+    return false
+  }
 
   if (!token?.trim()) return false
 
@@ -168,3 +245,41 @@ export async function verifyTurnstileToken(
   const data = (await res.json()) as { success?: boolean }
   return data.success === true
 }
+
+// ---- send-verification-email handler ----
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers":
+    "Content-Type, Authorization, X-Client-Info, Apikey",
+};
+
+/** Minimum seconds between verification emails for the same address. */
+const RESEND_COOLDOWN_SECONDS = 60;
+/** Max verification emails per address per rolling hour. */
+const RESEND_MAX_PER_HOUR = 5;
+
+function json(
+  body: Record<string, unknown>,
+  status: number,
+  extraHeaders?: HeadersInit,
+): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      ...extraHeaders,
+    },
+  });
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 200, headers: corsHeaders });
+  }
+
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const resendA

@@ -148,7 +148,11 @@ export async function verifyTurnstileToken(
   remoteIp: string | null,
 ): Promise<boolean> {
   const secret = Deno.env.get("TURNSTILE_SECRET_KEY")?.trim()
-  if (!secret) return true
+  // Fail closed: missing secret must not silently allow bots through.
+  if (!secret) {
+    console.error("[signupAbuseGuard] TURNSTILE_SECRET_KEY is not set")
+    return false
+  }
 
   if (!token?.trim()) return false
 

@@ -1,178 +1,134 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+// ---- inlined: brandEmailAssets.ts ----
+/** Public Storage URLs for TScopier brand images in emails. */
 
-import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+const EMAIL_ASSETS_BUCKET = "email-assets";
 
-/** Max auth-email sends per IP per rolling hour (verification + password reset). */
-export const AUTH_EMAIL_MAX_PER_HOUR_IP = 3
+type EmailLogoVariant = "light" | "dark" | "mark";
 
-/** Absolute cap on verification emails across all IPs (stops IP-rotation floods). */
-export const AUTH_EMAIL_MAX_PER_HOUR_GLOBAL = 20
+const LOGO_FILES: Record<EmailLogoVariant, string> = {
+  light: "tscopierlogo.png",
+  dark: "tscopierlogo-dark.png",
+  mark: "tslogo-collapse.png",
+};
 
-/** Shared bucket when client IP headers are missing (do not skip rate limiting). */
-export const MISSING_IP_HASH = "missing-ip";
+function emailAssetsPublicBase(supabaseUrl: string): string {
+  return `${String(supabaseUrl).replace(/\/$/, "")}/storage/v1/object/public/${EMAIL_ASSETS_BUCKET}`;
+}
 
-export function extractClientIp(req: Request): string | null {
-  const cfIp = req.headers.get("cf-connecting-ip")?.trim()
-  if (cfIp) return cfIp
+function emailBrandLogoUrl(
+  supabaseUrl: string,
+  variant: EmailLogoVariant = "light",
+): string {
+  return `${emailAssetsPublicBase(supabaseUrl)}/${LOGO_FILES[variant]}`;
+}
 
-  const forwarded = req.headers.get("x-forwarded-for")?.trim()
-  if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim()
-    if (first) return first
+/** Prefer explicit override, then Storage, then app-hosted fallback. */
+function resolveEmailLogoUrl(args: {
+  supabaseUrl: string;
+  appUrl?: string | null;
+  variant?: EmailLogoVariant;
+  explicitUrl?: string | null;
+}): string {
+  const explicit = String(args.explicitUrl ?? "").trim();
+  if (explicit) return explicit;
+
+  const supabaseUrl = String(args.supabaseUrl ?? "").trim();
+  if (supabaseUrl) {
+    return emailBrandLogoUrl(supabaseUrl, args.variant ?? "light");
   }
 
-  const realIp = req.headers.get("x-real-ip")?.trim()
-  return realIp || null
+  const appUrl = String(args.appUrl ?? "https://app.tscopier.ai").replace(/\/$/, "");
+  const file = LOGO_FILES[args.variant ?? "light"];
+  return `${appUrl}/${file}`;
 }
 
-export async function hashClientIp(ip: string): Promise<string> {
-  const data = new TextEncoder().encode(ip)
-  const digest = await crypto.subtle.digest("SHA-256", data)
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
+// ---- inlined: authEmailLayout.ts ----
+const COMPANY_FOOTER = `Tartarix Inc.<br>
+131 Continental Dr<br>
+Suite 305<br>
+Newark, DE 19713 US`
+
+function buildAuthEmailHtml(args: {
+  title: string
+  greeting: string
+  bodyHtml: string
+  buttonLabel: string
+  buttonUrl: string
+  footerNote?: string
+  logoUrl?: string | null
+}): string {
+  const footerNote = args.footerNote
+    ? `<p style="margin:0 0 24px 0;font-size:13px;line-height:1.6;color:#737373;">${args.footerNote}</p>`
+    : ""
+
+  const logoBlock = args.logoUrl
+    ? `<img src="${args.logoUrl}" alt="TScopier" width="148" height="36" style="display:block;margin:0 0 20px 0;height:36px;width:auto;max-width:180px;border:0;" />`
+    : `<p style="margin:0 0 8px 0;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#0d9488;">TScopier</p>`
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${args.title}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f5;padding:40px 20px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="padding:40px 40px 0 40px;">
+              ${logoBlock}
+              <h1 style="margin:0 0 24px 0;font-size:22px;font-weight:600;color:#171717;line-height:1.3;">
+                ${args.title}
+              </h1>
+              <p style="margin:0 0 16px 0;font-size:15px;line-height:1.6;color:#404040;">
+                ${args.greeting}
+              </p>
+              <div style="margin:0 0 32px 0;font-size:15px;line-height:1.6;color:#404040;">
+                ${args.bodyHtml}
+              </div>
+              ${footerNote}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 40px 40px 40px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+                <tr>
+                  <td style="border-radius:8px;background-color:#0d9488;">
+                    <a href="${args.buttonUrl}" target="_blank" style="display:inline-block;padding:12px 32px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">
+                      ${args.buttonLabel}
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 40px;">
+              <hr style="border:none;border-top:1px solid #e5e5e5;margin:0;">
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px 40px 40px 40px;text-align:center;">
+              <p style="margin:0;font-size:12px;line-height:1.6;color:#a3a3a3;">
+                ${COMPANY_FOOTER}
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
 }
 
-export type AbuseClaimResult =
-  | { ok: true }
-  | { ok: false; retryAfterSeconds: number }
-
-export async function claimAuthAbuseSlot(
-  supabase: SupabaseClient,
-  action: string,
-  ip: string,
-  maxPerHour = AUTH_EMAIL_MAX_PER_HOUR_IP,
-): Promise<AbuseClaimResult> {
-  const ipHash = await hashClientIp(ip)
-  const { data, error } = await supabase.rpc("claim_auth_abuse_slot", {
-    p_action: action,
-    p_ip_hash: ipHash,
-    p_max_per_hour: maxPerHour,
-  })
-
-  if (error) {
-    console.error("[signupAbuseGuard] claim error:", error)
-    throw new Error(error.message)
-  }
-
-  const claim = (data ?? {}) as {
-    ok?: boolean
-    retry_after_seconds?: number
-  }
-
-  if (claim.ok) return { ok: true }
-
-  return {
-    ok: false,
-    retryAfterSeconds: Math.max(1, Number(claim.retry_after_seconds ?? 3600)),
-  }
-}
-
-export async function enforceIpRateLimit(
-  req: Request,
-  supabase: SupabaseClient,
-  action: string,
-  maxPerHour = AUTH_EMAIL_MAX_PER_HOUR_IP,
-  corsHeaders?: Record<string, string>,
-): Promise<Response | null> {
-  const ip = extractClientIp(req)
-  // Missing IP must still be capped — previously we skipped and bots bypassed limits.
-  const claim = await claimAuthAbuseSlot(
-    supabase,
-    action,
-    ip ?? MISSING_IP_HASH,
-    maxPerHour,
-  )
-  if (claim.ok) return null
-
-  return new Response(
-    JSON.stringify({
-      error: "rate_limited",
-      code: "rate_limited",
-      message: "Too many requests. Try again later.",
-      retry_after_seconds: claim.retryAfterSeconds,
-    }),
-    {
-      status: 429,
-      headers: {
-        "Content-Type": "application/json",
-        "Retry-After": String(claim.retryAfterSeconds),
-        ...(corsHeaders ?? {}),
-      },
-    },
-  )
-}
-
-/** Global (cross-IP) hourly cap for an auth-email action. */
-export async function enforceGlobalRateLimit(
-  supabase: SupabaseClient,
-  action: string,
-  maxPerHour = AUTH_EMAIL_MAX_PER_HOUR_GLOBAL,
-  corsHeaders?: Record<string, string>,
-): Promise<Response | null> {
-  // Use literal sentinel ip_hash (not SHA-256) so this matches
-  // claim_verification_email_send → claim_auth_abuse_slot(..., 'global', ...).
-  const { data, error } = await supabase.rpc("claim_auth_abuse_slot", {
-    p_action: `${action}_global`,
-    p_ip_hash: "global",
-    p_max_per_hour: maxPerHour,
-  })
-
-  if (error) {
-    console.error("[signupAbuseGuard] global claim error:", error)
-    throw new Error(error.message)
-  }
-
-  const claim = (data ?? {}) as { ok?: boolean; retry_after_seconds?: number }
-  if (claim.ok) return null
-
-  const retryAfterSeconds = Math.max(1, Number(claim.retry_after_seconds ?? 3600))
-  return new Response(
-    JSON.stringify({
-      error: "rate_limited",
-      code: "rate_limited",
-      message: "Too many requests. Try again later.",
-      retry_after_seconds: retryAfterSeconds,
-    }),
-    {
-      status: 429,
-      headers: {
-        "Content-Type": "application/json",
-        "Retry-After": String(retryAfterSeconds),
-        ...(corsHeaders ?? {}),
-      },
-    },
-  )
-}
-
-export async function verifyTurnstileToken(
-  token: string | undefined,
-  remoteIp: string | null,
-): Promise<boolean> {
-  const secret = Deno.env.get("TURNSTILE_SECRET_KEY")?.trim()
-  if (!secret) return true
-
-  if (!token?.trim()) return false
-
-  const body = new URLSearchParams({
-    secret,
-    response: token.trim(),
-  })
-  if (remoteIp) body.set("remoteip", remoteIp)
-
-  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  })
-
-  if (!res.ok) return false
-  const data = (await res.json()) as { success?: boolean }
-  return data.success === true
-}
-
+// ---- inlined: emailSignupPolicy.ts ----
 /**
  * Server-side signup email policy — blocks obvious spam, adult brand domains,
  * keyword locals, and disposable providers.
@@ -258,7 +214,7 @@ const DEFAULT_BLOCKED_KEYWORDS = [
   "gay",
 ]
 
-export type EmailSignupPolicyResult =
+type EmailSignupPolicyResult =
   | { allowed: true; normalizedEmail: string }
   | { allowed: false; reason: string; code: "invalid_email" | "blocked_email" | "disposable_domain" }
 
@@ -303,7 +259,7 @@ function containsBlockedKeyword(haystack: string, keywords: string[]): boolean {
   return keywords.some((kw) => haystack.includes(kw))
 }
 
-export function normalizeSignupEmail(raw: unknown): string | null {
+function normalizeSignupEmail(raw: unknown): string | null {
   if (typeof raw !== "string") return null
   const email = raw.trim().toLowerCase()
   if (!email.includes("@")) return null
@@ -313,7 +269,7 @@ export function normalizeSignupEmail(raw: unknown): string | null {
   return email
 }
 
-export function evaluateSignupEmail(raw: unknown): EmailSignupPolicyResult {
+function evaluateSignupEmail(raw: unknown): EmailSignupPolicyResult {
   const normalizedEmail = normalizeSignupEmail(raw)
   if (!normalizedEmail) {
     return { allowed: false, reason: "Invalid email address", code: "invalid_email" }
@@ -367,136 +323,193 @@ export function evaluateSignupEmail(raw: unknown): EmailSignupPolicyResult {
 }
 
 /** Returns true when email matches known spam signup patterns (for admin cleanup). */
-export function isSuspiciousSignupEmail(email: string): boolean {
+function isSuspiciousSignupEmail(email: string): boolean {
   const result = evaluateSignupEmail(email)
   return !result.allowed && result.code !== "invalid_email"
 }
 
-const COMPANY_FOOTER = `Tartarix Inc.<br>
-131 Continental Dr<br>
-Suite 305<br>
-Newark, DE 19713 US`
-
-export function buildAuthEmailHtml(args: {
-  title: string
-  greeting: string
-  bodyHtml: string
-  buttonLabel: string
-  buttonUrl: string
-  footerNote?: string
-  logoUrl?: string | null
-}): string {
-  const footerNote = args.footerNote
-    ? `<p style="margin:0 0 24px 0;font-size:13px;line-height:1.6;color:#737373;">${args.footerNote}</p>`
-    : ""
-
-  const logoBlock = args.logoUrl
-    ? `<img src="${args.logoUrl}" alt="TScopier" width="148" height="36" style="display:block;margin:0 0 20px 0;height:36px;width:auto;max-width:180px;border:0;" />`
-    : `<p style="margin:0 0 8px 0;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#0d9488;">TScopier</p>`
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${args.title}</title>
-</head>
-<body style="margin:0;padding:0;background-color:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f5;padding:40px 20px;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
-          <tr>
-            <td style="padding:40px 40px 0 40px;">
-              ${logoBlock}
-              <h1 style="margin:0 0 24px 0;font-size:22px;font-weight:600;color:#171717;line-height:1.3;">
-                ${args.title}
-              </h1>
-              <p style="margin:0 0 16px 0;font-size:15px;line-height:1.6;color:#404040;">
-                ${args.greeting}
-              </p>
-              <div style="margin:0 0 32px 0;font-size:15px;line-height:1.6;color:#404040;">
-                ${args.bodyHtml}
-              </div>
-              ${footerNote}
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:0 40px 40px 40px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
-                <tr>
-                  <td style="border-radius:8px;background-color:#0d9488;">
-                    <a href="${args.buttonUrl}" target="_blank" style="display:inline-block;padding:12px 32px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">
-                      ${args.buttonLabel}
-                    </a>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:0 40px;">
-              <hr style="border:none;border-top:1px solid #e5e5e5;margin:0;">
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:32px 40px 40px 40px;text-align:center;">
-              <p style="margin:0;font-size:12px;line-height:1.6;color:#a3a3a3;">
-                ${COMPANY_FOOTER}
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`
-}
-
-/** Public Storage URLs for TScopier brand images in emails. */
-
-export const EMAIL_ASSETS_BUCKET = "email-assets";
-
-export type EmailLogoVariant = "light" | "dark" | "mark";
-
-const LOGO_FILES: Record<EmailLogoVariant, string> = {
-  light: "tscopierlogo.png",
-  dark: "tscopierlogo-dark.png",
-  mark: "tslogo-collapse.png",
+// ---- inlined: signupAbuseGuard.ts ----
+type SupabaseClient = {
+  rpc: (
+    fn: string,
+    args?: Record<string, unknown>,
+  ) => Promise<{ data: unknown; error: { message: string } | null }>;
 };
 
-export function emailAssetsPublicBase(supabaseUrl: string): string {
-  return `${String(supabaseUrl).replace(/\/$/, "")}/storage/v1/object/public/${EMAIL_ASSETS_BUCKET}`;
-}
+/** Max auth-email sends per IP per rolling hour (verification + password reset). */
+const AUTH_EMAIL_MAX_PER_HOUR_IP = 3
 
-export function emailBrandLogoUrl(
-  supabaseUrl: string,
-  variant: EmailLogoVariant = "light",
-): string {
-  return `${emailAssetsPublicBase(supabaseUrl)}/${LOGO_FILES[variant]}`;
-}
+/** Absolute cap on verification emails across all IPs (stops IP-rotation floods). */
+const AUTH_EMAIL_MAX_PER_HOUR_GLOBAL = 20
 
-/** Prefer explicit override, then Storage, then app-hosted fallback. */
-export function resolveEmailLogoUrl(args: {
-  supabaseUrl: string;
-  appUrl?: string | null;
-  variant?: EmailLogoVariant;
-  explicitUrl?: string | null;
-}): string {
-  const explicit = String(args.explicitUrl ?? "").trim();
-  if (explicit) return explicit;
+/** Shared bucket when client IP headers are missing (do not skip rate limiting). */
+const MISSING_IP_HASH = "missing-ip";
 
-  const supabaseUrl = String(args.supabaseUrl ?? "").trim();
-  if (supabaseUrl) {
-    return emailBrandLogoUrl(supabaseUrl, args.variant ?? "light");
+function extractClientIp(req: Request): string | null {
+  const cfIp = req.headers.get("cf-connecting-ip")?.trim()
+  if (cfIp) return cfIp
+
+  const forwarded = req.headers.get("x-forwarded-for")?.trim()
+  if (forwarded) {
+    const first = forwarded.split(",")[0]?.trim()
+    if (first) return first
   }
 
-  const appUrl = String(args.appUrl ?? "https://app.tscopier.ai").replace(/\/$/, "");
-  const file = LOGO_FILES[args.variant ?? "light"];
-  return `${appUrl}/${file}`;
+  const realIp = req.headers.get("x-real-ip")?.trim()
+  return realIp || null
 }
 
+async function hashClientIp(ip: string): Promise<string> {
+  const data = new TextEncoder().encode(ip)
+  const digest = await crypto.subtle.digest("SHA-256", data)
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+}
+
+type AbuseClaimResult =
+  | { ok: true }
+  | { ok: false; retryAfterSeconds: number }
+
+async function claimAuthAbuseSlot(
+  supabase: SupabaseClient,
+  action: string,
+  ip: string,
+  maxPerHour = AUTH_EMAIL_MAX_PER_HOUR_IP,
+): Promise<AbuseClaimResult> {
+  const ipHash = await hashClientIp(ip)
+  const { data, error } = await supabase.rpc("claim_auth_abuse_slot", {
+    p_action: action,
+    p_ip_hash: ipHash,
+    p_max_per_hour: maxPerHour,
+  })
+
+  if (error) {
+    console.error("[signupAbuseGuard] claim error:", error)
+    throw new Error(error.message)
+  }
+
+  const claim = (data ?? {}) as {
+    ok?: boolean
+    retry_after_seconds?: number
+  }
+
+  if (claim.ok) return { ok: true }
+
+  return {
+    ok: false,
+    retryAfterSeconds: Math.max(1, Number(claim.retry_after_seconds ?? 3600)),
+  }
+}
+
+async function enforceIpRateLimit(
+  req: Request,
+  supabase: SupabaseClient,
+  action: string,
+  maxPerHour = AUTH_EMAIL_MAX_PER_HOUR_IP,
+  corsHeaders?: Record<string, string>,
+): Promise<Response | null> {
+  const ip = extractClientIp(req)
+  // Missing IP must still be capped — previously we skipped and bots bypassed limits.
+  const claim = await claimAuthAbuseSlot(
+    supabase,
+    action,
+    ip ?? MISSING_IP_HASH,
+    maxPerHour,
+  )
+  if (claim.ok) return null
+
+  return new Response(
+    JSON.stringify({
+      error: "rate_limited",
+      code: "rate_limited",
+      message: "Too many requests. Try again later.",
+      retry_after_seconds: claim.retryAfterSeconds,
+    }),
+    {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": String(claim.retryAfterSeconds),
+        ...(corsHeaders ?? {}),
+      },
+    },
+  )
+}
+
+/** Global (cross-IP) hourly cap for an auth-email action. */
+async function enforceGlobalRateLimit(
+  supabase: SupabaseClient,
+  action: string,
+  maxPerHour = AUTH_EMAIL_MAX_PER_HOUR_GLOBAL,
+  corsHeaders?: Record<string, string>,
+): Promise<Response | null> {
+  // Use literal sentinel ip_hash (not SHA-256) so this matches
+  // claim_verification_email_send → claim_auth_abuse_slot(..., 'global', ...).
+  const { data, error } = await supabase.rpc("claim_auth_abuse_slot", {
+    p_action: `${action}_global`,
+    p_ip_hash: "global",
+    p_max_per_hour: maxPerHour,
+  })
+
+  if (error) {
+    console.error("[signupAbuseGuard] global claim error:", error)
+    throw new Error(error.message)
+  }
+
+  const claim = (data ?? {}) as { ok?: boolean; retry_after_seconds?: number }
+  if (claim.ok) return null
+
+  const retryAfterSeconds = Math.max(1, Number(claim.retry_after_seconds ?? 3600))
+  return new Response(
+    JSON.stringify({
+      error: "rate_limited",
+      code: "rate_limited",
+      message: "Too many requests. Try again later.",
+      retry_after_seconds: retryAfterSeconds,
+    }),
+    {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": String(retryAfterSeconds),
+        ...(corsHeaders ?? {}),
+      },
+    },
+  )
+}
+
+async function verifyTurnstileToken(
+  token: string | undefined,
+  remoteIp: string | null,
+): Promise<boolean> {
+  const secret = Deno.env.get("TURNSTILE_SECRET_KEY")?.trim()
+  // Fail closed: missing secret must not silently allow bots through.
+  if (!secret) {
+    console.error("[signupAbuseGuard] TURNSTILE_SECRET_KEY is not set")
+    return false
+  }
+
+  if (!token?.trim()) return false
+
+  const body = new URLSearchParams({
+    secret,
+    response: token.trim(),
+  })
+  if (remoteIp) body.set("remoteip", remoteIp)
+
+  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  })
+
+  if (!res.ok) return false
+  const data = (await res.json()) as { success?: boolean }
+  return data.success === true
+}
+
+// ---- send-verification-email handler ----
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
@@ -576,7 +589,6 @@ Deno.serve(async (req: Request) => {
 
     let targetEmail: string | undefined;
     let firstName = "there";
-    let hasAuthedUser = false;
 
     const authHeader = req.headers.get("Authorization");
     if (authHeader) {
@@ -585,7 +597,6 @@ Deno.serve(async (req: Request) => {
         token,
       );
       if (!authError && user?.email) {
-        hasAuthedUser = true;
         targetEmail = user.email;
         firstName = (user.user_metadata?.first_name as string) || firstName;
       }
@@ -602,11 +613,11 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Missing email" }, 400);
     }
 
-    if (!hasAuthedUser) {
-      const captchaOk = await verifyTurnstileToken(body.captchaToken, clientIp);
-      if (!captchaOk) {
-        return json({ error: "Captcha verification failed", code: "captcha_failed" }, 403);
-      }
+    // Always verify Turnstile — including when a session JWT is present.
+    // Skipping captcha for authed users let bots create a session then send mail.
+    const captchaOk = await verifyTurnstileToken(body.captchaToken, clientIp);
+    if (!captchaOk) {
+      return json({ error: "Captcha verification failed", code: "captcha_failed" }, 403);
     }
 
     const normalizedEmail = targetEmail.trim().toLowerCase();
