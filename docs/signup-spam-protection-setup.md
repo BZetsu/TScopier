@@ -49,6 +49,7 @@ Apply on **both** staging (`axdcledcyhyvzrnfkwat`) and production (`sxkpcovbyafi
 
 - [x] Migration `20260812140000_auth_abuse_rate_limits.sql` applied (staging + prod) — 2026-08-12
 - [x] Migration `20260812160000_block_spam_signup_emails.sql` applied (staging + prod) — DB-level signup block
+- [x] Migration `20260812180000_block_spam_email_domains_keywords.sql` applied (staging + prod) — adult domains + keywords (`gay`, `porn`, …)
 - [ ] Edge functions deployed: `send-verification-email`, `send-password-reset-email`, `auth-before-user-created`, `admin-query`, `admin-mutate`
 - [ ] `TURNSTILE_SECRET_KEY` + `BEFORE_USER_CREATED_HOOK_SECRET` set on Supabase
 - [ ] `VITE_TURNSTILE_SITE_KEY` set on Netlify (redeploy frontend)
@@ -62,8 +63,23 @@ Backoffice **Overview** → **Ban spam signups** button, or SQL (destructive):
 ```sql
 -- Preview only — run SELECT first
 SELECT id, email, created_at FROM auth.users
-WHERE email ILIKE 'pornhub%@hotmail.com'
+WHERE split_part(lower(email), '@', 2) IN ('pornhub.com', 'xvideos.com', 'xnxx.com')
+   OR split_part(lower(email), '@', 1) ~ '(pornhub|gay|porn|xxx)'
 ORDER BY created_at DESC;
 ```
 
 Use backoffice bulk ban action instead of raw DELETE unless you need full removal.
+
+## 7. Custom domains / keywords (ops)
+
+Hard-coded lists live in:
+- `src/lib/signupEmailPolicy.ts` (frontend)
+- `supabase/functions/_shared/emailSignupPolicy.ts` (edge)
+- `public.block_spam_auth_signup()` (DB trigger — source of truth even without Auth Hook)
+
+To add more without a code deploy (edge hook only, if enabled):
+```bash
+supabase secrets set SIGNUP_BLOCKED_EMAIL_DOMAINS="bad.com,worse.net" --project-ref <ref>
+supabase secrets set SIGNUP_BLOCKED_EMAIL_KEYWORDS="spamword,other" --project-ref <ref>
+```
+DB trigger still needs a migration for new hard blocks (recommended for bots that bypass the hook).

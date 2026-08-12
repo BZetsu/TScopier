@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-08-12 — Block spam email domains + keywords (gaylord@pornhub.com wave)
+
+- **Problem:** Bots switched to `gaylord######@pornhub.com`. Prior trigger only blocked `pornhub#####` locals and disposable domains — not adult brand domains or keyword locals like `gay*`.
+- **Fix (live prod + staging):** Migration `20260812180000_block_spam_email_domains_keywords.sql` — blocks adult domains (`pornhub.com`, `xvideos.com`, …) and keywords in local/domain (`porn`, `gay`, `xxx`, `nsfw`, brand names). Synced in `src/lib/signupEmailPolicy.ts` + `supabase/functions/_shared/emailSignupPolicy.ts`. Edge secrets optional: `SIGNUP_BLOCKED_EMAIL_DOMAINS`, `SIGNUP_BLOCKED_EMAIL_KEYWORDS`.
+- **Cleanup:** Deleted **51** matching spam accounts from prod (0 brokers / 0 subs).
+- **Note:** Keyword `gay` can false-positive rare real names (Gaylord, Gayle). Acceptable for current spam wave.
+
 ### 2026-08-12 — Fix marketing links becoming tscopier.ai/https://app.tscopier.ai/...
 
 - **Bug:** Sign in / Get started on `tscopier.ai` produced `https://tscopier.ai/https://app.tscopier.ai/login`. `appUrl('/login')` correctly returns the absolute app URL on the marketing host, then `withQuery()` treated that as a relative path (`/https://app.tscopier.ai/login`).

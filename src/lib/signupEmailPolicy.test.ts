@@ -22,6 +22,15 @@ describe('evaluateSignupEmail', () => {
     expect(result.allowed).toBe(false)
     if (!result.allowed) expect(result.code).toBe('disposable_domain')
   })
+
+  it('blocks adult brand domains', () => {
+    expect(evaluateSignupEmail('gaylord297426@pornhub.com').allowed).toBe(false)
+  })
+
+  it('blocks keyword locals like gay*', () => {
+    expect(evaluateSignupEmail('gaylord297426@hotmail.com').allowed).toBe(false)
+    expect(evaluateSignupEmail('user@something-porn.example').allowed).toBe(false)
+  })
 })
 
 describe('signupErrorPolicyCode', () => {
