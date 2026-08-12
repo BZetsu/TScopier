@@ -48,6 +48,7 @@ export interface AuthTranslations {
     confirmPasswordPlaceholder: string
     passwordHint: string
     passwordTooShort: string
+    passwordTooWeak: string
     passwordMismatch: string
     submit: string
     successHeading: string
@@ -75,7 +76,10 @@ export interface AuthTranslations {
     confirmPasswordPlaceholder: string
     passwordHint: string
     passwordTooShort: string
+    passwordTooWeak: string
     passwordMismatch: string
+    emailNotAllowed: string
+    disposableEmailNotAllowed: string
     submit: string
     terms: {
       prefix: string

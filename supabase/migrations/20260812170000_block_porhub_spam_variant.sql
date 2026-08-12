@@ -1,7 +1,5 @@
 /*
-  Block obvious spam signups at auth.users INSERT time.
-  Mirrors supabase/functions/_shared/emailSignupPolicy.ts so bots are rejected
-  even when the before-user-created Auth Hook is not enabled in the dashboard.
+  Broaden pornhub-style spam block to catch typo variants (porhub, prhub, p0rnhub).
 */
 
 CREATE OR REPLACE FUNCTION public.block_spam_auth_signup()
@@ -63,14 +61,3 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-
-REVOKE ALL ON FUNCTION public.block_spam_auth_signup() FROM PUBLIC;
-
-DROP TRIGGER IF EXISTS on_auth_user_before_insert_block_spam ON auth.users;
-CREATE TRIGGER on_auth_user_before_insert_block_spam
-  BEFORE INSERT ON auth.users
-  FOR EACH ROW
-  EXECUTE FUNCTION public.block_spam_auth_signup();
-
-COMMENT ON FUNCTION public.block_spam_auth_signup() IS
-  'Rejects auth signups matching server-side emailSignupPolicy spam patterns.';

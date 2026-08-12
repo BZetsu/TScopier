@@ -10,6 +10,7 @@ import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 import { AuthBackHome } from '../../components/auth/AuthBackHome'
 import { useLocale } from '../../context/LocaleContext'
+import { evaluatePassword } from '../../lib/passwordPolicy'
 
 type PagePhase = 'verifying' | 'ready' | 'invalid' | 'success'
 
@@ -91,12 +92,18 @@ export function ResetPasswordPage() {
     e.preventDefault()
     setError('')
 
-    if (password.length < 6) {
-      setError(t.passwordTooShort)
-      return
-    }
     if (password !== confirmPassword) {
       setError(t.passwordMismatch)
+      return
+    }
+
+    const passwordPolicy = evaluatePassword(password)
+    if (!passwordPolicy.ok) {
+      setError(
+        passwordPolicy.failures.includes('too_short')
+          ? t.passwordTooShort
+          : t.passwordTooWeak,
+      )
       return
     }
 

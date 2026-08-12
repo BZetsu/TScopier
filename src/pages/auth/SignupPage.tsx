@@ -24,6 +24,12 @@ import {
 } from '../../lib/pendingPlanSelection'
 import { TurnstileWidget, type TurnstileWidgetHandle } from '../../components/auth/TurnstileWidget'
 import { isTurnstileEnabled } from '../../lib/turnstile'
+import {
+  evaluateSignupEmail,
+  signupErrorPolicyCode,
+  signupPolicyMessage,
+} from '../../lib/signupEmailPolicy'
+import { evaluatePassword, isPasswordStrongEnough } from '../../lib/passwordPolicy'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -99,16 +105,32 @@ export function SignupPage() {
     e.preventDefault()
     setError('')
 
-    if (password.length < 6) {
-      setError(signupT.passwordTooShort)
-      return
-    }
     if (password !== confirmPassword) {
       setError(signupT.passwordMismatch)
       return
     }
+
+    const passwordPolicy = evaluatePassword(password)
+    if (!passwordPolicy.ok) {
+      setError(
+        passwordPolicy.failures.includes('too_short')
+          ? signupT.passwordTooShort
+          : signupT.passwordTooWeak,
+      )
+      return
+    }
+
     if (captchaRequired && !captchaToken) {
       setError(auth.oauth.captchaRequired)
+      return
+    }
+
+    const emailPolicy = evaluateSignupEmail(email)
+    if (!emailPolicy.allowed) {
+      setError(signupPolicyMessage(emailPolicy.code, {
+        emailNotAllowed: signupT.emailNotAllowed,
+        disposableEmailNotAllowed: signupT.disposableEmailNotAllowed,
+      }))
       return
     }
 
@@ -136,7 +158,15 @@ export function SignupPage() {
       },
     })
     if (signUpError) {
-      setError(signUpError.message)
+      const policyCode = signupErrorPolicyCode(signUpError.message)
+      setError(
+        policyCode
+          ? signupPolicyMessage(policyCode, {
+              emailNotAllowed: signupT.emailNotAllowed,
+              disposableEmailNotAllowed: signupT.disposableEmailNotAllowed,
+            })
+          : signUpError.message,
+      )
       turnstileRef.current?.reset()
       setCaptchaToken(null)
       setLoading(false)
@@ -303,7 +333,7 @@ export function SignupPage() {
         <Button
           type="submit"
           loading={loading}
-          disabled={captchaRequired && !captchaToken}
+          disabled={(captchaRequired && !captchaToken) || !isPasswordStrongEnough(password) || password !== confirmPassword}
           className="w-full !mt-6"
           size="lg"
         >
