@@ -53,8 +53,8 @@ export async function reconcileBasketFlatFromBroker(
 
   const openRows = (data ?? []) as OpenTradeRow[]
   if (!openRows.length) {
-    await purgeRangePendingLegsIfBasketFlat(supabase, scope, 'signal_closed')
-    return 'signal_closed'
+    const purged = await purgeRangePendingLegsIfBasketFlat(supabase, scope, 'signal_closed')
+    return purged > 0 ? 'signal_closed' : null
   }
 
   if (!api || !metaapiAccountId) return null
