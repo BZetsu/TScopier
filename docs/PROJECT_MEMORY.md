@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-08-12 — Emergency spam block: DB trigger + cleanup (spam resumed)
+
+- **Problem:** `pornhub#####@hotmail.com` bots resumed (~20 signups in last hour). `auth-before-user-created` edge function was deployed but **Auth Hook not enabled in dashboard** — signups bypassed server policy. `auth_abuse_rate_limits` migration also not yet applied on prod.
+- **Fix (live on prod + staging):** Migration `20260812160000_block_spam_signup_emails.sql` — `BEFORE INSERT` trigger on `auth.users` mirrors `emailSignupPolicy` (pornhub pattern, numeric locals, disposable domains, repeated-char locals). Blocks bots even without dashboard hook/CAPTCHA. Also applied `20260812140000_auth_abuse_rate_limits.sql` on prod + staging.
+- **Cleanup:** Deleted 20 new `pornhub*@hotmail.com` accounts from prod.
+- **Still manual (dashboard):** Enable Supabase Auth CAPTCHA (Turnstile), wire `before-user-created` hook, set `TURNSTILE_SECRET_KEY` + `BEFORE_USER_CREATED_HOOK_SECRET`, Netlify `VITE_TURNSTILE_SITE_KEY` + redeploy frontend. See `docs/signup-spam-protection-setup.md`.
+
 ### 2026-08-12 — Advanced free trial extended to 5 days
 
 - **Change:** `trial_period_days` 3 → 5 in `create-checkout-session` (Advanced, first-time only). Updated all marketing/pricing i18n (EN + 8 locales), campaign emails, and docs (`stripe-setup.md`, `marketing-site.md`).
