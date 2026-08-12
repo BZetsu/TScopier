@@ -2,6 +2,12 @@
 
 ## Changelog
 
+### 2026-08-12 — Fix marketing links becoming tscopier.ai/https://app.tscopier.ai/...
+
+- **Bug:** Sign in / Get started on `tscopier.ai` produced `https://tscopier.ai/https://app.tscopier.ai/login`. `appUrl('/login')` correctly returns the absolute app URL on the marketing host, then `withQuery()` treated that as a relative path (`/https://app.tscopier.ai/login`).
+- **Fix:** `withQuery` and `joinOrigin` now keep `http(s)://` URLs absolute instead of prefixing `/` or the marketing origin.
+- Files: `src/lib/site.ts`, `src/lib/site.test.ts`
+
 ### 2026-08-12 — Emergency spam block: DB trigger + cleanup (spam resumed)
 
 - **Problem:** `pornhub#####@hotmail.com` bots resumed (~20 signups in last hour). `auth-before-user-created` edge function was deployed but **Auth Hook not enabled in dashboard** — signups bypassed server policy. `auth_abuse_rate_limits` migration also not yet applied on prod.
