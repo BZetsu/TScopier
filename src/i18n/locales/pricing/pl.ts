@@ -133,7 +133,7 @@ export const pricingPl: PricingBundleTranslations = {
       statusCanceled: 'Anulowana',
       statusPastDue: 'Zaległa',
       trialEnds: 'Koniec okresu próbnego',
-      choosePlan: 'Zacznij za darmo',
+      choosePlan: 'Rozpocznij 3-dniowy bezpłatny okres próbny',
     },
     checkoutFailed: 'Nie udało się rozpocząć płatności. Spróbuj ponownie.',
     paywall: {

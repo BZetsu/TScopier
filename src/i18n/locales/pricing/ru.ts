@@ -133,7 +133,7 @@ export const pricingRu: PricingBundleTranslations = {
       statusCanceled: 'Отменена',
       statusPastDue: 'Просрочена',
       trialEnds: 'Пробный период закончится',
-      choosePlan: 'Начать бесплатно',
+      choosePlan: 'Начните 3-дневный бесплатный пробный период',
     },
     checkoutFailed: 'Не удалось начать оплату. Попробуйте снова.',
     paywall: {

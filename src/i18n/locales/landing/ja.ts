@@ -9,16 +9,17 @@ export const landingJa: LandingTranslations = {
     faq: 'FAQ',
     docs: 'ドキュメント',
     signIn: 'ログイン',
-    getStarted: '無料で始める',
+    getStarted: '新規登録',
     dashboard: 'ダッシュボード',
     menuOpen: 'メニューを開く',
     menuClose: 'メニューを閉じる',
   },
   hero: {
-    headline: 'インテリジェントなAI Telegramシグナルコピープラットフォーム',
+    headline: 'Telegramシグナル。自動でコピー。',
     subheadline:
       'TScopierはオールインワンのTelegramシグナルコピープラットフォームです。Telegramを接続し、トレードシグナルをMT4/MT5に直接コピー。複雑な設定、EA、VPSは不要です。',
-    primaryCta: '無料で始める',
+    socialProof: 'クラウド型Telegramシグナルコピーで評価#1',
+    primaryCta: '3日間の無料トライアルを始める',
     secondaryCta: 'ログイン',
     imageAlt: '残高、当日損益、取引結果、口座成長チャートを表示したTScopierダッシュボード',
     previewUrl: 'app.tscopier.ai/dashboard',
@@ -608,7 +609,7 @@ export const landingJa: LandingTranslations = {
     subtitle: '一般的なTelegram copierと、速度・可視性・拡張性を重視したクラウド基盤を比較。',
     otherLabel: '他社copier',
     tscopierLabel: 'TScopier',
-    cta: '無料で始める',
+    cta: '3日間の無料トライアルを始める',
     rows: [
       {
         aspect: 'セットアップ',
@@ -817,7 +818,7 @@ export const landingJa: LandingTranslations = {
     cta: {
       title: '手動作業なしでシグナルコピーを始めませんか？',
       subtitle: 'Telegramを接続し、MT4またはMT5を紐づけるだけ。数分でコピー運用を開始できます。',
-      primary: '無料で始める',
+      primary: '3日間の無料トライアルを始める',
       secondary: 'ログイン',
     },
     tagline: 'MetaTrader口座向けの超高速Telegramシグナルcopier。',

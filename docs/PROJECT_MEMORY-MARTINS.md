@@ -4,6 +4,24 @@ Changelog entries authored / owned by Martins, kept separate from the main `PROJ
 
 ## Changelog
 
+### 2026-08-12 — Marketing nav overlap fix
+
+- Flex nav (no absolute center); hamburger below `lg`; truncating header CTA for long locales.
+- Nav button label → “Sign up” (hero still uses trial CTA).
+
+### 2026-08-12 — Hero social proof
+
+- Trustpilot “Excellent” badge commented out; hero line is “Rated #1 Cloud-based Telegram Signal Copier”.
+- Hero headline: “Telegram Signals. Copied Automatically.”
+
+### 2026-08-12 — Referral field no longer prefills verify-email
+
+- Reserved app paths blocked as referral codes; catch-all route moved after real routes.
+
+### 2026-08-12 — Marketing CTA trial wording
+
+- “Get started for free” → “Start your 3-day free trial” (marketing + paywall choosePlan).
+
 ### 2026-08-12 — Welcome Modal → Channels
 
 - CTAs: “Start Using TScopier” (→ `/channels`) and “Explore dashboard first”. Removed trial/pricing buttons from welcome.

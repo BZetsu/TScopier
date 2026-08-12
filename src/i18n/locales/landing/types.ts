@@ -344,6 +344,7 @@ export interface LandingTranslations {
   hero: {
     headline: string
     subheadline: string
+    socialProof: string
     primaryCta: string
     secondaryCta: string
     imageAlt: string

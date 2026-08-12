@@ -2,6 +2,29 @@
 
 ## Changelog
 
+### 2026-08-12 — Marketing nav responsive for long locale labels
+
+- Replaced absolute-centered desktop nav with flex layout so links no longer overlap logo / language / CTAs when translations are longer.
+- Desktop nav + header CTA from `lg` up; hamburger until then. Long trial CTA truncates with title tooltip.
+- Nav header CTA label: **Sign up** (`nav.getStarted`); hero keeps trial CTA via `hero.primaryCta`.
+- Files: `MarketingHeader.tsx`, `MarketingAuthCta.tsx`, landing `nav.getStarted`.
+
+### 2026-08-12 — Hero: classic “30,000 traders already joined” replaces Trustpilot
+
+- Commented out Excellent/Trustpilot widget at top of marketing hero; shows `hero.socialProof` instead (now “Rated #1 Cloud-based Telegram Signal Copier”).
+- Hero headline: “Telegram Signals. Copied Automatically.”
+- Files: `HeroSection.tsx`, landing locale `hero.socialProof` / `hero.headline`.
+
+### 2026-08-12 — Stop treating verify-email as a referral code
+
+- **Bug:** Signup “Referral code” field showed `verify-email` because `/:referralCode` could capture that path and redirect to `/signup?ref=verify-email`.
+- **Fix:** reserved path blocklist in `referralCodeLooksValid`; clear stored reserved codes; move `/:referralCode` after real routes in `App.tsx`.
+- **Files:** `referralCapture.ts`, `referralCapture.test.ts`, `App.tsx`, `MarketingApp.tsx`.
+
+### 2026-08-12 — Marketing CTA: Start your 3-day free trial
+
+- Replaced “Get started for free” with “Start your 3-day free trial” on marketing nav/hero/comparison/footer CTAs and paywall `choosePlan` (all landing + relevant pricing locales). Still links to `/signup`.
+
 ### 2026-08-12 — Welcome Modal: Start Using TScopier → Channels
 
 - Pricing already shown earlier in onboarding, so Welcome Modal no longer offers trial/pricing CTAs.

@@ -133,7 +133,7 @@ export const pricingAr: PricingBundleTranslations = {
       statusCanceled: 'ملغى',
       statusPastDue: 'متأخر',
       trialEnds: 'انتهاء التجربة',
-      choosePlan: 'ابدأ مجانًا',
+      choosePlan: 'ابدأ تجربتك المجانية لمدة 3 أيام',
     },
     checkoutFailed: 'تعذر بدء الدفع. حاول مرة أخرى.',
     paywall: {

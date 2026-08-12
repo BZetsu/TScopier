@@ -309,7 +309,7 @@ export const en: Translations = {
       statusCanceled: 'Canceled',
       statusPastDue: 'Past due',
       trialEnds: 'Trial ends',
-      choosePlan: 'Get started for free',
+      choosePlan: 'Start your 3-day free trial',
     },
     checkoutFailed: 'Could not start checkout. Please try again.',
     paywall: {

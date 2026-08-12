@@ -133,7 +133,7 @@ export const pricingNl: PricingBundleTranslations = {
       statusCanceled: 'Geannuleerd',
       statusPastDue: 'Achterstallig',
       trialEnds: 'Proefperiode eindigt',
-      choosePlan: 'Gratis beginnen',
+      choosePlan: 'Start je gratis proefperiode van 3 dagen',
     },
     checkoutFailed: 'Checkout kon niet worden gestart. Probeer opnieuw.',
     paywall: {

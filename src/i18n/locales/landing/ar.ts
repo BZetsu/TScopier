@@ -9,16 +9,17 @@ export const landingAr: LandingTranslations = {
     faq: 'الأسئلة الشائعة',
     docs: 'التوثيق',
     signIn: 'تسجيل الدخول',
-    getStarted: 'ابدأ مجانًا',
+    getStarted: 'إنشاء حساب',
     dashboard: 'لوحة التحكم',
     menuOpen: 'فتح القائمة',
     menuClose: 'إغلاق القائمة',
   },
   hero: {
-    headline: 'منصة ذكية واحدة بالذكاء الاصطناعي لنسخ إشارات Telegram',
+    headline: 'إشارات Telegram. تُنسخ تلقائيًا.',
     subheadline:
       'TScopier منصة شاملة لنسخ إشارات Telegram تربط Telegram وتنسخ إشارات التداول مباشرة إلى MT4/MT5 — بلا إعدادات معقدة، بلا EA، وبلا VPS.',
-    primaryCta: 'ابدأ مجانًا',
+    socialProof: 'مصنف رقم 1 كناسخ إشارات Telegram سحابي',
+    primaryCta: 'ابدأ تجربتك المجانية لمدة 3 أيام',
     secondaryCta: 'تسجيل الدخول',
     imageAlt:
       'لوحة تحكم TScopier تعرض الرصيد والربح اليومي ونتائج التداول ومخططات نمو الحساب',
@@ -614,7 +615,7 @@ export const landingAr: LandingTranslations = {
     subtitle: 'نساخ Telegram التقليديون مقابل منصة سحابية مبنية للسرعة والشفافية والتوسع.',
     otherLabel: 'نساخ آخرون',
     tscopierLabel: 'TScopier',
-    cta: 'ابدأ مجانًا',
+    cta: 'ابدأ تجربتك المجانية لمدة 3 أيام',
     rows: [
       {
         aspect: 'الإعداد',
@@ -825,7 +826,7 @@ export const landingAr: LandingTranslations = {
       title: 'مستعد لنسخ الإشارات دون عمل يدوي؟',
       subtitle:
         'اربط Telegram، وصِل MT4 أو MT5، وابدأ النسخ خلال دقائق — بلا VPS، بلا تثبيت.',
-      primary: 'ابدأ مجانًا',
+      primary: 'ابدأ تجربتك المجانية لمدة 3 أيام',
       secondary: 'تسجيل الدخول',
     },
     tagline: 'ناسخ إشارات Telegram فائق السرعة لحسابات MetaTrader.',

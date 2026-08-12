@@ -9,16 +9,17 @@ export const landingNl: LandingTranslations = {
     faq: 'FAQ',
     docs: 'Docs',
     signIn: 'Inloggen',
-    getStarted: 'Gratis beginnen',
+    getStarted: 'Aanmelden',
     dashboard: 'Dashboard',
     menuOpen: 'Menu openen',
     menuClose: 'Menu sluiten',
   },
   hero: {
-    headline: 'Één intelligent AI Telegram-signaalkopieerplatform',
+    headline: 'Telegram-signalen. Automatisch gekopieerd.',
     subheadline:
       'TScopier is een alles-in-één Telegram-signaalkopieerplatform dat je Telegram koppelt en handelssignalen direct naar MT4/MT5 kopieert — geen complexe setup, geen EA en geen VPS nodig.',
-    primaryCta: 'Gratis beginnen',
+    socialProof: 'Beoordeeld als #1 cloud Telegram-signaalkopieerder',
+    primaryCta: 'Start je gratis proefperiode van 3 dagen',
     secondaryCta: 'Inloggen',
     imageAlt:
       'TScopier-dashboard met saldo, dagwinst, trade-resultaten en groeigrafieken van accounts',
@@ -613,7 +614,7 @@ export const landingNl: LandingTranslations = {
     subtitle: 'Typische Telegram-copiers versus een cloudplatform gebouwd voor snelheid, duidelijkheid en schaal.',
     otherLabel: 'Andere copiers',
     tscopierLabel: 'TScopier',
-    cta: 'Gratis beginnen',
+    cta: 'Start je gratis proefperiode van 3 dagen',
     rows: [
       {
         aspect: 'Setup',
@@ -824,7 +825,7 @@ export const landingNl: LandingTranslations = {
       title: 'Klaar om signalen te kopieren zonder handmatig werk?',
       subtitle:
         'Koppel Telegram, verbind MT4 of MT5 en begin binnen enkele minuten met kopieren - zonder VPS of installatie.',
-      primary: 'Gratis beginnen',
+      primary: 'Start je gratis proefperiode van 3 dagen',
       secondary: 'Inloggen',
     },
     tagline: 'Supersnelle Telegram-signaalcopier voor MetaTrader-accounts.',

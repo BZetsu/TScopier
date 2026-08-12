@@ -312,7 +312,7 @@ export const es: Translations = {
       statusCanceled: 'Cancelado',
       statusPastDue: 'Vencido',
       trialEnds: 'La prueba termina',
-      choosePlan: 'Empieza gratis',
+      choosePlan: 'Empieza tu prueba gratuita de 3 días',
     },
     checkoutFailed: 'No se pudo iniciar el pago. Inténtalo de nuevo.',
     paywall: {

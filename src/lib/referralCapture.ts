@@ -7,6 +7,61 @@ export const REFERRAL_CODE_MIN_LENGTH = 3
 export const REFERRAL_CODE_MAX_LENGTH = 32
 const REF_TTL_SECONDS = Math.floor(REF_TTL_MS / 1000)
 
+/**
+ * Single-segment app/marketing paths that must never be treated as referral codes.
+ * The `/:referralCode` catch-all can otherwise capture these (e.g. verify-email).
+ */
+export const RESERVED_REFERRAL_PATH_SEGMENTS = new Set([
+  'login',
+  'signup',
+  'forgot-password',
+  'reset-password',
+  'email-unsubscribe',
+  'pricing',
+  'verify-email',
+  'auth',
+  'welcome',
+  'dashboard',
+  'brokers',
+  'account-configuration',
+  'account-trades',
+  'channels',
+  'popular-channels',
+  'copier-engine',
+  'backtest',
+  'copier-templates',
+  'copier-logs',
+  'activities',
+  'management',
+  'manage-signals',
+  'signals',
+  'updates',
+  'signal-history',
+  'market-news',
+  'economic-calendar',
+  'contact-support',
+  'feature-request',
+  'partner-with-us',
+  'affiliate-program',
+  'billing',
+  'subscriptions',
+  'performance',
+  'portfolio',
+  'analysis-hub',
+  'settings',
+  'trades',
+  'onboarding',
+  'integrations',
+  'sentiments',
+  'risk-disclaimer',
+  'terms',
+  'privacy',
+  'cookie-policy',
+  'docs',
+  'api',
+  'assets',
+])
+
 function nowMs(): number {
   return Date.now()
 }
@@ -15,8 +70,16 @@ export function normalizeReferralCode(code: string): string {
   return code.trim()
 }
 
+export function isReservedReferralPathSegment(code: string): boolean {
+  return RESERVED_REFERRAL_PATH_SEGMENTS.has(normalizeReferralCode(code).toLowerCase())
+}
+
 export function referralCodeLooksValid(code: string): boolean {
-  return new RegExp(`^\\S{${REFERRAL_CODE_MIN_LENGTH},${REFERRAL_CODE_MAX_LENGTH}}$`, 'u').test(code)
+  const normalized = normalizeReferralCode(code)
+  if (isReservedReferralPathSegment(normalized)) return false
+  return new RegExp(`^\\S{${REFERRAL_CODE_MIN_LENGTH},${REFERRAL_CODE_MAX_LENGTH}}$`, 'u').test(
+    normalized,
+  )
 }
 
 export function captureReferralFromUrl(search: string): string | null {
@@ -37,29 +100,45 @@ export function captureReferralFromUrl(search: string): string | null {
 }
 
 export function loadStoredReferralCode(): string | null {
-  const localCandidate = (() => {
+  const readLocal = (): { code: string; ts: number } | null => {
     try {
       const code = normalizeReferralCode(localStorage.getItem(REF_KEY) ?? '')
       const ts = Number(localStorage.getItem(REF_TS_KEY) ?? 0)
-      if (!referralCodeLooksValid(code) || !Number.isFinite(ts) || ts <= 0) return null
+      if (!code || !Number.isFinite(ts) || ts <= 0) return null
       return { code, ts }
     } catch {
       return null
     }
-  })()
+  }
 
-  const cookieCandidate = (() => {
+  const readCookie = (): { code: string; ts: number } | null => {
     const code = normalizeReferralCode(getCookie(REF_KEY) ?? '')
     const ts = Number(getCookie(REF_TS_KEY) ?? 0)
-    if (!referralCodeLooksValid(code) || !Number.isFinite(ts) || ts <= 0) return null
+    if (!code || !Number.isFinite(ts) || ts <= 0) return null
     return { code, ts }
-  })()
+  }
+
+  const localCandidate = readLocal()
+  const cookieCandidate = readCookie()
+
+  // Clear reserved junk previously stored (e.g. verify-email from the catch-all route).
+  if (
+    (localCandidate && isReservedReferralPathSegment(localCandidate.code))
+    || (cookieCandidate && isReservedReferralPathSegment(cookieCandidate.code))
+  ) {
+    clearStoredReferralCode()
+    return null
+  }
 
   const candidate = (() => {
-    if (localCandidate && cookieCandidate) {
-      return localCandidate.ts >= cookieCandidate.ts ? localCandidate : cookieCandidate
+    const validLocal =
+      localCandidate && referralCodeLooksValid(localCandidate.code) ? localCandidate : null
+    const validCookie =
+      cookieCandidate && referralCodeLooksValid(cookieCandidate.code) ? cookieCandidate : null
+    if (validLocal && validCookie) {
+      return validLocal.ts >= validCookie.ts ? validLocal : validCookie
     }
-    return localCandidate ?? cookieCandidate
+    return validLocal ?? validCookie
   })()
 
   try {
@@ -84,4 +163,3 @@ export function clearStoredReferralCode(): void {
   removeCookie(REF_KEY)
   removeCookie(REF_TS_KEY)
 }
-

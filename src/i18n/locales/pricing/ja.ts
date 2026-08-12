@@ -133,7 +133,7 @@ export const pricingJa: PricingBundleTranslations = {
       statusCanceled: 'キャンセル済み',
       statusPastDue: '支払い遅延',
       trialEnds: 'トライアル終了',
-      choosePlan: '無料で始める',
+      choosePlan: '3日間の無料トライアルを始める',
     },
     checkoutFailed: 'チェックアウトを開始できませんでした。もう一度お試しください。',
     paywall: {

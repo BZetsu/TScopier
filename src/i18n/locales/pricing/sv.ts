@@ -133,7 +133,7 @@ export const pricingSv: PricingBundleTranslations = {
       statusCanceled: 'Avslutad',
       statusPastDue: 'Förfallen',
       trialEnds: 'Provperiod slutar',
-      choosePlan: 'Kom igång gratis',
+      choosePlan: 'Starta din 3-dagars gratis provperiod',
     },
     checkoutFailed: 'Kunde inte starta checkout. Försök igen.',
     paywall: {
