@@ -19,7 +19,7 @@ export const landingEs: LandingTranslations = {
     subheadline:
       'TScopier es una plataforma todo en uno para copiar señales de Telegram que conecta tu Telegram y copia señales de trading directamente a MT4/MT5 — sin configuraciones complicadas, sin EA ni VPS.',
     socialProof: 'Clasificado #1 copiador de señales Telegram en la nube',
-    primaryCta: 'Empieza tu prueba gratuita de 3 días',
+    primaryCta: 'Empieza tu prueba gratuita de 5 días',
     secondaryCta: 'Iniciar sesión',
     imageAlt:
       'Panel de TScopier con saldo, beneficio diario, resultados de operaciones y gráficos de crecimiento',
@@ -616,7 +616,7 @@ export const landingEs: LandingTranslations = {
       'Copiadores típicos de Telegram frente a una plataforma en la nube pensada para velocidad, claridad y escala.',
     otherLabel: 'Otros copiadores',
     tscopierLabel: 'TScopier',
-    cta: 'Empieza tu prueba gratuita de 3 días',
+    cta: 'Empieza tu prueba gratuita de 5 días',
     rows: [
       {
         aspect: 'Puesta en marcha',
@@ -760,7 +760,7 @@ export const landingEs: LandingTranslations = {
       {
         feature: 'Prueba gratuita',
         basic: 'no',
-        advanced: '3 días',
+        advanced: '5 días',
         custom: 'Personalizado',
       },
       {
@@ -779,7 +779,7 @@ export const landingEs: LandingTranslations = {
       {
         question: '¿Hay prueba gratuita?',
         answer:
-          'Sí. Advanced incluye una prueba gratuita de 3 días para suscriptores nuevos (se requiere tarjeta en el checkout; la facturación comienza después de la prueba). Basic se cobra desde el primer día.',
+          'Sí. Advanced incluye una prueba gratuita de 5 días para suscriptores nuevos (se requiere tarjeta en el checkout; la facturación comienza después de la prueba). Basic se cobra desde el primer día.',
       },
       {
         question: '¿Cuál es la diferencia entre facturación mensual y anual?',
@@ -828,7 +828,7 @@ export const landingEs: LandingTranslations = {
       title: '¿Listo para copiar señales sin trabajo manual?',
       subtitle:
         'Conecta Telegram, enlaza MT4 o MT5 y empieza a copiar en minutos — sin VPS ni instalación.',
-      primary: 'Empieza tu prueba gratuita de 3 días',
+      primary: 'Empieza tu prueba gratuita de 5 días',
       secondary: 'Iniciar sesión',
     },
     tagline: 'Copiador de señales de Telegram ultrarrápido para cuentas MetaTrader.',

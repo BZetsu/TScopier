@@ -8,7 +8,7 @@ Widget already created. Keys:
 
 | Variable | Where | Value |
 |----------|-------|-------|
-| `VITE_TURNSTILE_SITE_KEY` | Netlify (prod + staging) + local `.env` | `0x4AAAAAAENwYkTwFMwfAUdc` |
+| `VITE_TURNSTILE_SITE_KEY` | Netlify (prod + staging) + local `.env` | `****` |
 | Turnstile secret | Supabase Dashboard → Auth → CAPTCHA **and** `supabase secrets set TURNSTILE_SECRET_KEY=...` | From Cloudflare Turnstile widget |
 
 1. Confirm widget hostnames include `app.tscopier.ai`, `staging.tscopier.ai`, and `localhost`

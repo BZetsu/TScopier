@@ -19,7 +19,7 @@ export const landingNl: LandingTranslations = {
     subheadline:
       'TScopier is een alles-in-één Telegram-signaalkopieerplatform dat je Telegram koppelt en handelssignalen direct naar MT4/MT5 kopieert — geen complexe setup, geen EA en geen VPS nodig.',
     socialProof: 'Beoordeeld als #1 cloud Telegram-signaalkopieerder',
-    primaryCta: 'Start je gratis proefperiode van 3 dagen',
+    primaryCta: 'Start je gratis proefperiode van 5 dagen',
     secondaryCta: 'Inloggen',
     imageAlt:
       'TScopier-dashboard met saldo, dagwinst, trade-resultaten en groeigrafieken van accounts',
@@ -614,7 +614,7 @@ export const landingNl: LandingTranslations = {
     subtitle: 'Typische Telegram-copiers versus een cloudplatform gebouwd voor snelheid, duidelijkheid en schaal.',
     otherLabel: 'Andere copiers',
     tscopierLabel: 'TScopier',
-    cta: 'Start je gratis proefperiode van 3 dagen',
+    cta: 'Start je gratis proefperiode van 5 dagen',
     rows: [
       {
         aspect: 'Setup',
@@ -757,7 +757,7 @@ export const landingNl: LandingTranslations = {
       {
         feature: 'Gratis proefperiode',
         basic: 'no',
-        advanced: '3 dagen',
+        advanced: '5 dagen',
         custom: 'Maatwerk',
       },
       {
@@ -776,7 +776,7 @@ export const landingNl: LandingTranslations = {
       {
         question: 'Is er een gratis proefperiode?',
         answer:
-          'Ja. Advanced bevat een gratis proefperiode van 3 dagen voor nieuwe abonnees (kaart vereist bij checkout; facturering start na de proefperiode). Basic wordt vanaf dag één in rekening gebracht.',
+          'Ja. Advanced bevat een gratis proefperiode van 5 dagen voor nieuwe abonnees (kaart vereist bij checkout; facturering start na de proefperiode). Basic wordt vanaf dag één in rekening gebracht.',
       },
       {
         question: 'Wat is het verschil tussen maandelijkse en jaarlijkse facturatie?',
@@ -825,7 +825,7 @@ export const landingNl: LandingTranslations = {
       title: 'Klaar om signalen te kopieren zonder handmatig werk?',
       subtitle:
         'Koppel Telegram, verbind MT4 of MT5 en begin binnen enkele minuten met kopieren - zonder VPS of installatie.',
-      primary: 'Start je gratis proefperiode van 3 dagen',
+      primary: 'Start je gratis proefperiode van 5 dagen',
       secondary: 'Inloggen',
     },
     tagline: 'Supersnelle Telegram-signaalcopier voor MetaTrader-accounts.',
