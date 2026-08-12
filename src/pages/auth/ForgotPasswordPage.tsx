@@ -9,7 +9,7 @@ import { Alert } from '../../components/ui/Alert'
 import { AuthBackHome } from '../../components/auth/AuthBackHome'
 import { useLocale } from '../../context/LocaleContext'
 import { TurnstileWidget, type TurnstileWidgetHandle } from '../../components/auth/TurnstileWidget'
-import { isTurnstileEnabled } from '../../lib/turnstile'
+import { isTurnstileEnabled, isTurnstileMisconfigured } from '../../lib/turnstile'
 
 export function ForgotPasswordPage() {
   const { auth } = useLocale()
@@ -22,10 +22,15 @@ export function ForgotPasswordPage() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const turnstileRef = useRef<TurnstileWidgetHandle>(null)
   const captchaRequired = isTurnstileEnabled()
+  const captchaMisconfigured = isTurnstileMisconfigured()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    if (captchaMisconfigured) {
+      setError('Password reset protection is misconfigured. Please try again later.')
+      return
+    }
     if (captchaRequired && !captchaToken) {
       setError(auth.oauth.captchaRequired)
       return
@@ -108,7 +113,7 @@ export function ForgotPasswordPage() {
         <Button
           type="submit"
           loading={loading}
-          disabled={captchaRequired && !captchaToken}
+          disabled={captchaMisconfigured || (captchaRequired && !captchaToken)}
           className="w-full !mt-6"
           size="lg"
         >

@@ -1,5 +1,7 @@
 # Signup Spam Protection — Dashboard Setup
 
+**Status 2026-08-12:** Turnstile is **not effectively on in production**. Prod frontend build had no Turnstile site key baked in, server verify was fail-open without secret, and Auth CAPTCHA dashboard toggle is still off. Bots are not “solving” captcha — they never face it.
+
 Complete these steps **in the same deploy window** as the frontend Turnstile release. Enabling CAPTCHA in Supabase before the frontend ships will block all email signups.
 
 ## 1. Cloudflare Turnstile

@@ -3,8 +3,12 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 /** Max auth-email sends per IP per rolling hour (verification + password reset). */
 export const AUTH_EMAIL_MAX_PER_HOUR_IP = 3
 
-/** Absolute cap on verification emails across all IPs (stops IP-rotation floods). */
-export const AUTH_EMAIL_MAX_PER_HOUR_GLOBAL = 20
+/**
+ * Absolute cap on auth emails across all IPs (stops IP-rotation floods).
+ * Keep in sync with claim_verification_email_send global_max (DB).
+ * Do not also call enforceGlobalRateLimit before that RPC — same bucket would double-count.
+ */
+export const AUTH_EMAIL_MAX_PER_HOUR_GLOBAL = 100
 
 /** Shared bucket when client IP headers are missing (do not skip rate limiting). */
 export const MISSING_IP_HASH = "missing-ip";
@@ -148,7 +152,11 @@ export async function verifyTurnstileToken(
   remoteIp: string | null,
 ): Promise<boolean> {
   const secret = Deno.env.get("TURNSTILE_SECRET_KEY")?.trim()
-  if (!secret) return true
+  // Fail closed: missing secret must not silently allow bots through.
+  if (!secret) {
+    console.error("[signupAbuseGuard] TURNSTILE_SECRET_KEY is not set")
+    return false
+  }
 
   if (!token?.trim()) return false
 

@@ -4,9 +4,7 @@ import { buildAuthEmailHtml } from "../_shared/authEmailLayout.ts";
 import { resolveEmailLogoUrl } from "../_shared/brandEmailAssets.ts";
 import { evaluateSignupEmail } from "../_shared/emailSignupPolicy.ts";
 import {
-  AUTH_EMAIL_MAX_PER_HOUR_GLOBAL,
   AUTH_EMAIL_MAX_PER_HOUR_IP,
-  enforceGlobalRateLimit,
   enforceIpRateLimit,
   extractClientIp,
   verifyTurnstileToken,
@@ -67,22 +65,6 @@ Deno.serve(async (req: Request) => {
     };
 
     const clientIp = extractClientIp(req);
-    const globalLimitResponse = await enforceGlobalRateLimit(
-      supabase,
-      "verification_email",
-      AUTH_EMAIL_MAX_PER_HOUR_GLOBAL,
-      corsHeaders,
-    );
-    if (globalLimitResponse) return globalLimitResponse;
-
-    const ipLimitResponse = await enforceIpRateLimit(
-      req,
-      supabase,
-      "verification_email",
-      AUTH_EMAIL_MAX_PER_HOUR_IP,
-      corsHeaders,
-    );
-    if (ipLimitResponse) return ipLimitResponse;
 
     const redirectTo =
       body.redirectTo ||
@@ -91,7 +73,6 @@ Deno.serve(async (req: Request) => {
 
     let targetEmail: string | undefined;
     let firstName = "there";
-    let hasAuthedUser = false;
 
     const authHeader = req.headers.get("Authorization");
     if (authHeader) {
@@ -100,7 +81,6 @@ Deno.serve(async (req: Request) => {
         token,
       );
       if (!authError && user?.email) {
-        hasAuthedUser = true;
         targetEmail = user.email;
         firstName = (user.user_metadata?.first_name as string) || firstName;
       }
@@ -117,11 +97,12 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Missing email" }, 400);
     }
 
-    if (!hasAuthedUser) {
-      const captchaOk = await verifyTurnstileToken(body.captchaToken, clientIp);
-      if (!captchaOk) {
-        return json({ error: "Captcha verification failed", code: "captcha_failed" }, 403);
-      }
+    // Always verify Turnstile — including when a session JWT is present.
+    // Skipping captcha for authed users let bots create a session then send mail.
+    // Captcha runs before IP/global claims so failed bots do not burn rate-limit slots.
+    const captchaOk = await verifyTurnstileToken(body.captchaToken, clientIp);
+    if (!captchaOk) {
+      return json({ error: "Captcha verification failed", code: "captcha_failed" }, 403);
     }
 
     const normalizedEmail = targetEmail.trim().toLowerCase();
@@ -133,6 +114,18 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const ipLimitResponse = await enforceIpRateLimit(
+      req,
+      supabase,
+      "verification_email",
+      AUTH_EMAIL_MAX_PER_HOUR_IP,
+      corsHeaders,
+    );
+    if (ipLimitResponse) return ipLimitResponse;
+
+    // Global hourly cap lives only in claim_verification_email_send (same bucket
+    // as verification_email_global). Do not also call enforceGlobalRateLimit here
+    // — that double-counted and halved the effective limit.
     const { data: claimData, error: claimError } = await supabase.rpc(
       "claim_verification_email_send",
       {
@@ -190,6 +183,13 @@ Deno.serve(async (req: Request) => {
 
     // Prefer a signup confirmation link. Fall back to magiclink when the user
     // is already auth-confirmed (e.g. Confirm email disabled / auto-confirm).
+    // GoTrue may put action_link on properties or on the top-level payload.
+    const pickActionLink = (
+      result: { data?: { properties?: { action_link?: string }; action_link?: string } | null; error?: { message?: string } | null },
+    ): string | undefined =>
+      result.data?.properties?.action_link ??
+      (result.data as { action_link?: string } | null | undefined)?.action_link;
+
     let confirmUrl: string | undefined;
     let linkErrorMessage: string | undefined;
 
@@ -198,18 +198,16 @@ Deno.serve(async (req: Request) => {
       email: normalizedEmail,
       options: { redirectTo },
     });
-    if (signupLink.data?.properties?.action_link) {
-      confirmUrl = signupLink.data.properties.action_link;
-    } else {
+    confirmUrl = pickActionLink(signupLink);
+    if (!confirmUrl) {
       linkErrorMessage = signupLink.error?.message;
       const magicLink = await supabase.auth.admin.generateLink({
         type: "magiclink",
         email: normalizedEmail,
         options: { redirectTo },
       });
-      if (magicLink.data?.properties?.action_link) {
-        confirmUrl = magicLink.data.properties.action_link;
-      } else {
+      confirmUrl = pickActionLink(magicLink);
+      if (!confirmUrl) {
         linkErrorMessage =
           magicLink.error?.message ?? linkErrorMessage ?? "no action_link returned";
       }
