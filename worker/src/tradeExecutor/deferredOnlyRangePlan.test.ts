@@ -78,6 +78,10 @@ test('truly empty range plan is still skipped', async () => {
   assert.equal(ctx.orderSends, 0)
   assert.equal(ctx.persistedRows.length, 0)
   assert.deepEqual(ctx.skips.map(s => s.reason), ['signal_entry_range_requires_price'])
+  assert.deepEqual(ctx.dispatchClaimReleases, [{
+    signal_id: 'signal-empty-plan',
+    broker_account_id: 'broker-deferred',
+  }])
 })
 
 function baseSignal(id: string): SignalRow {
@@ -147,23 +151,10 @@ function makeRangeCtx() {
   const persistedRows: Record<string, unknown>[] = []
   const logs: Record<string, unknown>[] = []
   const skips: Array<{ signalId: string; brokerId: string; reason: string }> = []
+  const dispatchClaimReleases: Array<{ signal_id?: unknown; broker_account_id?: unknown }> = []
   let orderSends = 0
   const supabase = {
-    from: (table: string) => ({
-      insert: (row: Record<string, unknown>) => {
-        logs.push({ table, ...row })
-        return Promise.resolve({ data: null, error: null })
-      },
-      select: () => ({
-        eq: () => ({
-          eq: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({ data: null, error: null }),
-            }),
-          }),
-        }),
-      }),
-    }),
+    from: (table: string) => makeSupabaseTable(table, logs, dispatchClaimReleases),
   }
 
   return {
@@ -171,6 +162,7 @@ function makeRangeCtx() {
       return orderSends
     },
     persistedRows,
+    dispatchClaimReleases,
     logs,
     skips,
     supabase,
@@ -210,4 +202,52 @@ function makeRangeCtx() {
     syncMultiBasketLegTakeProfits: async () => {},
     closeOppositeDirectionTrades: async () => {},
   }
+}
+
+function makeSupabaseTable(
+  table: string,
+  logs: Record<string, unknown>[],
+  dispatchClaimReleases: Array<{ signal_id?: unknown; broker_account_id?: unknown }>,
+) {
+  return {
+    insert: (row: Record<string, unknown>) => {
+      logs.push({ table, ...row })
+      return Promise.resolve({ data: null, error: null })
+    },
+    delete: () => makeDeleteChain(table, dispatchClaimReleases),
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: null, error: null }),
+          }),
+        }),
+      }),
+    }),
+  }
+}
+
+function makeDeleteChain(
+  table: string,
+  dispatchClaimReleases: Array<{ signal_id?: unknown; broker_account_id?: unknown }>,
+) {
+  const filters: { signal_id?: unknown; broker_account_id?: unknown } = {}
+  const chain = {
+    eq: (key: string, value: unknown) => {
+      if (key === 'signal_id' || key === 'broker_account_id') {
+        filters[key] = value
+      }
+      return chain
+    },
+    then: <TResult1 = { error: null }, TResult2 = never>(
+      onfulfilled?: ((value: { error: null }) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+    ): PromiseLike<TResult1 | TResult2> => {
+      if (table === 'signal_broker_dispatch_claims') {
+        dispatchClaimReleases.push({ ...filters })
+      }
+      return Promise.resolve({ error: null }).then(onfulfilled, onrejected)
+    },
+  }
+  return chain
 }
