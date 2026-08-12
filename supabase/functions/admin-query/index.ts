@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { adminClient, corsHeaders, requireAuthedAdmin } from "../_shared/adminAuth.ts";
 import { isAdminAccessActive } from "../_shared/adminAccess.ts";
+import { isSuspiciousSignupEmail } from "../_shared/emailSignupPolicy.ts";
 
 function bad(status: number, message: string): Response {
   return Response.json({ error: message }, { status, headers: corsHeaders });
@@ -12,6 +13,36 @@ async function optionalRows(
   const { data, error } = await query;
   if (error) return [];
   return data ?? [];
+}
+
+async function countRecentSignups(
+  supabase: ReturnType<typeof adminClient>,
+  sinceIso: string,
+): Promise<{ total: number; suspicious: number }> {
+  let total = 0;
+  let suspicious = 0;
+  let page = 1;
+  const perPage = 1000;
+
+  while (page <= 20) {
+    const { data } = await supabase.auth.admin.listUsers({ page, perPage });
+    const users = data?.users ?? [];
+    if (users.length === 0) break;
+
+    for (const user of users) {
+      const createdAt = user.created_at ? Date.parse(user.created_at) : 0;
+      if (!createdAt || createdAt < Date.parse(sinceIso)) continue;
+      total += 1;
+      if (user.email && isSuspiciousSignupEmail(user.email)) {
+        suspicious += 1;
+      }
+    }
+
+    if (users.length < perPage) break;
+    page += 1;
+  }
+
+  return { total, suspicious };
 }
 
 Deno.serve(async (req: Request) => {
@@ -42,6 +73,8 @@ Deno.serve(async (req: Request) => {
       closedTodayRes,
       channelsRes,
       subsRes,
+      signupHour,
+      signupDay,
     ] = await Promise.all([
       supabase.from("user_profiles").select("user_id", { count: "exact", head: true }),
       supabase.from("broker_accounts").select("id", { count: "exact", head: true }).eq("is_active", true),
@@ -52,6 +85,8 @@ Deno.serve(async (req: Request) => {
         .lt("closed_at", tomorrowStart),
       supabase.from("telegram_channels").select("id", { count: "exact", head: true }).eq("is_active", true),
       supabase.from("subscriptions").select("id", { count: "exact", head: true }).eq("status", "active"),
+      countRecentSignups(supabase, new Date(Date.now() - 60 * 60 * 1000).toISOString()),
+      countRecentSignups(supabase, todayStart),
     ]);
 
     return Response.json({
@@ -62,6 +97,10 @@ Deno.serve(async (req: Request) => {
         closed_trades_today: closedTodayRes.count ?? 0,
         active_channels: channelsRes.count ?? 0,
         active_subscriptions: subsRes.count ?? 0,
+        signups_last_hour: signupHour.total,
+        suspicious_signups_last_hour: signupHour.suspicious,
+        signups_today: signupDay.total,
+        suspicious_signups_today: signupDay.suspicious,
       },
     }, { headers: corsHeaders });
   }

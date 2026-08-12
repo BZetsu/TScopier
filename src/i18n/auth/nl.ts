@@ -11,6 +11,7 @@ export const authNl: AuthTranslations = {
   oauth: {
     continueWithGoogle: 'Doorgaan met Google',
     orDivider: 'of',
+    captchaRequired: 'Voltooi de beveiligingscontrole voordat je doorgaat.',
   },
   login: {
     heading: 'Inloggen bij TScopier',

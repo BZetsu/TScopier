@@ -11,6 +11,7 @@ export const authEn: AuthTranslations = {
   oauth: {
     continueWithGoogle: 'Continue with Google',
     orDivider: 'or',
+    captchaRequired: 'Please complete the security check before continuing.',
   },
   login: {
     heading: 'Log in to TScopier',

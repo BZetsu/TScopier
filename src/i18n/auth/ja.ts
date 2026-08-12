@@ -11,6 +11,7 @@ export const authJa: AuthTranslations = {
   oauth: {
     continueWithGoogle: 'Googleで続行',
     orDivider: 'または',
+    captchaRequired: '続行する前にセキュリティチェックを完了してください。',
   },
   login: {
     heading: 'TScopierにログイン',
