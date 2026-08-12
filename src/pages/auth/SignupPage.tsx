@@ -204,15 +204,13 @@ export function SignupPage() {
         captchaToken,
       })
       if (!sent.ok) {
-        if (sent.code === 'cooldown' || sent.code === 'rate_limited') {
-          // First signup send already counted; continue to verify page with countdown.
-        } else {
-          setError(sent.error)
-          turnstileRef.current?.reset()
-          setCaptchaToken(null)
-          setLoading(false)
-          return
-        }
+        // Do not treat rate_limited/cooldown as success — that fakes "email sent"
+        // when Resend was never called (e.g. global flood cap).
+        setError(sent.error)
+        turnstileRef.current?.reset()
+        setCaptchaToken(null)
+        setLoading(false)
+        return
       }
     }
 

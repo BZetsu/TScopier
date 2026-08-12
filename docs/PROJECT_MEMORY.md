@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### 2026-08-12 — Legit verify emails blocked by global 20/hour + fake success UX
+
+- **Symptom:** Signup showed “Check your email” / Resend countdown for `ivyfiv@gmail.com`, but Resend had no new sends.
+- **Root cause:** Emergency `verification_email_global` cap (20/hour) was still full from the bot flood (~15:20 UTC); signup at 16:18 hit `rate_limited`. Edge `enforceGlobalRateLimit` + DB `claim_verification_email_send` **double-count the same bucket**. `SignupPage` treated `rate_limited`/`cooldown` as success and navigated anyway.
+- **Live DB:** Raised global cap **20 → 100** (prod + staging, migration `20260812220000_*`); reset global row + ivy cooldown.
+- **Code:** Stop navigating on failed first send; remove edge double global claim; captcha before IP limits; robust `action_link` pick for auto-confirmed users.
+- **User recovery:** Set `user_profiles.email_verified_at` for ivy so they can log in (email never left Resend).
+- **Still need:** Redeploy `send-verification-email` edge (remove double-count; edge still ships max 20 until redeploy) + frontend deploy for SignupPage. Scratchpad: `docs/scratchpad-legit-verify-email-blocked-2026-08-12.md`.
+
 ### 2026-08-12 — Turnstile not protecting prod (fail-open + missing Netlify key)
 
 - **Why bots bypass “captcha”:** Production JS bundle had **no Turnstile strings** → `VITE_TURNSTILE_SITE_KEY` was not set (or not redeployed) on Netlify, so the widget never renders and the client does not require a token. Setup checklist still unchecked.
