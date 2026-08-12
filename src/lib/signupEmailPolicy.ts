@@ -6,6 +6,21 @@
 
 const PORNHUB_STYLE_LOCAL = /^p[o0]{0,1}r{1,2}n?hub\d+$/i
 
+/** Letters + 5+ digits on Microsoft consumer mail (mamadou429302@hotmail.com). */
+const MS_NAME_DIGITS_LOCAL = /^[a-z]{3,16}[0-9]{5,}$/i
+
+const MS_CONSUMER_DOMAINS = new Set([
+  'hotmail.com',
+  'outlook.com',
+  'live.com',
+  'msn.com',
+  'hotmail.fr',
+  'outlook.fr',
+  'live.fr',
+  'hotmail.co.uk',
+  'outlook.co.uk',
+])
+
 const DEFAULT_BLOCKED_LOCAL_PATTERNS: RegExp[] = [
   PORNHUB_STYLE_LOCAL,
   /^[0-9]{6,}$/,
@@ -104,6 +119,10 @@ export function evaluateSignupEmail(raw: string): SignupEmailPolicyResult {
   }
 
   if (containsBlockedKeyword(localPart) || containsBlockedKeyword(domain)) {
+    return { allowed: false, code: 'blocked_email' }
+  }
+
+  if (MS_CONSUMER_DOMAINS.has(domain) && MS_NAME_DIGITS_LOCAL.test(localPart)) {
     return { allowed: false, code: 'blocked_email' }
   }
 

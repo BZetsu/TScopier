@@ -2,6 +2,12 @@
 
 ## Changelog
 
+### 2026-08-12 — Bots pivoted to mamadou#####@hotmail.com; block MS name+digits
+
+- **What user saw:** After pornhub cleanup, UI showed new accounts — not leftover `@pornhub`, but a new wave `mamadou######@hotmail.com` (auto-confirmed, burst signup).
+- **Cleanup:** Deleted **17** mamadou*@hotmail.com accounts (0 brokers).
+- **Fix (live prod + staging):** Migration `20260812190000_block_ms_name_digits_spam.sql` — on hotmail/outlook/live/msn (+ FR/UK variants), reject locals matching `^[a-z]{3,16}[0-9]{5,}$`. Synced in frontend + edge `emailSignupPolicy`.
+
 ### 2026-08-12 — Block spam email domains + keywords (gaylord@pornhub.com wave)
 
 - **Problem:** Bots switched to `gaylord######@pornhub.com`. Prior trigger only blocked `pornhub#####` locals and disposable domains — not adult brand domains or keyword locals like `gay*`.

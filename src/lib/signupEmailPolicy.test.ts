@@ -31,6 +31,11 @@ describe('evaluateSignupEmail', () => {
     expect(evaluateSignupEmail('gaylord297426@hotmail.com').allowed).toBe(false)
     expect(evaluateSignupEmail('user@something-porn.example').allowed).toBe(false)
   })
+
+  it('blocks MS consumer name+digits bots', () => {
+    expect(evaluateSignupEmail('mamadou429302@hotmail.com').allowed).toBe(false)
+    expect(evaluateSignupEmail('john.smith@hotmail.com').allowed).toBe(true)
+  })
 })
 
 describe('signupErrorPolicyCode', () => {
