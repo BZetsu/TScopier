@@ -1365,9 +1365,9 @@ export interface PricingTranslations {
   extraAccountUnit: string
   extraAccountUnitAnnual: string
   subscribe: string
-  /** @deprecated Prefer subscribe; kept for locale compatibility */
+  /** Advanced plan CTA for first-time trial (e.g. Start your 3-day free trial). */
   startTrial: string
-  /** @deprecated Prefer moneyBackGuarantee */
+  /** Prefer moneyBackGuarantee; both keys advertise the Advanced free trial. */
   trialDays: string
   moneyBackGuarantee: string
   features: string

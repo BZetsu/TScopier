@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Mail } from 'lucide-react'
-import { supabase } from '../../lib/supabase'
-import { sendVerificationEmail } from '../../lib/sendVerificationEmail'
+import {
+  clearVerificationEmailCooldown,
+  readVerificationEmailCooldownSeconds,
+  sendVerificationEmail,
+  startVerificationEmailCooldown,
+} from '../../lib/sendVerificationEmail'
 import { useAuth } from '../../context/AuthContext'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { isEmailVerified } from '../../lib/emailVerification'
@@ -25,6 +29,23 @@ export function VerifyEmailPage() {
   const [resending, setResending] = useState(false)
   const [resent, setResent] = useState(false)
   const [error, setError] = useState('')
+  const [cooldownSeconds, setCooldownSeconds] = useState(() =>
+    readVerificationEmailCooldownSeconds(email),
+  )
+
+  useEffect(() => {
+    setCooldownSeconds(readVerificationEmailCooldownSeconds(email))
+  }, [email])
+
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return
+    const id = window.setInterval(() => {
+      const remaining = readVerificationEmailCooldownSeconds(email)
+      setCooldownSeconds(remaining)
+      if (remaining <= 0) clearVerificationEmailCooldown(email)
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [cooldownSeconds > 0, email])
 
   useEffect(() => {
     if (profileLoading || !user) return
@@ -37,7 +58,7 @@ export function VerifyEmailPage() {
   }, [user, profileLoading, emailVerifiedAt, navigate])
 
   const handleResend = async () => {
-    if (!email) return
+    if (!email || resending || cooldownSeconds > 0) return
     setResending(true)
     setError('')
     setResent(false)
@@ -47,20 +68,23 @@ export function VerifyEmailPage() {
       accessToken: session?.access_token,
       redirectTo,
     })
+
     if (!sent.ok) {
-      const { error: resendError } = await supabase.auth.resend({
-        type: 'signup',
-        email,
-        options: { emailRedirectTo: redirectTo },
-      })
-      if (resendError) {
-        setError(sent.error ?? resendError.message)
+      if (sent.retryAfterSeconds) {
+        startVerificationEmailCooldown(email, sent.retryAfterSeconds)
+        setCooldownSeconds(sent.retryAfterSeconds)
+        const template = verifyT.resendCooldown
+          ?? 'Please wait {seconds}s before requesting another email.'
+        setError(template.replace('{seconds}', String(sent.retryAfterSeconds)))
       } else {
-        setResent(true)
+        setError(sent.error)
       }
-    } else {
-      setResent(true)
+      setResending(false)
+      return
     }
+
+    setCooldownSeconds(sent.cooldownSeconds)
+    setResent(true)
     setResending(false)
   }
 
@@ -70,6 +94,12 @@ export function VerifyEmailPage() {
   }
 
   const subtitle = verifyT.subtitle.replace('{email}', email)
+  const resendLabel = cooldownSeconds > 0
+    ? (verifyT.resendIn ?? 'Resend in {seconds}s').replace(
+      '{seconds}',
+      String(cooldownSeconds),
+    )
+    : verifyT.resend
 
   return (
     <div className="w-full py-4 text-center">
@@ -91,13 +121,14 @@ export function VerifyEmailPage() {
 
       <div className="mt-8 space-y-3">
         <Button
-          onClick={handleResend}
+          onClick={() => void handleResend()}
           loading={resending}
+          disabled={cooldownSeconds > 0}
           variant="secondary"
           className="w-full"
           size="lg"
         >
-          {verifyT.resend}
+          {resendLabel}
         </Button>
 
         <button

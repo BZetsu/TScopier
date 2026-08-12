@@ -9,7 +9,7 @@ export const landingNl: LandingTranslations = {
     faq: 'FAQ',
     docs: 'Docs',
     signIn: 'Inloggen',
-    getStarted: 'Kies een plan',
+    getStarted: 'Gratis beginnen',
     dashboard: 'Dashboard',
     menuOpen: 'Menu openen',
     menuClose: 'Menu sluiten',
@@ -18,7 +18,7 @@ export const landingNl: LandingTranslations = {
     headline: 'Één intelligent AI Telegram-signaalkopieerplatform',
     subheadline:
       'TScopier is een alles-in-één Telegram-signaalkopieerplatform dat je Telegram koppelt en handelssignalen direct naar MT4/MT5 kopieert — geen complexe setup, geen EA en geen VPS nodig.',
-    primaryCta: 'Kies een plan',
+    primaryCta: 'Gratis beginnen',
     secondaryCta: 'Inloggen',
     imageAlt:
       'TScopier-dashboard met saldo, dagwinst, trade-resultaten en groeigrafieken van accounts',
@@ -613,7 +613,7 @@ export const landingNl: LandingTranslations = {
     subtitle: 'Typische Telegram-copiers versus een cloudplatform gebouwd voor snelheid, duidelijkheid en schaal.',
     otherLabel: 'Andere copiers',
     tscopierLabel: 'TScopier',
-    cta: 'Kies een plan',
+    cta: 'Gratis beginnen',
     rows: [
       {
         aspect: 'Setup',
@@ -756,7 +756,7 @@ export const landingNl: LandingTranslations = {
       {
         feature: 'Gratis proefperiode',
         basic: 'no',
-        advanced: '10 dagen',
+        advanced: '3 dagen',
         custom: 'Maatwerk',
       },
       {
@@ -775,7 +775,7 @@ export const landingNl: LandingTranslations = {
       {
         question: 'Is er een gratis proefperiode?',
         answer:
-          'Er is geen gratis proefperiode. Kies Basic of Advanced, betaal bij checkout en start daarna onboarding. Elk plan heeft 30 dagen geld-terug-garantie.',
+          'Ja. Advanced bevat een gratis proefperiode van 3 dagen voor nieuwe abonnees (kaart vereist bij checkout; facturering start na de proefperiode). Basic wordt vanaf dag één in rekening gebracht.',
       },
       {
         question: 'Wat is het verschil tussen maandelijkse en jaarlijkse facturatie?',
@@ -824,7 +824,7 @@ export const landingNl: LandingTranslations = {
       title: 'Klaar om signalen te kopieren zonder handmatig werk?',
       subtitle:
         'Koppel Telegram, verbind MT4 of MT5 en begin binnen enkele minuten met kopieren - zonder VPS of installatie.',
-      primary: 'Kies een plan',
+      primary: 'Gratis beginnen',
       secondary: 'Inloggen',
     },
     tagline: 'Supersnelle Telegram-signaalcopier voor MetaTrader-accounts.',

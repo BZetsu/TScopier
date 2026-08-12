@@ -91,8 +91,23 @@ export const authNl: AuthTranslations = {
     heading: 'Controleer je e-mail',
     subtitle: 'We hebben zojuist een verificatielink gestuurd naar {email}.',
     resend: 'E-mail opnieuw versturen',
+    resendIn: 'Opnieuw versturen over {seconds}s',
+    resendCooldown: 'Wacht {seconds}s voordat je opnieuw een e-mail aanvraagt.',
     resent: 'E-mail verzonden!',
     backToLogin: 'Terug naar inloggen',
+  },
+  welcome: {
+    title: 'Welkom bij TScopier',
+    subtitle: 'Je account is klaar. Start je gratis proefperiode van 3 dagen of kies een plan om Telegram-signalen naar je broker te kopiëren.',
+    steps: [
+      'Koppel Telegram en kies signaalkanalen',
+      'Koppel je MT4/MT5-brokeraccount',
+      'Kopieer trades automatisch met je risicointstellingen',
+    ],
+    exploreDashboard: 'Verken eerst het dashboard',
+    seePricing: 'Bekijk prijzen',
+    errorFallback: 'Kon niet doorgaan. Probeer het opnieuw.',
+    checkoutFailed: 'Kon checkout niet starten. Probeer het opnieuw.',
   },
   marketing: {
     headline: 'Eén naadloze copier voor elk Telegram-signaal',

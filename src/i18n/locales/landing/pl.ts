@@ -9,7 +9,7 @@ export const landingPl: LandingTranslations = {
     faq: 'FAQ',
     docs: 'Dokumenty',
     signIn: 'Zaloguj się',
-    getStarted: 'Wybierz plan',
+    getStarted: 'Zacznij za darmo',
     dashboard: 'Panel kontrolny',
     menuOpen: 'Otwórz menu',
     menuClose: 'Zamknij menu',
@@ -18,7 +18,7 @@ export const landingPl: LandingTranslations = {
     headline: 'Jedna inteligentna platforma AI do kopiowania sygnałów Telegram',
     subheadline:
       'TScopier to kompleksowa platforma do kopiowania sygnałów z Telegrama, która łączy Telegram i kopiuje sygnały handlowe bezpośrednio na MT4/MT5 — bez skomplikowanych konfiguracji, bez EA i bez VPS.',
-    primaryCta: 'Wybierz plan',
+    primaryCta: 'Zacznij za darmo',
     secondaryCta: 'Zaloguj się',
     imageAlt:
       'TScopier panel kontrolny z saldem, dziennym zyskiem, wynikami handlu i wykresami wzrostu konta',
@@ -614,7 +614,7 @@ export const landingPl: LandingTranslations = {
     subtitle: 'Typowe kopiarki Telegram a platforma chmurowa zbudowana pod kątem szybkości, przejrzystości i skali.',
     otherLabel: 'Inne kopiarki',
     tscopierLabel: 'TScopier',
-    cta: 'Wybierz plan',
+    cta: 'Zacznij za darmo',
     rows: [
       {
         aspect: 'Konfiguracja',
@@ -757,7 +757,7 @@ export const landingPl: LandingTranslations = {
       {
         feature: 'Bezpłatny okres próbny',
         basic: 'no',
-        advanced: '10 dni',
+        advanced: '3 dni',
         custom: 'Niestandardowe',
       },
       {
@@ -776,7 +776,7 @@ export const landingPl: LandingTranslations = {
       {
         question: 'Czy istnieje bezpłatny okres próbny?',
         answer:
-          'Nie oferujemy bezpłatnego okresu próbnego. Wybierz Basic lub Advanced, zapłać w checkout, a następnie przejdź onboarding. Każdy plan ma 30-dniową gwarancję zwrotu.',
+          'Tak. Advanced obejmuje 3-dniowy bezpłatny okres próbny dla nowych subskrybentów (karta wymagana przy checkout; rozliczenie zaczyna się po okresie próbnym). Basic jest płatny od pierwszego dnia.',
       },
       {
         question: 'Jaka jest różnica między rozliczeniami miesięcznymi i rocznymi?',
@@ -825,7 +825,7 @@ export const landingPl: LandingTranslations = {
       title: 'Gotowy do kopiowania sygnałów bez pracy ręcznej?',
       subtitle:
         'Link Telegram, podłącz MT4 lub MT5 i rozpocznij kopiowanie w ciągu kilku minut — bez VPS, bez instalacji.',
-      primary: 'Wybierz plan',
+      primary: 'Zacznij za darmo',
       secondary: 'Zaloguj się',
     },
     tagline: 'Ultraszybka kopiarka sygnału Telegram dla kont MetaTrader.',

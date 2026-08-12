@@ -2,7 +2,7 @@ import clsx from 'clsx'
 import { Check, X } from 'lucide-react'
 import { useT } from '../../../context/LocaleContext'
 import type { LandingComparisonRow } from '../../../i18n/locales/landing/types'
-import { marketingUrl } from '../../../lib/site'
+import { appUrl } from '../../../lib/site'
 
 export function ComparisonSection() {
   const c = useT().landing.comparison
@@ -83,7 +83,7 @@ export function ComparisonSection() {
 
       <div className="mt-8 flex justify-center sm:mt-10">
         <a
-          href={marketingUrl('/pricing')}
+          href={appUrl('/signup')}
           className="inline-flex items-center justify-center rounded-xl bg-teal-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-teal-700 dark:bg-teal-500 dark:hover:bg-teal-600"
         >
           {c.cta}

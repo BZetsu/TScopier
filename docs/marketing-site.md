@@ -94,9 +94,10 @@ usually means the browser opened **`app.tscopier.ai` (or was redirected there) a
 ## Smoke test checklist
 
 - [ ] `https://tscopier.ai` — landing, glass cards, dark mode, language switch
-- [ ] “Choose a plan” → marketing `/pricing`
-- [ ] Plan Subscribe → `app…/signup?plan=…` then Stripe after auth (no free trial)
-- [ ] Unpaid app login → redirected to `/pricing` (no dashboard explore)
+- [ ] “Get started for free” → `app…/signup` (not pricing)
+- [ ] After verified signup → dashboard Welcome Modal → Start 3-day trial / See Pricing / Explore
+- [ ] Plan Subscribe on `/pricing` → `app…/signup?plan=…` then Stripe after auth (Advanced first-time = 3-day trial; Basic paid day one; no welcome interrupt when pending plan)
+- [ ] Unpaid app login with onboarding done → paywall `/pricing`; new verified users see Welcome Modal on dashboard first
 - [ ] `https://app.tscopier.ai` — login, paid dashboard, existing flows
 - [ ] Email verification redirect lands on app subdomain
 - [ ] Google OAuth redirect lands on app subdomain

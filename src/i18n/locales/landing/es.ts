@@ -9,7 +9,7 @@ export const landingEs: LandingTranslations = {
     faq: 'FAQ',
     docs: 'Docs',
     signIn: 'Iniciar sesión',
-    getStarted: 'Elegir un plan',
+    getStarted: 'Empieza gratis',
     dashboard: 'Panel',
     menuOpen: 'Abrir menú',
     menuClose: 'Cerrar menú',
@@ -18,7 +18,7 @@ export const landingEs: LandingTranslations = {
     headline: 'Una plataforma inteligente con IA para copiar señales de Telegram',
     subheadline:
       'TScopier es una plataforma todo en uno para copiar señales de Telegram que conecta tu Telegram y copia señales de trading directamente a MT4/MT5 — sin configuraciones complicadas, sin EA ni VPS.',
-    primaryCta: 'Elegir un plan',
+    primaryCta: 'Empieza gratis',
     secondaryCta: 'Iniciar sesión',
     imageAlt:
       'Panel de TScopier con saldo, beneficio diario, resultados de operaciones y gráficos de crecimiento',
@@ -615,7 +615,7 @@ export const landingEs: LandingTranslations = {
       'Copiadores típicos de Telegram frente a una plataforma en la nube pensada para velocidad, claridad y escala.',
     otherLabel: 'Otros copiadores',
     tscopierLabel: 'TScopier',
-    cta: 'Elegir un plan',
+    cta: 'Empieza gratis',
     rows: [
       {
         aspect: 'Puesta en marcha',
@@ -759,7 +759,7 @@ export const landingEs: LandingTranslations = {
       {
         feature: 'Prueba gratuita',
         basic: 'no',
-        advanced: '10 días',
+        advanced: '3 días',
         custom: 'Personalizado',
       },
       {
@@ -778,7 +778,7 @@ export const landingEs: LandingTranslations = {
       {
         question: '¿Hay prueba gratuita?',
         answer:
-          'No ofrecemos prueba gratuita. Elige Basic o Advanced, paga en el checkout y luego comienza el onboarding. Todos los planes incluyen garantía de devolución de 30 días.',
+          'Sí. Advanced incluye una prueba gratuita de 3 días para suscriptores nuevos (se requiere tarjeta en el checkout; la facturación comienza después de la prueba). Basic se cobra desde el primer día.',
       },
       {
         question: '¿Cuál es la diferencia entre facturación mensual y anual?',
@@ -827,7 +827,7 @@ export const landingEs: LandingTranslations = {
       title: '¿Listo para copiar señales sin trabajo manual?',
       subtitle:
         'Conecta Telegram, enlaza MT4 o MT5 y empieza a copiar en minutos — sin VPS ni instalación.',
-      primary: 'Elegir un plan',
+      primary: 'Empieza gratis',
       secondary: 'Iniciar sesión',
     },
     tagline: 'Copiador de señales de Telegram ultrarrápido para cuentas MetaTrader.',

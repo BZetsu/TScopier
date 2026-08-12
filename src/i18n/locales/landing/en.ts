@@ -9,7 +9,7 @@ export const landingEn: LandingTranslations = {
     faq: 'FAQ',
     docs: 'Docs',
     signIn: 'Sign in',
-    getStarted: 'Choose a plan',
+    getStarted: 'Get started for free',
     dashboard: 'Dashboard',
     menuOpen: 'Open menu',
     menuClose: 'Close menu',
@@ -18,7 +18,7 @@ export const landingEn: LandingTranslations = {
     headline: 'One Intelligent AI Telegram Signal Copier Platform',
     subheadline:
       'TScopier is an All-In-One Telegram Signal Copier Platform that connects your Telegram and copy trading signals directly to your MT4/MT5 — no complicated setups, no EA, and no VPS required.',
-    primaryCta: 'Choose a plan',
+    primaryCta: 'Get started for free',
     secondaryCta: 'Sign in',
     imageAlt:
       'TScopier dashboard with balance, daily profit, trade outcomes, and account growth charts',
@@ -614,7 +614,7 @@ export const landingEn: LandingTranslations = {
     subtitle: 'Typical Telegram copiers vs a cloud platform built for speed, clarity, and scale.',
     otherLabel: 'Other copiers',
     tscopierLabel: 'TScopier',
-    cta: 'Choose a plan',
+    cta: 'Get started for free',
     rows: [
       {
         aspect: 'Setup',
@@ -755,9 +755,9 @@ export const landingEn: LandingTranslations = {
         custom: 'yes',
       },
       {
-        feature: 'Money-back guarantee',
-        basic: '30 days',
-        advanced: '30 days',
+        feature: 'Free trial',
+        basic: 'no',
+        advanced: '3 days',
         custom: 'Custom',
       },
       {
@@ -771,12 +771,12 @@ export const landingEn: LandingTranslations = {
   pricingFaq: {
     eyebrow: 'Pricing FAQ',
     title: 'Pricing questions',
-    subtitle: 'Billing, guarantees, and plan changes explained.',
+    subtitle: 'Billing, trials, and plan changes explained.',
     items: [
       {
         question: 'Is there a free trial?',
         answer:
-          'We do not offer a free trial. Choose Basic or Advanced, pay at checkout, then start onboarding. Every plan includes a 30-day money-back guarantee. Basic is $9.99/month (or $95.90/year). Advanced is $39.99/month (or $383.90/year).',
+          'Yes. Advanced includes a 3-day free trial for first-time subscribers (card required at checkout; billing starts after the trial). Basic is charged from day one. Basic is $9.99/month (or $95.90/year). Advanced is $39.99/month (or $383.90/year).',
       },
       {
         question: 'What is the difference between monthly and annual billing?',
@@ -825,7 +825,7 @@ export const landingEn: LandingTranslations = {
       title: 'Ready to copy signals without the manual work?',
       subtitle:
         'Link Telegram, connect MT4 or MT5, and start copying in minutes — no VPS, no install.',
-      primary: 'Choose a plan',
+      primary: 'Get started for free',
       secondary: 'Sign in',
     },
     tagline: 'Ultra-fast Telegram signal copier for MetaTrader accounts.',

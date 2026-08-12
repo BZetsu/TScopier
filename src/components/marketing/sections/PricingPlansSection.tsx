@@ -335,7 +335,7 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
             ) : null}
           </div>
 
-          {planCta('advanced', isApp ? advancedCheckoutCta : pt.subscribe)}
+          {planCta('advanced', isApp ? advancedCheckoutCta : pt.startTrial)}
 
           <div className="mt-8">
             <p className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">

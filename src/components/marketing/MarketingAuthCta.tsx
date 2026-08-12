@@ -2,7 +2,7 @@ import clsx from 'clsx'
 import { ArrowRight } from 'lucide-react'
 import { useMarketingAuthState } from '../../hooks/useMarketingAuthState'
 import { useT } from '../../context/LocaleContext'
-import { appUrl, marketingUrl, withQuery } from '../../lib/site'
+import { appUrl, withQuery } from '../../lib/site'
 import { trackMarketingEvent } from '../../lib/analytics'
 
 type MarketingAuthCtaVariant = 'hero' | 'header' | 'headerMobile'
@@ -26,9 +26,9 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
     if (typeof window === 'undefined') return null
     return new URLSearchParams(window.location.search).get('ref')?.trim() || null
   })()
-  const pricingHref = withQuery(marketingUrl('/pricing'), { ref: referralRef })
+  const signupHref = withQuery(appUrl('/signup'), { ref: referralRef })
   const loginHref = withQuery(appUrl('/login'), { ref: referralRef })
-  const onCtaClick = (action: 'signup' | 'login' | 'dashboard' | 'pricing') => {
+  const onCtaClick = (action: 'signup' | 'login' | 'dashboard') => {
     trackMarketingEvent('marketing_cta_click', {
       action,
       variant,
@@ -77,8 +77,8 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
     return (
       <div className="flex w-full flex-col items-center justify-center">
         <a
-          href={pricingHref}
-          onClick={() => onCtaClick('pricing')}
+          href={signupHref}
+          onClick={() => onCtaClick('signup')}
           className={heroCtaClass}
         >
           {hero.primaryCta}
@@ -98,8 +98,8 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
           {nav.signIn}
         </a>
         <a
-          href={pricingHref}
-          onClick={() => onCtaClick('pricing')}
+          href={signupHref}
+          onClick={() => onCtaClick('signup')}
           className="mt-1 inline-flex w-full items-center justify-center rounded-lg border border-teal-600 bg-teal-600 px-3 py-2.5 text-sm font-medium text-white transition-colors hover:border-teal-700 hover:bg-teal-700"
         >
           {nav.getStarted}
@@ -118,8 +118,8 @@ export function MarketingAuthCta({ variant, onNavigate }: MarketingAuthCtaProps)
         {nav.signIn}
       </a>
       <a
-        href={pricingHref}
-        onClick={() => onCtaClick('pricing')}
+        href={signupHref}
+        onClick={() => onCtaClick('signup')}
         className={clsx(primaryBtnClass, 'hidden md:inline-flex')}
       >
         {nav.getStarted}

@@ -197,9 +197,9 @@ export const fr: Translations = {
     extraAccountUnit: '10$/compte/mois',
     extraAccountUnitAnnual: '96$/compte/an',
     subscribe: 'S\'abonner',
-    startTrial: 'S\'abonner',
-    trialDays: 'Garantie satisfait ou remboursé 30 jours',
-    moneyBackGuarantee: 'Garantie satisfait ou remboursé 30 jours',
+    startTrial: 'Commencez votre essai gratuit de 3 jours',
+    trialDays: 'Essai gratuit de 3 jours sur Advanced',
+    moneyBackGuarantee: 'Essai gratuit de 3 jours sur Advanced',
     features: 'Fonctionnalités',
     popular: 'Le plus populaire',
     basicFeatures: [
@@ -312,7 +312,7 @@ export const fr: Translations = {
       statusCanceled: 'Annulé',
       statusPastDue: 'En retard',
       trialEnds: 'L\'essai se termine',
-      choosePlan: 'Choisir un plan',
+      choosePlan: 'Commencer gratuitement',
     },
     checkoutFailed: 'Impossible de démarrer le paiement. Veuillez réessayer.',
     paywall: {

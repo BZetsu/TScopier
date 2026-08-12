@@ -2,6 +2,50 @@
 
 ## Changelog
 
+### 2026-08-12 — Verification email resend cooldown (abuse protection)
+
+- **Limits:** 60s between sends per email; max 5 per rolling hour. Enforced server-side via `claim_verification_email_send` + `email_verification_sends` table before Resend is called. Returns HTTP 429 + `retry_after_seconds`.
+- **UI:** Verify-email “Resend” disabled with countdown (`Resend in Ns`); sessionStorage keeps countdown across refresh; signup no longer falls back to `auth.resend` on cooldown.
+- **Files:** migration `20260812130000_verification_email_resend_cooldown.sql`, `send-verification-email/index.ts`, `sendVerificationEmail.ts`, `VerifyEmailPage.tsx`, `SignupPage.tsx`, auth i18n.
+- **Deploy:** migration applied staging + prod; edge function deploy required for enforcement to go live.
+
+### 2026-08-12 — Email verification bypass: auto-confirm was marking profiles verified
+
+- **Bug:** Users could sign up / log in and use the app without clicking the verification email.
+- **Root cause:** Supabase “Confirm email” is off on staging and prod (auth confirms within ~15ms of signup). Trigger `sync_email_verified_on_confirm` copied that into `user_profiles.email_verified_at`, so frontend gates (`isEmailVerified` / `ProtectedRoute` / `EmailVerificationGate`) allowed access.
+- **Fix:** Migration `20260812120000_harden_email_verified_sync.sql` — ignore confirms within 2s of `created_at`; `mark_email_verified()` writes `now()`. Applied on staging + prod. Staging auto-synced `email_verified_at` cleared for retest; prod existing users grandfathered.
+- **Code:** `supabase/functions/send-verification-email/index.ts` prefers `signup` generateLink with `magiclink` fallback (redeploy when approved).
+- **Follow-up (ops):** Enable **Confirm email** in Supabase Auth → Providers → Email on staging (`axdcledcyhyvzrnfkwat`) and prod (`sxkpcovbyaficvtkpsdo`). Until then, password login still succeeds at Auth, but the app redirects to `/verify-email` until the link is clicked.
+- **Scratchpad:** `docs/scratchpad-email-verification-bypass-2026-08-12.md`.
+
+### 2026-08-12 — Welcome Modal trial CTA reliably opens Stripe Checkout
+
+- **Bug:** Welcome Modal “Start your 3-day free trial” called `completeOnboarding()` (profile refresh) before creating the Stripe session, which cleared `needsWelcome` and unmounted the modal mid-flow, so users often never reached Stripe Hosted Checkout.
+- **Fix:** `startFreeTrial` now creates the Advanced monthly checkout session first via `startPlanCheckout`, marks `onboarding_completed_at` with a non-blocking `updateUserProfileFields`, then `window.location.assign(stripeUrl)`. Uses `appAbsoluteUrl` for success/cancel like the pricing page.
+- **File:** `src/components/onboarding/WelcomeModal.tsx`.
+
+### 2026-08-11 — Signup-first + Welcome Modal restored
+
+- **Marketing CTAs:** “Get started for free” (hero/header/comparison/footer) goes to `appUrl('/signup')`, not `/pricing`. Pricing-page plan buttons still stash `pendingPlanSelection` and auto-checkout after auth.
+- **Welcome Modal:** restored `src/components/onboarding/WelcomeModal.tsx` + `auth.welcome` i18n. Shown when email verified and `onboarding_completed_at` is null. Primary starts Advanced monthly checkout (3-day trial CTA); secondary opens `/pricing`; tertiary explores dashboard. Each path sets `onboarding_completed_at`.
+- **Gate:** `useNeedsWelcome` restored; skips welcome when a pending plan exists so pricing auto-checkout is not interrupted. `AppShell` lazy-loads the modal and forces `/dashboard` while welcome is needed.
+- **Files:** `MarketingAuthCta.tsx`, `ComparisonSection.tsx`, `MarketingFooter.tsx`, `WelcomeModal.tsx`, `useNeedsWelcome.ts`, `AppShell.tsx`, `src/i18n/auth/*`, `docs/marketing-site.md`.
+
+### 2026-08-11 — Pricing CTAs: Advanced trial button + Get started for free
+
+- **Advanced plan CTA:** marketing pricing card uses `pricing.startTrial` → “Start your 3-day free trial” (Basic stays `Subscribe`). App Advanced checkout via `getSubscribeCtaLabel` also defaults to `startTrial` (still uses update-payment / upgrade / purchase labels when past due, on Basic, or trial expired).
+- **Marketing primary CTA:** landing `nav.getStarted`, `hero.primaryCta`, comparison CTA, and footer primary changed from “Choose a plan” to “Get started for free” (all landing locales). Billing `paywall.choosePlan` aligned in en/es/fr + pricing locale packs.
+- **Files:** `PricingPlansSection.tsx`, `subscriptionCta.ts`, pricing/landing i18n, `docs/marketing-site.md`.
+
+### 2026-08-11 — Restore Advanced 3-day free trial (replace money-back messaging)
+
+- **Context (user request):** bring back the free trial. Decisions locked: **Advanced only**, first-time only (`!trial_ends_at`); **replace** 30-day money-back copy with trial messaging; Basic stays paid from day one. Length set to **3 days** (not 10).
+- **Checkout:** restored `trial_period_days: 3` + `trial_settings.end_behavior.missing_payment_method: create_invoice` in `supabase/functions/create-checkout-session/index.ts` for Advanced when `existingSub.trial_ends_at` is null. Card collection remains `always`. Webhook / `confirm-checkout` already sync Stripe `trial_end` → `subscriptions.trial_ends_at`.
+- **Copy:** pricing `trialDays` / `moneyBackGuarantee` and landing FAQ answers updated across locales; EN comparison table row changed from money-back to Free trial (Basic no / Advanced 3 days). Campaign emails updated to 3-day Advanced trial.
+- **Docs:** `docs/stripe-setup.md`, `docs/marketing-site.md`, `docs/PROJECT_MEMORY-MARTINS.md` invariants updated.
+- **Deploy:** `create-checkout-session` redeployed to staging (`axdcledcyhyvzrnfkwat`) and prod (`sxkpcovbyaficvtkpsdo`) with `trial_period_days: 3`. No migration.
+- **Verify:** fresh Advanced → `trialing` + `trial_ends_at` ~3d; Advanced after prior trial → no second trial; Basic → charged day one; pricing UI shows trial, not money-back. Frontend/i18n still needs a Netlify rebuild for marketing copy.
+
 ### 2026-08-11 — `entry_not_opened` missing-logs root cause CONFIRMED: retention priority ordering inverted (ASC) + auto_be failure flood; Fix 1 applied to staging, Fix 2 (worker throttle) written
 
 - **Context:** closing the open item from 2026-08-10 (why signal `7de8d9c7`'s `pipeline_summary` row was missing). Diagnosed fully via prod DB + worker source + staging DB. Scratchpad: `docs/scratchpad-signal-7de8d9c7-entry-not-opened-2026-08-10.md`.

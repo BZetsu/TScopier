@@ -4,6 +4,36 @@ Changelog entries authored / owned by Martins, kept separate from the main `PROJ
 
 ## Changelog
 
+### 2026-08-12 — Verification email resend cooldown
+
+- 60s cooldown + 5/hour per email (server claim + verify UI countdown).
+
+### 2026-08-12 — Block app access until email verification click
+
+- Auto-confirm (Confirm email off) was syncing into `email_verified_at` → login bypassed verification.
+- Hardened DB sync (2s rule) + staging cleanup; enable Confirm email in Supabase dashboard still required.
+- Scratchpad: `docs/scratchpad-email-verification-bypass-2026-08-12.md`.
+
+### 2026-08-11 — Signup-first + Welcome Modal restored
+
+- “Get started for free” → `/signup`; post-verify Welcome Modal for plan/trial choice.
+- Pending-plan checkout path unchanged (no welcome interrupt).
+- Restored `WelcomeModal`, `useNeedsWelcome`, `auth.welcome` locales, `AppShell` wiring.
+
+### 2026-08-11 — Pricing CTAs: Advanced trial button + Get started for free
+
+- Advanced pricing CTA: “Start your 3-day free trial” (`pricing.startTrial`); Basic remains “Subscribe”.
+- Marketing / paywall choose-plan wording → “Get started for free”.
+- Wired in `PricingPlansSection.tsx` + `getSubscribeCtaLabel`.
+
+### 2026-08-11 — Restore Advanced 3-day free trial
+
+- **Product change:** Advanced first-time checkouts again get a **3-day free trial** (`trial_period_days: 3` when `!existingSub?.trial_ends_at`). Basic remains charged from day one. Money-back marketing copy is replaced by trial messaging.
+- **Checkout:** `supabase/functions/create-checkout-session/index.ts` — restore Advanced trial block + keep `payment_method_collection: always`.
+- **Copy/docs:** pricing + landing locales, campaign emails, `docs/stripe-setup.md`, `docs/marketing-site.md`.
+- **Do not break these invariants:** (1) Only Advanced first-time subscribers get a free trial. (2) Users with a prior `trial_ends_at` do not get a second trial. (3) Basic never invents a free trial. (4) Live `trialing` rows keep access until `trial_ends_at`. (5) `confirm-checkout` + webhook must agree on plan/`extra_accounts`. (6) Basic cannot silently overwrite Advanced via a second checkout (reconcile best entitlement). (7) `past_due` remains inactive for feature gates; portal is the recovery path.
+- **Follow-up:** Redeploy `create-checkout-session`; smoke Advanced trial vs Basic day-one charge.
+
 ### 2026-08-10 — XM gold OrderSend failures: friendly errors + metal symbol auto-resolve + mapping preserved
 
 - **Context (user investigation):** User `59cc8c42-2535-4af8-8940-c5ee0754318f` (Mehmet / XMGlobal-MT5 2 demo `168535699`) was failing every gold copy with skip/error `HTTP 500`. Live FxSocket repro proved `getQuote`/`OrderSend` for `XAUUSD` returned HTTP 500 `SymbolSelect failed`; the account’s real gold symbol is `GOLD#`. Copier logs showed `trade_symbol=XAUUSD` / `signal_symbol=XAUUSD`. Account Config has **whitelist/exclude only** — there is no Symbol mapping UI. DB showed `symbol_mapping: {}` on `broker_accounts.manual_settings`, channel JSON, and the authoritative `broker_channel_trading_configs` row.
@@ -68,7 +98,7 @@ supabase functions deploy assistant-chat --project-ref <staging-or-prod-ref> --u
 ### 2026-08-08 — Stripe / pricing flow: paid-from-day-one + confirm-checkout + marketing CTA
 
 - **Docs:** `docs/stripe-setup.md`, `docs/marketing-site.md` updated for the new flow.
-- **Product change:** **No free trial on new checkouts** — Basic and Advanced charge from day one. Existing Stripe `trialing` subscribers keep access until `trial_ends_at`. Pricing surfaces a **30-day money-back guarantee**.
+- **Product change (historical, 2026-08-08):** temporarily removed free trial on new checkouts in favor of paid-from-day-one + 30-day money-back messaging. **Superseded 2026-08-11** — Advanced first-time 3-day trial restored; money-back copy replaced.
 - **Checkout path:** Marketing **Choose a plan** → `/pricing` → remember plan (`pendingPlanSelection`) → signup/login → `create-checkout-session` → Stripe Hosted Checkout → success `/dashboard?checkout=success`. Cancel → `/pricing`. Card always collected; webhook sets `save_default_payment_method: on_subscription`.
 - **Entitlement sync:** NEW/expanded `confirm-checkout` edge function so entitlement applies even when webhook is delayed or missing on a project (local/staging). `SubscriptionContext` refreshes on `checkout=success`. Webhook still reconciles best entitlement (Advanced beats Basic; higher `extra_accounts` wins).
 - **App paywall UX:** unpaid users redirected to `/pricing` after verify; dashboard routes gated; `AppPricingPage` layout/header polish (brand logo header). Marketing CTAs / PricingPlansSection / site URL helpers (`appUrl` / `marketingUrl`) clarified for localhost vs production.
@@ -83,7 +113,7 @@ supabase functions deploy backtest-run broker-metatrader
 # Redeploy worker for subscription execution gates
 ```
 
-- **Do not break these invariants:** (1) New checkouts must not invent a free trial. (2) Grandfathered `trialing` rows keep access until trial end. (3) `confirm-checkout` + webhook must agree on plan/`extra_accounts`. (4) Basic cannot silently overwrite Advanced via a second checkout (reconcile best entitlement). (5) `past_due` remains inactive for feature gates; portal is the recovery path.
+- **Do not break these invariants (updated 2026-08-11):** (1) Only Advanced first-time subscribers get a free trial; Basic is paid day one. (2) Users with prior `trial_ends_at` get no second trial. (3) Live `trialing` rows keep access until trial end. (4) `confirm-checkout` + webhook must agree on plan/`extra_accounts`. (5) Basic cannot silently overwrite Advanced via a second checkout (reconcile best entitlement). (6) `past_due` remains inactive for feature gates; portal is the recovery path.
 - **Smoke test:** unpaid → `/pricing`; Basic checkout → `subscriptions.plan=basic`; second broker blocked on Basic; Advanced + extras; portal cancel; Basic backtest month cap.
 
 ### 2026-08-08 — Config presets: manage / import / export (i18n)

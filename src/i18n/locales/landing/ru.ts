@@ -9,7 +9,7 @@ export const landingRu: LandingTranslations = {
     faq: 'FAQ',
     docs: 'Документы',
     signIn: 'Войти',
-    getStarted: 'Выбрать план',
+    getStarted: 'Начать бесплатно',
     dashboard: 'Панель управления',
     menuOpen: 'Открыть меню',
     menuClose: 'Закрыть меню',
@@ -18,7 +18,7 @@ export const landingRu: LandingTranslations = {
     headline: 'Единая интеллектуальная AI-платформа для копирования сигналов Telegram',
     subheadline:
       'TScopier — это универсальная платформа для копирования сигналов Telegram, которая подключает Telegram и копирует торговые сигналы напрямую на MT4/MT5 — без сложных настроек, советников и VPS.',
-    primaryCta: 'Выбрать план',
+    primaryCta: 'Начать бесплатно',
     secondaryCta: 'Войти',
     imageAlt:
       'TScopier информационная панель с балансом, ежедневной прибылью, результатами торговли и графиками роста счета',
@@ -614,7 +614,7 @@ export const landingRu: LandingTranslations = {
     subtitle: 'Типичные копировальные аппараты Telegram в сравнении с облачной платформой, созданной для скорости, ясности и масштабирования.',
     otherLabel: 'Другие копировальные аппараты',
     tscopierLabel: 'TScopier',
-    cta: 'Выбрать план',
+    cta: 'Начать бесплатно',
     rows: [
       {
         aspect: 'Настраивать',
@@ -757,7 +757,7 @@ export const landingRu: LandingTranslations = {
       {
         feature: 'Бесплатная пробная версия',
         basic: 'no',
-        advanced: '10 дней',
+        advanced: '3 дня',
         custom: 'Обычай',
       },
       {
@@ -776,7 +776,7 @@ export const landingRu: LandingTranslations = {
       {
         question: 'Есть ли бесплатная пробная версия?',
         answer:
-          'Бесплатного пробного периода нет. Выберите Basic или Advanced, оплатите при оформлении, затем начните онбординг. У каждого плана есть 30-дневная гарантия возврата.',
+          'Да. Advanced включает 3-дневный бесплатный пробный период для новых подписчиков (карта требуется при оформлении; оплата начинается после пробного периода). Basic оплачивается с первого дня.',
       },
       {
         question: 'В чем разница между ежемесячным и годовым выставлением счетов?',
@@ -825,7 +825,7 @@ export const landingRu: LandingTranslations = {
       title: 'Готовы копировать сигналы без ручной работы?',
       subtitle:
         'Свяжите Telegram, подключите MT4 или MT5 и начните копирование за считанные минуты — без VPS, без установки.',
-      primary: 'Выбрать план',
+      primary: 'Начать бесплатно',
       secondary: 'Войти',
     },
     tagline: 'Сверхбыстрый копировщик сигналов Telegram для счетов MetaTrader.',

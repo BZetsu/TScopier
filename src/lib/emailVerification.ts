@@ -11,7 +11,10 @@ export function isOAuthUser(user: User | null | undefined): boolean {
 
 /**
  * True when the user may use the app.
- * Email/password signups require profile.email_verified_at (set only after clicking the verification link).
+ * Email/password signups require profile.email_verified_at.
+ * That column is set by mark_email_verified() / sync_email_verified_on_confirm
+ * after a real confirmation — not by GoTrue auto-confirm when "Confirm email" is off
+ * (sync ignores confirms within 2s of auth.users.created_at).
  */
 export function isEmailVerified(
   user: User | null | undefined,

@@ -15,9 +15,9 @@ export const pricingNl: PricingBundleTranslations = {
     extraAccountUnit: '$10/account/maand',
     extraAccountUnitAnnual: '$96/account/jaar',
     subscribe: 'Abonneren',
-    startTrial: 'Abonneren',
-    trialDays: '30 dagen geld-terug-garantie',
-    moneyBackGuarantee: '30 dagen geld-terug-garantie',
+    startTrial: 'Start je gratis proefperiode van 3 dagen',
+    trialDays: '3 dagen gratis proefperiode op Advanced',
+    moneyBackGuarantee: '3 dagen gratis proefperiode op Advanced',
     features: 'Functies',
     popular: 'Meest populair',
     basicFeatures: [
@@ -133,7 +133,7 @@ export const pricingNl: PricingBundleTranslations = {
       statusCanceled: 'Geannuleerd',
       statusPastDue: 'Achterstallig',
       trialEnds: 'Proefperiode eindigt',
-      choosePlan: 'Kies een plan',
+      choosePlan: 'Gratis beginnen',
     },
     checkoutFailed: 'Checkout kon niet worden gestart. Probeer opnieuw.',
     paywall: {
