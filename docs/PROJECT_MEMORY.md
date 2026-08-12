@@ -2,6 +2,20 @@
 
 ## Changelog
 
+### 2026-08-12 — Signup-spam protection stack pulled into dev + staging (was main-only)
+
+- **Context (user request):** "supabase auth is being spammed" — investigation confirmed the **signup-spam protection** built on `upstream/main` (PR #99, `fcde1094`) had **never reached dev or staging**. Main also carried trial/marketing commits (free trial 3→5 days) via the `off-staging-free-trial` PR chain.
+- **Branch topology (verified):** `upstream/dev` (`039f18a8`) and `upstream/staging` (`19fe13dc`) were both strict ancestors of `upstream/main` (`982f95e9`) — 0 dev-only/0 staging-only commits. Spam commits (`fcde1094`, 55e913fb) only on main.
+- **What the protection stack is (from main's `docs/signup-spam-protection-setup.md`):** Cloudflare Turnstile (`src/components/auth/TurnstileWidget.tsx` + `src/lib/turnstile.ts`, wired into signup/login/forgot-password, passes `captchaToken` to Supabase Auth + email edge fns); Supabase Auth CAPTCHA (Bot and Abuse Protection); Supabase Auth rate limits (IP forwarding on); `auth-before-user-created` hook (webhook-verified, rejects `emailSignupPolicy` matches with HTTP 400 before user row); IP rate-limit migration `20260812140000_auth_abuse_rate_limits.sql` (`claim_auth_abuse_slot`, 10/hr per action+IP) enforced in `send-verification-email`/`send-password-reset-email`; verification-email resend cooldown `20260812130000`; email-verification-bypass fix `20260812120000`; backoffice Overview page with signup-abuse stats + bulk ban spam. Main's memory entry notes 2,883 + 15 bot accounts already deleted from prod (254 legitimate users remain).
+- **Actions this session (full sync per user choice):**
+  - `docs/main-to-staging-tracking.md`: appended **Sync #2** section (7 commits, files/impact per commit) + merge-log row.
+  - **upstream/staging** → merge commit `6d8da6c5` (fresh worktree `merge/m2s-sync2` off `19fe13dc`, `--no-commit` merge of `982f95e9`, tree byte-identical to main, tracking doc committed with the merge), pushed `19fe13dc..6d8da6c5`.
+  - **upstream/dev** → fast-forward `039f18a8..982f95e9` (pushed `upstream/main:dev`).
+  - **origin fork (BZetsu) main/staging/dev** → merge commit `afe2f5b2` (fresh worktree off `d71e2452`, merged `982f95e9`; fork's `d71e2452` wasn't an ancestor so a merge commit was required), pushed to `origin/{main,staging,dev}`.
+- **Verification:** `git diff --cached --stat upstream/main` = 0 lines for both the staging merge and fork merge (byte-identical trees to main). Worktrees removed.
+- **Deploy follow-ups (from `docs/signup-spam-protection-setup.md`, per-project staging + prod):** apply migration `20260812140000_auth_abuse_rate_limits.sql`; deploy edge fns `send-verification-email`, `send-password-reset-email`, `auth-before-user-created`, `admin-query`, `admin-mutate`; set `TURNSTILE_SECRET_KEY` + `BEFORE_USER_CREATED_HOOK_SECRET` + `VITE_TURNSTILE_SITE_KEY`; enable Supabase CAPTCHA after frontend is live; enable the before-user-created hook; enable "Confirm email" (pending). Railway auto-deploys staging from the `staging` branch, so the worker/edge-fn code now present there; Supabase edge-function deploys are separate.
+- **Notion:** task board reviewed; no pre-existing task for auth-spam — (see Notion "Bug: range_basket_tp_rebalance…" task is unrelated; signup-spam protection was only documented on main, no Notion task found).
+
 ### 2026-08-12 — `range_basket_tp_rebalance` "no TP ladder" FALSELY logged as `failed`/Major — root-caused + FIXED (signal `2ffe9304`)
 
 - **Context (user request):** admin dashboard showed `range_basket_tp_rebalance` as **Major** for signal `2ffe9304` ("GOLD BUY NOW @4391.00 / SL: 4376.00", Leonardo Araújo, Aug 12 02:20–02:36 UTC): `{phase:"layering_rebalance", failed:1, modified:0, attempted:1, open_legs:11..16, target_tp_counts:{}, force_layering_rebalance:true}` — 6 failed rows, no error message.
