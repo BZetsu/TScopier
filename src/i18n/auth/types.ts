@@ -8,6 +8,7 @@ export interface AuthTranslations {
   oauth: {
     continueWithGoogle: string
     orDivider: string
+    captchaRequired: string
   }
   login: {
     heading: string

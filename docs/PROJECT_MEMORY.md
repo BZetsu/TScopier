@@ -2,6 +2,14 @@
 
 ## Changelog
 
+### 2026-08-12 — Signup spam protection (Turnstile + server hardening)
+
+- **Problem:** Bots mass-registering (e.g. `pornhub#####@hotmail.com`), triggering verification emails that bounce and hurt Resend reputation.
+- **Frontend:** Cloudflare Turnstile on signup, login, forgot-password (`TurnstileWidget`, `VITE_TURNSTILE_SITE_KEY`). Passes `captchaToken` to Supabase Auth and email edge functions. Removed `auth.resend()` fallback on signup.
+- **Edge:** IP rate limits (`auth_abuse_rate_limits` migration), `emailSignupPolicy` (spam patterns + disposable domains), Turnstile verify on email functions, `auth-before-user-created` hook.
+- **Backoffice:** Overview signup-abuse stats + bulk ban spam action.
+- **Deploy:** See `docs/signup-spam-protection-setup.md` — set Netlify `VITE_TURNSTILE_SITE_KEY`, Supabase `TURNSTILE_SECRET_KEY`, enable Auth CAPTCHA + before-user-created hook, apply migration, redeploy edge functions.
+
 ### 2026-08-12 — Marketing nav responsive for long locale labels
 
 - Replaced absolute-centered desktop nav with flex layout so links no longer overlap logo / language / CTAs when translations are longer.

@@ -2,6 +2,13 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { buildAuthEmailHtml } from "../_shared/authEmailLayout.ts";
 import { resolveEmailLogoUrl } from "../_shared/brandEmailAssets.ts";
+import { evaluateSignupEmail } from "../_shared/emailSignupPolicy.ts";
+import {
+  AUTH_EMAIL_MAX_PER_HOUR_IP,
+  enforceIpRateLimit,
+  extractClientIp,
+  verifyTurnstileToken,
+} from "../_shared/signupAbuseGuard.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -54,7 +61,18 @@ Deno.serve(async (req: Request) => {
       confirmUrl?: string;
       redirectTo?: string;
       email?: string;
+      captchaToken?: string;
     };
+
+    const clientIp = extractClientIp(req);
+    const ipLimitResponse = await enforceIpRateLimit(
+      req,
+      supabase,
+      "verification_email",
+      AUTH_EMAIL_MAX_PER_HOUR_IP,
+      corsHeaders,
+    );
+    if (ipLimitResponse) return ipLimitResponse;
 
     const redirectTo =
       body.redirectTo ||
@@ -63,6 +81,7 @@ Deno.serve(async (req: Request) => {
 
     let targetEmail: string | undefined;
     let firstName = "there";
+    let hasAuthedUser = false;
 
     const authHeader = req.headers.get("Authorization");
     if (authHeader) {
@@ -71,6 +90,7 @@ Deno.serve(async (req: Request) => {
         token,
       );
       if (!authError && user?.email) {
+        hasAuthedUser = true;
         targetEmail = user.email;
         firstName = (user.user_metadata?.first_name as string) || firstName;
       }
@@ -87,7 +107,21 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Missing email" }, 400);
     }
 
+    if (!hasAuthedUser) {
+      const captchaOk = await verifyTurnstileToken(body.captchaToken, clientIp);
+      if (!captchaOk) {
+        return json({ error: "Captcha verification failed", code: "captcha_failed" }, 403);
+      }
+    }
+
     const normalizedEmail = targetEmail.trim().toLowerCase();
+    const emailPolicy = evaluateSignupEmail(normalizedEmail);
+    if (!emailPolicy.allowed) {
+      return json(
+        { error: emailPolicy.reason, code: emailPolicy.code },
+        400,
+      );
+    }
 
     const { data: claimData, error: claimError } = await supabase.rpc(
       "claim_verification_email_send",

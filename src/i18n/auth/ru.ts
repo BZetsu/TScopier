@@ -11,6 +11,7 @@ export const authRu: AuthTranslations = {
   oauth: {
     continueWithGoogle: 'Продолжить с Google',
     orDivider: 'или',
+    captchaRequired: 'Пройдите проверку безопасности, прежде чем продолжить.',
   },
   login: {
     heading: 'Вход в TScopier',

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -20,6 +20,8 @@ import {
 } from '../../lib/emailVerification'
 import { loadUserProfile } from '../../lib/userProfile'
 import { capturePendingPlanFromUrl, postAuthAppPath } from '../../lib/pendingPlanSelection'
+import { TurnstileWidget, type TurnstileWidgetHandle } from '../../components/auth/TurnstileWidget'
+import { isTurnstileEnabled } from '../../lib/turnstile'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -57,6 +59,9 @@ export function AuthPage() {
   const [googleLoading, setGoogleLoading] = useState(false)
   const [error, setError] = useState('')
   const [storedReferralCode, setStoredReferralCode] = useState<string | null>(null)
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileWidgetHandle>(null)
+  const captchaRequired = isTurnstileEnabled()
 
   useEffect(() => {
     const fromUrl = captureReferralFromUrl(window.location.search)
@@ -87,9 +92,17 @@ export function AuthPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    if (captchaRequired && !captchaToken) {
+      setError(auth.oauth.captchaRequired)
+      return
+    }
     setLoading(true)
 
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+      options: { captchaToken: captchaToken ?? undefined },
+    })
     if (signInError) {
       if (isUnconfirmedEmailAuthError(signInError)) {
         navigate(verifyEmailPath(email))
@@ -97,6 +110,8 @@ export function AuthPage() {
         return
       }
       setError(signInError.message)
+      turnstileRef.current?.reset()
+      setCaptchaToken(null)
       setLoading(false)
       return
     }
@@ -190,7 +205,21 @@ export function AuthPage() {
           </Link>
         </div>
 
-        <Button type="submit" loading={loading} className="w-full !mt-6" size="lg">
+        <TurnstileWidget
+          ref={turnstileRef}
+          className="flex justify-center"
+          onToken={setCaptchaToken}
+          onExpire={() => setCaptchaToken(null)}
+          onError={() => setCaptchaToken(null)}
+        />
+
+        <Button
+          type="submit"
+          loading={loading}
+          disabled={captchaRequired && !captchaToken}
+          className="w-full !mt-6"
+          size="lg"
+        >
           {loginT.submit}
         </Button>
       </form>
