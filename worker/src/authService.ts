@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import { SupabaseClient } from '@supabase/supabase-js'
 import { TelegramClient } from 'telegram'
 import { Api } from 'telegram/tl'
@@ -23,6 +24,11 @@ type PhonePending = {
   client: TelegramClient
   phone: string
   phoneCodeHash: string
+  delivery: TelegramCodeDelivery
+  nextDelivery?: TelegramCodeDelivery | null
+  timeoutSeconds?: number | null
+  resendAvailableAt?: number | null
+  codeLength?: number | null
   createdAt: number
   awaitingPassword?: boolean
 }
@@ -46,6 +52,14 @@ type VerifySuccess = { ok: true; session_id: string; channels?: ChannelInfo[] }
 
 type VerifyResult = VerifySuccess | { requires_password: true }
 
+type TelegramInvoker = <T>(client: TelegramClient, request: Parameters<typeof tgInvoke>[1]) => Promise<T>
+
+type AuthServiceDeps = {
+  buildClient?: typeof buildClient
+  invoke?: TelegramInvoker
+  now?: () => number
+}
+
 /**
  * Maximum age of a pending auth (between send_code and verify_code)
  * before we drop the in-memory client. Telegram codes expire in a few minutes;
@@ -61,6 +75,9 @@ const PENDING_DB_TTL_MS = 12 * 60 * 1000
 const PENDING_DB_PASSWORD_TTL_MS = 20 * 60 * 1000
 const QR_FIRST_TOKEN_WAIT_MS = 15_000
 const QR_PASSWORD_WAIT_MS = 120_000
+const DEFAULT_RESEND_TIMEOUT_SECONDS = 60
+const SENSITIVE_AUTH_LOG_KEY_RE = /(phone_code_hash|phonecodehash|session|string_session|auth_session|auth_key|password|code|token|hash)/i
+const PHONE_AUTH_LOG_KEY_RE = /phone/i
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -78,21 +95,133 @@ function normalizeVerificationCode(raw: string): string {
   return String(raw ?? '').replace(/\D/g, '')
 }
 
+export type TelegramCodeDelivery = 'app' | 'sms' | 'call' | 'other'
+
+export type TelegramCodeStatus = {
+  delivery: TelegramCodeDelivery
+  next_delivery?: TelegramCodeDelivery | null
+  resend_available_at?: string | null
+  resend_wait_seconds?: number | null
+  code_length?: number | null
+}
+
 /** Map Telegram SentCode type to a simple delivery channel for the UI. */
-function sentCodeDelivery(result: Api.auth.SentCode): 'app' | 'sms' | 'call' | 'other' {
+export function sentCodeDelivery(result: { type?: { className?: string } | null }): TelegramCodeDelivery {
   const className = String((result.type as { className?: string } | undefined)?.className ?? '')
   if (/App/i.test(className)) return 'app'
-  if (/Sms/i.test(className)) return 'sms'
-  if (/Call|Flash/i.test(className)) return 'call'
+  if (/Sms|Firebase/i.test(className)) return 'sms'
+  if (/Call|Flash|MissedCall/i.test(className)) return 'call'
   return 'other'
+}
+
+function codeTypeDelivery(value: { className?: string } | null | undefined): TelegramCodeDelivery | null {
+  const className = String(value?.className ?? '')
+  if (!className) return null
+  if (/Sms|Firebase/i.test(className)) return 'sms'
+  if (/Call|Flash|MissedCall/i.test(className)) return 'call'
+  return 'other'
+}
+
+function codeLength(value: { length?: unknown } | null | undefined): number | null {
+  const length = value?.length
+  return typeof length === 'number' && Number.isFinite(length) && length > 0 ? length : null
+}
+
+function positiveSeconds(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : null
+}
+
+function resendAvailableAtFromTimeout(timeoutSeconds: number | null, now = Date.now()): number {
+  return now + (timeoutSeconds ?? DEFAULT_RESEND_TIMEOUT_SECONDS) * 1000
+}
+
+export function sentCodeStatus(
+  result: {
+    type?: { className?: string; length?: unknown } | null
+    nextType?: { className?: string } | null
+    timeout?: unknown
+  },
+  now = Date.now(),
+): Omit<TelegramCodeStatus, 'resend_available_at' | 'resend_wait_seconds'> & {
+  timeoutSeconds: number | null
+  resendAvailableAt: number
+} {
+  const timeoutSeconds = positiveSeconds(result.timeout)
+  return {
+    delivery: sentCodeDelivery(result),
+    next_delivery: codeTypeDelivery(result.nextType),
+    timeoutSeconds,
+    resendAvailableAt: resendAvailableAtFromTimeout(timeoutSeconds, now),
+    code_length: codeLength(result.type),
+  }
+}
+
+function pendingCodeStatus(pending: PhonePending, now = Date.now()): TelegramCodeStatus {
+  const waitMs = pending.resendAvailableAt ? Math.max(0, pending.resendAvailableAt - now) : 0
+  return {
+    delivery: pending.delivery,
+    next_delivery: pending.nextDelivery ?? null,
+    resend_available_at: pending.resendAvailableAt ? new Date(pending.resendAvailableAt).toISOString() : null,
+    resend_wait_seconds: pending.resendAvailableAt ? Math.ceil(waitMs / 1000) : null,
+    code_length: pending.codeLength ?? null,
+  }
+}
+
+type PhoneAuthSessionEnvelope = {
+  version: 1
+  session: string
+  delivery?: TelegramCodeDelivery | null
+  nextDelivery?: TelegramCodeDelivery | null
+  timeoutSeconds?: number | null
+  resendAvailableAt?: number | null
+  codeLength?: number | null
+}
+
+function parsePhoneAuthSessionEnvelope(raw: string): { sessionString: string; meta: Partial<PhoneAuthSessionEnvelope> } {
+  try {
+    const parsed = JSON.parse(raw) as Partial<PhoneAuthSessionEnvelope>
+    if (parsed && parsed.version === 1 && typeof parsed.session === 'string') {
+      return { sessionString: parsed.session, meta: parsed }
+    }
+  } catch {
+    /* Legacy rows stored the raw StringSession. */
+  }
+  return { sessionString: raw, meta: {} }
+}
+
+function serializePhoneAuthSession(sessionString: string, pending: PhonePending): string {
+  const envelope: PhoneAuthSessionEnvelope = {
+    version: 1,
+    session: sessionString,
+    delivery: pending.delivery,
+    nextDelivery: pending.nextDelivery ?? null,
+    timeoutSeconds: pending.timeoutSeconds ?? null,
+    resendAvailableAt: pending.resendAvailableAt ?? null,
+    codeLength: pending.codeLength ?? null,
+  }
+  return JSON.stringify(envelope)
+}
+
+function shortHash(value: unknown): string {
+  return crypto
+    .createHash('sha256')
+    .update(String(value ?? ''))
+    .digest('hex')
+    .slice(0, 12)
+}
+
+export function redactAuthLogValue(key: string, value: unknown): string {
+  if (SENSITIVE_AUTH_LOG_KEY_RE.test(key)) return '[redacted]'
+  if (PHONE_AUTH_LOG_KEY_RE.test(key)) return `[phone:${shortHash(value)}]`
+  if (typeof value === 'object' && value !== null) return JSON.stringify(value)
+  return String(value ?? '')
 }
 
 function logAuthEvent(event: string, extra?: Record<string, unknown>): void {
   const parts = [`[authService] event=${event}`]
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
-      const val = typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '')
-      parts.push(`${k}=${val}`)
+      parts.push(`${k}=${redactAuthLogValue(k, v)}`)
     }
   }
   console.log(parts.join(' '))
@@ -113,15 +242,23 @@ export class AuthService {
   private pending = new Map<string, PendingEntry>()
   /** True from auth start until pending Map entry is ready — blocks listener restart. */
   private authInFlight = new Set<string>()
+  private resendInFlight = new Set<string>()
   private qrPasswordResolvers = new Map<string, { resolve: (p: string) => void; reject: (e: Error) => void }>()
   private cleanupTimer: NodeJS.Timeout
+  private readonly createTelegramClient: typeof buildClient
+  private readonly invokeTelegram: TelegramInvoker
+  private readonly now: () => number
 
   constructor(
     private supabase: SupabaseClient,
     private sessionManager: UserSessionManager,
+    deps: AuthServiceDeps = {},
   ) {
+    this.createTelegramClient = deps.buildClient ?? buildClient
+    this.invokeTelegram = deps.invoke ?? tgInvoke
+    this.now = deps.now ?? Date.now
     this.sessionManager.setAuthGuard(
-      userId => this.pending.has(userId) || this.authInFlight.has(userId),
+      userId => this.pending.has(userId) || this.authInFlight.has(userId) || this.resendInFlight.has(userId),
     )
     this.cleanupTimer = setInterval(() => {
       this.cleanup()
@@ -152,6 +289,7 @@ export class AuthService {
     await Promise.allSettled(disconnects)
     this.pending.clear()
     this.authInFlight.clear()
+    this.resendInFlight.clear()
     this.qrPasswordResolvers.clear()
   }
 
@@ -220,10 +358,11 @@ export class AuthService {
     }
 
     const awaitingPassword = Boolean(row.awaiting_password)
-    const savedSession =
+    const savedAuthSession =
       typeof row.auth_session_string === 'string' && row.auth_session_string.trim()
         ? row.auth_session_string.trim()
         : ''
+    const { sessionString: savedSession, meta } = parsePhoneAuthSessionEnvelope(savedAuthSession)
 
     // 2FA resume requires the persisted MTProto session from SignIn; without it the
     // user must request a new code.
@@ -232,16 +371,31 @@ export class AuthService {
       return null
     }
 
-    const client = buildClient(savedSession)
+    const client = this.createTelegramClient(savedSession)
     await client.connect()
     return {
       method: 'phone',
       client,
       phone: row.phone,
       phoneCodeHash: row.phone_code_hash ?? '',
+      delivery: meta.delivery ?? 'other',
+      nextDelivery: meta.nextDelivery ?? null,
+      timeoutSeconds: meta.timeoutSeconds ?? null,
+      resendAvailableAt: meta.resendAvailableAt ?? null,
+      codeLength: meta.codeLength ?? null,
       createdAt: Date.now(),
       awaitingPassword,
     }
+  }
+
+  private async getPhonePending(userId: string, phone: string): Promise<PhonePending | null> {
+    const existing = this.pending.get(userId)
+    if (existing?.method === 'phone') {
+      return phonesMatch(existing.phone, phone) ? existing : null
+    }
+    const restored = await this.restorePhonePendingFromDatabase(userId, phone)
+    if (restored) this.pending.set(userId, restored)
+    return restored
   }
 
   private async restoreQrPendingFromDatabase(userId: string): Promise<QrPending | null> {
@@ -263,7 +417,7 @@ export class AuthService {
         : ''
     if (!sessionString) return null
 
-    const client = buildClient(sessionString)
+    const client = this.createTelegramClient(sessionString)
     await client.connect()
     const pending: QrPending = {
       method: 'qr',
@@ -296,7 +450,7 @@ export class AuthService {
         phone_code_hash: pending?.phoneCodeHash ?? null,
         expires_at: expiresAt,
         awaiting_password: true,
-        auth_session_string: authSessionString,
+        auth_session_string: pending ? serializePhoneAuthSession(authSessionString, pending) : authSessionString,
       },
       { onConflict: 'user_id' },
     )
@@ -307,6 +461,28 @@ export class AuthService {
       pending.awaitingPassword = true
       // Refresh in-memory age so cleanup does not expire mid-password entry.
       pending.createdAt = Date.now()
+    }
+  }
+
+  private async persistPhonePendingRow(userId: string, pending: PhonePending): Promise<void> {
+    const authSessionString = (pending.client.session.save() as unknown) as string
+    const expiresAt = new Date(Date.now() + PENDING_DB_TTL_MS).toISOString()
+    const { error } = await this.supabase.from('telegram_auth_pending').upsert(
+      {
+        user_id: userId,
+        auth_method: 'phone',
+        phone: pending.phone,
+        phone_code_hash: pending.phoneCodeHash,
+        expires_at: expiresAt,
+        awaiting_password: Boolean(pending.awaitingPassword),
+        auth_session_string: serializePhoneAuthSession(authSessionString, pending),
+        qr_expires_at: null,
+      },
+      { onConflict: 'user_id' },
+    )
+    if (error) {
+      logAuthEvent('phone_pending_upsert_failed', { userId, error: error.message })
+      throw new Error('Could not save Telegram login state. Please request a new code.')
     }
   }
 
@@ -332,9 +508,9 @@ export class AuthService {
   }
 
   private async completePasswordStep(client: TelegramClient, password: string): Promise<void> {
-    const srpResult = await tgInvoke<Api.account.Password>(client, new Api.account.GetPassword())
+    const srpResult = await this.invokeTelegram<Api.account.Password>(client, new Api.account.GetPassword())
     const srpCheck = await computeCheck(srpResult, password)
-    await tgInvoke(client, new Api.auth.CheckPassword({ password: srpCheck }))
+    await this.invokeTelegram(client, new Api.auth.CheckPassword({ password: srpCheck }))
   }
 
   private async finalizeAuth(
@@ -489,16 +665,35 @@ export class AuthService {
   async sendCode(
     userId: string,
     phone: string,
-  ): Promise<{ phone_code_hash: string; delivery: 'app' | 'sms' | 'call' | 'other' }> {
+  ): Promise<TelegramCodeStatus> {
     const correlationId = authCorrelationId()
     const normalizedPhone = normalizePhoneNumber(phone)
     logAuthEvent('send_code_start', { userId, rawPhone: phone, normalizedPhone, correlationId })
     if (!normalizedPhone || !normalizedPhone.startsWith('+')) {
       logAuthEvent('send_code_invalid_phone', { userId, phone, correlationId })
-      console.warn(`[authService] send_code invalid phone format user=${userId} phone=${phone}`)
+      console.warn(`[authService] send_code invalid phone format user=${userId} phone=${redactAuthLogValue('phone', phone)}`)
       throw new Error('Use full phone with country code, e.g. +44...')
     }
+    if (this.authInFlight.has(userId)) {
+      logAuthEvent('send_code_duplicate_in_flight', { userId, correlationId })
+      throw new Error('Telegram login is already starting. Wait a few seconds before requesting another code.')
+    }
     await assertTelegramAccountAvailable(this.supabase, userId, { phone: normalizedPhone })
+    const existingPending = await this.getPhonePending(userId, normalizedPhone)
+    if (existingPending) {
+      if (existingPending.awaitingPassword) {
+        throw new Error('Telegram Two-Step Verification password is already required for this login.')
+      }
+      const status = pendingCodeStatus(existingPending, this.now())
+      logAuthEvent('send_code_existing_pending', {
+        userId,
+        correlationId,
+        delivery: status.delivery,
+        nextDelivery: status.next_delivery,
+        resendWaitSeconds: status.resend_wait_seconds,
+      })
+      return status
+    }
 
     this.authInFlight.add(userId)
     const tStart = Date.now()
@@ -530,7 +725,7 @@ export class AuthService {
 
       await this.sessionManager.prepareForAuth(userId)
 
-      const client = buildClient('')
+      const client = this.createTelegramClient('')
       logAuthEvent('send_code_connecting', { userId, correlationId })
       await client.connect()
       logAuthEvent('send_code_connected', { userId, correlationId, connectTimeMs: Date.now() - tStart })
@@ -538,7 +733,7 @@ export class AuthService {
       try {
         const tApi = Date.now()
         logAuthEvent('send_code_calling_api', { userId, normalizedPhone, correlationId })
-        const result = await tgInvoke<Api.auth.SentCode>(
+        const result = await this.invokeTelegram<Api.auth.SentCode>(
           client,
           new Api.auth.SendCode({
             phoneNumber: normalizedPhone,
@@ -553,43 +748,31 @@ export class AuthService {
         )
         logAuthEvent('send_code_api_ok', {
           userId, correlationId, apiTimeMs: Date.now() - tApi,
-          delivery: sentCodeDelivery(result), hash: result.phoneCodeHash,
+          delivery: sentCodeDelivery(result),
+          nextDelivery: codeTypeDelivery(result.nextType),
+          timeoutSeconds: positiveSeconds(result.timeout),
+          hasPhoneCodeHash: Boolean(result.phoneCodeHash),
         })
 
-        const authSessionString = (client.session.save() as unknown) as string
+        const status = sentCodeStatus(result, this.now())
 
-        this.pending.set(userId, {
+        const pending: PhonePending = {
           method: 'phone',
           client,
           phone: normalizedPhone,
           phoneCodeHash: result.phoneCodeHash,
+          delivery: status.delivery,
+          nextDelivery: status.next_delivery ?? null,
+          timeoutSeconds: status.timeoutSeconds,
+          resendAvailableAt: status.resendAvailableAt,
+          codeLength: status.code_length ?? null,
           createdAt: Date.now(),
-        })
-
-        const expiresAt = new Date(Date.now() + PENDING_DB_TTL_MS).toISOString()
-        const { error: dbErr } = await this.supabase.from('telegram_auth_pending').upsert(
-          {
-            user_id: userId,
-            auth_method: 'phone',
-            phone: normalizedPhone,
-            phone_code_hash: result.phoneCodeHash,
-            expires_at: expiresAt,
-            awaiting_password: false,
-            auth_session_string: authSessionString,
-            qr_expires_at: null,
-          },
-          { onConflict: 'user_id' },
-        )
-        if (dbErr) {
-          logAuthEvent('send_code_db_upsert_warn', { userId, correlationId, error: dbErr.message })
-          console.error('[authService] telegram_auth_pending upsert:', dbErr.message)
         }
+        this.pending.set(userId, pending)
+        await this.persistPhonePendingRow(userId, pending)
 
         logAuthEvent('send_code_complete', { userId, correlationId, totalTimeMs: Date.now() - tStart })
-        return {
-          phone_code_hash: result.phoneCodeHash,
-          delivery: sentCodeDelivery(result),
-        }
+        return pendingCodeStatus(pending, this.now())
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err)
         logAuthEvent('send_code_api_failed', { userId, correlationId, error: errMsg, totalTimeMs: Date.now() - tStart })
@@ -604,6 +787,86 @@ export class AuthService {
     }
   }
 
+  async resendCode(userId: string, phone: string): Promise<TelegramCodeStatus> {
+    const correlationId = authCorrelationId()
+    const normalizedPhone = normalizePhoneNumber(phone)
+    logAuthEvent('resend_code_start', { userId, normalizedPhone, correlationId })
+    if (!normalizedPhone || !normalizedPhone.startsWith('+')) {
+      logAuthEvent('resend_code_invalid_phone', { userId, phone, correlationId })
+      throw new Error('Use full phone with country code, e.g. +44...')
+    }
+    if (this.authInFlight.has(userId)) {
+      throw new Error('Telegram login is already starting. Wait a few seconds before requesting another code.')
+    }
+
+    const pending = await this.getPhonePending(userId, normalizedPhone)
+    if (!pending) {
+      logAuthEvent('resend_code_no_pending', { userId, correlationId })
+      const err = new Error(noPendingPhoneAuthMessage())
+      err.name = NO_PENDING_PHONE_AUTH_ERROR
+      throw err
+    }
+    if (pending.awaitingPassword) {
+      throw new Error('Telegram Two-Step Verification password is already required for this login.')
+    }
+
+    const now = this.now()
+    const waitMs = pending.resendAvailableAt ? pending.resendAvailableAt - now : 0
+    if (waitMs > 0) {
+      const waitSeconds = Math.ceil(waitMs / 1000)
+      logAuthEvent('resend_code_wait', { userId, correlationId, waitSeconds })
+      throw new Error(`RESEND_WAIT_${waitSeconds}`)
+    }
+    if (this.resendInFlight.has(userId)) {
+      logAuthEvent('resend_code_duplicate_in_flight', { userId, correlationId })
+      throw new Error('Telegram resend is already in progress. Wait a few seconds before requesting another delivery method.')
+    }
+
+    this.resendInFlight.add(userId)
+    try {
+      const { client, phone: pendingPhone, phoneCodeHash } = pending
+      if (!client.connected) {
+        logAuthEvent('resend_code_reconnect_client', { userId, correlationId })
+        try { await client.connect() } catch { /* will fail at invoke */ }
+      }
+
+      const tApi = Date.now()
+      const result = await this.invokeTelegram<Api.auth.SentCode>(
+        client,
+        new Api.auth.ResendCode({
+          phoneNumber: pendingPhone,
+          phoneCodeHash,
+        }),
+      )
+      const status = sentCodeStatus(result, this.now())
+      pending.phoneCodeHash = result.phoneCodeHash
+      pending.delivery = status.delivery
+      pending.nextDelivery = status.next_delivery ?? null
+      pending.timeoutSeconds = status.timeoutSeconds
+      pending.resendAvailableAt = status.resendAvailableAt
+      pending.codeLength = status.code_length ?? null
+      pending.createdAt = Date.now()
+      await this.persistPhonePendingRow(userId, pending)
+
+      logAuthEvent('resend_code_api_ok', {
+        userId,
+        correlationId,
+        apiTimeMs: Date.now() - tApi,
+        delivery: pending.delivery,
+        nextDelivery: pending.nextDelivery,
+        timeoutSeconds: pending.timeoutSeconds,
+        hasPhoneCodeHash: Boolean(pending.phoneCodeHash),
+      })
+      return pendingCodeStatus(pending, this.now())
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      logAuthEvent('resend_code_failed', { userId, correlationId, error: errMsg })
+      throw err
+    } finally {
+      this.resendInFlight.delete(userId)
+    }
+  }
+
   async verifyCode(userId: string, phone: string, code: string, password?: string): Promise<VerifyResult> {
     const correlationId = authCorrelationId()
     const normalizedPhone = normalizePhoneNumber(phone)
@@ -613,7 +876,6 @@ export class AuthService {
       logAuthEvent('verify_code_missing', { userId, correlationId })
       throw new Error('Verification code is required')
     }
-    const tStart = Date.now()
     await this.sessionManager.pauseForAuth(userId, { releaseDelay: false })
 
     let pending: PhonePending | undefined
@@ -654,7 +916,7 @@ export class AuthService {
       } else if (password?.trim()) {
         try {
           logAuthEvent('verify_code_signin_with_password', { userId, correlationId })
-          await tgInvoke(client, new Api.auth.SignIn({
+          await this.invokeTelegram(client, new Api.auth.SignIn({
             phoneNumber: pendingPhone,
             phoneCodeHash,
             phoneCode: normalizedCode,
@@ -672,7 +934,7 @@ export class AuthService {
         try {
           logAuthEvent('verify_code_signin', { userId, correlationId })
           const tSign = Date.now()
-          await tgInvoke(client, new Api.auth.SignIn({
+          await this.invokeTelegram(client, new Api.auth.SignIn({
             phoneNumber: pendingPhone,
             phoneCodeHash,
             phoneCode: normalizedCode,
@@ -746,7 +1008,7 @@ export class AuthService {
 
       await this.sessionManager.prepareForAuth(userId)
 
-      const client = buildClient('')
+      const client = this.createTelegramClient('')
       logAuthEvent('qr_login_connecting', { userId, correlationId })
       await client.connect()
       logAuthEvent('qr_login_connected', { userId, correlationId, connectTimeMs: Date.now() - tStart })

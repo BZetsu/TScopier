@@ -6,6 +6,8 @@ import {
   callTelegramAuth,
   resolveTelegramAuthErrorMessage,
   type QrPollResponse,
+  type TelegramCodeDelivery,
+  type TelegramCodeStatusResponse,
 } from '../../../lib/telegramAuthApi'
 import { supabase } from '../../../lib/supabase'
 import { Card } from '../../../components/ui/Card'
@@ -41,6 +43,9 @@ export function TelegramLinkStep({ onDone }: Props) {
   const [authMethod, setAuthMethod] = useState<TelegramAuthMethod>('phone')
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
+  const [codeDelivery, setCodeDelivery] = useState<TelegramCodeDelivery | null>(null)
+  const [nextCodeDelivery, setNextCodeDelivery] = useState<TelegramCodeDelivery | null>(null)
+  const [resendAvailableAt, setResendAvailableAt] = useState<string | null>(null)
   const [password, setPassword] = useState('')
   const [qrUrl, setQrUrl] = useState('')
   const [qrWaiting, setQrWaiting] = useState(false)
@@ -146,7 +151,7 @@ export function TelegramLinkStep({ onDone }: Props) {
     setLoading(true)
     try {
       const normalizedPhone = normalizeTelegramPhoneInput(phone)
-      const { ok, data } = await callTelegramAuth<Record<string, never>>(
+      const { ok, data } = await callTelegramAuth<TelegramCodeStatusResponse>(
         EDGE_FN,
         session?.access_token,
         'send_code',
@@ -157,6 +162,56 @@ export function TelegramLinkStep({ onDone }: Props) {
         return
       }
       setPhone(normalizedPhone)
+      setCodeDelivery(data.delivery ?? null)
+      setNextCodeDelivery(data.next_delivery ?? null)
+      setResendAvailableAt(data.resend_available_at ?? null)
+      setStage('code')
+    } catch {
+      setError('Network error. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleStageChange = (nextStage: TelegramConnectStage) => {
+    setStage(nextStage)
+    setError('')
+    if (nextStage === 'phone' || nextStage === 'method') {
+      setCode('')
+      setPassword('')
+      setCodeDelivery(null)
+      setNextCodeDelivery(null)
+      setResendAvailableAt(null)
+      setQrUrl('')
+      setQrWaiting(false)
+    }
+    if (nextStage === 'code') {
+      setPassword('')
+    }
+    if (nextStage !== 'qr') {
+      setQrWaiting(false)
+    }
+  }
+
+  const resendCode = async () => {
+    setError('')
+    setLoading(true)
+    try {
+      const normalizedPhone = normalizeTelegramPhoneInput(phone)
+      const { ok, data } = await callTelegramAuth<TelegramCodeStatusResponse>(
+        EDGE_FN,
+        session?.access_token,
+        'resend_code',
+        { phone: normalizedPhone },
+      )
+      if (!ok) {
+        setError(resolveTelegramAuthError(data.error, ce.failedSendCode, ce))
+        return
+      }
+      setPhone(normalizedPhone)
+      setCodeDelivery(data.delivery ?? null)
+      setNextCodeDelivery(data.next_delivery ?? null)
+      setResendAvailableAt(data.resend_available_at ?? null)
       setStage('code')
     } catch {
       setError('Network error. Please try again.')
@@ -319,7 +374,7 @@ export function TelegramLinkStep({ onDone }: Props) {
   return (
     <TelegramConnectFlow
       stage={stage}
-      onStageChange={setStage}
+      onStageChange={handleStageChange}
       authMethod={authMethod}
       onAuthMethodChange={setAuthMethod}
       phone={phone}
@@ -328,11 +383,15 @@ export function TelegramLinkStep({ onDone }: Props) {
       onCodeChange={setCode}
       password={password}
       onPasswordChange={setPassword}
+      codeDelivery={codeDelivery}
+      nextCodeDelivery={nextCodeDelivery}
+      resendAvailableAt={resendAvailableAt}
       qrUrl={qrUrl}
       qrWaiting={qrWaiting}
       loading={loading}
       error={error}
       onSendCode={sendCode}
+      onResendCode={resendCode}
       onVerifyCode={verifyCode}
       onStartQr={startQrLogin}
       onVerifyQrPassword={verifyQrPassword}
