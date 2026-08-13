@@ -1,6 +1,7 @@
 import { describe, it, after } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  cerebrasParseApiKeys,
   cerebrasParseMaxTokens,
   cerebrasParseModel,
   cerebrasParseRetries,
@@ -18,6 +19,10 @@ describe('parseConfig', () => {
   const prevReconcileTimeout = process.env.UNIVERSAL_PARSE_RECONCILE_TIMEOUT_MS
   const prevCerebrasMaxTokens = process.env.CEREBRAS_PARSE_MAX_TOKENS
   const prevCerebrasRetries = process.env.CEREBRAS_PARSE_RETRIES
+  const prevCerebrasKey1 = process.env.CEREBRAS_API_KEY_1
+  const prevCerebrasKey2 = process.env.CEREBRAS_API_KEY_2
+  const prevCerebrasKey3 = process.env.CEREBRAS_API_KEY_3
+  const prevCerebrasKey = process.env.CEREBRAS_API_KEY
 
   after(() => {
     if (prevMode != null) process.env.UNIVERSAL_PARSE_MODE = prevMode
@@ -43,6 +48,14 @@ describe('parseConfig', () => {
     } else {
       delete process.env.CEREBRAS_PARSE_RETRIES
     }
+    if (prevCerebrasKey1 != null) process.env.CEREBRAS_API_KEY_1 = prevCerebrasKey1
+    else delete process.env.CEREBRAS_API_KEY_1
+    if (prevCerebrasKey2 != null) process.env.CEREBRAS_API_KEY_2 = prevCerebrasKey2
+    else delete process.env.CEREBRAS_API_KEY_2
+    if (prevCerebrasKey3 != null) process.env.CEREBRAS_API_KEY_3 = prevCerebrasKey3
+    else delete process.env.CEREBRAS_API_KEY_3
+    if (prevCerebrasKey != null) process.env.CEREBRAS_API_KEY = prevCerebrasKey
+    else delete process.env.CEREBRAS_API_KEY
   })
 
   it('defaults to shadow mode when UNIVERSAL_PARSE_MODE is unset', () => {
@@ -101,5 +114,36 @@ describe('parseConfig', () => {
     assert.equal(cerebrasParseRetries(), 5)
     process.env.CEREBRAS_PARSE_RETRIES = '0'
     assert.equal(cerebrasParseRetries(), 0)
+  })
+
+  it('falls back to the legacy single CEREBRAS_API_KEY', () => {
+    delete process.env.CEREBRAS_API_KEY_1
+    delete process.env.CEREBRAS_API_KEY_2
+    delete process.env.CEREBRAS_API_KEY_3
+    process.env.CEREBRAS_API_KEY = 'sk-legacy'
+    assert.deepEqual(cerebrasParseApiKeys(), ['sk-legacy'])
+  })
+
+  it('collects numbered CEREBRAS_API_KEY_N vars in order, stopping at the first gap', () => {
+    process.env.CEREBRAS_API_KEY_1 = 'key-a'
+    process.env.CEREBRAS_API_KEY_2 = 'key-b'
+    process.env.CEREBRAS_API_KEY_3 = 'key-c'
+    process.env.CEREBRAS_API_KEY = 'sk-ignored'
+    assert.deepEqual(cerebrasParseApiKeys(), ['key-a', 'key-b', 'key-c'])
+  })
+
+  it('stops at the first missing numbered key', () => {
+    process.env.CEREBRAS_API_KEY_1 = 'key-a'
+    delete process.env.CEREBRAS_API_KEY_2
+    process.env.CEREBRAS_API_KEY_3 = 'key-c'
+    assert.deepEqual(cerebrasParseApiKeys(), ['key-a'])
+  })
+
+  it('returns an empty list when no Cerebras key is configured', () => {
+    delete process.env.CEREBRAS_API_KEY_1
+    delete process.env.CEREBRAS_API_KEY_2
+    delete process.env.CEREBRAS_API_KEY_3
+    delete process.env.CEREBRAS_API_KEY
+    assert.deepEqual(cerebrasParseApiKeys(), [])
   })
 })

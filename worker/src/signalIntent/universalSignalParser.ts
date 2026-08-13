@@ -24,6 +24,7 @@ import {
   loadChannelSignalExamples,
 } from './loadChannelExamples'
 import {
+  cerebrasParseApiKeys,
   cerebrasParseEnabled,
   cerebrasParseMaxTokens,
   cerebrasParseModel,
@@ -44,7 +45,40 @@ import { loadOpenTradesForChannel } from '../signalModificationGrounding'
 import { formatFewShots, STAGE_TWO_FEW_SHOTS, STAGE_THREE_FEW_SHOTS } from './fewShotExamples'
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? ''
-const CEREBRAS_API_KEY = process.env.CEREBRAS_API_KEY ?? ''
+
+/** Per-key Cerebras pool state. `exhausted` means the key hit its daily token
+ *  quota ("Tokens per day limit exceeded") — it is skipped for the rest of the
+ *  process lifetime, since the quota only resets once per day. */
+const cerebrasKeyState = new Map<string, { exhausted: boolean }>()
+let cerebrasKeyCursor = 0
+
+function maskKey(key: string): string {
+  return key.length <= 8 ? '****' : `${key.slice(0, 4)}...${key.slice(-4)}`
+}
+
+/** True for the daily-quota 429 (tokens or requests per day). Unlike transient
+ *  rate limits this never recovers within the process lifetime, so the key must
+ *  be swapped rather than retried. */
+export function isCerebrasDailyLimit(status: number, body: string): boolean {
+  return status === 429 && /per day limit/i.test(body)
+}
+
+/** Rotation order of pool indices to try, starting at `startIndex` and skipping
+ *  keys already marked exhausted. Exported for tests. */
+export function cerebrasKeyOrder(
+  startIndex: number,
+  keys: string[],
+  isExhausted: (key: string) => boolean,
+): number[] {
+  if (keys.length === 0) return []
+  const start = ((startIndex % keys.length) + keys.length) % keys.length
+  const order: number[] = []
+  for (let i = 0; i < keys.length; i++) {
+    const idx = (start + i) % keys.length
+    if (!isExhausted(keys[idx])) order.push(idx)
+  }
+  return order
+}
 
 export type UniversalParseResult = {
   parseResult: ParseChannelMessageResult
@@ -171,13 +205,14 @@ async function callChatCompletions(args: {
   label: string
   maxTokens?: number
   retries?: number
-}): Promise<{ raw: Record<string, unknown> | null; error: string | null }> {
+}): Promise<{ raw: Record<string, unknown> | null; error: string | null; dailyExhausted?: boolean }> {
   if (!args.apiKey) {
     return { raw: null, error: `${args.label} API key not set on listener worker` }
   }
   const maxTokens = args.maxTokens ?? 500
   const attempts = (args.retries ?? 0) + 1
   let lastError: string | null = null
+  let dailyExhausted = false
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), args.timeoutMs)
@@ -206,6 +241,10 @@ async function callChatCompletions(args: {
       if (res.status === 429 || res.status >= 500) {
         const body = await res.text().catch(() => '')
         lastError = `${args.label} HTTP ${res.status}: ${body.slice(0, 200)}`
+        // Daily quota is exhausted — retrying the same key cannot succeed, the
+        // caller must rotate to the next key (or fall back to OpenAI).
+        dailyExhausted = isCerebrasDailyLimit(res.status, body)
+        if (dailyExhausted) break
         if (attempt < attempts) {
           console.warn(`[universalSignalParser] ${args.label} HTTP ${res.status} — retry ${attempt}/${attempts}`)
           await new Promise(r => setTimeout(r, 400 * attempt))
@@ -246,7 +285,7 @@ async function callChatCompletions(args: {
   if (lastError) {
     console.error(`[universalSignalParser] ${args.label} failed: ${lastError}`)
   }
-  return { raw: null, error: lastError }
+  return { raw: null, error: lastError, ...(dailyExhausted ? { dailyExhausted: true } : {}) }
 }
 
 function callOpenAiUniversal(context: UniversalParseContext): ReturnType<typeof callChatCompletions> {
@@ -262,18 +301,61 @@ function callOpenAiUniversal(context: UniversalParseContext): ReturnType<typeof 
   })
 }
 
-function callCerebrasUniversal(context: UniversalParseContext): ReturnType<typeof callChatCompletions> {
-  return callChatCompletions({
-    baseUrl: 'https://api.cerebras.ai/v1',
-    apiKey: CEREBRAS_API_KEY,
-    model: cerebrasParseModel(),
-    systemPrompt: UNIVERSAL_SYSTEM_PROMPT,
-    userContent: JSON.stringify(context),
-    timeoutMs: universalParseTimeoutMs(),
-    label: 'Cerebras',
-    maxTokens: cerebrasParseMaxTokens(),
-    retries: cerebrasParseRetries(),
-  })
+/** Try every configured Cerebras key, rotating past daily-exhausted keys.
+ *  Only falls through to OpenAI (in callStageTwo) when every key failed. */
+async function callCerebrasUniversal(context: UniversalParseContext): Promise<{
+  raw: Record<string, unknown> | null
+  error: string | null
+}> {
+  const keys = cerebrasParseApiKeys()
+  if (keys.length === 0) {
+    return { raw: null, error: 'Cerebras API key not set on listener worker' }
+  }
+  let lastError: string | null = null
+  const startIndex = cerebrasKeyCursor
+  const order = cerebrasKeyOrder(
+    startIndex,
+    keys,
+    key => cerebrasKeyState.get(key)?.exhausted ?? false,
+  )
+  if (order.length === 0) {
+    return {
+      raw: null,
+      error: `Cerebras daily token limit exhausted on all ${keys.length} configured keys`,
+    }
+  }
+  for (const idx of order) {
+    const key = keys[idx]
+    const attempt = await callChatCompletions({
+      baseUrl: 'https://api.cerebras.ai/v1',
+      apiKey: key,
+      model: cerebrasParseModel(),
+      systemPrompt: UNIVERSAL_SYSTEM_PROMPT,
+      userContent: JSON.stringify(context),
+      timeoutMs: universalParseTimeoutMs(),
+      label: `Cerebras[${idx}]`,
+      maxTokens: cerebrasParseMaxTokens(),
+      retries: cerebrasParseRetries(),
+    })
+    if (attempt.raw) {
+      return { raw: attempt.raw, error: null }
+    }
+    lastError = attempt.error
+    if (attempt.dailyExhausted) {
+      cerebrasKeyState.set(key, { exhausted: true })
+      console.warn(
+        `[universalSignalParser] Cerebras[${idx}] daily limit exhausted (${maskKey(key)}) — rotating to next key`,
+      )
+      continue
+    }
+    console.warn(
+      `[universalSignalParser] Cerebras[${idx}] failed (${maskKey(key)}), trying next key: ${attempt.error}`,
+    )
+  }
+  // Always advance the rotation start, success or not, so every turn leads with
+  // a different key and load spreads evenly across the pool.
+  cerebrasKeyCursor = (startIndex + 1) % keys.length
+  return { raw: null, error: lastError }
 }
 
 /** Stage 2 provider: Cerebras OSS when configured, otherwise OpenAI. */
@@ -283,7 +365,7 @@ async function callStageTwo(context: UniversalParseContext): Promise<{
   provider: 'cerebras' | 'openai' | null
   fallbackReason?: string | null
 }> {
-  if (cerebrasParseEnabled() && CEREBRAS_API_KEY) {
+  if (cerebrasParseEnabled() && cerebrasParseApiKeys().length > 0) {
     const cerebras = await callCerebrasUniversal(context)
     if (cerebras.raw) return { ...cerebras, provider: 'cerebras' }
     console.warn(`[universalSignalParser] Cerebras failed, falling back to OpenAI: ${cerebras.error}`)
@@ -456,7 +538,7 @@ export async function parseUniversalSignal(
     return buildSkipResult(args.rawMessage, 'universal_parse_disabled')
   }
 
-  const { keywords, lexicon } = await getChannelParseContext(supabase, args.channelRowId)
+  const { keywords } = await getChannelParseContext(supabase, args.channelRowId)
   const context = await buildUniversalParseContext(supabase, args)
   const { raw, error, provider, fallbackReason } = await callStageTwo(context)
 
