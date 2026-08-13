@@ -2,6 +2,16 @@
 
 Changelog entries authored / owned by Martins, kept separate from the main `PROJECT_MEMORY.md` and Emma’s file by request.
 
+## Plain English Summary
+
+- **What this file is:** Martins’ changelog of frontend / marketing / auth and broker-symbol work, kept separate from the main memory file.
+- **Most recent (2026-08-12):** marketing & auth UX —
+  1. **Navigation fix** — longer translated labels no longer overlap the logo/CTAs.
+  2. **Copy refresh** — “Start your 3-day free trial” CTAs, new hero headline (“Telegram Signals. Copied Automatically.”).
+  3. **Onboarding** — Welcome Modal now routes to Channels instead of trial/pricing buttons.
+  4. **Verification email** — fixed page flicker, added a 60s resend cooldown, and blocked app access until the email link is actually clicked.
+- **Also recently (2026-08-10):** gold trades failing with HTTP 500 are now explained with friendly errors and auto-resolved to the broker’s real symbol (e.g. `XAUUSD` → `GOLD#`); the in-app AI assistant (`assistant-chat`) was shipped.
+
 ## Changelog
 
 ### 2026-08-12 — Marketing nav overlap fix

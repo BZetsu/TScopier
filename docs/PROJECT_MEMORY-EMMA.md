@@ -2,6 +2,16 @@
 
 Changelog entries authored by Emma, kept separate from the main PROJECT_MEMORY.md by request.
 
+## Plain English Summary
+
+- **What this file is:** Emma's changelog of worker/backend reliability work, kept separate from the main memory file.
+- **Most recent (2026-08-12):** fixed **deferred-only range plans** being treated as "empty" — a plan with no immediate broker orders but one waiting leg is valid, but the executor was skipping it and the cleanup could delete the pending leg before its price trigger fired. Pending range legs now survive and fire correctly.
+- **Other recent work:**
+  1. **User-friendly trade failures** — missing SL / unknown broker symbol now show a clear reason instead of generic errors.
+  2. **Safer Telegram recovery** — malformed RPC results no longer risk invalidating a still-valid Telegram session.
+  3. **Faster dispatch** — a short-lived cache for channel config reduces repeated database reads (staging-first).
+  4. **Accurate "copier health"** — the dashboard only shows Operational when the listener is genuinely connected, not just because a lease is fresh.
+
 ## Changelog
 
 ### 2026-08-12 - Deferred-Only Range Plan Registration Incident
