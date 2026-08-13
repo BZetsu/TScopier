@@ -38,7 +38,7 @@ import { PageShell } from '../../components/layout/PageShell'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
 import { TelegramConnectFlow, type TelegramConnectStage, type TelegramAuthMethod } from '../../components/telegram/TelegramConnectFlow'
-import { callTelegramAuth, resolveTelegramAuthErrorMessage, type QrPollResponse } from '../../lib/telegramAuthApi'
+import { callTelegramAuth, resolveTelegramAuthErrorMessage, type QrPollResponse, type TelegramCodeStatusResponse } from '../../lib/telegramAuthApi'
 import {
   getCachedTgChannels,
   invalidateTgChannelsCache,
@@ -46,6 +46,7 @@ import {
   type TgChannelListItem,
 } from '../../lib/telegramChannelsCache'
 import { resolveTelegramAuthError, isNoPendingPhoneAuthError } from '../../lib/telegramAuthError'
+import type { TelegramCodeDelivery } from '../../lib/telegramAuthApi'
 import {
   getCachedTgSession,
   invalidateTgSessionCache,
@@ -136,6 +137,9 @@ export function CopierEnginePage() {
   const [tgQrWaiting, setTgQrWaiting] = useState(false)
   const [tgPhone, setTgPhone] = useState('')
   const [tgCode, setTgCode] = useState('')
+  const [tgCodeDelivery, setTgCodeDelivery] = useState<TelegramCodeDelivery | null>(null)
+  const [tgNextCodeDelivery, setTgNextCodeDelivery] = useState<TelegramCodeDelivery | null>(null)
+  const [tgResendAvailableAt, setTgResendAvailableAt] = useState<string | null>(null)
   const [tgPassword, setTgPassword] = useState('')
   const [tgLoading, setTgLoading] = useState(false)
   const [tgError, setTgError] = useState('')
@@ -288,6 +292,9 @@ export function CopierEnginePage() {
     setTgError('')
     setError('')
     setTgCode('')
+    setTgCodeDelivery(null)
+    setTgNextCodeDelivery(null)
+    setTgResendAvailableAt(null)
     setTgPassword('')
     setTgStage(nextStage)
     void refreshListenerLease()
@@ -742,21 +749,48 @@ export function CopierEnginePage() {
     setTgLoading(true)
     try {
       const phone = normalizeTelegramPhoneInput(tgPhone)
-      const res = await fetch(EDGE_FN, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session?.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ action: 'send_code', phone }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok || data.error) {
+      const { ok, data } = await callTelegramAuth<TelegramCodeStatusResponse>(
+        EDGE_FN,
+        session?.access_token,
+        'send_code',
+        { phone },
+      )
+      if (!ok) {
         const msg = resolveTelegramAuthError(data.error, ce.failedSendCode, ce)
         setTgError(msg)
         return
       }
       setTgPhone(phone)
+      setTgCodeDelivery(data.delivery ?? null)
+      setTgNextCodeDelivery(data.next_delivery ?? null)
+      setTgResendAvailableAt(data.resend_available_at ?? null)
+      setTgStage('code')
+    } catch {
+      setTgError(ce.networkError)
+    } finally {
+      setTgLoading(false)
+    }
+  }
+
+  const resendCode = async () => {
+    setTgError('')
+    setTgLoading(true)
+    try {
+      const phone = normalizeTelegramPhoneInput(tgPhone)
+      const { ok, data } = await callTelegramAuth<TelegramCodeStatusResponse>(
+        EDGE_FN,
+        session?.access_token,
+        'resend_code',
+        { phone },
+      )
+      if (!ok) {
+        setTgError(resolveTelegramAuthError(data.error, ce.failedSendCode, ce))
+        return
+      }
+      setTgPhone(phone)
+      setTgCodeDelivery(data.delivery ?? null)
+      setTgNextCodeDelivery(data.next_delivery ?? null)
+      setTgResendAvailableAt(data.resend_available_at ?? null)
       setTgStage('code')
     } catch {
       setTgError(ce.networkError)
@@ -825,6 +859,9 @@ export function CopierEnginePage() {
     setTgError('')
     if (stage === 'phone' || stage === 'method') {
       setTgCode('')
+      setTgCodeDelivery(null)
+      setTgNextCodeDelivery(null)
+      setTgResendAvailableAt(null)
       setTgPassword('')
       setTgQrUrl('')
       setTgQrWaiting(false)
@@ -898,11 +935,15 @@ export function CopierEnginePage() {
           onCodeChange={setTgCode}
           password={tgPassword}
           onPasswordChange={setTgPassword}
+          codeDelivery={tgCodeDelivery}
+          nextCodeDelivery={tgNextCodeDelivery}
+          resendAvailableAt={tgResendAvailableAt}
           qrUrl={tgQrUrl}
           qrWaiting={tgQrWaiting}
           loading={tgLoading}
           error={tgError}
           onSendCode={sendCode}
+          onResendCode={resendCode}
           onVerifyCode={verifyCode}
           onStartQr={startQrLogin}
           onVerifyQrPassword={verifyQrPassword}

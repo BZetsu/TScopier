@@ -37,6 +37,7 @@ const WORKER_INTERNAL_TOKEN = Deno.env.get("WORKER_INTERNAL_TOKEN") ?? ""
 
 const ROUTES: Record<string, string> = {
   send_code: "/auth/send_code",
+  resend_code: "/auth/resend_code",
   verify_code: "/auth/verify_code",
   start_qr_login: "/auth/start_qr",
   poll_qr_login: "/auth/qr_status",
@@ -84,7 +85,10 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: "Unknown action" }, { status: 400, headers: corsHeaders })
     }
 
-    const { action: _omit, phone_code_hash: _omitHash, session_string: _omitSession, ...rest } = body
+    const rest = { ...body }
+    delete rest.action
+    delete rest.phone_code_hash
+    delete rest.session_string
 
     const workerRes = await fetch(`${WORKER_URL}${path}`, {
       method: "POST",

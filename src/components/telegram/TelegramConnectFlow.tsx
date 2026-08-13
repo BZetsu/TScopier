@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect } from 'react'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { QRCodeSVG } from 'qrcode.react'
 import { Check, Smartphone, KeyRound, ListPlus, ShieldCheck, TriangleAlert, QrCode, Loader2 } from 'lucide-react'
@@ -8,6 +8,7 @@ import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Alert } from '../ui/Alert'
 import { Input } from '../ui/Input'
+import type { TelegramCodeDelivery } from '../../lib/telegramAuthApi'
 
 export type TelegramConnectStage = 'idle' | 'method' | 'phone' | 'code' | 'qr' | 'twoFa'
 export type TelegramAuthMethod = 'phone' | 'qr'
@@ -23,11 +24,15 @@ interface TelegramConnectFlowProps {
   onCodeChange: (value: string) => void
   password: string
   onPasswordChange: (value: string) => void
+  codeDelivery?: TelegramCodeDelivery | null
+  nextCodeDelivery?: TelegramCodeDelivery | null
+  resendAvailableAt?: string | null
   qrUrl: string
   qrWaiting: boolean
   loading: boolean
   error: string
   onSendCode: (e: FormEvent) => void
+  onResendCode: () => void
   onVerifyCode: (e: FormEvent) => void
   onStartQr: () => void
   onVerifyQrPassword: (e: FormEvent) => void
@@ -70,11 +75,15 @@ export function TelegramConnectFlow({
   onCodeChange,
   password,
   onPasswordChange,
+  codeDelivery,
+  nextCodeDelivery,
+  resendAvailableAt,
   qrUrl,
   qrWaiting,
   loading,
   error,
   onSendCode,
+  onResendCode,
   onVerifyCode,
   onStartQr,
   onVerifyQrPassword,
@@ -88,12 +97,39 @@ export function TelegramConnectFlow({
   const qrStepLabels = [ce.tgConnectStepQr, ce.tgConnectStepTwoFa, ce.tgConnectStepChannels]
   const stepLabels = authMethod === 'qr' ? qrStepLabels : phoneStepLabels
   const howItWorks = [ce.tgConnectHowItWorks1, ce.tgConnectHowItWorks2, ce.tgConnectHowItWorks3]
+  const [now, setNow] = useState(() => Date.now())
+  const resendAvailableAtMs = useMemo(() => {
+    if (!resendAvailableAt) return null
+    const parsed = new Date(resendAvailableAt).getTime()
+    return Number.isFinite(parsed) ? parsed : null
+  }, [resendAvailableAt])
+  const resendWaitSeconds = resendAvailableAtMs ? Math.max(0, Math.ceil((resendAvailableAtMs - now) / 1000)) : 0
+  const nextDeliveryHint =
+    nextCodeDelivery === 'sms'
+      ? ' If it does not arrive, SMS may become available after the countdown.'
+      : nextCodeDelivery === 'call'
+        ? ' If it does not arrive, a phone call may become available after the countdown.'
+        : nextCodeDelivery
+          ? ' If it does not arrive, another delivery method may become available after the countdown.'
+          : ''
+  const codeHint =
+    codeDelivery === 'app'
+      ? `${ce.tgConnectCodeSubtitle}${nextDeliveryHint}`
+      : codeDelivery === 'call'
+        ? `Telegram will call this number with the login code.${nextDeliveryHint}`
+        : `${interpolate(ce.sentTo, { phone })}${nextDeliveryHint}`
 
   useEffect(() => {
     if (stage === 'qr' && !qrUrl && !loading && !error) {
       onStartQr()
     }
   }, [stage, qrUrl, loading, error, onStartQr])
+
+  useEffect(() => {
+    if (stage !== 'code' || !resendAvailableAtMs || resendWaitSeconds <= 0) return undefined
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [stage, resendAvailableAtMs, resendWaitSeconds])
 
   const title =
     stage === 'method'
@@ -289,12 +325,23 @@ export function TelegramConnectFlow({
               placeholder={ce.verificationPlaceholder}
               value={code}
               onChange={e => onCodeChange(e.target.value)}
-              hint={interpolate(ce.sentTo, { phone })}
+              hint={codeHint}
               required
               autoFocus
             />
             <Button type="submit" loading={loading} size="lg" className="w-full">
               {ce.verify}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full"
+              disabled={loading || resendWaitSeconds > 0}
+              onClick={onResendCode}
+            >
+              {resendWaitSeconds > 0
+                ? `Request another delivery method in ${resendWaitSeconds}s`
+                : 'Request another delivery method'}
             </Button>
             <Button
               type="button"
@@ -343,7 +390,7 @@ export function TelegramConnectFlow({
                 <p className="text-sm font-medium text-neutral-900 dark:text-neutral-50 mt-0.5 font-mono tracking-wide">
                   {code || '—'}
                 </p>
-                <p className="text-xs text-neutral-400 mt-1">{interpolate(ce.sentTo, { phone })}</p>
+                <p className="text-xs text-neutral-400 mt-1">{codeHint}</p>
               </div>
             )}
             <Input
