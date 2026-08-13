@@ -29,6 +29,14 @@ export type EnsureSignalRowResult = {
   /** True when a new row was written (or upsert applied). */
   written: boolean
   error?: string
+  /**
+   * True when a DIFFERENT signal row already owns (user_id, channel_id,
+   * telegram_message_id). Callers must treat this as a duplicate message and
+   * NOT dispatch / execute — the owner signal is already being handled.
+   */
+  duplicate?: boolean
+  /** The signal id that owns the telegram message (when duplicate). */
+  existingSignalId?: string
 }
 
 function buildSignalRowPatch(args: EnsureSignalRowArgs): Record<string, unknown> {
@@ -77,7 +85,42 @@ export async function ensureSignalRow(
 
   const msg = error.message ?? String(error)
   // Unique (user_id, channel_id, telegram_message_id) may already be owned by
-  // another signal id. Still ensure THIS id exists so OrderSend post-fill FKs work.
+  // another signal id. Detect the duplicate BEFORE falling back to the stub:
+  // the owner signal is already being handled, so the stub must be NON-executable
+  // (status 'skipped') and callers must skip dispatch.
+  if (args.telegram_message_id) {
+    const existing = await findSignalByTelegramMessage(
+      supabase,
+      args.user_id,
+      args.channel_id ?? null,
+      args.telegram_message_id,
+    )
+    if (existing) {
+      const stub = {
+        ...row,
+        // Never executable: 'skipped' is not in PARSED_STATUSES, so neither the
+        // sweep nor acceptDispatchSignal will pick it up. The row still exists so
+        // FK-dependent writes (trades / trade_execution_logs) can reference it.
+        status: 'skipped',
+        skip_reason: 'duplicate_telegram_message',
+        telegram_message_id: null,
+        reply_to_message_id: null,
+      }
+      const { error: stubErr } = await supabase.from('signals').upsert(stub, { onConflict: 'id' })
+      if (!stubErr) {
+        console.warn(
+          `[ensureSignalRow] duplicate telegram message signal=${args.id} owned by signal=${existing}`
+          + ` — persisted non-executable skipped stub (${msg.slice(0, 200)})`,
+        )
+        return { ok: true, written: true, duplicate: true, existingSignalId: existing }
+      }
+      console.error(
+        `[ensureSignalRow] duplicate stub upsert failed signal=${args.id}: ${stubErr.message} (primary: ${msg.slice(0, 200)})`,
+      )
+      return { ok: false, written: false, duplicate: true, existingSignalId: existing, error: stubErr.message }
+    }
+  }
+  // Still ensure THIS id exists so OrderSend post-fill FKs work.
   if (args.telegram_message_id) {
     const stub = {
       ...row,
@@ -113,4 +156,24 @@ export function isSignalFkViolation(message: string | null | undefined): boolean
     || m.includes('trade_execution_logs_signal_id_fkey')
     || m.includes('range_pending_legs_signal_id_fkey')
     || m.includes('partial_tp_legs_signal_id_fkey')
+}
+
+async function findSignalByTelegramMessage(
+  supabase: SupabaseClient,
+  userId: string,
+  channelId: string | null,
+  telegramMessageId: string,
+): Promise<string | null> {
+  try {
+    let query = supabase
+      .from('signals')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('telegram_message_id', telegramMessageId)
+    if (channelId) query = query.eq('channel_id', channelId)
+    const { data } = await query.limit(1)
+    return (data?.[0]?.id as string | undefined) ?? null
+  } catch {
+    return null
+  }
 }
