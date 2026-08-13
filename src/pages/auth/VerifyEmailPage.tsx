@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Mail } from 'lucide-react'
 import {
@@ -14,6 +14,8 @@ import { Button } from '../../components/ui/Button'
 import { Alert } from '../../components/ui/Alert'
 import { useLocale } from '../../context/LocaleContext'
 import { postAuthAppPath } from '../../lib/pendingPlanSelection'
+import { TurnstileWidget, type TurnstileWidgetHandle } from '../../components/auth/TurnstileWidget'
+import { isTurnstileEnabled } from '../../lib/turnstile'
 
 export function VerifyEmailPage() {
   const navigate = useNavigate()
@@ -29,6 +31,9 @@ export function VerifyEmailPage() {
   const [resending, setResending] = useState(false)
   const [resent, setResent] = useState(false)
   const [error, setError] = useState('')
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileWidgetHandle>(null)
+  const captchaRequired = isTurnstileEnabled()
   const [cooldownSeconds, setCooldownSeconds] = useState(() =>
     readVerificationEmailCooldownSeconds(email),
   )
@@ -57,6 +62,10 @@ export function VerifyEmailPage() {
 
   const handleResend = async () => {
     if (!email || resending || cooldownSeconds > 0) return
+    if (captchaRequired && !captchaToken) {
+      setError(auth.oauth.captchaRequired)
+      return
+    }
     setResending(true)
     setError('')
     setResent(false)
@@ -65,7 +74,11 @@ export function VerifyEmailPage() {
       email,
       accessToken: session?.access_token,
       redirectTo,
+      captchaToken,
     })
+
+    turnstileRef.current?.reset()
+    setCaptchaToken(null)
 
     if (!sent.ok) {
       if (sent.retryAfterSeconds) {
@@ -118,10 +131,18 @@ export function VerifyEmailPage() {
       {resent ? <Alert variant="success" className="mt-5 py-2.5 text-left">{verifyT.resent}</Alert> : null}
 
       <div className="mt-8 space-y-3">
+        <TurnstileWidget
+          ref={turnstileRef}
+          className="flex justify-center"
+          onToken={setCaptchaToken}
+          onExpire={() => setCaptchaToken(null)}
+          onError={() => setCaptchaToken(null)}
+        />
+
         <Button
           onClick={() => void handleResend()}
           loading={resending}
-          disabled={cooldownSeconds > 0}
+          disabled={cooldownSeconds > 0 || (captchaRequired && !captchaToken)}
           variant="secondary"
           className="w-full"
           size="lg"
