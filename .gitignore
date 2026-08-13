@@ -1,3 +1,9 @@
 node_modules/
 .env
 load-results/
+
+# Local-only agent files (personal config + investigation scratchpads)
+AGENTS.md
+docs/scratchpads/
+docs/scratchpad-*.md
+
