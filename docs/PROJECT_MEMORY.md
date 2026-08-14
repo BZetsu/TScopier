@@ -2,6 +2,12 @@
 
 ## Changelog
 
+### 2026-08-14 — Unblock hotmail/outlook/proton signup domains
+
+- Removed full-domain signup block for `hotmail.com`, `outlook.com`, `outlook.co.uk`, `proton.me`.
+- Kept adult-domain, keyword, disposable, and MS name+digits (`mamadou429302@hotmail.com`) rules.
+- Live on prod + staging DB (`20260814120000_unblock_hotmail_outlook_proton_signup.sql`). Synced in frontend + edge policy files.
+
 ### 2026-08-12 — Cleanup hotmail/outlook/proton spam wave
 
 - Deleted **31** prod spam accounts created today on `hotmail.com` / `outlook.com` / `outlook.co.uk` / `proton.me` (0 brokers, 0 subs).

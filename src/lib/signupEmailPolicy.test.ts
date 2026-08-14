@@ -33,15 +33,14 @@ describe('evaluateSignupEmail', () => {
   })
 
   it('blocks MS consumer name+digits bots', () => {
-    expect(evaluateSignupEmail('mamadou429302@live.com').allowed).toBe(false)
-    expect(evaluateSignupEmail('john.smith@live.com').allowed).toBe(true)
+    expect(evaluateSignupEmail('mamadou429302@hotmail.com').allowed).toBe(false)
+    expect(evaluateSignupEmail('john.smith@hotmail.com').allowed).toBe(true)
   })
 
-  it('blocks hotmail/outlook/proton signup domains', () => {
-    expect(evaluateSignupEmail('john.smith@hotmail.com').allowed).toBe(false)
-    expect(evaluateSignupEmail('user@outlook.com').allowed).toBe(false)
-    expect(evaluateSignupEmail('user@outlook.co.uk').allowed).toBe(false)
-    expect(evaluateSignupEmail('user@proton.me').allowed).toBe(false)
+  it('allows hotmail/outlook/proton signups', () => {
+    expect(evaluateSignupEmail('user@outlook.com').allowed).toBe(true)
+    expect(evaluateSignupEmail('user@outlook.co.uk').allowed).toBe(true)
+    expect(evaluateSignupEmail('user@proton.me').allowed).toBe(true)
   })
 
   it('blocks RFC example domains', () => {

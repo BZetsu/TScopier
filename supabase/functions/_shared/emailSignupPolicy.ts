@@ -62,11 +62,6 @@ const DEFAULT_BLOCKED_DOMAINS = new Set([
   "onlyfans.com",
   "brazzers.com",
   "spankbang.com",
-  // Temporary: high-volume spam providers (bots rotating outlook/hotmail/proton)
-  "hotmail.com",
-  "outlook.com",
-  "outlook.co.uk",
-  "proton.me",
 ])
 
 const DEFAULT_BLOCKED_KEYWORDS = [
