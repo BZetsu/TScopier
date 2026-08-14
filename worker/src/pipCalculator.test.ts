@@ -64,6 +64,13 @@ test('pipCalculator: XAUUSD 2-digit → pip=0.1, $10/std lot', () => {
   assert.equal(q.class, 'metal')
 })
 
+test('pipCalculator: GOLD alias uses gold trader pip 0.1 (not point 0.01)', () => {
+  const q = pipCalculator('GOLD', 0.01, 2)
+  assert.equal(q.class, 'metal')
+  assert.equal(q.pipPrice, 0.1)
+  approxEq(q.pipValuePerStdLot, 10)
+})
+
 test('pipCalculator: XAUUSD 3-digit → pip=0.1 (trader pip), $10/std lot', () => {
   const q = pipCalculator('XAUUSD', 0.001, 3)
   approxEq(q.pipPrice, 0.1)

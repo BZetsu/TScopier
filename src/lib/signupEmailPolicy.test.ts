@@ -37,6 +37,12 @@ describe('evaluateSignupEmail', () => {
     expect(evaluateSignupEmail('john.smith@hotmail.com').allowed).toBe(true)
   })
 
+  it('allows hotmail/outlook/proton signups', () => {
+    expect(evaluateSignupEmail('user@outlook.com').allowed).toBe(true)
+    expect(evaluateSignupEmail('user@outlook.co.uk').allowed).toBe(true)
+    expect(evaluateSignupEmail('user@proton.me').allowed).toBe(true)
+  })
+
   it('blocks RFC example domains', () => {
     const result = evaluateSignupEmail('bot@example.com')
     expect(result.allowed).toBe(false)
@@ -47,5 +53,6 @@ describe('evaluateSignupEmail', () => {
 describe('signupErrorPolicyCode', () => {
   it('maps database error from spam trigger', () => {
     expect(signupErrorPolicyCode('Database error saving new user')).toBe('blocked_email')
+    expect(signupErrorPolicyCode('This email is not allowed.')).toBe('blocked_email')
   })
 })

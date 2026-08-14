@@ -144,7 +144,8 @@ export function signupErrorPolicyCode(message: string): SignupEmailPolicyCode | 
   const lower = message.toLowerCase()
   if (lower.includes('disposable email')) return 'disposable_domain'
   if (
-    lower.includes('this email address is not allowed')
+    lower.includes('this email is not allowed')
+    || lower.includes('this email address is not allowed')
     || lower.includes('database error saving new user')
   ) {
     return 'blocked_email'

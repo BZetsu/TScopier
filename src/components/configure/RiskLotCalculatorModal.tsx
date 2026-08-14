@@ -159,10 +159,21 @@ function RiskLotCalculatorModalInner({
   }, [open])
 
   const effectiveSymbol = (form.symbol || initialSymbol || 'EURUSD').trim().toUpperCase()
-  const quote = useMemo(
-    () => externalPipQuote ?? pipQuoteForSymbol(effectiveSymbol),
-    [externalPipQuote, effectiveSymbol],
-  )
+  // Always size pips from the symbol shown in the modal. Parent `livePipQuote` is
+  // for Symbol-to-Trade on the page; preferring it left GOLD/XAU edits stuck on
+  // the wrong pip (e.g. FX point math or broker point 0.01 instead of gold 0.1).
+  const quote = useMemo(() => {
+    const fromForm = pipQuoteForSymbol(effectiveSymbol)
+    if (!externalPipQuote) return fromForm
+    // Same instrument: keep parent quote (same pipPrice; may carry contract size later).
+    if (
+      Math.abs(externalPipQuote.pipPrice - fromForm.pipPrice) < 1e-12
+      && externalPipQuote.class === fromForm.class
+    ) {
+      return externalPipQuote
+    }
+    return fromForm
+  }, [externalPipQuote, effectiveSymbol])
   const minLegPercent = useMemo(
     () => computeMinMultiTradeLegPercent(form.fixedLot),
     [form.fixedLot],

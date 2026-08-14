@@ -82,7 +82,7 @@ export const authEn: AuthTranslations = {
     passwordTooShort: 'Password must be at least 6 characters',
     passwordTooWeak: 'Password is too weak. Use uppercase, lowercase, a number, and a symbol.',
     passwordMismatch: 'Passwords do not match',
-    emailNotAllowed: 'This email address is not allowed',
+    emailNotAllowed: 'This email is not allowed.',
     disposableEmailNotAllowed: 'Disposable email addresses are not allowed',
     submit: 'Create account',
     terms: {

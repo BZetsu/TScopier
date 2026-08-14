@@ -42,6 +42,14 @@ const FX_CURRENCY_CODES = new Set([
 /** Symbols that start with these are metals regardless of suffix conventions. */
 const METAL_PREFIXES = ['XAU', 'XAG', 'XPT', 'XPD']
 
+/** Broker / chat aliases → canonical metal pair used for pip sizing. */
+const METAL_NAME_ALIASES: Record<string, string> = {
+  GOLD: 'XAUUSD',
+  XAU: 'XAUUSD',
+  SILVER: 'XAGUSD',
+  XAG: 'XAGUSD',
+}
+
 /** Crypto base assets we recognize before doing any deeper checks. */
 const CRYPTO_TOKENS = new Set([
   'BTC', 'ETH', 'LTC', 'XRP', 'ADA', 'DOT', 'DOGE', 'SOL',
@@ -83,13 +91,27 @@ function cleanSymbol(symbol: string): string {
   return core
 }
 
+/**
+ * Canonical instrument id for pip math (GOLD → XAUUSD).
+ * Keeps metal trader pip = 0.1 instead of broker point (0.01).
+ */
+export function normalizePipInstrument(symbol: string): string {
+  const cleaned = cleanSymbol(symbol)
+  if (!cleaned) return ''
+  return METAL_NAME_ALIASES[cleaned] ?? cleaned
+}
+
 export function classifySymbol(symbol: string): SymbolClass {
-  const s = cleanSymbol(symbol)
+  const rawClean = cleanSymbol(symbol)
+  const s = normalizePipInstrument(symbol)
   if (!s) return 'other'
 
   // Deriv synthetics quote at large absolute prices; treat pip like an index
   // (broker `point` is the sub-pip increment → pip = 10 × point).
-  if (isDerivSyntheticSymbol(s)) return 'synthetic'
+  if (isDerivSyntheticSymbol(rawClean) || isDerivSyntheticSymbol(s)) return 'synthetic'
+
+  // GOLD / SILVER chat aliases (before FX shape rules).
+  if (METAL_NAME_ALIASES[rawClean]) return 'metal'
 
   // Metals first — XAUUSD, XAGUSD, XPTUSD, XPDUSD share the FX pair shape
   // (6 letters, both halves look like currency codes), so they must be detected

@@ -23,6 +23,8 @@ test('classifySymbol: metals', () => {
   assert.equal(classifySymbol('XAGUSD'), 'metal')
   assert.equal(classifySymbol('XPTUSD'), 'metal')
   assert.equal(classifySymbol('XAUUSDm'), 'metal')
+  assert.equal(classifySymbol('GOLD'), 'metal')
+  assert.equal(classifySymbol('SILVER'), 'metal')
 })
 
 test('classifySymbol: crypto', () => {

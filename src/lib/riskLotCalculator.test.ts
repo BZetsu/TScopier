@@ -110,6 +110,28 @@ test('single partial TP reward matches 50/30/20 on 1.0 lot', () => {
   assert.equal(result.totalReward, 340)
 })
 
+test('gold XAUUSD/GOLD: trader pip is 0.1 not point 0.01; 30 SL × 0.01 lot = $3', () => {
+  for (const symbol of ['XAUUSD', 'XAUUSDm', 'GOLD']) {
+    const quote = pipCalculator(symbol, 0.01, 2)
+    assert.equal(quote.class, 'metal', symbol)
+    assert.equal(quote.pipPrice, 0.1, `${symbol} pipPrice`)
+    // $10/std lot → $0.10/micro; 30 pips × 0.01 lot = $3
+    // If wrongly using point 0.01 as pip: $1/std → risk would be $0.30
+    const result = computeRiskLotCalculator(
+      baseState({ fixedLot: 0.01, slPips: 30 }),
+      quote,
+    )
+    assert.equal(result.riskFullBasket, 3, `${symbol} risk`)
+  }
+})
+
+test('gold must not use FX-style defaults when misclassified as other', () => {
+  // Regression: GOLD used to classify as 'other' → pipPrice ≈ 0.0001
+  const quote = pipCalculator('GOLD', 0.00001, 5)
+  assert.equal(quote.class, 'metal')
+  assert.equal(quote.pipPrice, 0.1)
+})
+
 test('disabled TP with zero % is excluded from reward; pips and % stay index-aligned', () => {
   const result = computeRiskLotCalculator(
     baseState({
