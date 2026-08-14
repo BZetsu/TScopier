@@ -157,6 +157,7 @@ export function layeringMechanismIsSelectable(
 ): boolean {
   if (mode === 'legacy') return true
   const row = capabilities.layeringModes[mode]
+  if (row.configurable === false) return false
   if (mechanism === 'auto') return true
   const value = row.executionMechanisms?.[mechanism]
   return typeof value === 'object' && value !== null
