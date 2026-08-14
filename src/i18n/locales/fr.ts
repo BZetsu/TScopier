@@ -112,6 +112,7 @@ export const fr: Translations = {
       subtitle: 'Posez des questions ou agissez avec de l’aide',
       ariaLabel: 'Ouvrir l’assistant IA',
       close: 'Fermer l’assistant',
+      clearConversation: 'Effacer la conversation',
       placeholder: 'Demandez tout sur TScopier…',
       send: 'Envoyer',
       thinking: 'Réflexion…',

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { ImagePlus, Loader2, Send, Sparkles, X } from 'lucide-react'
+import { ImagePlus, Loader2, RefreshCw, Send, Sparkles, X } from 'lucide-react'
 import { useAssistant } from '../../context/AssistantContext'
 import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
 import { useLiveChat } from '../../context/LiveChatContext'
@@ -118,6 +118,15 @@ export function AssistantPanel() {
       { role: 'user', content: redactTelegramPhones(userContent) },
       { role: 'assistant', content: assistantContent },
     ])
+  }
+
+  const handleClearConversation = () => {
+    persistMessages([])
+    setPendingConfirmations([])
+    setPendingClientActions([])
+    resetTelegramLinkFlow()
+    resetBrokerConnectFlow()
+    setError('')
   }
 
   const applySideEffects = async (
@@ -500,6 +509,15 @@ export function AssistantPanel() {
             <h2 className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100">{a.title}</h2>
             <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">{a.subtitle}</p>
           </div>
+          <button
+            type="button"
+            title={a.clearConversation}
+            aria-label={a.clearConversation}
+            onClick={handleClearConversation}
+            className="rounded-lg p-2 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
           <button
             type="button"
             onClick={closeAssistant}

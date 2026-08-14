@@ -107,6 +107,7 @@ export interface NavTranslations {
     subtitle: string
     ariaLabel: string
     close: string
+    clearConversation: string
     placeholder: string
     send: string
     thinking: string

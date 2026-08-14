@@ -93,6 +93,7 @@ export const chromeSv: AppChromeTranslations = {
       subtitle: 'Ask questions or get help taking action',
       ariaLabel: 'Open AI assistant',
       close: 'Close assistant',
+      clearConversation: 'Clear conversation',
       placeholder: 'Ask anything about TScopier…',
       send: 'Send',
       thinking: 'Thinking…',

@@ -13,6 +13,7 @@ import {
 } from "../_shared/assistantKnowledge.ts";
 import {
   guardAssistantUserMessage,
+  sanitizeAssistantText,
   sanitizeToolArgs,
 } from "../_shared/assistantGuard.ts";
 import {
@@ -1584,20 +1585,53 @@ Deno.serve(async (req: Request) => {
       }),
   ];
 
-  // Prompt-injection guard: every user message in the window is sanitized;
-  // if any looks like an injection attempt, refuse the whole turn without
-  // calling the model.
-  for (const msg of messages) {
-    if (msg.role !== "user" || typeof msg.content !== "string") continue
-    const guarded = guardAssistantUserMessage(msg.content)
-    if (!guarded.ok) {
-      console.warn(`[assistant] refused user message: reason=${guarded.reason}`)
+  // Prompt-injection guard: sanitize every user message in the window. Only
+  // the NEWEST user message (the current turn) can refuse the turn; older
+  // messages that look like injection attempts are untrusted content and are
+  // dropped from the window instead of bricking the rest of the session.
+  // (Re-refusing on stale history turned one flagged message into a permanent
+  // refusal loop — "ignore your stop loss" then bricked every later turn.)
+  // Text in image messages (content = array of parts) is scanned too — the
+  // caption would otherwise bypass the guard entirely.
+  let newestUserIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      newestUserIndex = i;
+      break;
+    }
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== "user") continue;
+    const text =
+      typeof msg.content === "string"
+        ? msg.content
+        : Array.isArray(msg.content)
+          ? msg.content
+              .filter((p): p is { type: "text"; text: string } => p.type === "text")
+              .map((p) => p.text)
+              .join("\n")
+          : "";
+    const guarded = guardAssistantUserMessage(text);
+    if (guarded.ok) {
+      if (typeof msg.content === "string") {
+        msg.content = guarded.sanitized;
+      } else if (Array.isArray(msg.content)) {
+        msg.content = msg.content.map((p) =>
+          p.type === "text" ? { ...p, text: sanitizeAssistantText(p.text, 8000) } : p,
+        );
+      }
+      continue;
+    }
+    if (i === newestUserIndex) {
+      console.warn(`[assistant] refused user message: reason=${guarded.reason}`);
       return Response.json(
         { assistant_message: INJECTION_REFUSAL, pending_client_actions: [], pending_confirmations: [], tool_results: [] },
         { headers: corsHeaders },
-      )
+      );
     }
-    msg.content = guarded.sanitized
+    console.warn(`[assistant] dropped poisoned history message: reason=${guarded.reason}`);
+    messages.splice(i, 1);
   }
 
   if (messages.length < 2) return bad(400, "messages required");

@@ -112,6 +112,7 @@ export const es: Translations = {
       subtitle: 'Pregunta o pide ayuda para actuar',
       ariaLabel: 'Abrir asistente de IA',
       close: 'Cerrar asistente',
+      clearConversation: 'Borrar conversación',
       placeholder: 'Pregunta lo que quieras sobre TScopier…',
       send: 'Enviar',
       thinking: 'Pensando…',
