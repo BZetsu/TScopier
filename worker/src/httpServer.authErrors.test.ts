@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { NO_RESEND_AVAILABLE_ERROR } from './authService'
 import { clientErrorPayload } from './httpServer'
 import { NO_PENDING_PHONE_AUTH_ERROR } from './telegramAuthRecovery'
 
@@ -39,6 +40,7 @@ describe('clientErrorPayload', () => {
 
   it('maps resend waits and Telegram resend failures to clear messages', () => {
     assert.match(clientErrorPayload(new Error('RESEND_WAIT_42'), 'Failed to resend code').message, /42 seconds/i)
+    assert.match(clientErrorPayload(new Error(NO_RESEND_AVAILABLE_ERROR), 'Failed to resend code').message, /did not offer another code delivery method/i)
     assert.match(clientErrorPayload(new Error('PHONE_CODE_HASH_EMPTY'), 'Failed to resend code').message, /login state expired/i)
     assert.match(clientErrorPayload(new Error('SMS_CODE_CREATE_FAILED'), 'Failed to resend code').message, /could not create an SMS/i)
     assert.match(clientErrorPayload(new Error('AUTH_RESTART'), 'Failed to resend code').message, /request a new verification code/i)
