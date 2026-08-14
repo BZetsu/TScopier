@@ -27,6 +27,7 @@ interface TelegramConnectFlowProps {
   codeDelivery?: TelegramCodeDelivery | null
   nextCodeDelivery?: TelegramCodeDelivery | null
   resendAvailableAt?: string | null
+  canResend?: boolean
   qrUrl: string
   qrWaiting: boolean
   loading: boolean
@@ -78,6 +79,7 @@ export function TelegramConnectFlow({
   codeDelivery,
   nextCodeDelivery,
   resendAvailableAt,
+  canResend = false,
   qrUrl,
   qrWaiting,
   loading,
@@ -112,9 +114,10 @@ export function TelegramConnectFlow({
         : nextCodeDelivery
           ? ' If it does not arrive, another delivery method may become available after the countdown.'
           : ''
+  const noAppFallback = codeDelivery === 'app' && !nextCodeDelivery && !canResend
   const codeHint =
     codeDelivery === 'app'
-      ? `${ce.tgConnectCodeSubtitle}${nextDeliveryHint}`
+      ? `Telegram sent the login code through the Telegram app.${nextDeliveryHint}`
       : codeDelivery === 'call'
         ? `Telegram will call this number with the login code.${nextDeliveryHint}`
         : `${interpolate(ce.sentTo, { phone })}${nextDeliveryHint}`
@@ -329,20 +332,43 @@ export function TelegramConnectFlow({
               required
               autoFocus
             />
+            {noAppFallback && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                <p className="font-medium">Telegram accepted the login request, but did not offer another code delivery method.</p>
+                <p className="mt-1 text-xs leading-relaxed text-amber-800 dark:text-amber-200/90">
+                  Check Telegram for a login message from Telegram, or connect with QR instead.
+                </p>
+              </div>
+            )}
             <Button type="submit" loading={loading} size="lg" className="w-full">
               {ce.verify}
             </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              className="w-full"
-              disabled={loading || resendWaitSeconds > 0}
-              onClick={onResendCode}
-            >
-              {resendWaitSeconds > 0
-                ? `Request another delivery method in ${resendWaitSeconds}s`
-                : 'Request another delivery method'}
-            </Button>
+            {canResend && (
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                disabled={loading || resendWaitSeconds > 0}
+                onClick={onResendCode}
+              >
+                {resendWaitSeconds > 0
+                  ? `Request another delivery method in ${resendWaitSeconds}s`
+                  : 'Request another delivery method'}
+              </Button>
+            )}
+            {noAppFallback && (
+              <Button
+                type="button"
+                className="w-full"
+                onClick={() => {
+                  onAuthMethodChange('qr')
+                  onStageChange('qr')
+                }}
+              >
+                <QrCode className="w-4 h-4" />
+                Connect with QR instead
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"
