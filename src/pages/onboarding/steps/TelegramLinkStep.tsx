@@ -46,6 +46,7 @@ export function TelegramLinkStep({ onDone }: Props) {
   const [codeDelivery, setCodeDelivery] = useState<TelegramCodeDelivery | null>(null)
   const [nextCodeDelivery, setNextCodeDelivery] = useState<TelegramCodeDelivery | null>(null)
   const [resendAvailableAt, setResendAvailableAt] = useState<string | null>(null)
+  const [canResendCode, setCanResendCode] = useState(false)
   const [password, setPassword] = useState('')
   const [qrUrl, setQrUrl] = useState('')
   const [qrWaiting, setQrWaiting] = useState(false)
@@ -165,6 +166,7 @@ export function TelegramLinkStep({ onDone }: Props) {
       setCodeDelivery(data.delivery ?? null)
       setNextCodeDelivery(data.next_delivery ?? null)
       setResendAvailableAt(data.resend_available_at ?? null)
+      setCanResendCode(Boolean(data.can_resend))
       setStage('code')
     } catch {
       setError('Network error. Please try again.')
@@ -182,6 +184,7 @@ export function TelegramLinkStep({ onDone }: Props) {
       setCodeDelivery(null)
       setNextCodeDelivery(null)
       setResendAvailableAt(null)
+      setCanResendCode(false)
       setQrUrl('')
       setQrWaiting(false)
     }
@@ -212,6 +215,7 @@ export function TelegramLinkStep({ onDone }: Props) {
       setCodeDelivery(data.delivery ?? null)
       setNextCodeDelivery(data.next_delivery ?? null)
       setResendAvailableAt(data.resend_available_at ?? null)
+      setCanResendCode(Boolean(data.can_resend))
       setStage('code')
     } catch {
       setError('Network error. Please try again.')
@@ -386,6 +390,7 @@ export function TelegramLinkStep({ onDone }: Props) {
       codeDelivery={codeDelivery}
       nextCodeDelivery={nextCodeDelivery}
       resendAvailableAt={resendAvailableAt}
+      canResend={canResendCode}
       qrUrl={qrUrl}
       qrWaiting={qrWaiting}
       loading={loading}

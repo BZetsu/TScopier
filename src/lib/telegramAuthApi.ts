@@ -30,6 +30,7 @@ export type TelegramCodeStatusResponse = {
   next_delivery?: TelegramCodeDelivery | null
   resend_available_at?: string | null
   resend_wait_seconds?: number | null
+  can_resend?: boolean
   code_length?: number | null
 }
 

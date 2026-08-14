@@ -59,23 +59,27 @@ describe('sentCodeStatus', () => {
       next_delivery: 'sms',
       timeoutSeconds: 42,
       resendAvailableAt: 43_000,
+      can_resend: true,
+      canResend: true,
       code_length: 5,
     })
     assert.equal(Object.prototype.hasOwnProperty.call(status, 'phoneCodeHash'), false)
     assert.equal(Object.prototype.hasOwnProperty.call(status, 'phone_code_hash'), false)
   })
 
-  it('uses a conservative resend fallback when Telegram omits timeout', () => {
+  it('does not fabricate resend availability when Telegram omits next_type and timeout', () => {
     const status = sentCodeStatus({
-      type: { className: 'auth.SentCodeTypeCall', length: 6 },
+      type: { className: 'auth.SentCodeTypeApp', length: 5 },
       nextType: undefined,
       timeout: undefined,
     }, 10_000)
 
-    assert.equal(status.delivery, 'call')
+    assert.equal(status.delivery, 'app')
     assert.equal(status.next_delivery, null)
     assert.equal(status.timeoutSeconds, null)
-    assert.equal(status.resendAvailableAt, 70_000)
-    assert.equal(status.code_length, 6)
+    assert.equal(status.resendAvailableAt, null)
+    assert.equal(status.canResend, false)
+    assert.equal(status.can_resend, false)
+    assert.equal(status.code_length, 5)
   })
 })

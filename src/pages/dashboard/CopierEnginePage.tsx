@@ -140,6 +140,7 @@ export function CopierEnginePage() {
   const [tgCodeDelivery, setTgCodeDelivery] = useState<TelegramCodeDelivery | null>(null)
   const [tgNextCodeDelivery, setTgNextCodeDelivery] = useState<TelegramCodeDelivery | null>(null)
   const [tgResendAvailableAt, setTgResendAvailableAt] = useState<string | null>(null)
+  const [tgCanResendCode, setTgCanResendCode] = useState(false)
   const [tgPassword, setTgPassword] = useState('')
   const [tgLoading, setTgLoading] = useState(false)
   const [tgError, setTgError] = useState('')
@@ -295,6 +296,7 @@ export function CopierEnginePage() {
     setTgCodeDelivery(null)
     setTgNextCodeDelivery(null)
     setTgResendAvailableAt(null)
+    setTgCanResendCode(false)
     setTgPassword('')
     setTgStage(nextStage)
     void refreshListenerLease()
@@ -764,6 +766,7 @@ export function CopierEnginePage() {
       setTgCodeDelivery(data.delivery ?? null)
       setTgNextCodeDelivery(data.next_delivery ?? null)
       setTgResendAvailableAt(data.resend_available_at ?? null)
+      setTgCanResendCode(Boolean(data.can_resend))
       setTgStage('code')
     } catch {
       setTgError(ce.networkError)
@@ -791,6 +794,7 @@ export function CopierEnginePage() {
       setTgCodeDelivery(data.delivery ?? null)
       setTgNextCodeDelivery(data.next_delivery ?? null)
       setTgResendAvailableAt(data.resend_available_at ?? null)
+      setTgCanResendCode(Boolean(data.can_resend))
       setTgStage('code')
     } catch {
       setTgError(ce.networkError)
@@ -938,6 +942,7 @@ export function CopierEnginePage() {
           codeDelivery={tgCodeDelivery}
           nextCodeDelivery={tgNextCodeDelivery}
           resendAvailableAt={tgResendAvailableAt}
+          canResend={tgCanResendCode}
           qrUrl={tgQrUrl}
           qrWaiting={tgQrWaiting}
           loading={tgLoading}
