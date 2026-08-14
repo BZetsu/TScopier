@@ -49,6 +49,11 @@ test('isPartialTpBenignBrokerError: existing benign replies still match', () => 
   assert.equal(isPartialTpBenignBrokerError('no such order'), true)
 })
 
+test('isPartialTpBenignBrokerError: MT4 error 4108 invalid request is benign (duplicate-close race)', () => {
+  assert.equal(isPartialTpBenignBrokerError('MT4 error 4108: Invalid request'), true)
+  assert.equal(isPartialTpBenignBrokerError('4108 Invalid request'), true)
+})
+
 test('isPartialTpBenignBrokerError: real broker failures stay retryable', () => {
   assert.equal(isPartialTpBenignBrokerError('Insufficient funds'), false)
   assert.equal(isPartialTpBenignBrokerError('trade context busy'), false)

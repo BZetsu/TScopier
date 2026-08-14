@@ -5,6 +5,7 @@ import { DEFAULT_CHANNEL_KEYWORDS, parseChannelMessageSync } from '../parseSigna
 import { tradeIntentToChannelParsedSignal } from './tradeIntentAdapter'
 import { coerceTradeIntent } from './coerceTradeIntent'
 import { PORTUGUESE_SCALP_SELL } from './fixtures/multilingualFixtures'
+import { cerebrasKeyOrder, isCerebrasDailyLimit } from './universalSignalParser'
 
 describe('compareParseShadowDiff', () => {
   it('detects action mismatch between deterministic and universal', () => {
@@ -26,5 +27,58 @@ describe('compareParseShadowDiff', () => {
     const diff = compareParseShadowDiff(det, uniParsed)
     assert.equal(typeof diff.differs, 'boolean')
     assert.equal(diff.universal_action, 'sell')
+  })
+})
+
+describe('isCerebrasDailyLimit', () => {
+  it('detects the tokens-per-day 429', () => {
+    assert.equal(
+      isCerebrasDailyLimit(429, 'Tokens per day limit exceeded - too many tokens processed.'),
+      true,
+    )
+  })
+
+  it('detects the requests-per-day 429', () => {
+    assert.equal(
+      isCerebrasDailyLimit(429, 'Requests per day limit exceeded - too many requests sent.'),
+      true,
+    )
+  })
+
+  it('does not flag transient rate limits or other statuses', () => {
+    assert.equal(isCerebrasDailyLimit(429, 'Rate limit reached. Please retry.'), false)
+    assert.equal(isCerebrasDailyLimit(429, 'Too many concurrent requests'), false)
+    assert.equal(isCerebrasDailyLimit(500, 'Tokens per day limit exceeded'), false)
+  })
+})
+
+describe('cerebrasKeyOrder', () => {
+  const noExhausted = () => false
+
+  it('rotates the start index forward on every call', () => {
+    const keys = ['a', 'b', 'c']
+    assert.deepEqual(cerebrasKeyOrder(0, keys, noExhausted), [0, 1, 2])
+    assert.deepEqual(cerebrasKeyOrder(1, keys, noExhausted), [1, 2, 0])
+    assert.deepEqual(cerebrasKeyOrder(2, keys, noExhausted), [2, 0, 1])
+  })
+
+  it('skips exhausted keys but keeps rotation order for the rest', () => {
+    const keys = ['a', 'b', 'c']
+    const exhausted = (k: string) => k === 'b'
+    assert.deepEqual(cerebrasKeyOrder(0, keys, exhausted), [0, 2])
+    assert.deepEqual(cerebrasKeyOrder(1, keys, exhausted), [2, 0])
+    assert.deepEqual(cerebrasKeyOrder(2, keys, exhausted), [2, 0])
+  })
+
+  it('returns an empty order when all keys are exhausted', () => {
+    assert.deepEqual(cerebrasKeyOrder(0, ['a', 'b'], () => true), [])
+  })
+
+  it('returns an empty order for an empty key list', () => {
+    assert.deepEqual(cerebrasKeyOrder(0, [], noExhausted), [])
+  })
+
+  it('handles a start index beyond the pool length', () => {
+    assert.deepEqual(cerebrasKeyOrder(7, ['a', 'b', 'c'], noExhausted), [1, 2, 0])
   })
 })

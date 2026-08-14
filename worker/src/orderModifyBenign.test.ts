@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { isBenignOrderModifyError, isPositionGoneError, stopsAlreadyMatchDb } from './orderModifyBenign'
+import {
+  isBenignOrderModifyError,
+  isPositionGoneCloseError,
+  isPositionGoneError,
+  stopsAlreadyMatchDb,
+} from './orderModifyBenign'
 
 describe('isPositionGoneError', () => {
   it('matches position-gone replies', () => {
@@ -18,6 +23,23 @@ describe('isPositionGoneError', () => {
     assert.equal(isPositionGoneError('Symbol not found: BTCUSD'), false)
     assert.equal(isPositionGoneError('Not enough money'), false)
     assert.equal(isPositionGoneError(''), false)
+  })
+})
+
+describe('isPositionGoneCloseError', () => {
+  it('matches position-gone replies plus MT4 4108 invalid request on closes', () => {
+    assert.equal(isPositionGoneCloseError('unknown ticket'), true)
+    assert.equal(isPositionGoneCloseError('MT4 error 4108: Invalid request'), true)
+    assert.equal(isPositionGoneCloseError('4108 Invalid request'), true)
+    assert.equal(isPositionGoneCloseError('invalid ticket'), true)
+    assert.equal(isPositionGoneCloseError('ticket 1297061 not found'), true)
+    assert.equal(isPositionGoneCloseError('already closed'), true)
+  })
+
+  it('does not match unrelated errors', () => {
+    assert.equal(isPositionGoneCloseError('Symbol not found: BTCUSD'), false)
+    assert.equal(isPositionGoneCloseError('Not enough money'), false)
+    assert.equal(isPositionGoneCloseError(''), false)
   })
 })
 

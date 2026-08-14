@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { ImagePlus, Loader2, Send, Sparkles, X } from 'lucide-react'
+import { ImagePlus, Loader2, RefreshCw, Send, Sparkles, X } from 'lucide-react'
 import { useAssistant } from '../../context/AssistantContext'
 import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
 import { useLiveChat } from '../../context/LiveChatContext'
@@ -39,6 +39,7 @@ import {
 import { AssistantChatBubble, AssistantTypingIndicator } from './AssistantChatBubble'
 import { AssistantTelegramLinkCard } from './AssistantTelegramLinkCard'
 import { AssistantBrokerConnectCard } from './AssistantBrokerConnectCard'
+import { AssistantTradesCard } from './AssistantTradesCard'
 import { Button } from '../ui/Button'
 import clsx from 'clsx'
 import { ensureFreshAuthSession } from '../../lib/fxsocketBroker'
@@ -76,6 +77,7 @@ export function AssistantPanel() {
   const [attaching, setAttaching] = useState(false)
   const [error, setError] = useState('')
   const [confirmBusy, setConfirmBusy] = useState<string | null>(null)
+  const [toolResults, setToolResults] = useState<Array<{ tool: string; result: string }>>([])
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -118,6 +120,16 @@ export function AssistantPanel() {
       { role: 'user', content: redactTelegramPhones(userContent) },
       { role: 'assistant', content: assistantContent },
     ])
+  }
+
+  const handleClearConversation = () => {
+    persistMessages([])
+    setPendingConfirmations([])
+    setPendingClientActions([])
+    setToolResults([])
+    resetTelegramLinkFlow()
+    resetBrokerConnectFlow()
+    setError('')
   }
 
   const applySideEffects = async (
@@ -375,6 +387,7 @@ export function AssistantPanel() {
     setDraft('')
     const images = draftImages
     setDraftImages([])
+    setToolResults([])
     const userContent = text ? redactTelegramPhones(text) : a.imageOnlyCaption
     const nextMessages = [
       ...messages,
@@ -392,6 +405,7 @@ export function AssistantPanel() {
         ...nextMessages,
         { role: 'assistant', content: res.assistant_message || a.emptyReply },
       ])
+      setToolResults(res.tool_results ?? [])
       await applySideEffects(res.pending_client_actions, res.pending_confirmations)
     } catch (e) {
       setError(e instanceof Error ? e.message : a.errorFallback)
@@ -502,6 +516,15 @@ export function AssistantPanel() {
           </div>
           <button
             type="button"
+            title={a.clearConversation}
+            aria-label={a.clearConversation}
+            onClick={handleClearConversation}
+            className="rounded-lg p-2 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
             onClick={closeAssistant}
             className="rounded-lg p-2 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             aria-label={a.close}
@@ -547,6 +570,15 @@ export function AssistantPanel() {
               hidePlainCaption={
                 Boolean(m.images?.length) && m.content.trim() === a.imageOnlyCaption
               }
+            />
+          ))}
+
+          {toolResults.map((tr, i) => (
+            <AssistantTradesCard
+              key={`${tr.tool}-${i}`}
+              tool={tr.tool}
+              result={tr.result}
+              copy={a.tradesCard}
             />
           ))}
 

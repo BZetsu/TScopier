@@ -37,6 +37,29 @@ function json(
   });
 }
 
+/**
+ * Build the verification URL GoTrue should redirect the user to after they
+ * click the email link. We construct it from the raw token instead of trusting
+ * the SDK's `action_link`: the SDK sends `redirectTo` (camelCase) in the
+ * generate_link body, which GoTrue ignores, so `action_link` always points at
+ * the site root. Passing `redirect_to` in the verify query string is honored.
+ */
+function buildConfirmUrl(
+  supabaseUrl: string,
+  properties: { hashed_token?: string; verification_type?: string } | null,
+  redirectTo: string,
+): string | undefined {
+  if (!properties?.hashed_token || !properties.verification_type) {
+    return undefined;
+  }
+  const params = new URLSearchParams({
+    token: properties.hashed_token,
+    type: properties.verification_type,
+    redirect_to: redirectTo,
+  });
+  return `${supabaseUrl}/auth/v1/verify?${params.toString()}`;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -198,7 +221,7 @@ Deno.serve(async (req: Request) => {
       email: normalizedEmail,
       options: { redirectTo },
     });
-    confirmUrl = pickActionLink(signupLink);
+    confirmUrl = buildConfirmUrl(supabaseUrl, signupLink.data?.properties, redirectTo);
     if (!confirmUrl) {
       linkErrorMessage = signupLink.error?.message;
       const magicLink = await supabase.auth.admin.generateLink({
@@ -206,7 +229,7 @@ Deno.serve(async (req: Request) => {
         email: normalizedEmail,
         options: { redirectTo },
       });
-      confirmUrl = pickActionLink(magicLink);
+      confirmUrl = buildConfirmUrl(supabaseUrl, magicLink.data?.properties, redirectTo);
       if (!confirmUrl) {
         linkErrorMessage =
           magicLink.error?.message ?? linkErrorMessage ?? "no action_link returned";
@@ -217,7 +240,7 @@ Deno.serve(async (req: Request) => {
       return json(
         {
           error: "Could not create verification link",
-          details: linkErrorMessage ?? "no action_link returned",
+          details: linkErrorMessage ?? "no hashed_token/verification_type returned",
         },
         500,
       );

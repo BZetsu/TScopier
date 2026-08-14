@@ -52,6 +52,24 @@ export function cerebrasParseEnabled(): boolean {
   return parseEnvBool('CEREBRAS_PARSE_ENABLED', true)
 }
 
+/** Cerebras API keys for stage 2. Multiple keys distribute the daily token
+ *  quota across accounts: once a key returns "Tokens per day limit exceeded",
+ *  the pool rotates to the next usable key instead of degrading to OpenAI.
+ *  Each key gets its own env var: CEREBRAS_API_KEY_1, CEREBRAS_API_KEY_2, …
+ *  (enumerated from 1, stops at the first gap). The legacy CEREBRAS_API_KEY
+ *  is only used when no numbered keys are set. */
+export function cerebrasParseApiKeys(): string[] {
+  const keys: string[] = []
+  for (let i = 1; i <= 20; i++) {
+    const key = String(process.env[`CEREBRAS_API_KEY_${i}`] ?? '').trim()
+    if (!key) break
+    keys.push(key)
+  }
+  if (keys.length > 0) return keys
+  const single = String(process.env.CEREBRAS_API_KEY ?? '').trim()
+  return single ? [single] : []
+}
+
 export function cerebrasParseModel(): string {
   return String(process.env.CEREBRAS_PARSE_MODEL ?? CEREBRAS_MODEL).trim() || CEREBRAS_MODEL
 }

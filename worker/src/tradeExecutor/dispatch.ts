@@ -498,6 +498,16 @@ export async function handleSignal(ctx: TradeExecutorContext,
       is_modification: row.is_modification,
       pipeline_ts: row.pipeline_ts as Record<string, unknown> | undefined,
     })
+    if (ensured.duplicate && ensured.existingSignalId) {
+      // Another signal owns this telegram message — a duplicate dispatch that
+      // must not execute (double-executes management/entry actions). The owner
+      // signal is already being handled by the executor.
+      console.warn(
+        `[tradeExecutor] duplicate dispatch skipped signal=${row.id} existing=${ensured.existingSignalId}`
+        + ` user=${row.user_id} message=${row.telegram_message_id ?? 'n/a'}`,
+      )
+      return
+    }
     if (!ensured.ok) {
       console.error(
         `[tradeExecutor] ensureSignalRow before handle failed signal=${row.id}: ${ensured.error ?? 'unknown'}`,

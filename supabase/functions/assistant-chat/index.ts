@@ -13,6 +13,7 @@ import {
 } from "../_shared/assistantKnowledge.ts";
 import {
   guardAssistantUserMessage,
+  sanitizeAssistantText,
   sanitizeToolArgs,
 } from "../_shared/assistantGuard.ts";
 import {
@@ -90,6 +91,10 @@ const NAV_ALLOWLIST = new Set([
   "/billing",
   "/contact-support",
   "/pricing",
+  "/account-trades",
+  "/copier-logs",
+  "/activities",
+  "/manage-signals",
 ]);
 
 /** Map legacy assistant paths to real routes (never /account-config — that hits /:referralCode → signup). */
@@ -346,12 +351,96 @@ const TOOL_DEFS = [
           path: {
             type: "string",
             description:
-              "One of: /dashboard /copier-engine /brokers /channels /backtest /billing /contact-support /pricing",
+              "One of: /dashboard /copier-engine /brokers /channels /backtest /billing /contact-support /pricing /account-trades /copier-logs /activities /manage-signals",
           },
         },
         required: ["path"],
         additionalProperties: false,
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_recent_trades",
+      description:
+        "List the user's recent trades (signals that were executed, skipped, failed, or pending) with outcome, tickets, and any execution errors. Use BEFORE answering questions like 'what happened with my trades', 'show my recent trades', 'did my signal execute', or before reporting a trade.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max trades to return (default 10, max 20)" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_trade_detail",
+      description:
+        "Deep dive on ONE trade: the signal, its legs (basket children), dispatch claims, and execution log rows (successes and failures with error messages). Pass signal_id, or a broker ticket (+ optional symbol). Use to explain why a specific trade failed or what happened to it, or right before filing a trade report.",
+      parameters: {
+        type: "object",
+        properties: {
+          signal_id: { type: "string", description: "Signal UUID from get_recent_trades / get_copier_logs" },
+          ticket: { type: "number", description: "Broker ticket number, e.g. 12947638" },
+          symbol: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_copier_logs",
+      description:
+        "List the user's recent signal copier log entries (executed / skipped / failed / pending / parsed / ignored) with timestamps, channel, symbol, skip reason, tickets, and errors. Optionally filter by status. Use for 'copier logs', 'recent activity', 'did my signal get copied'.",
+      parameters: {
+        type: "object",
+        properties: {
+          status: {
+            type: "string",
+            description: "Filter by signal status: executed, skipped, failed, pending, parsed, ignored, error, or all (default all)",
+          },
+          limit: { type: "number", description: "Max entries (default 15, max 30)" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "report_trade",
+      description:
+        "File a trade report for the user (stored in trade_reports for support review). First gather the trade via get_recent_trades / get_trade_detail, then call with signal_id (preferred — fills symbol/ticket from data) plus category and reason. The first call returns a Confirm card; the client re-executes with confirmed=true. Categories: wrong_entry, wrong_sl, wrong_tp, wrong_direction, wrong_lots, not_executed, other.",
+      parameters: {
+        type: "object",
+        properties: {
+          signal_id: { type: "string", description: "Signal UUID of the trade to report (preferred)" },
+          symbol: { type: "string", description: "Symbol (required if no signal_id)" },
+          ticket: { type: "number" },
+          category: {
+            type: "string",
+            enum: ["wrong_entry", "wrong_sl", "wrong_tp", "wrong_direction", "wrong_lots", "not_executed", "other"],
+          },
+          reason: { type: "string", description: "What went wrong, in the user's words" },
+          confirmed: { type: "boolean" },
+        },
+        required: ["category", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "open_trades",
+      description:
+        "Open the live trades page (/account-trades) so the user can see their open/closed broker positions. Use when they ask to see their trades or navigate to the trades page.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
   {
@@ -710,6 +799,484 @@ async function toolListBacktests(
       runs,
       hint: "To run a new backtest, call open_backtest and guide: pick channel → date range → Pull signals → pick symbol → Run.",
     }),
+  };
+}
+
+type SignalRow = {
+  id: string;
+  created_at: string;
+  channel_id: string | null;
+  status: string;
+  skip_reason: string | null;
+  parent_signal_id: string | null;
+  parsed_data: Record<string, unknown> | null;
+};
+
+const SIGNAL_SELECT =
+  "id,created_at,channel_id,status,skip_reason,parent_signal_id,parsed_data";
+
+const REPORT_CATEGORIES = new Set([
+  "wrong_entry",
+  "wrong_sl",
+  "wrong_tp",
+  "wrong_direction",
+  "wrong_lots",
+  "not_executed",
+  "other",
+]);
+
+async function fetchChannelNames(
+  supabase: SupabaseClient,
+  channelIds: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (!channelIds.length) return map;
+  const { data } = await supabase
+    .from("telegram_channels")
+    .select("id,display_name")
+    .in("id", channelIds);
+  for (const c of data ?? []) map.set(c.id, c.display_name);
+  return map;
+}
+
+async function fetchBrokerLabels(
+  supabase: SupabaseClient,
+  brokerIds: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const ids = [...new Set(brokerIds)].filter(Boolean);
+  if (!ids.length) return map;
+  const { data } = await supabase
+    .from("broker_accounts")
+    .select("id,label")
+    .in("id", ids);
+  for (const b of data ?? []) map.set(b.id, b.label);
+  return map;
+}
+
+function parsedTradeFields(parsed: Record<string, unknown> | null) {
+  const p = parsed ?? {};
+  const action = String(p.action ?? "");
+  const tpArr = Array.isArray(p.tp) ? p.tp.filter((n): n is number => typeof n === "number") : [];
+  return {
+    symbol: typeof p.symbol === "string" ? p.symbol : null,
+    action,
+    direction: action === "buy" || action === "sell" ? action : null,
+    entry_price: typeof p.entry_price === "number" && Number.isFinite(p.entry_price) ? p.entry_price : null,
+    sl: typeof p.sl === "number" && Number.isFinite(p.sl) ? p.sl : null,
+    tp: tpArr.slice(0, 5),
+    lot_size: typeof p.lot_size === "number" && Number.isFinite(p.lot_size) ? p.lot_size : null,
+  };
+}
+
+type ExecLogRow = {
+  signal_id: unknown;
+  action: string;
+  status: string;
+  error_message: string | null;
+  response_payload: Record<string, unknown> | null;
+  broker_account_id: string | null;
+  created_at: string;
+};
+
+function summarizeLogs(
+  logs: ExecLogRow[],
+  labelById: Map<string, string>,
+) {
+  const tickets: number[] = [];
+  const errors: string[] = [];
+  const rows: Array<{
+    action: string;
+    status: string;
+    broker: string | null;
+    ticket: number | null;
+    error_message: string | null;
+    time: string;
+  }> = [];
+  for (const l of logs) {
+    const payload = l.response_payload && typeof l.response_payload === "object"
+      ? (l.response_payload as Record<string, unknown>)
+      : {};
+    const ticket =
+      typeof payload.ticket === "number" && Number.isFinite(payload.ticket)
+        ? payload.ticket
+        : null;
+    if (ticket != null) tickets.push(ticket);
+    if (l.status === "failed" && l.error_message) errors.push(String(l.error_message));
+    rows.push({
+      action: l.action,
+      status: l.status,
+      broker: l.broker_account_id ? (labelById.get(l.broker_account_id) ?? null) : null,
+      ticket,
+      error_message: l.error_message,
+      time: l.created_at,
+    });
+  }
+  return { tickets: [...new Set(tickets)], errors: [...new Set(errors)].slice(0, 5), rows };
+}
+
+/**
+ * Build model-friendly trade summaries for a set of TOP-LEVEL signals.
+ * Child legs (parent_signal_id) are aggregated into their parent's outcome.
+ */
+async function buildTradeSummaries(
+  supabase: SupabaseClient,
+  userId: string,
+  topLevelSignals: SignalRow[],
+): Promise<Array<Record<string, unknown>>> {
+  const ids = topLevelSignals.map((s) => s.id);
+  if (!ids.length) return [];
+
+  const { data: children } = await supabase
+    .from("signals")
+    .select(SIGNAL_SELECT)
+    .eq("user_id", userId)
+    .not("parent_signal_id", "is", null)
+    .in("parent_signal_id", ids);
+  const childRows = (children ?? []) as SignalRow[];
+
+  const all = [...topLevelSignals, ...childRows];
+  const allIds = all.map((s) => s.id);
+  const channelIds = [...new Set(all.map((s) => s.channel_id).filter((c): c is string => Boolean(c)))];
+  const channelNames = await fetchChannelNames(supabase, channelIds);
+
+  const logsBySignal = new Map<string, ExecLogRow[]>();
+  const brokerIds = new Set<string>();
+  if (allIds.length) {
+    const { data: logs } = await supabase
+      .from("trade_execution_logs")
+      .select("signal_id,action,status,error_message,response_payload,broker_account_id,created_at")
+      .eq("user_id", userId)
+      .in("signal_id", allIds);
+    for (const l of logs ?? []) {
+      const sid = String(l.signal_id);
+      if (!logsBySignal.has(sid)) logsBySignal.set(sid, []);
+      logsBySignal.get(sid)!.push(l as ExecLogRow);
+      if (l.broker_account_id) brokerIds.add(String(l.broker_account_id));
+    }
+  }
+  const labelById = await fetchBrokerLabels(supabase, [...brokerIds]);
+
+  const summarize = (s: SignalRow, kids: SignalRow[]): Record<string, unknown> => {
+    const fields = parsedTradeFields(s.parsed_data);
+    const logs = [s, ...kids].flatMap((x) => logsBySignal.get(x.id) ?? []);
+    const { tickets, errors, rows } = summarizeLogs(logs, labelById);
+    return {
+      signal_id: s.id,
+      time: s.created_at,
+      channel: s.channel_id ? (channelNames.get(s.channel_id) ?? null) : null,
+      symbol: fields.symbol,
+      action: fields.action,
+      direction: fields.direction,
+      entry_price: fields.entry_price,
+      sl: fields.sl,
+      tp: fields.tp,
+      lot_size: fields.lot_size,
+      status: s.status,
+      skip_reason: s.skip_reason,
+      tickets,
+      failure_count: errors.length,
+      errors,
+      legs: kids.length,
+      execution_logs: rows.slice(0, 10),
+    };
+  };
+
+  return topLevelSignals.map((s) =>
+    summarize(s, childRows.filter((c) => c.parent_signal_id === s.id)),
+  );
+}
+
+async function toolGetRecentTrades(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const limitRaw = Number(args.limit ?? 10);
+  const limit = Number.isFinite(limitRaw) ? Math.min(20, Math.max(1, Math.floor(limitRaw))) : 10;
+  const { data, error } = await supabase
+    .from("signals")
+    .select(SIGNAL_SELECT)
+    .eq("user_id", userId)
+    .is("parent_signal_id", null)
+    .or("skip_reason.is.null,skip_reason.neq.non_trade_message")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) return { content: JSON.stringify({ error: error.message }) };
+  const trades = await buildTradeSummaries(supabase, userId, (data ?? []) as SignalRow[]);
+  return {
+    content: JSON.stringify({
+      trades,
+      hint: "Explain each trade's outcome plainly (executed with tickets, skipped with reason, failed with errors). Offer get_trade_detail for a specific trade or open_trades to see live positions.",
+    }),
+  };
+}
+
+async function toolGetCopierLogs(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const limitRaw = Number(args.limit ?? 15);
+  const limit = Number.isFinite(limitRaw) ? Math.min(30, Math.max(1, Math.floor(limitRaw))) : 15;
+  const status = String(args.status ?? "").trim().toLowerCase();
+
+  let query = supabase
+    .from("signals")
+    .select(SIGNAL_SELECT)
+    .eq("user_id", userId)
+    .is("parent_signal_id", null)
+    .or("skip_reason.is.null,skip_reason.neq.non_trade_message")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (status && status !== "all") query = query.eq("status", status);
+
+  const { data, error } = await query;
+  if (error) return { content: JSON.stringify({ error: error.message }) };
+  const trades = await buildTradeSummaries(supabase, userId, (data ?? []) as SignalRow[]);
+  return {
+    content: JSON.stringify({
+      trades,
+      hint: "This mirrors the /copier-logs page. Explain statuses; offer get_trade_detail for failures.",
+    }),
+  };
+}
+
+async function toolGetTradeDetail(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  let signalId = String(args.signal_id ?? "").trim();
+
+  if (!signalId) {
+    const ticket = args.ticket != null ? String(args.ticket) : "";
+    if (ticket) {
+      const { data: logs } = await supabase
+        .from("trade_execution_logs")
+        .select("signal_id,response_payload")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(300);
+      const hit = (logs ?? []).find((l) => {
+        const p = l.response_payload && typeof l.response_payload === "object"
+          ? (l.response_payload as Record<string, unknown>)
+          : {};
+        return typeof p.ticket === "number" && String(p.ticket) === ticket;
+      });
+      if (!hit) {
+        return { content: JSON.stringify({ error: "No trade found with that ticket." }) };
+      }
+      signalId = String(hit.signal_id);
+    }
+  }
+  if (!signalId) {
+    return { content: JSON.stringify({ error: "Provide signal_id or a broker ticket." }) };
+  }
+
+  const { data: sig } = await supabase
+    .from("signals")
+    .select(SIGNAL_SELECT)
+    .eq("id", signalId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!sig) return { content: JSON.stringify({ error: "Trade not found." }) };
+
+  let root = sig as SignalRow;
+  if (root.parent_signal_id) {
+    const { data: parent } = await supabase
+      .from("signals")
+      .select(SIGNAL_SELECT)
+      .eq("id", root.parent_signal_id)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (parent) root = parent as SignalRow;
+  }
+
+  const { data: children } = await supabase
+    .from("signals")
+    .select(SIGNAL_SELECT)
+    .eq("user_id", userId)
+    .eq("parent_signal_id", root.id);
+  const childRows = (children ?? []) as SignalRow[];
+  const allIds = [root.id, ...childRows.map((c) => c.id)];
+
+  const [logsRes, claimsRes] = await Promise.all([
+    supabase
+      .from("trade_execution_logs")
+      .select("signal_id,action,status,error_message,response_payload,broker_account_id,created_at")
+      .eq("user_id", userId)
+      .in("signal_id", allIds),
+    supabase
+      .from("signal_broker_dispatch_claims")
+      .select("signal_id,broker_account_id,created_at")
+      .in("signal_id", allIds),
+  ]);
+
+  const brokerIds = new Set<string>();
+  const logsBySignal = new Map<string, ExecLogRow[]>();
+  for (const l of logsRes.data ?? []) {
+    const sid = String(l.signal_id);
+    if (!logsBySignal.has(sid)) logsBySignal.set(sid, []);
+    logsBySignal.get(sid)!.push(l as ExecLogRow);
+    if (l.broker_account_id) brokerIds.add(String(l.broker_account_id));
+  }
+  for (const c of claimsRes.data ?? []) {
+    if (c.broker_account_id) brokerIds.add(String(c.broker_account_id));
+  }
+  const labelById = await fetchBrokerLabels(supabase, [...brokerIds]);
+  const channelNames = await fetchChannelNames(supabase, [root.channel_id].filter((c): c is string => Boolean(c)));
+
+  const summarize = (s: SignalRow): Record<string, unknown> => {
+    const fields = parsedTradeFields(s.parsed_data);
+    const { tickets, errors, rows } = summarizeLogs(logsBySignal.get(s.id) ?? [], labelById);
+    return {
+      signal_id: s.id,
+      time: s.created_at,
+      channel: s.channel_id ? (channelNames.get(s.channel_id) ?? null) : null,
+      symbol: fields.symbol,
+      action: fields.action,
+      direction: fields.direction,
+      entry_price: fields.entry_price,
+      sl: fields.sl,
+      tp: fields.tp,
+      lot_size: fields.lot_size,
+      status: s.status,
+      skip_reason: s.skip_reason,
+      tickets,
+      failure_count: errors.length,
+      errors,
+      execution_logs: rows.slice(0, 15),
+    };
+  };
+
+  return {
+    content: JSON.stringify({
+      trade: summarize(root),
+      legs: childRows.map(summarize),
+      dispatch_claims: (claimsRes.data ?? []).map((c) => ({
+        broker: c.broker_account_id ? (labelById.get(String(c.broker_account_id)) ?? null) : null,
+        time: c.created_at,
+      })),
+      hint: "Explain the outcome per leg. If execution_logs have status failed, quote error_message and suggest report_trade or /copier-logs.",
+    }),
+  };
+}
+
+async function toolReportTrade(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const confirmed = args.confirmed === true;
+  const category = String(args.category ?? "").trim().toLowerCase();
+  const reason = String(args.reason ?? "").trim().slice(0, 2000);
+
+  if (!REPORT_CATEGORIES.has(category)) {
+    return { content: JSON.stringify({ error: `Invalid category: ${category}` }) };
+  }
+  if (!reason) {
+    return { content: JSON.stringify({ error: "reason is required" }) };
+  }
+
+  let symbol = String(args.symbol ?? "").trim();
+  let direction = "";
+  let ticket: string | null = args.ticket != null ? String(args.ticket) : null;
+  let brokerLabel: string | null = null;
+  let entryPrice: number | null = null;
+  let sl: number | null = null;
+  let tp: number | null = null;
+  let lotSize: number | null = null;
+
+  const signalId = String(args.signal_id ?? "").trim();
+  if (signalId) {
+    const { data: sig } = await supabase
+      .from("signals")
+      .select("id,parsed_data,user_id")
+      .eq("id", signalId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (sig) {
+      const fields = parsedTradeFields(sig.parsed_data as Record<string, unknown> | null);
+      symbol = symbol || fields.symbol || "";
+      direction = fields.direction || direction;
+      entryPrice = fields.entry_price;
+      sl = fields.sl;
+      tp = fields.tp.length ? fields.tp[0] : null;
+      lotSize = fields.lot_size;
+
+      const { data: logs } = await supabase
+        .from("trade_execution_logs")
+        .select("response_payload,broker_account_id,status")
+        .eq("signal_id", signalId)
+        .eq("user_id", userId)
+        .order("created_at", { ascending: true })
+        .limit(30);
+      const brokerIds = [...new Set((logs ?? []).map((l) => l.broker_account_id).filter((b): b is string => Boolean(b)))];
+      const labelById = await fetchBrokerLabels(supabase, brokerIds);
+      const success = (logs ?? []).find((l) => {
+        const p = l.response_payload && typeof l.response_payload === "object"
+          ? (l.response_payload as Record<string, unknown>)
+          : {};
+        return l.status === "success" && typeof p.ticket === "number";
+      });
+      if (success) {
+        const p = success.response_payload as Record<string, unknown>;
+        ticket = ticket ?? String(p.ticket);
+        brokerLabel = success.broker_account_id ? (labelById.get(success.broker_account_id) ?? null) : null;
+      } else if ((logs ?? []).length) {
+        const b = logs![0].broker_account_id;
+        brokerLabel = b ? (labelById.get(b) ?? null) : null;
+      }
+    }
+  }
+
+  if (!symbol) {
+    return {
+      content: JSON.stringify({
+        error: "symbol is required (and could not be resolved from signal_id). Call get_recent_trades first and pass the signal_id.",
+      }),
+    };
+  }
+
+  if (!confirmed) {
+    const categoryLabel = category.replace(/_/g, " ");
+    const summary = `Report ${symbol}${ticket ? ` #${ticket}` : ""} — ${categoryLabel}: ${reason.length > 90 ? `${reason.slice(0, 90)}…` : reason}`;
+    return {
+      content: JSON.stringify({
+        needs_confirmation: true,
+        symbol,
+        direction,
+        ticket,
+        broker_label: brokerLabel,
+        category,
+        reason: reason.slice(0, 400),
+      }),
+      pendingConfirmation: {
+        tool: "report_trade",
+        args: { signal_id: signalId || undefined, symbol, ticket: ticket != null ? Number(ticket) : undefined, category, reason },
+        summary,
+      },
+    };
+  }
+
+  const { error } = await supabase.from("trade_reports").insert({
+    user_id: userId,
+    symbol,
+    direction,
+    ticket,
+    broker_label: brokerLabel,
+    entry_price: entryPrice,
+    sl,
+    tp,
+    lot_size: lotSize,
+    category,
+    reason,
+    status: "open",
+  });
+  if (error) return { content: JSON.stringify({ error: error.message }) };
+  return {
+    content: JSON.stringify({ ok: true, category, symbol, ticket }),
   };
 }
 
@@ -1386,6 +1953,15 @@ function runClientActionTool(name: string, args: Record<string, unknown>): ToolR
           args: { path: "/backtest" },
         },
       };
+    case "open_trades":
+      return {
+        content: JSON.stringify({ queued: true, path: "/account-trades" }),
+        pendingClientAction: {
+          type: "navigate",
+          summary: "Open Trades",
+          args: { path: "/account-trades" },
+        },
+      };
     case "propose_config_change":
       // Handled in executeTool via toolOpenBrokerConfig (needs broker resolution).
       return { content: JSON.stringify({ error: "Use open_broker_config" }) };
@@ -1419,6 +1995,14 @@ async function executeTool(
       return toolListPresets(supabase, userId);
     case "list_backtests":
       return toolListBacktests(supabase, userId, args);
+    case "get_recent_trades":
+      return toolGetRecentTrades(supabase, userId, args);
+    case "get_copier_logs":
+      return toolGetCopierLogs(supabase, userId, args);
+    case "get_trade_detail":
+      return toolGetTradeDetail(supabase, userId, args);
+    case "report_trade":
+      return toolReportTrade(supabase, userId, args);
     case "apply_preset":
       return toolApplyPreset(supabase, userId, args);
     case "save_preset":
@@ -1440,6 +2024,7 @@ async function executeTool(
     case "open_telegram_link":
     case "start_telegram_link":
     case "open_backtest":
+    case "open_trades":
     case "navigate":
     case "open_live_chat":
       return runClientActionTool(name, args);
@@ -1454,6 +2039,7 @@ const EXECUTABLE_MUTATIONS = new Set([
   "apply_preset",
   "save_preset",
   "update_channel_config",
+  "report_trade",
 ]);
 
 function isImageDataUrl(value: unknown): value is string {
@@ -1584,20 +2170,53 @@ Deno.serve(async (req: Request) => {
       }),
   ];
 
-  // Prompt-injection guard: every user message in the window is sanitized;
-  // if any looks like an injection attempt, refuse the whole turn without
-  // calling the model.
-  for (const msg of messages) {
-    if (msg.role !== "user" || typeof msg.content !== "string") continue
-    const guarded = guardAssistantUserMessage(msg.content)
-    if (!guarded.ok) {
-      console.warn(`[assistant] refused user message: reason=${guarded.reason}`)
+  // Prompt-injection guard: sanitize every user message in the window. Only
+  // the NEWEST user message (the current turn) can refuse the turn; older
+  // messages that look like injection attempts are untrusted content and are
+  // dropped from the window instead of bricking the rest of the session.
+  // (Re-refusing on stale history turned one flagged message into a permanent
+  // refusal loop — "ignore your stop loss" then bricked every later turn.)
+  // Text in image messages (content = array of parts) is scanned too — the
+  // caption would otherwise bypass the guard entirely.
+  let newestUserIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      newestUserIndex = i;
+      break;
+    }
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== "user") continue;
+    const text =
+      typeof msg.content === "string"
+        ? msg.content
+        : Array.isArray(msg.content)
+          ? msg.content
+              .filter((p): p is { type: "text"; text: string } => p.type === "text")
+              .map((p) => p.text)
+              .join("\n")
+          : "";
+    const guarded = guardAssistantUserMessage(text);
+    if (guarded.ok) {
+      if (typeof msg.content === "string") {
+        msg.content = guarded.sanitized;
+      } else if (Array.isArray(msg.content)) {
+        msg.content = msg.content.map((p) =>
+          p.type === "text" ? { ...p, text: sanitizeAssistantText(p.text, 8000) } : p,
+        );
+      }
+      continue;
+    }
+    if (i === newestUserIndex) {
+      console.warn(`[assistant] refused user message: reason=${guarded.reason}`);
       return Response.json(
         { assistant_message: INJECTION_REFUSAL, pending_client_actions: [], pending_confirmations: [], tool_results: [] },
         { headers: corsHeaders },
-      )
+      );
     }
-    msg.content = guarded.sanitized
+    console.warn(`[assistant] dropped poisoned history message: reason=${guarded.reason}`);
+    messages.splice(i, 1);
   }
 
   if (messages.length < 2) return bad(400, "messages required");

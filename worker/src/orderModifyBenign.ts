@@ -21,6 +21,23 @@ export function isPositionGoneError(message: string): boolean {
   )
 }
 
+/**
+ * Close-only gone-position classifier. MT4 error 4108 (ERR_INVALID_REQUEST) is
+ * the retcode FxSocket/MetaApi return when an OrderClose references a ticket
+ * that no longer exists (TP/SL hit, or a concurrent duplicate close already
+ * removed it). Scoped to close-family actions because on OrderModify the same
+ * retcode can mean invalid parameters, not a gone position.
+ */
+export function isPositionGoneCloseError(message: string): boolean {
+  const m = message.trim()
+  if (!m) return false
+  return (
+    isPositionGoneError(m)
+    || /\b4108\b/.test(m)
+    || /invalid\s+request/i.test(m)
+  )
+}
+
 export function isBenignOrderModifyError(message: string): boolean {
   const m = message.trim()
   if (!m) return false

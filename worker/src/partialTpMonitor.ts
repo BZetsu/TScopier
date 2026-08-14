@@ -94,7 +94,7 @@ export function isPartialTpTriggered(isBuy: boolean, triggerPrice: number, bid: 
  * (prod incident 2026-08-10, trade 1278201 — 505 errors in 14.5 min).
  */
 export function isPartialTpBenignBrokerError(message: string): boolean {
-  return /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order|unknown\s+ticket/i.test(message)
+  return /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order|unknown\s+ticket|\b4108\b|invalid\s+request/i.test(message)
 }
 
 export class PartialTpMonitor {

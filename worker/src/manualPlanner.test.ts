@@ -21,7 +21,6 @@ import type { PlannerCloseWorseEntries } from './manualPlanning/types'
 import { triggerPriceFor } from './tradeExecutor/helpers'
 import { buildRangeLayerTriggerMap } from './manualPlanning/rangeLayerTriggers'
 import { pipCalculator } from './pipCalculator'
-import { signalPipPrice } from './signalPip'
 
 const baseSplit = {
   totalLegs: 20,
@@ -311,6 +310,71 @@ test('planMultiManualOrders: dynamic range trading opens multiple immediates whe
   assert.equal(plan.virtualPendings?.length, 10)
   const totalVolume = plan.orders.reduce((s, o) => s + Number(o.volume), 0)
   assert.ok(Math.abs(totalVolume - 1.7) < 1e-6)
+})
+
+test('planMultiManualOrders: 100% BUY range can produce zero immediates plus one deferred dip leg', () => {
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      entry_price: 2400,
+      sl: 2390,
+      tp: [2410],
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      ...baseManual,
+      fixed_lot: 0.01,
+      multi_trade_leg_percent: 100,
+      multi_trade_max_orders: 1,
+      range_percent: 100,
+      range_step_pips: 10,
+      range_distance_pips: 10,
+    },
+    channelKeywords: null,
+    manualLot: 0.01,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:aug11',
+  })
+  assert.equal(plan.orders.length, 0)
+  assert.equal((plan.virtualPendings ?? []).length, 1)
+  assert.equal(plan.rangeLayering?.plannedImmediateLegs, 0)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 1)
+  assert.equal(plan.skip_reason, undefined)
+  assert.equal(plan.virtualPendings?.[0]?.isBuy, true)
+})
+
+test('planMultiManualOrders: 100% SELL range can produce zero immediates plus one deferred rally leg', () => {
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      action: 'sell',
+      entry_price: 2400,
+      sl: 2410,
+      tp: [2390],
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Sell',
+    manual: {
+      ...baseManual,
+      fixed_lot: 0.01,
+      multi_trade_leg_percent: 100,
+      multi_trade_max_orders: 1,
+      range_percent: 100,
+      range_step_pips: 10,
+      range_distance_pips: 10,
+    },
+    channelKeywords: null,
+    manualLot: 0.01,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:aug11',
+  })
+  assert.equal(plan.orders.length, 0)
+  assert.equal((plan.virtualPendings ?? []).length, 1)
+  assert.equal(plan.rangeLayering?.plannedImmediateLegs, 0)
+  assert.equal(plan.rangeLayering?.activePendingLegs, 1)
+  assert.equal(plan.skip_reason, undefined)
+  assert.equal(plan.virtualPendings?.[0]?.isBuy, false)
 })
 
 test('planMultiManualOrders: passes rangeLayeringType from manual settings', () => {
