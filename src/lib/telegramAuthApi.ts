@@ -2,6 +2,7 @@ import { resolveTelegramAuthError, TELEGRAM_ALREADY_LINKED_ERROR } from './teleg
 
 export type TelegramAuthAction =
   | 'send_code'
+  | 'resend_code'
   | 'verify_code'
   | 'start_qr_login'
   | 'poll_qr_login'
@@ -20,6 +21,17 @@ export type QrPollResponse = {
   session_id?: string
   channels?: unknown[]
   error?: string
+}
+
+export type TelegramCodeDelivery = 'app' | 'sms' | 'call' | 'other'
+
+export type TelegramCodeStatusResponse = {
+  delivery?: TelegramCodeDelivery
+  next_delivery?: TelegramCodeDelivery | null
+  resend_available_at?: string | null
+  resend_wait_seconds?: number | null
+  can_resend?: boolean
+  code_length?: number | null
 }
 
 export type TelegramAuthErrorMessages = {

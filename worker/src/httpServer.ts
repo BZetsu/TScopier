@@ -1,5 +1,5 @@
 import { createServer, IncomingMessage, Server, ServerResponse } from 'http'
-import { AuthService } from './authService'
+import { AuthService, NO_RESEND_AVAILABLE_ERROR } from './authService'
 import {
   isAuthKeyDuplicated,
   TelegramSessionInvalidError,
@@ -83,7 +83,53 @@ function sanitizeClientError(msg: string): string {
   }
   const flood = cleaned.match(/FLOOD_WAIT_(\d+)/i) || cleaned.match(/wait (\d+) seconds/i)
   if (flood) {
-    return `Telegram rate limit: wait ${flood[1]} seconds, then try again.`
+    return `Telegram has temporarily limited new login-code requests for this number. Please wait about ${flood[1]} seconds before requesting another code.`
+  }
+  const resendWait = cleaned.match(/RESEND_WAIT_(\d+)/i)
+  if (resendWait) {
+    return `Telegram has already sent a login code. You can request another delivery method in ${resendWait[1]} seconds.`
+  }
+  if (cleaned.includes(NO_RESEND_AVAILABLE_ERROR)) {
+    return 'Telegram accepted the login request, but did not offer another code delivery method. Use QR login or check Telegram for a login message.'
+  }
+  if (/PHONE_NUMBER_FLOOD/i.test(cleaned)) {
+    return 'Telegram has temporarily limited new login-code requests for this number. Please wait before requesting another code.'
+  }
+  if (/PHONE_PASSWORD_FLOOD/i.test(cleaned)) {
+    return 'Telegram has temporarily limited Two-Step Verification password attempts. Please wait before trying again.'
+  }
+  if (/SEND_CODE_UNAVAILABLE/i.test(cleaned)) {
+    return 'Telegram has exhausted the available login-code delivery methods for this attempt. Go back and request a new code later.'
+  }
+  if (/PHONE_NUMBER_INVALID/i.test(cleaned)) {
+    return 'Telegram rejected this phone number. Use the full number with country code, then request a new code.'
+  }
+  if (/PHONE_NUMBER_BANNED/i.test(cleaned)) {
+    return 'Telegram rejected this phone number because the Telegram account is banned or restricted.'
+  }
+  if (/API_ID_PUBLISHED_FLOOD/i.test(cleaned)) {
+    return 'Telegram temporarily blocked login-code requests for this app. Contact support.'
+  }
+  if (/PHONE_CODE_EXPIRED/i.test(cleaned)) {
+    return 'This Telegram login code expired. Request a new code and enter the latest one.'
+  }
+  if (/PHONE_CODE_HASH_EMPTY/i.test(cleaned)) {
+    return 'Telegram login state expired. Go back and request a new verification code.'
+  }
+  if (/PHONE_CODE_INVALID/i.test(cleaned)) {
+    return 'That Telegram login code is incorrect. Check the latest code in Telegram and try again.'
+  }
+  if (/SMS_CODE_CREATE_FAILED/i.test(cleaned)) {
+    return 'Telegram could not create an SMS login code for this attempt. Request another delivery method later.'
+  }
+  if (/UPDATE_APP_TO_LOGIN/i.test(cleaned)) {
+    return 'Telegram requires an updated Telegram app to approve this login. Update Telegram and try again.'
+  }
+  if (/AUTH_RESTART/i.test(cleaned)) {
+    return 'Telegram restarted this login attempt. Go back and request a new verification code.'
+  }
+  if (/TIMEOUT|TIMED OUT|ECONNRESET|NETWORK|SOCKET/i.test(cleaned)) {
+    return 'Telegram did not respond in time. Check your connection and request a new code.'
   }
   return cleaned
 }
@@ -153,6 +199,23 @@ export function startHttpServer(
         }
       }
 
+      if (url === '/auth/resend_code') {
+        if (!body.user_id || !body.phone) {
+          console.warn(`[httpServer] resend_code missing fields user_id=${!!body.user_id} phone=${!!body.phone}`)
+          return sendJson(res, 400, { error: 'user_id and phone are required' })
+        }
+        try {
+          console.log(`[httpServer] resend_code -> authService user=${body.user_id}`)
+          const r = await authService.resendCode(body.user_id, body.phone)
+          console.log(`[httpServer] resend_code OK user=${body.user_id}`)
+          return sendJson(res, 200, r)
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          console.warn(`[httpServer] resend_code FAILED user=${body.user_id}: ${msg}`)
+          return sendJson(res, 400, clientErrorPayload(err, 'Failed to resend code'))
+        }
+      }
+
       if (url === '/auth/verify_code') {
         if (!body.user_id || !body.phone || !body.code) {
           console.warn(`[httpServer] verify_code missing fields user_id=${!!body.user_id} phone=${!!body.phone} code=${!!body.code}`)
@@ -200,7 +263,13 @@ export function startHttpServer(
         }
         try {
           const r = await authService.getQrStatus(body.user_id)
-          console.log(`[httpServer] qr_status OK user=${body.user_id} status=${JSON.stringify(r).slice(0, 100)}`)
+          console.log(
+            `[httpServer] qr_status OK user=${body.user_id}`
+            + ` status=${r.status}`
+            + ` has_qr_url=${Boolean(r.qr_url)}`
+            + ` requires_password=${Boolean(r.requires_password)}`
+            + ` has_session=${Boolean(r.session_id)}`,
+          )
           return sendJson(res, 200, r)
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err)

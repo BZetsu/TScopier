@@ -1,1 +1,0 @@
-var e={documentation:(void 0)?.trim()||`https://docs.tscopier.ai`,liveChat:(void 0)?.trim()||``,whatsapp:(void 0)?.trim()||``,telegram:(void 0)?.trim()||``,status:(void 0)?.trim()||`https://status.tscopier.ai`};export{e as t};

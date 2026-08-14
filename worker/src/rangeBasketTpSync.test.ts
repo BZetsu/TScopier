@@ -34,7 +34,7 @@ function fakeSupabaseForRebalance(
   captured: LogRow[],
   tables: Record<string, unknown[]> = {},
 ) {
-  const all = {
+  const all: Record<string, unknown[]> = {
     trades,
     range_pending_legs: [],
     basket_sl_tp_targets: [],

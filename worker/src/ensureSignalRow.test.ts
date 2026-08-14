@@ -54,9 +54,9 @@ test('ensureSignalRow falls back to stub without telegram_message_id on unique c
   let attempt = 0
   const payloads: Record<string, unknown>[] = []
   const supabase = {
-    from(_table: string) {
+    from() {
       return {
-        upsert(payload: Record<string, unknown>, _opts: unknown) {
+        upsert(payload: Record<string, unknown>) {
           attempt += 1
           payloads.push(payload)
           if (attempt === 1) {
@@ -65,6 +65,17 @@ test('ensureSignalRow falls back to stub without telegram_message_id on unique c
             })
           }
           return Promise.resolve({ error: null })
+        },
+        select() {
+          const chain = {
+            eq() {
+              return chain
+            },
+            limit() {
+              return Promise.resolve({ data: [], error: null })
+            },
+          }
+          return chain
         },
       }
     },
@@ -79,15 +90,126 @@ test('ensureSignalRow falls back to stub without telegram_message_id on unique c
   })
 
   assert.equal(result.ok, true)
+  assert.equal(result.duplicate, undefined)
   assert.equal(payloads.length, 2)
   assert.equal(payloads[1]?.telegram_message_id, null)
   assert.equal(payloads[1]?.id, '68b4b9a4-aaaa-bbbb-cccc-dddddddddddd')
 })
 
+test('ensureSignalRow detects duplicate telegram message and persists non-executable skipped stub', async () => {
+  let attempt = 0
+  const payloads: Record<string, unknown>[] = []
+  const supabase = {
+    from() {
+      return {
+        upsert(payload: Record<string, unknown>) {
+          attempt += 1
+          payloads.push(payload)
+          if (attempt === 1) {
+            return Promise.resolve({
+              error: { message: 'duplicate key value violates unique constraint "signals_user_channel_telegram_message_unique_idx"' },
+            })
+          }
+          return Promise.resolve({ error: null })
+        },
+        select() {
+          const chain = {
+            eq() {
+              return chain
+            },
+            limit() {
+              return Promise.resolve({
+                data: [{ id: '68b4b9a4-1111-2222-3333-444444444444' }],
+                error: null,
+              })
+            },
+          }
+          return chain
+        },
+      }
+    },
+  }
+
+  const result = await ensureSignalRow(supabase as never, {
+    id: '68b4b9a4-aaaa-bbbb-cccc-dddddddddddd',
+    user_id: 'user-1',
+    channel_id: 'ch-1',
+    raw_message: 'BOOK 50% PROFITS',
+    status: 'parsed',
+    telegram_message_id: '359',
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.duplicate, true)
+  assert.equal(result.existingSignalId, '68b4b9a4-1111-2222-3333-444444444444')
+  assert.equal(payloads.length, 2)
+  const stub = payloads[1] ?? {}
+  assert.equal(stub.telegram_message_id, null)
+  assert.equal(stub.status, 'skipped', 'duplicate stub must never be executable')
+  assert.equal(stub.skip_reason, 'duplicate_telegram_message')
+})
+
+test('ensureSignalRow duplicate close message (incident 2348668186 shape): owner stays executable, loser stub is not', async () => {
+  // Two deliveries of the same "Let's CLOSE our trade now" telegram message
+  // raced the listener (live event + poll overlap). The FIRST call owns the
+  // message; the SECOND must come back as duplicate and persist a stub that
+  // the worker sweep can never execute (status 'skipped' is not 'parsed').
+  const payloads: Record<string, unknown>[] = []
+  const supabase = {
+    from() {
+      return {
+        upsert(payload: Record<string, unknown>) {
+          payloads.push(payload)
+          if (payloads.length === 1) {
+            return Promise.resolve({
+              error: { message: 'duplicate key value violates unique constraint "signals_user_channel_telegram_message_unique_idx"' },
+            })
+          }
+          return Promise.resolve({ error: null })
+        },
+        select() {
+          const chain = {
+            eq() {
+              return chain
+            },
+            limit() {
+              return Promise.resolve({
+                data: [{ id: '94f52e2f-2ae1-4824-bdba-1f6a1b932873' }],
+                error: null,
+              })
+            },
+          }
+          return chain
+        },
+      }
+    },
+  }
+
+  const result = await ensureSignalRow(supabase as never, {
+    id: '4ddcf865-eebf-4dfc-a2b9-42e781e192c7',
+    user_id: '82756f8c-3b8a-4e9e-9614-3ad94e093781',
+    channel_id: '0065c1d8-36cd-4e4c-b68b-26c7f68979a0',
+    raw_message: "INSTANT 38pips✅\n\nLet's CLOSE our trade now and set breakeven if you wish to hold! United Kings are all about scalping traders🔥🔥🔥",
+    status: 'parsed',
+    parsed_data: { action: 'close', symbol: 'XAUUSD' },
+    telegram_message_id: '19742',
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.duplicate, true)
+  assert.equal(result.existingSignalId, '94f52e2f-2ae1-4824-bdba-1f6a1b932873')
+  assert.equal(payloads.length, 2)
+  const stub = payloads[1] ?? {}
+  assert.equal(stub.id, '4ddcf865-eebf-4dfc-a2b9-42e781e192c7')
+  assert.equal(stub.telegram_message_id, null)
+  assert.equal(stub.status, 'skipped', 'loser stub must never be executable by the sweep')
+  assert.equal(stub.skip_reason, 'duplicate_telegram_message')
+})
+
 test('ensureSignalRow preserves existing raw_message when dispatch payload omits it', async () => {
   const calls: Array<{ payload: Record<string, unknown> }> = []
   const supabase = {
-    from(_table: string) {
+    from() {
       return {
         upsert(payload: Record<string, unknown>) {
           calls.push({ payload })
@@ -114,7 +236,7 @@ test('ensureSignalRow preserves existing raw_message when dispatch payload omits
 test('ensureSignalRow preserves existing raw_message when raw_message is empty string', async () => {
   const calls: Array<{ payload: Record<string, unknown> }> = []
   const supabase = {
-    from(_table: string) {
+    from() {
       return {
         upsert(payload: Record<string, unknown>) {
           calls.push({ payload })

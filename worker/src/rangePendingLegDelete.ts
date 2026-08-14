@@ -15,11 +15,47 @@ export type BasketScope = {
   brokerAccountId: string
 }
 
+export const ACTIVE_RANGE_PENDING_LEG_STATUSES = ['pending', 'claimed', 'broker_pending'] as const
+
 function readComment(row: unknown): string {
   if (row == null || typeof row !== 'object') return ''
   const o = row as Record<string, unknown>
   const c = o.comment ?? o.Comment
   return typeof c === 'string' ? c : ''
+}
+
+export async function hasActiveRangePendingLegs(
+  supabase: SupabaseClient,
+  scope: BasketScope,
+): Promise<boolean> {
+  const { count, error } = await supabase
+    .from('range_pending_legs')
+    .select('id', { count: 'exact', head: true })
+    .eq('signal_id', scope.signalId)
+    .eq('broker_account_id', scope.brokerAccountId)
+    .in('status', [...ACTIVE_RANGE_PENDING_LEG_STATUSES])
+  if (error) {
+    console.warn(`[rangePendingLegDelete] active pending check failed signal=${scope.signalId}: ${error.message}`)
+    return true
+  }
+  return (count ?? 0) > 0
+}
+
+async function hasClosedTradeHistory(
+  supabase: SupabaseClient,
+  scope: BasketScope,
+): Promise<boolean> {
+  const { count, error } = await supabase
+    .from('trades')
+    .select('id', { count: 'exact', head: true })
+    .eq('signal_id', scope.signalId)
+    .eq('broker_account_id', scope.brokerAccountId)
+    .eq('status', 'closed')
+  if (error) {
+    console.warn(`[rangePendingLegDelete] closed-history check failed signal=${scope.signalId}: ${error.message}`)
+    return true
+  }
+  return (count ?? 0) > 0
 }
 
 /**
@@ -153,7 +189,7 @@ export async function deleteRangePendingLegsForBasket(
   return Math.max(n, brokerCancelled)
 }
 
-/** Delete pending/claimed legs when no open/pending trades remain in DB for the basket. */
+/** Delete active legs when no open/pending trades remain and no pending-only basket is still waiting. */
 export async function purgeRangePendingLegsIfBasketFlat(
   supabase: SupabaseClient,
   scope: BasketScope,
@@ -170,6 +206,11 @@ export async function purgeRangePendingLegsIfBasketFlat(
     return 0
   }
   if ((count ?? 0) > 0) return 0
+
+  if (await hasActiveRangePendingLegs(supabase, scope)) {
+    if (!await hasClosedTradeHistory(supabase, scope)) return 0
+  }
+
   const deleted = await deleteRangePendingLegsForBasket(supabase, scope, reason)
   if (deleted > 0) {
     await clearTpTouchedLock(supabase, scope)

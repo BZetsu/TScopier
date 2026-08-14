@@ -54,7 +54,7 @@ import { findStaleBasketKeys, upsertBasketSlTpTarget } from '../basketTargetStor
 import { isV2 } from '../engine/executionMode'
 import { getFxClient, toMtPlatform } from '../engine/fxClient'
 import type { PerLegStopTarget } from '../multiTradeMerge'
-import { isBenignOrderModifyError } from '../orderModifyBenign'
+import { isBenignOrderModifyError, isPositionGoneCloseError } from '../orderModifyBenign'
 import { modifyLegSlTpWithFallback } from '../orderModifySafe'
 import { mgmtBasketConcurrency, mgmtLegConcurrency, mgmtVerifyAfterModify, parallelMap } from '../parallelPool'
 import { patchActiveRangePendingLegStops } from '../rangePendingLadderSync'
@@ -268,6 +268,11 @@ function isUnknownTicketError(message: string): boolean {
     || /\bticket\b.*\bnot found\b/.test(m)
     || /\bno such order\b/.test(m)
   )
+}
+
+/** Close-family actions where MT4 error 4108 means the ticket is gone (not bad params). */
+function isCloseFamilyAction(action: string): boolean {
+  return action === 'close' || action === 'partial_profit' || action === 'partial_breakeven'
 }
 
 function isRetryableBreakevenError(message: string): boolean {
@@ -1083,7 +1088,31 @@ export async function applyManagement(
           const fraction = typeof parsed.partial_close_fraction === 'number' && parsed.partial_close_fraction > 0
             ? Math.min(0.95, parsed.partial_close_fraction)
             : 0.5
-          const lots = +(trade.lot_size * fraction).toFixed(2)
+          // Floor, never round up: (0.01 * 0.5).toFixed(2) = "0.01" would close
+          // the FULL position when the user asked to book 50% and hold the rest.
+          const lots = Math.floor(trade.lot_size * fraction * 100) / 100
+          if (lots < 0.01) {
+            console.warn(
+              `[tradeExecutor] partial_profit skipped trade=${trade.id} ticket=${ticket}`
+              + ` fraction=${fraction} lot=${trade.lot_size} → lots=${lots} below min lot 0.01`,
+            )
+            await ctx.supabase.from('trade_execution_logs').insert({
+              user_id: signal.user_id,
+              signal_id: signal.id,
+              broker_account_id: broker.id,
+              action: `mgmt_${action}`,
+              status: 'skipped',
+              request_payload: {
+                ticket: effectiveTicket,
+                action,
+                basket_anchor_signal_id: trade.signal_id,
+                mgmt_scope: replyScoped ? 'reply_basket' : 'channel',
+                mgmt_parent_signal_id: signal.parent_signal_id,
+                skip_reason: 'partial_volume_below_min_lot',
+              },
+            })
+            return
+          }
           await api.orderClose(uuid, { ticket, lots })
           const remaining = Math.max(0, +(trade.lot_size - lots).toFixed(2))
           if (remaining < 0.0001) {
@@ -1240,7 +1269,9 @@ export async function applyManagement(
             const fraction = typeof parsed.partial_close_fraction === 'number' && parsed.partial_close_fraction > 0
               ? Math.min(0.95, parsed.partial_close_fraction)
               : 0.5
-            const closeLots = +(trade.lot_size * fraction).toFixed(2)
+            // Floor, never round up (0.01 * 0.5).toFixed(2) = 0.01 would close the
+            // whole position when the user asked to half-close and hold the rest.
+            const closeLots = Math.floor(trade.lot_size * fraction * 100) / 100
             if (closeLots >= 0.01) {
               try {
                 await api.orderClose(uuid, { ticket: effectiveTicket, lots: closeLots })
@@ -1335,6 +1366,7 @@ export async function applyManagement(
         // so the sweep / reconcile fallback stop targeting a dead ticket. Mirrors
         // autoManagementMonitor's benign handling of the same replies.
         const positionGone = isUnknownTicketError(msg)
+          || (isCloseFamilyAction(action) && isPositionGoneCloseError(msg))
         let benign = isBenignOrderModifyError(msg) || positionGone
         if (benign && !positionGone && (action === 'breakeven' || action === 'partial_breakeven')) {
           let entry = sanitizeLevel(trade.entry_price)

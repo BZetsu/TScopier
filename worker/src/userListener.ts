@@ -89,6 +89,7 @@ import { evaluateParsedSignalExecutionEligibility, deterministicEntryNeedsAiRepa
 import { getUniversalParseMode } from './signalIntent/parseConfig'
 import { routeSignalParse } from './signalIntent/parseRouting'
 import { parseUniversalSignal } from './signalIntent/universalSignalParser'
+import { withParseRetry } from './withParseRetry'
 import { resolveEntrySignalIdByProviderNumber, findRecentEntrySignalByProviderNumber } from './managementScope'
 import {
   handlePostParseChannelIngest,
@@ -216,6 +217,11 @@ function catchUpMaxAgeMs(): number {
 
 function catchUpParseConcurrency(): number {
   return Math.max(1, Math.min(4, Number(process.env.TELEGRAM_CATCHUP_PARSE_CONCURRENCY ?? 2)))
+}
+
+/** Parse retries on transient failure (AI timeout/429/transport). 1 = no retry. */
+function listenerParseMaxAttempts(): number {
+  return Math.max(1, Math.min(5, Number(process.env.LISTENER_PARSE_MAX_ATTEMPTS ?? 3)))
 }
 
 function livePriorityPauseMs(): number {
@@ -2463,6 +2469,12 @@ export class UserListener {
     if (dedupAt != null && Date.now() - dedupAt < 120_000) {
       return false
     }
+    // Claim the message in-memory BEFORE the parse. The old code only set the
+    // map after parse completed (~1.4s later), so two deliveries of the same
+    // telegram message arriving within that window (live event + fast poll +
+    // catch-up overlap) BOTH passed the DB count check and created two signals
+    // that double-executed the same management action (partial_profit 4108 race).
+    this.liveMessageDedup.set(dedupKey, Date.now())
 
     const signalId = randomUUID()
     const pipelineTs: PipelineTimestamps = {}
@@ -2494,20 +2506,37 @@ export class UserListener {
     } | undefined
     let channelKeywords: Awaited<ReturnType<typeof getChannelParseContext>>['keywords'] | undefined
     try {
-      setPipelineTimestamp(pipelineTs, 'parse_started_at', Date.now())
-      const parsed = await this.parseSignalForListener({
-        channelRowId: channelRow.id,
-        rawMessage,
-        signalId,
-        isReply,
-        parentSignalId,
-        pipelineTs,
+      const parsed = await withParseRetry({
+        maxAttempts: listenerParseMaxAttempts(),
+        backoffMs: attemptIndex => 750 * (attemptIndex + 1),
+        onRetry: (err, attemptIndex) => {
+          setPipelineTimestamp(pipelineTs, 'parse_started_at', Date.now())
+          console.warn(
+            `[userListener] parse retry ${attemptIndex + 1}/${listenerParseMaxAttempts()}`
+            + ` user=${this.userId} signalId=${signalId}:`
+            + ` ${err instanceof Error ? err.message : String(err)}`,
+          )
+        },
+        attempt: () => {
+          setPipelineTimestamp(pipelineTs, 'parse_started_at', Date.now())
+          return this.parseSignalForListener({
+            channelRowId: channelRow.id,
+            rawMessage,
+            signalId,
+            isReply,
+            parentSignalId,
+            pipelineTs,
+          })
+        },
       })
       parseResult = parsed.parseResult
       aiMeta = parsed.aiMeta
       channelKeywords = parsed.channelKeywords
     } catch (err) {
       setPipelineTimestamp(pipelineTs, 'parse_completed_at', Date.now())
+      // Release the early in-memory claim: the parse failed and nothing was
+      // dispatched, so a later re-delivery of this message may be retried.
+      this.liveMessageDedup.delete(dedupKey)
       const errMsg = err instanceof Error ? err.message : String(err)
       emitPipelineEvent({
         event: 'signal_parse_failed',
@@ -2791,6 +2820,17 @@ export class UserListener {
       is_modification: isReply,
       pipeline_ts: pipelineTs as Record<string, unknown>,
     })
+    if (ensured.duplicate && ensured.existingSignalId) {
+      // Another signal already owns this telegram message (duplicate delivery
+      // that raced the parse window). Do NOT dispatch — the owner signal is
+      // already being handled; dispatching would double-execute the action.
+      console.log(
+        `[userListener] duplicate telegram message dropped user=${this.userId} channelRow=${channelRow.id}`
+        + ` messageId=${messageId} existingSignal=${ensured.existingSignalId} signalId=${signalId}`,
+      )
+      await this.bumpLastSeen(channelRow.id, messageId)
+      return true
+    }
     if (!ensured.ok) {
       console.error(
         `[userListener] ensureSignalRow before dispatch failed signalId=${signalId}: ${ensured.error ?? 'unknown'}`,

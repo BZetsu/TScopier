@@ -940,7 +940,10 @@ export class UserSessionManager {
 
   /**
    * User Disconnect: drop pending auth, stop listener immediately, delete session row.
-   * Configured telegram_channels are kept.
+   * Configured telegram_channels are kept. This is a local TScopier disconnect:
+   * it does not call Telegram auth.LogOut, so Telegram may still list the old
+   * authorization until the user revokes it in Telegram or a future hard-logout
+   * flow is designed.
    */
   async disconnectTelegramSession(userId: string): Promise<{ ok: true }> {
     await this.supabase.from('telegram_auth_pending').delete().eq('user_id', userId)

@@ -1,0 +1,232 @@
+import { useMemo } from 'react'
+import clsx from 'clsx'
+
+export type AssistantTradeRow = {
+  signal_id?: string | null
+  time?: string | null
+  channel?: string | null
+  symbol?: string | null
+  action?: string | null
+  direction?: string | null
+  entry_price?: number | null
+  sl?: number | null
+  tp?: number | null
+  lot_size?: number | null
+  status?: string | null
+  skip_reason?: string | null
+  tickets?: string[]
+  failure_count?: number
+  errors?: string[]
+  legs?: number
+}
+
+export type AssistantTradesCardCopy = {
+  title: string
+  noTrades: string
+  ticket: string
+  legs: string
+  statusExecuted: string
+  statusFailed: string
+  statusSkipped: string
+  statusPending: string
+  statusParsed: string
+  statusDispatched: string
+  statusIgnored: string
+  statusError: string
+  statusCancelled: string
+}
+
+type ParsedResult = {
+  trades?: AssistantTradeRow[]
+  trade?: AssistantTradeRow
+  legs?: AssistantTradeRow[]
+  error?: string
+}
+
+function parseResult(result: string): ParsedResult | null {
+  try {
+    return JSON.parse(result) as ParsedResult
+  } catch {
+    return null
+  }
+}
+
+function statusLabel(status: string, copy: AssistantTradesCardCopy): string {
+  switch (status) {
+    case 'executed':
+      return copy.statusExecuted
+    case 'failed':
+    case 'error':
+      return copy.statusFailed
+    case 'skipped':
+      return copy.statusSkipped
+    case 'pending':
+      return copy.statusPending
+    case 'parsed':
+      return copy.statusParsed
+    case 'dispatched':
+      return copy.statusDispatched
+    case 'ignored':
+      return copy.statusIgnored
+    case 'cancelled':
+      return copy.statusCancelled
+    default:
+      return status
+  }
+}
+
+function statusStyles(status: string): string {
+  switch (status) {
+    case 'executed':
+      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+    case 'failed':
+    case 'error':
+      return 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300'
+    case 'skipped':
+    case 'ignored':
+    case 'cancelled':
+      return 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+    case 'pending':
+    case 'dispatched':
+    case 'parsed':
+      return 'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300'
+    default:
+      return 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300'
+  }
+}
+
+function directionBadge(direction: string | null | undefined) {
+  const d = (direction ?? '').toLowerCase()
+  const isBuy = d === 'buy' || d === 'long'
+  const isSell = d === 'sell' || d === 'short'
+  if (!isBuy && !isSell) return null
+  return (
+    <span
+      className={clsx(
+        'rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide',
+        isBuy
+          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+          : 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300',
+      )}
+    >
+      {isBuy ? 'Buy' : 'Sell'}
+    </span>
+  )
+}
+
+function formatPrice(value: number | null | undefined): string | null {
+  if (value == null || !Number.isFinite(value)) return null
+  const text = String(value)
+  return Number.isInteger(value) ? text : text.replace(/\.?0+$/, '')
+}
+
+function TradeRow({ trade, copy }: { trade: AssistantTradeRow; copy: AssistantTradesCardCopy }) {
+  const status = trade.status ?? ''
+  const symbol = trade.symbol ?? 'Trade'
+  return (
+    <li className="rounded-xl border border-neutral-200 bg-white p-2.5 dark:border-neutral-800 dark:bg-neutral-900/70">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate font-semibold text-neutral-900 dark:text-neutral-50">{symbol}</span>
+          {directionBadge(trade.direction)}
+          {trade.legs ? (
+            <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
+              {copy.legs}: {trade.legs + 1}
+            </span>
+          ) : null}
+        </div>
+        <span
+          className={clsx(
+            'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold',
+            statusStyles(status),
+          )}
+        >
+          {statusLabel(status, copy)}
+        </span>
+      </div>
+
+      {trade.time ? (
+        <p className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+          {new Date(trade.time).toLocaleString()}
+          {trade.channel ? ` · ${trade.channel}` : ''}
+        </p>
+      ) : null}
+
+      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-neutral-600 dark:text-neutral-300">
+        {trade.entry_price != null ? <span>Entry {formatPrice(trade.entry_price)}</span> : null}
+        {trade.sl != null ? <span>SL {formatPrice(trade.sl)}</span> : null}
+        {trade.tp != null ? <span>TP {formatPrice(trade.tp)}</span> : null}
+        {trade.lot_size != null ? <span>Lot {formatPrice(trade.lot_size)}</span> : null}
+      </div>
+
+      {trade.tickets?.length ? (
+        <p className="mt-1.5 text-[11px] text-neutral-600 dark:text-neutral-300">
+          {copy.ticket}:{' '}
+          {trade.tickets.map((t, i) => (
+            <span key={t} className="font-mono text-teal-700 dark:text-teal-300">
+              {i > 0 ? ', ' : ''}#{t}
+            </span>
+          ))}
+        </p>
+      ) : null}
+
+      {trade.skip_reason ? (
+        <p className="mt-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+          {trade.skip_reason}
+        </p>
+      ) : null}
+
+      {trade.errors?.length ? (
+        <ul className="mt-1.5 space-y-0.5">
+          {trade.errors.slice(0, 2).map((err, i) => (
+            <li key={i} className="truncate text-[11px] text-red-600 dark:text-red-400">
+              {err}
+            </li>
+          ))}
+          {trade.errors.length > 2 ? (
+            <li className="text-[11px] text-neutral-500 dark:text-neutral-400">
+              +{trade.errors.length - 2} more
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </li>
+  )
+}
+
+/** Renders trades/legs returned by the assistant's get_recent_trades / get_copier_logs / get_trade_detail tools. */
+export function AssistantTradesCard({
+  tool,
+  result,
+  copy,
+}: {
+  tool: string
+  result: string
+  copy: AssistantTradesCardCopy
+}) {
+  const data = useMemo(() => parseResult(result), [result])
+
+  const trades = useMemo(() => {
+    if (!data) return []
+    const rows = data.trades?.length ? data.trades : []
+    if (!rows.length && data.trade) rows.push(data.trade)
+    if (!rows.length && data.legs?.length) rows.push(...data.legs)
+    return rows
+  }, [data])
+
+  if (!data || data.error) return null
+  if (!trades.length) return null
+
+  return (
+    <div className="animate-assistant-msg-in ms-[2.375rem] space-y-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+        {copy.title}
+      </p>
+      <ul className="space-y-2">
+        {trades.map(t => (
+          <TradeRow key={t.signal_id ?? `${tool}-${t.symbol}-${t.time}`} trade={t} copy={copy} />
+        ))}
+      </ul>
+    </div>
+  )
+}
