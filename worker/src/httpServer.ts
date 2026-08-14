@@ -1,5 +1,5 @@
 import { createServer, IncomingMessage, Server, ServerResponse } from 'http'
-import { AuthService } from './authService'
+import { AuthService, NO_RESEND_AVAILABLE_ERROR } from './authService'
 import {
   isAuthKeyDuplicated,
   TelegramSessionInvalidError,
@@ -88,6 +88,9 @@ function sanitizeClientError(msg: string): string {
   const resendWait = cleaned.match(/RESEND_WAIT_(\d+)/i)
   if (resendWait) {
     return `Telegram has already sent a login code. You can request another delivery method in ${resendWait[1]} seconds.`
+  }
+  if (cleaned.includes(NO_RESEND_AVAILABLE_ERROR)) {
+    return 'Telegram accepted the login request, but did not offer another code delivery method. Use QR login or check Telegram for a login message.'
   }
   if (/PHONE_NUMBER_FLOOD/i.test(cleaned)) {
     return 'Telegram has temporarily limited new login-code requests for this number. Please wait before requesting another code.'

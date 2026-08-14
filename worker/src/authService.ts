@@ -28,6 +28,7 @@ type PhonePending = {
   nextDelivery?: TelegramCodeDelivery | null
   timeoutSeconds?: number | null
   resendAvailableAt?: number | null
+  canResend?: boolean
   codeLength?: number | null
   createdAt: number
   awaitingPassword?: boolean
@@ -75,7 +76,7 @@ const PENDING_DB_TTL_MS = 12 * 60 * 1000
 const PENDING_DB_PASSWORD_TTL_MS = 20 * 60 * 1000
 const QR_FIRST_TOKEN_WAIT_MS = 15_000
 const QR_PASSWORD_WAIT_MS = 120_000
-const DEFAULT_RESEND_TIMEOUT_SECONDS = 60
+export const NO_RESEND_AVAILABLE_ERROR = 'NO_RESEND_AVAILABLE'
 const SENSITIVE_AUTH_LOG_KEY_RE = /(phone_code_hash|phonecodehash|session|string_session|auth_session|auth_key|password|code|token|hash)/i
 const PHONE_AUTH_LOG_KEY_RE = /phone/i
 
@@ -102,6 +103,7 @@ export type TelegramCodeStatus = {
   next_delivery?: TelegramCodeDelivery | null
   resend_available_at?: string | null
   resend_wait_seconds?: number | null
+  can_resend: boolean
   code_length?: number | null
 }
 
@@ -127,12 +129,25 @@ function codeLength(value: { length?: unknown } | null | undefined): number | nu
   return typeof length === 'number' && Number.isFinite(length) && length > 0 ? length : null
 }
 
+function telegramConstructorName(value: { className?: unknown } | null | undefined): string {
+  const className = typeof value?.className === 'string' ? value.className : ''
+  return className || 'absent'
+}
+
+function telegramErrorMeta(err: unknown): { apiErrorClass: string; apiErrorCode: string } {
+  const rec = err as { name?: unknown; code?: unknown; errorCode?: unknown; errorMessage?: unknown } | null | undefined
+  return {
+    apiErrorClass: err instanceof Error ? err.name : typeof rec?.name === 'string' ? rec.name : 'unknown',
+    apiErrorCode: String(rec?.code ?? rec?.errorCode ?? rec?.errorMessage ?? ''),
+  }
+}
+
 function positiveSeconds(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : null
 }
 
-function resendAvailableAtFromTimeout(timeoutSeconds: number | null, now = Date.now()): number {
-  return now + (timeoutSeconds ?? DEFAULT_RESEND_TIMEOUT_SECONDS) * 1000
+function pendingCanResend(pending: Pick<PhonePending, 'canResend' | 'nextDelivery' | 'timeoutSeconds' | 'resendAvailableAt'>): boolean {
+  return Boolean(pending.canResend || (pending.nextDelivery && pending.timeoutSeconds && pending.resendAvailableAt))
 }
 
 export function sentCodeStatus(
@@ -144,25 +159,32 @@ export function sentCodeStatus(
   now = Date.now(),
 ): Omit<TelegramCodeStatus, 'resend_available_at' | 'resend_wait_seconds'> & {
   timeoutSeconds: number | null
-  resendAvailableAt: number
+  resendAvailableAt: number | null
+  canResend: boolean
 } {
   const timeoutSeconds = positiveSeconds(result.timeout)
+  const nextDelivery = codeTypeDelivery(result.nextType)
+  const canResend = nextDelivery !== null && timeoutSeconds !== null
   return {
     delivery: sentCodeDelivery(result),
-    next_delivery: codeTypeDelivery(result.nextType),
+    next_delivery: nextDelivery,
     timeoutSeconds,
-    resendAvailableAt: resendAvailableAtFromTimeout(timeoutSeconds, now),
+    resendAvailableAt: canResend ? now + timeoutSeconds * 1000 : null,
+    can_resend: canResend,
+    canResend,
     code_length: codeLength(result.type),
   }
 }
 
 function pendingCodeStatus(pending: PhonePending, now = Date.now()): TelegramCodeStatus {
   const waitMs = pending.resendAvailableAt ? Math.max(0, pending.resendAvailableAt - now) : 0
+  const canResend = pendingCanResend(pending)
   return {
     delivery: pending.delivery,
     next_delivery: pending.nextDelivery ?? null,
-    resend_available_at: pending.resendAvailableAt ? new Date(pending.resendAvailableAt).toISOString() : null,
-    resend_wait_seconds: pending.resendAvailableAt ? Math.ceil(waitMs / 1000) : null,
+    resend_available_at: canResend && pending.resendAvailableAt ? new Date(pending.resendAvailableAt).toISOString() : null,
+    resend_wait_seconds: canResend && pending.resendAvailableAt ? Math.ceil(waitMs / 1000) : null,
+    can_resend: canResend,
     code_length: pending.codeLength ?? null,
   }
 }
@@ -174,6 +196,7 @@ type PhoneAuthSessionEnvelope = {
   nextDelivery?: TelegramCodeDelivery | null
   timeoutSeconds?: number | null
   resendAvailableAt?: number | null
+  canResend?: boolean
   codeLength?: number | null
 }
 
@@ -197,6 +220,7 @@ function serializePhoneAuthSession(sessionString: string, pending: PhonePending)
     nextDelivery: pending.nextDelivery ?? null,
     timeoutSeconds: pending.timeoutSeconds ?? null,
     resendAvailableAt: pending.resendAvailableAt ?? null,
+    canResend: Boolean(pending.canResend),
     codeLength: pending.codeLength ?? null,
   }
   return JSON.stringify(envelope)
@@ -211,6 +235,7 @@ function shortHash(value: unknown): string {
 }
 
 export function redactAuthLogValue(key: string, value: unknown): string {
+  if (/^(code_length|codeLength|apiErrorCode)$/i.test(key)) return String(value ?? '')
   if (SENSITIVE_AUTH_LOG_KEY_RE.test(key)) return '[redacted]'
   if (PHONE_AUTH_LOG_KEY_RE.test(key)) return `[phone:${shortHash(value)}]`
   if (typeof value === 'object' && value !== null) return JSON.stringify(value)
@@ -382,6 +407,7 @@ export class AuthService {
       nextDelivery: meta.nextDelivery ?? null,
       timeoutSeconds: meta.timeoutSeconds ?? null,
       resendAvailableAt: meta.resendAvailableAt ?? null,
+      canResend: Boolean(meta.canResend || (meta.nextDelivery && meta.timeoutSeconds && meta.resendAvailableAt)),
       codeLength: meta.codeLength ?? null,
       createdAt: Date.now(),
       awaitingPassword,
@@ -741,20 +767,26 @@ export class AuthService {
             apiHash: API_HASH,
             settings: new Api.CodeSettings({
               allowFlashcall: false,
-              currentNumber: true,
-              allowAppHash: true,
+              currentNumber: false,
+              allowAppHash: false,
+              allowMissedCall: false,
+              allowFirebase: false,
             }),
           }),
         )
+        const status = sentCodeStatus(result, this.now())
         logAuthEvent('send_code_api_ok', {
           userId, correlationId, apiTimeMs: Date.now() - tApi,
-          delivery: sentCodeDelivery(result),
-          nextDelivery: codeTypeDelivery(result.nextType),
-          timeoutSeconds: positiveSeconds(result.timeout),
-          hasPhoneCodeHash: Boolean(result.phoneCodeHash),
+          responseType: telegramConstructorName(result),
+          delivery: status.delivery,
+          deliveryType: telegramConstructorName(result.type),
+          nextDelivery: status.next_delivery,
+          nextDeliveryType: telegramConstructorName(result.nextType),
+          timeoutPresent: typeof result.timeout === 'number',
+          timeoutSeconds: status.timeoutSeconds,
+          codeLength: status.code_length,
+          canResend: status.can_resend,
         })
-
-        const status = sentCodeStatus(result, this.now())
 
         const pending: PhonePending = {
           method: 'phone',
@@ -765,6 +797,7 @@ export class AuthService {
           nextDelivery: status.next_delivery ?? null,
           timeoutSeconds: status.timeoutSeconds,
           resendAvailableAt: status.resendAvailableAt,
+          canResend: status.canResend,
           codeLength: status.code_length ?? null,
           createdAt: Date.now(),
         }
@@ -775,7 +808,13 @@ export class AuthService {
         return pendingCodeStatus(pending, this.now())
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err)
-        logAuthEvent('send_code_api_failed', { userId, correlationId, error: errMsg, totalTimeMs: Date.now() - tStart })
+        logAuthEvent('send_code_api_failed', {
+          userId,
+          correlationId,
+          error: errMsg,
+          ...telegramErrorMeta(err),
+          totalTimeMs: Date.now() - tStart,
+        })
         console.warn(`[authService] send_code Telegram API failed user=${userId}:`, errMsg)
         try { await client.disconnect() } catch { /* ignore */ }
         this.pending.delete(userId)
@@ -811,6 +850,17 @@ export class AuthService {
     }
 
     const now = this.now()
+    if (!pendingCanResend(pending) || !pending.nextDelivery || !pending.resendAvailableAt) {
+      logAuthEvent('resend_code_unavailable', {
+        userId,
+        correlationId,
+        delivery: pending.delivery,
+        nextDelivery: pending.nextDelivery,
+        timeoutSeconds: pending.timeoutSeconds,
+        canResend: pendingCanResend(pending),
+      })
+      throw new Error(NO_RESEND_AVAILABLE_ERROR)
+    }
     const waitMs = pending.resendAvailableAt ? pending.resendAvailableAt - now : 0
     if (waitMs > 0) {
       const waitSeconds = Math.ceil(waitMs / 1000)
@@ -844,6 +894,7 @@ export class AuthService {
       pending.nextDelivery = status.next_delivery ?? null
       pending.timeoutSeconds = status.timeoutSeconds
       pending.resendAvailableAt = status.resendAvailableAt
+      pending.canResend = status.canResend
       pending.codeLength = status.code_length ?? null
       pending.createdAt = Date.now()
       await this.persistPhonePendingRow(userId, pending)
@@ -852,15 +903,20 @@ export class AuthService {
         userId,
         correlationId,
         apiTimeMs: Date.now() - tApi,
+        responseType: telegramConstructorName(result),
         delivery: pending.delivery,
+        deliveryType: telegramConstructorName(result.type),
         nextDelivery: pending.nextDelivery,
+        nextDeliveryType: telegramConstructorName(result.nextType),
+        timeoutPresent: typeof result.timeout === 'number',
         timeoutSeconds: pending.timeoutSeconds,
-        hasPhoneCodeHash: Boolean(pending.phoneCodeHash),
+        codeLength: pending.codeLength,
+        canResend: Boolean(pending.canResend),
       })
       return pendingCodeStatus(pending, this.now())
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
-      logAuthEvent('resend_code_failed', { userId, correlationId, error: errMsg })
+      logAuthEvent('resend_code_failed', { userId, correlationId, error: errMsg, ...telegramErrorMeta(err) })
       throw err
     } finally {
       this.resendInFlight.delete(userId)
