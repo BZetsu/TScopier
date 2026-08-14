@@ -16,6 +16,7 @@
 
 ### 2026-08-13 — Verification-email resend: Turnstile captcha + redirect_to-preserving link
 
+- **Plain English:** After the spam fixes shipped, the verify-email "Resend" button had no CAPTCHA and the emailed link ignored the app's intended destination — users clicked Resend and landed on the site home page instead of the page they were heading to. Added a Turnstile captcha to Resend and rebuilt the link from the verification token so the redirect works.
 - **Context (user request):** after the signup-spam stack shipped, the verify-email **Resend** flow was still unguarded (no CAPTCHA) and the emailed link dropped the app's `redirectTo` — users clicked "Resend" and the resulting link landed on the site root instead of their intended post-auth path.
 - **Fix 1 — Turnstile on resend (`8ba25199`, `VerifyEmailPage.tsx` +23/-2):** the verify-email page now renders `TurnstileWidget`; Resend is disabled until a captcha token exists (`captchaRequired && !captchaToken`), passes `captchaToken` to `sendVerificationEmail`, and resets the widget + clears the token after each resend. Missing token → local error `auth.oauth.captchaRequired`, no edge call.
 - **Fix 2 — link built from token (`0799e1d9`, `supabase/functions/send-verification-email/index.ts`):** root cause — GoTrue's `generate_link` only reads `redirect_to` (snake_case) from the request body; the supabase-js SDK sends `redirectTo` (camelCase), which GoTrue ignores, so `action_link` always pointed at the site root. New `buildConfirmUrl()` constructs `/auth/v1/verify` from `hashed_token` + `verification_type` with `redirect_to` in the query string (GoTrue honors it), used for both signup and magiclink paths. Also synced the edge function to the feature-branch version (Turnstile verification, IP rate limiting, signup-link fallback) the frontend already expects.
@@ -24,6 +25,7 @@
 
 ### 2026-08-12 — Assistant prompt-injection guard wired into `assistant-chat` (edge function)
 
+- **Plain English:** The assistant's security module (which detects prompt-injection attacks and strips hidden formatting) was written but never actually connected to the chat endpoint. Wired it in so every user message is scanned before reaching the AI, flagged attacks are refused with a generic message, and tool arguments are sanitized.
 - **Context (user request):** the untracked `supabase/functions/_shared/assistantGuard.ts` module (pure TS: `detectPromptInjection` — instruction-override / system-prompt-extraction / jailbreak / hidden-markup / base64 smuggling patterns; `sanitizeAssistantText` control+zero-width strip, 8000-char cap; `guardAssistantUserMessage` refuse-then-allow; `sanitizeToolArgs` depth/key/length bounds) was written but **nothing imported it**. Wired into `assistant-chat/index.ts`.
 - **Wiring:** (1) every incoming user message is guard-scanned BEFORE the chat loop; a flagged turn is refused with HTTP 403 + generic message ("I can't help with that request.") — the matched reason is logged server-side only (`[assistant-chat] turn refused user=… reason=…`), never returned (design: don't teach attackers how to evade); (2) approved user content is replaced with the SANITIZED text (control/zero-width stripped, capped) before reaching the model, both plain-text and image-caption paths; (3) model tool-call args pass through `sanitizeToolArgs` before `executeTool` (bounds depth/key-count/lengths, drops non-JSON-safe values); (4) the client-confirmed `execute` path args are sanitized the same way before the mutation runs.
 - **Also fixed:** pre-existing `no-useless-assignment` lint error in the execute block (`let parsed = {}` initializer — dead value); added scoped `eslint-disable-next-line no-control-regex` on the intentional CONTROL_CHARS pattern in `assistantGuard.ts`.
@@ -32,6 +34,7 @@
 
 ### 2026-08-12 — Duplicate-dispatch double-close → `unknown ticket` (trade #2348668186) — fix batch completed in working tree + parse-retry added
 
+- **Plain English:** A single Telegram close message was picked up twice within a second, so the same 12 positions were closed twice — the second wave errored with "unknown ticket" and showed as a Major failure in the admin dashboard. Fixed by claiming each message in memory before parsing and saving duplicates as non-executable skips, and added retries so a failed parse no longer loses a signal.
 - **Context (user request):** admin dashboard showed **Major / "unknown ticket"** for Leonardo Araújo, trade #2348668186, signal `81c2df21` (XAUUSD buy basket, 12 legs, Aug 12 07:45Z). User: "I THOUGHT WE ALREADY FIXED THIS". Scratchpad: `docs/scratchpads/scratchpad-unknown-ticket-2348668186-2026-08-12.md`.
 - **Root cause (verified via prod DB + Railway logs):** provider's close message (tg msg 19742) was processed **twice** by the listener ~960ms apart (invocations at 07:52:09.030Z → signal `94f52e2f`, 07:52:09.990Z → `4ddcf865`). Both passed the DB count dedupe (neither persisted yet) AND the in-memory `liveMessageDedup` (set only AFTER parse). `4ddcf865` lost the unique-key race → `ensureSignalRow` stub (telegram_message_id NULL, status parsed) → **still dispatched + executed**. Both close signals ran `mgmt_close` on the same 12 tickets: first wave OK, second wave → broker `unknown ticket` → 12 `order_close_audit failed` rows. The Aug-10/11 benign fixes worked (trades closed, no retry storm) — this was **duplicate execution of the same instruction**, not a loop. 116+ stub signals observed across all users in ~1.5h → same race duplicates ENTRY signals too (double positions, no error surfaces).
 - **Trigger conditions:** listener instance had restarted ~40s before (catch-up + fast poll + live push overlap); channel `0065c1d8` has `last_live_at=NULL` → always fast-polled every 3s.
@@ -44,6 +47,7 @@
 
 ### 2026-08-12 — `mgmt_partial_profit` "MT4 error 4108: Invalid request" root-caused + FIXED (trade #421496628, signal 90150c10)
 
+- **Plain English:** "Book 50% profits" on a small position ended up closing 100% of it and threw a scary "invalid request" error in the admin dashboard. Four problems stacked up: the same message was processed twice, one duplicate still got executed, the half-lot math rounded up to the full lot, and the "position already closed" error was reported as a major failure instead of being treated as benign.
 - **Context (user request):** admin dashboard flagged `mgmt_partial_profit` as Major for L CY, trade #421496628 ("BOOK 50% PROFITS HERE SET B.E & HOLD!.. ✅✅", XAUUSD, Aug 12 01:17Z): `MT4 error 4108: Invalid request`, no retries, `mgmt_legs_total:1`, reply-basket scoped to parent `ae581054` / anchor `437b38ac`. Scratchpad: `docs/scratchpads/scratchpad-mgmt-partial-profit-4108-421496628-2026-08-12.md`.
 - **Root cause — FOUR stacked bugs (verified via prod DB + Railway):**
   1. **Duplicate signal (primary):** the SAME telegram message 4719 was processed twice by the listener ~293ms apart (live event + fast poll overlap). Both deliveries passed the DB count dedup (neither had persisted yet) AND the in-memory `liveMessageDedup` (only set AFTER parse at `userListener.ts:2741/2775`, ~1.4s later). Result: TWO signals — `d6270d93` (tg 4719) + `90150c10` (telegram_message_id NULL stub).
@@ -64,6 +68,7 @@
 
 ### 2026-08-12 — Cerebras multi-key pool: round-robin rotation across backup accounts (rate-limit distribution)
 
+- **Plain English:** The free AI account hit its daily token limit, so signal parsing silently fell back to a costlier model or failed for the rest of the day. AI parsing now rotates across multiple accounts, spreading the load so a single exhausted account doesn't stall things.
 - **Context (user request):** prod listener requests CSV (`docs/Prod_Logs/org_9dkj4pyvxh3cxd4yh3wey442-2026_08_12-2026_08_12-requests.csv`) showed the single Cerebras free-tier account exhausting its **daily token quota** (~10:47Z onward, hundreds of `429 Tokens per day limit exceeded`), so stage-2 parsing degraded to OpenAI fallback / failures for the rest of the day. User asked for backup accounts to distribute the load.
 - **Implementation:**
   - `worker/src/signalIntent/parseConfig.ts`: new `cerebrasParseApiKeys()` — collects `CEREBRAS_API_KEY_1`, `CEREBRAS_API_KEY_2`, … (one env var per account, enumerated from 1, stops at the first gap); the legacy single `CEREBRAS_API_KEY` is only used when no numbered keys are set.
@@ -76,6 +81,7 @@
 
 ### 2026-08-12 — Signup-spam protection stack pulled into dev + staging (was main-only)
 
+- **Plain English:** The anti-spam signup protections (captcha, rate limits, bot hook) were only on production; dev and staging were still wide open. Synced all branches so the protection ships everywhere.
 - **Context (user request):** "supabase auth is being spammed" — investigation confirmed the **signup-spam protection** built on `upstream/main` (PR #99, `fcde1094`) had **never reached dev or staging**. Main also carried trial/marketing commits (free trial 3→5 days) via the `off-staging-free-trial` PR chain.
 - **Branch topology (verified):** `upstream/dev` (`039f18a8`) and `upstream/staging` (`19fe13dc`) were both strict ancestors of `upstream/main` (`982f95e9`) — 0 dev-only/0 staging-only commits. Spam commits (`fcde1094`, 55e913fb) only on main.
 - **What the protection stack is (from main's `docs/signup-spam-protection-setup.md`):** Cloudflare Turnstile (`src/components/auth/TurnstileWidget.tsx` + `src/lib/turnstile.ts`, wired into signup/login/forgot-password, passes `captchaToken` to Supabase Auth + email edge fns); Supabase Auth CAPTCHA (Bot and Abuse Protection); Supabase Auth rate limits (IP forwarding on); `auth-before-user-created` hook (webhook-verified, rejects `emailSignupPolicy` matches with HTTP 400 before user row); IP rate-limit migration `20260812140000_auth_abuse_rate_limits.sql` (`claim_auth_abuse_slot`, 10/hr per action+IP) enforced in `send-verification-email`/`send-password-reset-email`; verification-email resend cooldown `20260812130000`; email-verification-bypass fix `20260812120000`; backoffice Overview page with signup-abuse stats + bulk ban spam. Main's memory entry notes 2,883 + 15 bot accounts already deleted from prod (254 legitimate users remain).
@@ -90,6 +96,7 @@
 
 ### 2026-08-12 — `range_basket_tp_rebalance` "no TP ladder" FALSELY logged as `failed`/Major — root-caused + FIXED (signal `2ffe9304`)
 
+- **Plain English:** A normal "take-profit not ready yet" situation was being logged as a failure and flagged Major in the admin dashboard, even though nothing went wrong and no broker call happened. Now logged as "skipped" with a reason, so the dashboard stops alarming.
 - **Context (user request):** admin dashboard showed `range_basket_tp_rebalance` as **Major** for signal `2ffe9304` ("GOLD BUY NOW @4391.00 / SL: 4376.00", Leonardo Araújo, Aug 12 02:20–02:36 UTC): `{phase:"layering_rebalance", failed:1, modified:0, attempted:1, open_legs:11..16, target_tp_counts:{}, force_layering_rebalance:true}` — 6 failed rows, no error message.
 - **What actually happened (correct behavior, wrong logging):** signal has NO TPs (`parsed tp:[]`). 10-leg range basket opened at 02:23 (2026-08-11 `30ec1794` edit fix worked — edited price opened), then more legs fired to 16 as price moved. Each leg firing re-ran `syncRangeBasketTakeProfits` (forceLayeringRebalance). `resolveRangeBasketFinalTps` correctly found no ladder (signal `tp:[]`, no plan TPs, no channel TP memory) → correct skip, **no broker call**. But the deployed worker logged the skip as `status:'failed'` with `attempted:1, failed:1` `target_tp_counts:{}` → admin `errors.ts:93` defaulted empty-message rows to Major.
 - **Root cause — the Aug-11 fix was PARTIALLY shipped:** commit `00674674` (main/staging) shipped `rangeBasketTpRebalanceStatus` helper, i18n keys (all 9 locales), frontend timeline handler, and a pure-unit test — but the **skip-branch call site** at `worker/src/rangeBasketTpSync.ts:754-761` was never updated. It still passed `attempted:1, failed:1` and NO `skippedReason`. The full hunk had been left uncommitted in `stash@{0}` (`wip-2026-08-11-agents-i18n-range`). Unit test passed because it tested the pure helper, not the call site.
@@ -104,6 +111,7 @@
 
 ### 2026-08-11 — `entry_not_opened` / `signal_entry_range_requires_price` incident FIXED: stale dispatch claim + revision routing (3 worker fixes, signal `30ec1794`)
 
+- **Plain English:** A signal whose price only arrived in a later Telegram edit never opened the trade, because the first (price-less) attempt held onto its dispatch claim forever and edited signals were routed to modify-only. Fixed all three worker-side bugs so edited signals can actually open.
 - **Context (user request):** signal `30ec1794` ("GOLD BUY NOW @4389.00\n\nSL : 4374.00", user `82756f8c` = Leonardo, channel `e8218797`, broker `fcabb782`) failed with `entry_not_opened` even though the edited message carried the price. Diagnosed via prod DB (`signals`, `trade_execution_logs`, `signal_broker_dispatch_claims`, `listener_events`) + Railway worker logs.
 - **Verified timeline (UTC):** 12:07:21 listener dispatches ORIGINAL message (NO price — provider posts "GOLD BUY NOW" then edits 19s later) → 12:07:23 worker claims `signal_broker_dispatch_claims`, planner skips `signal_entry_range_requires_price` (correct for no-price + range-strict), **claim never released** → 12:07:40 provider EDITS message adding `@4389.00` (`telegram_edit_date_seen=12:07:40`) → 12:07:41 `message revision dispatch source=live_edit` with valid `entry_price=4389` → 12:07:49 + 12:07:53 worker: `skip duplicate dispatch claim … materialized=false` → revision gives up → final `failed/entry_not_opened`.
 - **Root cause — THREE stacked worker bugs:**
@@ -121,16 +129,19 @@
 
 ### 2026-08-12 — Advanced free trial extended to 5 days
 
+- **Plain English:** Extended the Advanced plan's free trial from 3 days to 5 days (first-time triers only).
 - **Change:** `trial_period_days` 3 → 5 in `create-checkout-session` (Advanced, first-time only). Updated all marketing/pricing i18n (EN + 8 locales), campaign emails, and docs (`stripe-setup.md`, `marketing-site.md`).
 - **Deploy:** Redeploy `create-checkout-session` to staging + prod; Netlify rebuild for frontend copy. Existing `trialing` users keep their current `trial_ends_at`.
 
 ### 2026-08-12 — Additional manual spam bot cleanup (screenshot batch)
 
+- **Plain English:** Deleted another 15 bot accounts that slipped past the big cleanup — nonsense names/emails with no real activity.
 - **Action:** Deleted **15** more bot accounts from production that survived the bulk `pornhub` cleanup — nonsense names (`123 123`, `gay lord`, `test test`), garbage emails (`gaylord@*`, `qweeee*@hotmail.com`, `123qwe*@hotmail.com`), all with 0 brokers/trades/subs.
 - **Kept:** Markus Frei (`herrmarkus.frei@gmail.com`), Comlan Comlan (`ccomlan07@gmail.com`, onboarding completed), Nelson Dimgba (`jayrowe65.out@gmail.com`, active subscription).
 
 ### 2026-08-12 — Production spam bot account cleanup
 
+- **Plain English:** Deleted 2,883 fake signup accounts from production that were mass-registering with spam emails and hurting email reputation; 254 real users remain.
 - **Action:** Deleted **2,883** bot signup accounts from production (`sxkpcovbyaficvtkpsdo`) via SQL batches. Pattern matched `emailSignupPolicy` rules: `pornhub#####@hotmail.com` (2,881), numeric-only local parts (2), disposable domains (0 on prod).
 - **Verified before delete:** 0 brokers, 0 trades, 0 subscriptions, 0 admin audit refs on matched accounts. Cascade removed `user_profiles` rows; 0 orphan profiles after cleanup.
 - **Remaining prod users:** 254 legitimate accounts. Staging left unchanged (only `tartarix-test*@yopmail.com` test accounts matched disposable-domain rule).
@@ -138,6 +149,7 @@
 
 ### 2026-08-12 — Signup spam protection (Turnstile + server hardening)
 
+- **Plain English:** Added Cloudflare Turnstile captcha to signup/login plus server-side rate limits and a bot-pattern hook to stop automated spam accounts.
 - **Problem:** Bots mass-registering (e.g. `pornhub#####@hotmail.com`), triggering verification emails that bounce and hurt Resend reputation.
 - **Frontend:** Cloudflare Turnstile on signup, login, forgot-password (`TurnstileWidget`, `VITE_TURNSTILE_SITE_KEY`). Passes `captchaToken` to Supabase Auth and email edge functions. Removed `auth.resend()` fallback on signup.
 - **Edge:** IP rate limits (`auth_abuse_rate_limits` migration), `emailSignupPolicy` (spam patterns + disposable domains), Turnstile verify on email functions, `auth-before-user-created` hook.
@@ -146,6 +158,7 @@
 
 ### 2026-08-12 — Marketing nav responsive for long locale labels
 
+- **Plain English:** Fixed the marketing navigation so it no longer breaks or overlaps when translated labels are long.
 - Replaced absolute-centered desktop nav with flex layout so links no longer overlap logo / language / CTAs when translations are longer.
 - Desktop nav + header CTA from `lg` up; hamburger until then. Long trial CTA truncates with title tooltip.
 - Nav header CTA label: **Sign up** (`nav.getStarted`); hero keeps trial CTA via `hero.primaryCta`.
@@ -153,22 +166,26 @@
 
 ### 2026-08-12 — Hero: classic “30,000 traders already joined” replaces Trustpilot
 
+- **Plain English:** Swapped the marketing hero's social-proof from the Trustpilot widget to a simple "30,000 traders already joined" message.
 - Commented out Excellent/Trustpilot widget at top of marketing hero; shows `hero.socialProof` instead (now “Rated #1 Cloud-based Telegram Signal Copier”).
 - Hero headline: “Telegram Signals. Copied Automatically.”
 - Files: `HeroSection.tsx`, landing locale `hero.socialProof` / `hero.headline`.
 
 ### 2026-08-12 — Stop treating verify-email as a referral code
 
+- **Plain English:** Fixed a bug where the "verify-email" page path could be captured as a referral code, showing "verify-email" in the signup referral field.
 - **Bug:** Signup “Referral code” field showed `verify-email` because `/:referralCode` could capture that path and redirect to `/signup?ref=verify-email`.
 - **Fix:** reserved path blocklist in `referralCodeLooksValid`; clear stored reserved codes; move `/:referralCode` after real routes in `App.tsx`.
 - **Files:** `referralCapture.ts`, `referralCapture.test.ts`, `App.tsx`, `MarketingApp.tsx`.
 
 ### 2026-08-12 — Marketing CTA: Start your 3-day free trial
 
+- **Plain English:** Updated marketing call-to-action buttons to "Start your 3-day free trial".
 - Replaced “Get started for free” with “Start your 3-day free trial” on marketing nav/hero/comparison/footer CTAs and paywall `choosePlan` (all landing + relevant pricing locales). Still links to `/signup`.
 
 ### 2026-08-12 — Welcome Modal: Start Using TScopier → Channels
 
+- **Plain English:** The welcome modal's main button now takes new users straight to the Channels page to connect Telegram.
 - Pricing already shown earlier in onboarding, so Welcome Modal no longer offers trial/pricing CTAs.
 - Primary: **Start Using TScopier** → completes onboarding and navigates to `/channels` (Telegram connect).
 - Secondary: **Explore dashboard first** → completes onboarding and stays on dashboard.
@@ -176,12 +193,14 @@
 
 ### 2026-08-12 — Fix Check-your-email page flicker
 
+- **Plain English:** Fixed the check-your-email page flickering/refreshing endlessly for logged-in users.
 - **Cause:** `VerifyEmailPage` called `refreshProfile()` whenever `profileLoading` became false, while `UserProfileProvider` already loads the profile — infinite refresh loop for logged-in unverified users (redirect from app gates).
 - **Fix:** removed that effect; keep only redirect-when-verified. Prefer `?email=` for the subtitle so it does not flash when the session clears.
 - **Files:** `src/pages/auth/VerifyEmailPage.tsx`, scratchpad `docs/scratchpad-verify-email-flicker-2026-08-12.md`.
 
 ### 2026-08-12 — Verification email resend cooldown (abuse protection)
 
+- **Plain English:** Added a cooldown to the verification-email Resend button (60s between sends, max 5/hour) so it can't be spammed, with a countdown in the UI.
 - **Limits:** 60s between sends per email; max 5 per rolling hour. Enforced server-side via `claim_verification_email_send` + `email_verification_sends` table before Resend is called. Returns HTTP 429 + `retry_after_seconds`.
 - **UI:** Verify-email “Resend” disabled with countdown (`Resend in Ns`); sessionStorage keeps countdown across refresh; signup no longer falls back to `auth.resend` on cooldown.
 - **Files:** migration `20260812130000_verification_email_resend_cooldown.sql`, `send-verification-email/index.ts`, `sendVerificationEmail.ts`, `VerifyEmailPage.tsx`, `SignupPage.tsx`, auth i18n.
@@ -189,6 +208,7 @@
 
 ### 2026-08-12 — Email verification bypass: auto-confirm was marking profiles verified
 
+- **Plain English:** A security gap let people use the app without ever clicking the verification email, because auto-confirm was marking profiles verified. Fixed so verification can't be bypassed; ops must enable "Confirm email".
 - **Bug:** Users could sign up / log in and use the app without clicking the verification email.
 - **Root cause:** Supabase “Confirm email” is off on staging and prod (auth confirms within ~15ms of signup). Trigger `sync_email_verified_on_confirm` copied that into `user_profiles.email_verified_at`, so frontend gates (`isEmailVerified` / `ProtectedRoute` / `EmailVerificationGate`) allowed access.
 - **Fix:** Migration `20260812120000_harden_email_verified_sync.sql` — ignore confirms within 2s of `created_at`; `mark_email_verified()` writes `now()`. Applied on staging + prod. Staging auto-synced `email_verified_at` cleared for retest; prod existing users grandfathered.
@@ -198,12 +218,14 @@
 
 ### 2026-08-12 — Welcome Modal trial CTA reliably opens Stripe Checkout
 
+- **Plain English:** The welcome modal's trial button sometimes did nothing because the modal unmounted mid-flow; it now reliably opens Stripe Checkout.
 - **Bug:** Welcome Modal “Start your 3-day free trial” called `completeOnboarding()` (profile refresh) before creating the Stripe session, which cleared `needsWelcome` and unmounted the modal mid-flow, so users often never reached Stripe Hosted Checkout.
 - **Fix:** `startFreeTrial` now creates the Advanced monthly checkout session first via `startPlanCheckout`, marks `onboarding_completed_at` with a non-blocking `updateUserProfileFields`, then `window.location.assign(stripeUrl)`. Uses `appAbsoluteUrl` for success/cancel like the pricing page.
 - **File:** `src/components/onboarding/WelcomeModal.tsx`.
 
 ### 2026-08-11 — Signup-first + Welcome Modal restored
 
+- **Plain English:** Restored the signup-first flow (marketing CTAs go to signup) and brought back the welcome modal for new users.
 - **Marketing CTAs:** “Get started for free” (hero/header/comparison/footer) goes to `appUrl('/signup')`, not `/pricing`. Pricing-page plan buttons still stash `pendingPlanSelection` and auto-checkout after auth.
 - **Welcome Modal:** restored `src/components/onboarding/WelcomeModal.tsx` + `auth.welcome` i18n. Shown when email verified and `onboarding_completed_at` is null. Primary starts Advanced monthly checkout (3-day trial CTA); secondary opens `/pricing`; tertiary explores dashboard. Each path sets `onboarding_completed_at`.
 - **Gate:** `useNeedsWelcome` restored; skips welcome when a pending plan exists so pricing auto-checkout is not interrupted. `AppShell` lazy-loads the modal and forces `/dashboard` while welcome is needed.
@@ -211,12 +233,14 @@
 
 ### 2026-08-11 — Pricing CTAs: Advanced trial button + Get started for free
 
+- **Plain English:** Updated pricing CTAs: Advanced shows "Start your 3-day free trial", and primary CTAs say "Get started for free".
 - **Advanced plan CTA:** marketing pricing card uses `pricing.startTrial` → “Start your 3-day free trial” (Basic stays `Subscribe`). App Advanced checkout via `getSubscribeCtaLabel` also defaults to `startTrial` (still uses update-payment / upgrade / purchase labels when past due, on Basic, or trial expired).
 - **Marketing primary CTA:** landing `nav.getStarted`, `hero.primaryCta`, comparison CTA, and footer primary changed from “Choose a plan” to “Get started for free” (all landing locales). Billing `paywall.choosePlan` aligned in en/es/fr + pricing locale packs.
 - **Files:** `PricingPlansSection.tsx`, `subscriptionCta.ts`, pricing/landing i18n, `docs/marketing-site.md`.
 
 ### 2026-08-11 — Restore Advanced 3-day free trial (replace money-back messaging)
 
+- **Plain English:** Brought back the 3-day free trial for the Advanced plan (first-time only), replacing the 30-day money-back messaging.
 - **Context (user request):** bring back the free trial. Decisions locked: **Advanced only**, first-time only (`!trial_ends_at`); **replace** 30-day money-back copy with trial messaging; Basic stays paid from day one. Length set to **3 days** (not 10).
 - **Checkout:** restored `trial_period_days: 3` + `trial_settings.end_behavior.missing_payment_method: create_invoice` in `supabase/functions/create-checkout-session/index.ts` for Advanced when `existingSub.trial_ends_at` is null. Card collection remains `always`. Webhook / `confirm-checkout` already sync Stripe `trial_end` → `subscriptions.trial_ends_at`.
 - **Copy:** pricing `trialDays` / `moneyBackGuarantee` and landing FAQ answers updated across locales; EN comparison table row changed from money-back to Free trial (Basic no / Advanced 3 days). Campaign emails updated to 3-day Advanced trial.
@@ -226,6 +250,7 @@
 
 ### 2026-08-11 — `entry_not_opened` missing-logs root cause CONFIRMED: retention priority ordering inverted (ASC) + auto_be failure flood; Fix 1 applied to staging, Fix 2 (worker throttle) written
 
+- **Plain English:** Found why "entry not opened" signals had zero logs in the database: the log-pruning job was deleting the important rows FIRST instead of last, and a broker outage flooded the log with auto-breakeven failures that ate the whole budget. Applied the retention fix on staging and wrote a throttle for the failure flood.
 - **Context:** closing the open item from 2026-08-10 (why signal `7de8d9c7`'s `pipeline_summary` row was missing). Diagnosed fully via prod DB + worker source + staging DB. Scratchpad: `docs/scratchpad-signal-7de8d9c7-entry-not-opened-2026-08-10.md`.
 - **ROOT CAUSE CONFIRMED (Fix 1 — retention ordering inverted):** the deployed `prune_all_trade_execution_logs` (prod AND staging) ranks priority action rows (`pipeline_summary`, `handle_start/handle_end`, `dispatch_received`, ...) with `CASE … THEN 1 ELSE 0 END ASC`. `ASC` gives the priority rows the HIGHEST rn, so once a user exceeds `p_keep` (500) rows, the priority rows are deleted FIRST — exactly backwards. The intent is `DESC` (priority rows rank 1..N and survive). The priority list existed ONLY in the deployed function, NOT in any migration — it was applied ad-hoc.
 - **Amplifier:** user `82756f8c` (Leonardo, broker `fcabb782` disconnected the whole window — "empty snapshot / suspected disconnect" every ~30s) had an `auto_be` failure flood: `autoManagementMonitor` tick (~400ms active) fires `orderModify`, broker is down, each non-benign failure writes a `trade_execution_logs` row → 724 rows all `action=auto_be status=failed` (~1 row/0.5s). That flood consumed the entire 500-row budget, so every `pipeline_summary`/`handle_*` row for Leonardo was pruned within minutes of being written → DB showed ZERO pipeline logs for the signal while the pipeline actually ran fine.
@@ -238,6 +263,7 @@
 
 ### 2026-08-10 — `entry_not_opened` investigation CONCLUDED: delivery + entry proven; empty outcome via silent `prepareEntryExecution` return (probable); one open item
 
+- **Plain English:** Closed the investigation into "entry not opened": proved the signal reached the executing worker and the entry pipeline ran, and found the likely cause of the empty result — a silent early return when the broker client failed to initialize. One item still needs runtime access to confirm.
 - **Context:** finished Round 3 of the `7de8d9c7` investigation (Leonardo Araújo) using Railway GraphQL logs + prod DB + worker source. Scratchpad: `docs/scratchpad-signal-7de8d9c7-entry-not-opened-2026-08-10.md` (sections G–L).
 - **Executing worker confirmed:** `TScopier - Worker` (`cb96002f`), deployment `ec51d529`. The `Trade` service (`9e424585`, `realtime=false`) was idle — only `basketReconcileTargets` heartbeats. Listener `TScopier - Listener` (`88a5c666`) dispatched.
 - **PROVEN delivery + claim:** `signal_broker_dispatch_claims` row (`ecac4856`) inserted 19:11:19.105Z (unique-constraint claim, `signalBrokerDispatchClaim.ts:16`), 94ms before `[tradeExecutor] sendOrder signal=7de8d9c7 broker=fcabb782 … source=per_channel style=multi fixed_lot=2 range_trading=true` at 19:11:19.199Z. A second invocation (live-edit revision) hit the duplicate key → `skip duplicate dispatch claim materialized=false` + its own `slow pipeline ms=6108` both at 19:12:30.876Z. DB `pipeline_ts` = only `queue_consumed_at`+`t_dispatch_received` (19:12:59.222Z) is normal — stamps go into `trade_execution_logs.pipeline_summary`, not `signals`.
@@ -250,6 +276,7 @@
 
 ### 2026-08-10 — Railway read-only access via GraphQL API established (used for `entry_not_opened` investigation)
 
+- **Plain English:** Set up read-only access to Railway (deployments, logs, env vars) through its GraphQL API, so incidents can be investigated without the CLI or dashboard.
 - **Context (user request):** "OpenCode + Railway" — user provided a Railway token to inspect prod worker logs/env while investigating the `entry_not_opened` issue for signal `7de8d9c7`.
 - **Key discovery — how to access Railway without the CLI:** the installed Railway CLI (`/usr/bin/railway`, v3.21.0) ignores `RAILWAY_TOKEN` for `railway whoami` (returns `Unauthorized`) and `railway login` needs a browser. Direct GraphQL works: `POST https://backboard.railway.com/graphql/v2` with `Authorization: Bearer <token>`. Project-scoped tokens reject `{ me { … } }` (`Not Authorized`) but allow `{ projects { … } }`, `project(id:)`, `deploymentLogs`, `environmentLogs`, and `variables`.
 - **Documented in AGENTS.md** under a new "Railway access (read-only via GraphQL API)" section: token URL, curl pattern, key IDs (project `3cc419d4`, prod env `25cc1235`, staging env `bf3e9d3e`, and all service IDs with their running deployments), query templates, and gotchas (`beforeLimit` max ~2000, `deploymentLogs` spans all replicas of a deployment, custom env vars NOT exposed via API — only `RAILWAY_*`).
@@ -264,6 +291,7 @@
 
 ### 2026-08-11 — `range_basket_tp_rebalance` "no TP ladder" skip logged as `skipped` (was `failed`) + user-facing timeline message; admin explanation added (admin repo, handoff)
 
+- **Plain English:** A "take-profit not ready" skip was being logged as a failure and shown as "unknown ticket" in the admin. Now logged as skipped, shown to users in plain language on the timeline, and explained in the admin.
 - **Context (user request):** admin dashboard showed `range_basket_tp_rebalance` as **Major / "unknown ticket"** for signal `e2fbd5c5` ("Gold Buy Now!", XAUUSD, Luis ESp, Aug 11 13:25 WAT): `{phase:"layering_rebalance", failed:1, attempted:1, modified:0, open_legs:13, target_tp_counts:{}}`. User asked whether it was explained to the user and on the admin dashboard.
 - **Root cause (verified against code):** the skip branch in `worker/src/rangeBasketTpSync.ts:735-752` logged the "no TP ladder" skip as `status:'failed'` with `attempted:1, failed:1` and no reason field. It was a correct skip, not a failure — `resolveRangeBasketFinalTps` returned an empty ladder (signal `tp:[]`/`sl:null`, `plan:null`, channel TP memory absent or predating the basket via `channelParamsPredateBasket`, and the single-TP-across-many-legs guard at `rangeBasketTpSync.ts:137-141` deliberately rejects). No broker call happened; the fired leg `de505a08` opened with stops (`opened_naked:false`). The "Major / unknown ticket" presentation was a downstream artifact: `errors.ts:93` defaulted empty-message rows to Major, and `PipelineSections.tsx:421-427` printed the broker-ticket line for every `MANAGEMENT_ACTIONS` row.
 - **Worker (`worker/src/rangeBasketTpSync.ts`):**
@@ -278,6 +306,7 @@
 
 ### 2026-08-11 — `mgmt_breakeven` unknown-ticket retry loop root-caused + fixed (trade #1297061, signal e8831c0f) — fix written, NOT yet committed/pushed
 
+- **Plain English:** Auto-breakeven kept retrying a position that no longer existed ("unknown ticket") every second for 5 minutes, leaving the trade stuck open. Root-caused it and wrote the fix (treat gone positions as benign, throttle sweep retries) — written but not yet deployed.
 - **Context (user request):** two questions — (1) why "Broker · Unknown ticket" STILL appears (trade #1297061, Ramandeep, Aug 11 12:48 PM) despite the 2026-08-10 fix; (2) why a 0.92-confidence deterministic parse bypassed AI. Scratchpad: `docs/scratchpads/scratchpad-unknown-ticket-1297061-2026-08-11.md` (new folder `docs/scratchpads/` created at user request).
 - **Q2 answer (CONFIRMED, no code change):** prod listener had no AI env vars → `UNIVERSAL_PARSE_MODE` unset → default `'shadow'` (`parseConfig.ts:20`) → deterministic result used unconditionally (`parseRouting.ts:518-541`); the 0.92 is the regex engine's own confidence, no AI gate applied. User added the envs; listener redeployed 12:35:40Z; DB vpaths show AI live since ~12:47Z (`fast_lane`/`stage2`/`stage2_veto`/`stage3`; e.g. signal `4d9c09e9` det_conf 0.92 → `stage3`). Staging also live. The 11:46Z parse predates enablement and stays immutable.
 - **Q1 root cause (CONFIRMED via prod DB + Railway logs):**
@@ -297,6 +326,7 @@
 
 ### 2026-08-10 — Auto-BE "unknown ticket" retry loop root-caused + fixed (Leonardo Araújo incident)
 
+- **Plain English:** A customer's auto-breakeven kept trying to modify positions that were already closed, spamming "unknown ticket" errors forever. Fixed so gone-position replies are recognized as benign and the trade is marked closed, ending the loop.
 - **Context (user request):** investigate the "Broker · Unknown ticket" error for Leonardo Araújo (XAUUSD, `auto_be`, signal `072a819e`). Scratchpad: `docs/scratchpad-unknown-ticket-2026-08-10.md`.
 - **Root cause (fully verified against prod DB + code):**
   1. Signal arrived 11:49:54Z → **10 trades** opened on broker 11:49:58–11:50:01Z (NOT 5). `manual_settings`: `static_layer_count: 5` × `predefined_tp_pips: [20,40]` = 5 layers × 2 TP targets (tp 4335/4337).
@@ -311,6 +341,7 @@
 
 ### 2026-08-10 — Prompt-injection guard + input sanitization for the AI assistant (`assistant-chat`)
 
+- **Plain English:** Added a security guard to the AI assistant so users can't smuggle hidden instructions (like "ignore your guidelines"), plus input cleaning that strips invisible characters and caps message/tool-argument sizes.
 - **Context (user request):** "Create a prompt injection guard and input sanitization for the ai assistant." The assistant (`supabase/functions/assistant-chat/index.ts`, Martins' feature) sends user messages straight into OpenAI tool-calling with only a length cap — no protection against instruction-override, system-prompt extraction, jailbreak, or encoded/markup smuggling, and tool args were used unsanitized.
 - **NEW `supabase/functions/_shared/assistantGuard.ts`** (pure TS, no Deno/OpenAI imports):
   - `sanitizeAssistantText` — strips control chars + zero-width chars, clips to 8000 chars.
@@ -325,6 +356,7 @@
 
 ### 2026-08-10 — Order-close audit: `signal_id` restored as required (hybrid merge broke it) — pushed to staging
 
+- **Plain English:** A bad merge made the signal_id field optional on order-close audit rows, but the database requires it — so every audit write was silently dropped. Restored it as required and pushed to staging.
 - **Context (user request):** After the staging/main hybrid merge of `worker/src/orderCloseAudit.ts` (commits `886e107f` [BZetsu trade-resolved] + `9e354c57` [Osodi account-resolved], resolved in `6dbddd21`), audit inserts made `signal_id` OPTIONAL (`...(signalId ? { signal_id: signalId } : {})`). But `trade_execution_logs.signal_id` is `uuid not null` (migration `20260508190500_trade_execution_logs.sql:4`) — no migration ever relaxed it. Omitted `signal_id` → DB 23502 → audit row silently dropped, the exact bug the fix was meant to solve. Worse: `signalId` was only resolved on the account cache-miss branch, so repeat events for a known account never resolved it.
 - **Fix (worker only, `worker/src/orderCloseAudit.ts`):** the Supabase sink now always resolves the account once (caching `{ userId, brokerAccountId }` together in `accountByFxAccount`), always resolves `signal_id` from the owning `trades` row (`broker_account_id` + `metaapi_order_id` = ticket), and **skips the insert** with a console warning when either is missing (console-only audit retained). Insert always carries both required fields.
 - **Tests:** `worker/src/orderCloseAudit.test.ts` — replaced the test that asserted an insert with `signal_id: undefined` (that is the bug; the insert fails in prod) with "skips the insert when the trade row is missing". 3/3 pass; worker `tsc --noEmit` clean; eslint clean.
@@ -333,6 +365,7 @@
 
 ### 2026-08-10 — Applied Emma's copier-listener-health migration to staging + prod (was missing on both)
 
+- **Plain English:** A teammate's database migration for listener-health tracking existed in code but had never been applied to staging or production — the health feature was dead everywhere. Applied and verified it on both.
 - **Context (user request):** "Check if emma has any project memory updates" → Emma's file (`docs/PROJECT_MEMORY-EMMA.md`) has 2 entries (Aug 07, both already merged via `cdb6c46e`): Light Channel Config Cache (PR #83, flag OFF by default) and Deferred Business Events + Accurate Copier Health (PR #82). Follow-up requested: "just migration" — verify/apply the copier-health migration.
 - **Verified missing on BOTH projects:** `supabase/migrations/20260806120000_copier_listener_health.sql` was NOT registered in `supabase_migrations.schema_migrations` AND the objects did not exist (`copier_listener_health` table = null, `upsert_copier_listener_health` RPC = false) on staging `axdcledcyhyvzrnfkwat` and prod `sxkpcovbyaficvtkpsdo` — Emma's health feature was dead code in both environments.
 - **Applied (Management API query endpoint, same pattern as `scripts/apply-migrations.py`):** DDL ran clean on both; table + RPC verified; registered in `schema_migrations` — note the `statements` column is `text[]` on these projects, so the older `'[...]'::jsonb` registration format from `scripts/register-migrations.py` fails (`42804`) — use `ARRAY['-- <name>']` instead.
@@ -341,12 +374,14 @@
 
 ### 2026-08-10 — Sentry log-noise filter (gramjs flood-wait chatter dropped before capture)
 
+- **Plain English:** Stopped sending noisy Telegram flood-wait log lines to Sentry so real errors aren't drowned out.
 - **Noise filter (worker):** `worker/src/observability/sentry.ts` `beforeSendLog` now drops high-frequency, no-diagnostic-value log lines. Default regex drops gramjs flood-waits (`Sleeping for Ns on flood wait (Caused by messages.GetHistory/GetDialogs)`) — ~60-67% of captured log lines in the Aug 9/10 prod windows. Env controls: `SENTRY_LOG_NOISE_FILTER` (default ON; `false` disables) and `SENTRY_LOG_NOISE_PATTERNS` (comma-separated extra regex sources). Tests in `sentry.test.ts` cover default drop, keep non-noise, extra patterns, disable. `worker/.env.example` documents both vars. Compiled `worker/dist/observability/sentry.js` updated.
 - **Verification:** worker `tsc --noEmit` clean; `sentry.test.ts` passes (noise + existing); build clean.
 - **Deploy note:** push to dev + staging, redeploy worker on Railway (listener + trade worker). No env vars required — filter ON by default.
 
 ### 2026-08-10 — Order-close audit persistence fixed (missing user_id/signal_id) — Notion task done, body rewritten in plain English
 
+- **Plain English:** Fixed order-close audit rows that were failing to save because they lacked the required user/signal IDs; they're now resolved from the trade record before saving. Notion task completed and rewritten in plain English.
 - **Context (user request):** "Wait first, fix order close audit id task, should have plain english explanations for context, all too technical" — the Notion task "Fix order-close audit persistence (missing signal_id)" was open (investigation only, no code fix yet). Root cause B from the Aug 10 findings: `registerOrderCloseAuditSupabase` (`worker/src/orderCloseAudit.ts:28-43`) inserted into `trade_execution_logs` with NO `user_id`/`signal_id`, but both columns are NOT NULL (migration `20260508190500_trade_execution_logs.sql`) → every close-audit write failed at the DB and was only console-logged. Callers (`fxClient.ts`, `fxsocketClient.ts`) only know broker account id + ticket, not user/signal.
 - **Fix (worker only):** the Supabase sink now resolves `user_id` + `signal_id` from the `trades` row (`broker_account_id` + `metaapi_order_id` = ticket) before inserting; if no trade row matches, the DB write is skipped with a console warning (console-only audit retained). Insert carries the same action/status/payload as before plus the two required fields.
 - **Tests:** NEW `worker/src/orderCloseAudit.test.ts` — mock supabase client, 2 tests: (1) persist includes resolved user_id/signal_id + failed status + error_message; (2) no insert attempted when the trade row is missing. 2/2 pass; worker `tsc --noEmit` clean; `worker/dist/orderCloseAudit.js` rebuilt (+34/−18).
@@ -356,6 +391,7 @@
 
 ### 2026-08-10 — Partial-TP benign-error regex fixed (`unknown ticket` retry loop) — Notion task done
 
+- **Plain English:** Partial take-profit on an already-closed position kept retrying forever on "unknown ticket"; that error is now recognized as benign and stops the loop. Notion task done.
 - **Context (user request):** "Check the unknown_ticket error on notion and in investigations findings, have we fixed it" → it was NOT fixed: Notion task "Fix partial-TP benign-error regex (unknown ticket)" was Not started; `docs/Prod_Logs/Listener/investigation-findings-2026-08-10.md` documented it as the dominant prod failure (505 errors in 14.5 min, trade 1278201 retrying every ~400ms since Aug 7). `partialTpMonitor.ts:357` regex `/not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order/i` did not match FxSocket's `unknown ticket` reply → leg rolled back to `pending` and retried forever. Note: `managementExecutor.ts:263` already had a correct `isUnknownTicketError` helper but it was never used by the partial-TP monitor.
 - **Fix (worker only):**
   - `worker/src/partialTpMonitor.ts` — extracted the benign-error check into exported pure fn `isPartialTpBenignBrokerError(message)` and added `unknown\s+ticket` to the alternation. Broker replies meaning "parent position is gone" now cancel the partial leg and close the parent trade (existing benign path) instead of the retry loop.
@@ -367,6 +403,7 @@
 
 ### 2026-08-10 — Broker-error surfacing: trade modal banner + copier log timeline highlighting
 
+- **Plain English:** When a broker rejects an order, the app now shows a red error banner in the trade modal and highlights failed/skipped rows in the copier log, so users can see why a trade failed.
 - **Context (user request):** "In the app, whenever a trade fails due to broker related error, let the user know in the trade modal or copier logs." Broker rejections are recorded by the worker as `trade_execution_logs` rows with `status='failed'` + `error_message` (e.g. `order_send failed` at `orderLegExecution.ts:456-464`, `mgmt_close_worse_entries failed` at `managementExecutor.ts:2115-2128`). The trade detail modal showed no error info at all; the copier log timeline rendered failed rows in the same neutral style as successes.
 - **Changes (frontend only, no worker change):**
   - `src/lib/copierLogDetail.ts` — new `fetchBrokerFailuresForTrade(supabase, {userId, signalId, brokerAccountId})`: queries `trade_execution_logs` for `status='failed'` across the trade's signal family (linked entry signal + its management children via `signals.parent_signal_id`), filtered to the trade's broker, newest 10. New `formatBrokerFailureRow(row, copierLogs)` — friendly label via existing skip-reason mapping (`order_send failed` → `formatCopierSkipReasonShort`, other actions → `action: error`), raw message kept in tooltip.
@@ -379,6 +416,7 @@
 
 ### 2026-08-10 — Sentry log-noise filter, plain-English findings, wkhtmltopdf PDF, Notion task integration
 
+- **Plain English:** Combined docs/admin session: reduced Sentry log noise, added a plain-English summary to the findings doc, regenerated the PDF, and set up Notion task tracking via the MCP.
 - **Noise filter (code, committed for push):** `worker/src/observability/sentry.ts` now drops high-frequency no-diagnostic-value log lines from Sentry (`beforeSendLog`): default regex drops gramjs flood-waits (`Sleeping for Ns on flood wait ...`). Env controls: `SENTRY_LOG_NOISE_FILTER` (default ON; `false` disables) and `SENTRY_LOG_NOISE_PATTERNS` (comma-separated extra regexes). Tests in `sentry.test.ts` (40/40 pass), `.env.example` documents both vars. Compiled `worker/dist/observability/sentry.js` updated. Build passes.
 - **Docs:** added "Plain English summary" (what happened / who was affected) to `docs/Prod_Logs/Listener/investigation-findings-2026-08-10.md`.
 - **PDF:** regenerated `docs/Prod_Logs/Listener/investigation-findings-2026-08-10.pdf` using **wkhtmltopdf 0.12.6** (same engine + `docs/ai-signal-verification-review-print.css` as the existing good PDFs), verified 6 pages / fonts / margins / no overflow.
@@ -391,6 +429,7 @@
 
 ### 2026-08-10 — Investigated prod listener/trade failures from Sentry exports + DB; findings doc written
 
+- **Plain English:** Investigated the morning's production trade failures using Sentry exports and the database, and wrote up the findings (partial-TP retry loop, missing audit saves, connection instability, degraded Telegram).
 - **Context (user request):** "Document your findings so far", starting from the listener Sentry logs, then a second export, then the Sentry errors CSV. The investigation covers the Aug 10 production incident window (trades failing all morning).
 - **Sources analyzed:**
   - `docs/Prod_Logs/Listener/trace_item_full_export_2026-August-10_122171.jsonl` (10k lines, Aug 9 07:39–07:54 UTC)
@@ -407,6 +446,7 @@
 
 ### 2026-08-08 — Worker Sentry Logs: enable console capture via consoleIntegration (one-switch fix)
 
+- **Plain English:** The worker's console logs weren't reaching Sentry because the console-capture integration was disabled; enabled it with a one-line change so real logs show up.
 - **Context (user request):** Sentry Logs showed only 3 `worker startup` logs (3 worker restarts). Root cause verified in code, not guessed: the worker emits all real logging through `console.*` — 770 calls across 113 files — but `initWorkerSentry` was initialized with `defaultIntegrations: false, integrations: []`, which excluded the SDK's `ConsoleLogs` integration that pipes console output into Sentry Logs. The only `Sentry.logger` call site was the startup log in `worker/src/index.ts:50`. `enableLogs: true` (internal option `ln`) was already set — proven working because the 3 startup logs arrived.
 - **Changes:**
   - `worker/src/observability/sentry.ts` — `integrations: []` → `integrations: [Sentry.consoleIntegration()]` (one line). This installs the `ConsoleLogs` integration (`@sentry/node@10.69.0`), which captures `console.debug/info/warn/error/log/trace/assert` as logs. Security is preserved: every captured log flows through `_INTERNAL_captureLog` → our existing `beforeSendLog` (`safeForSentry` on the whole log object — JWT/Bearer/API-key/email/phone redaction + 512-char message cap + sanitized attributes).
@@ -416,6 +456,7 @@
 
 ### 2026-08-08 — Learnings recorded: wrong-branch push, fast-forward verification, Emma's memory split (pitfalls)
 
+- **Plain English:** Recorded team lessons: a push nearly went to a stale local branch, how to verify clean fast-forwards before pushing, and why teammates must keep their own memory files.
 - **Context:** Recording three learnings from the staging push incident into `.superstack/learnings.md`. (1) `git push upstream staging` targeted a stale local branch literally named `staging` (merging Emma's layering fix, 75f8e56e) that diverges from upstream/staging — rejected non-fast-forward. The correct push is the worktree branch via explicit refspec: `git push upstream push-sentry/staging:staging`. (2) Always prove a clean fast-forward before pushing with `git merge-base --is-ancestor upstream/<branch> <local-branch>` plus `git log upstream/<branch>..<local-branch>` — this also caught an EMMA.md extraction anchored on a commit ("Fix modify-TP") that does not exist on staging, which swept 5 main-memory entries into Emma's file. (3) Emma's changelog entries must live only in `docs/PROJECT_MEMORY-EMMA.md`, never in `docs/PROJECT_MEMORY.md`, or they collide with every other session's memory merge.
 - **Change:** Created `.superstack/learnings.md` (first entry) with 3 learnings. See `.superstack/learnings.md` for full details.
 - **Files:** `.superstack/learnings.md`, `docs/PROJECT_MEMORY.md`
@@ -423,6 +464,7 @@
 
 ### 2026-08-08 — Worker Sentry Logs pipeline (staging onboarding follow-up)
 
+- **Plain English:** Set up the worker's Sentry logs pipeline: structured logs now forward to Sentry (sanitized), with a guaranteed startup log on every boot.
 - **Context (user request):** Sentry onboarding for `tscopier-worker-staging` showed "Waiting for this project's first log". The worker already had a hardened Sentry integration for **issues** (`captureWorkerError/Warning/Message`, breadcrumbs, business events) gated on `SENTRY_ENABLED` + `SENTRY_DSN`, but the SDK logs pipeline was never enabled — `@sentry/node@10.69.0` (installed, ≥9.41) was configured without `enableLogs`, so no logs reached the Sentry Logs tab. The staging Railway listener + trade worker already had `SENTRY_ENABLED=true` + a DSN set.
 - **Changes (worker only):**
   - `worker/src/observability/sentry.ts` — `Sentry.init` now sets `enableLogs: true` plus a `beforeSendLog` sanitizer (defense-in-depth; runs `safeForSentry` on every log before it leaves the process). Added `captureWorkerLog(level, message, opts)` helper (levels info/warn/error) that applies the same redaction/bounded-field discipline as the issue helpers and emits attributes `subsystem`, `operation`, optional `error_code`, merged tags, and sanitized extra attributes through `Sentry.logger.*`. `SentryAdapter` type extended with the `logger` public API.
@@ -437,6 +479,7 @@
 
 ### 2026-08-07 — Staging hotfix: deployed `upsert-telegram-channel` edge function to staging Supabase
 
+- **Plain English:** Adding a Telegram channel on staging failed because the channel-creation edge function had never been deployed there; deployed it as a hotfix.
 - **Context (user bug report):** Adding a new Telegram channel on staging (`staging.tscopier.ai`) failed with `Could not reach upsert-telegram-channel. Deploy the edge function first.`
 - **Root cause (verified, not guessed):** `supabase/functions/upsert-telegram-channel/` existed in the repo but was NEVER deployed to the staging Supabase project `axdcledcyhyvzrnfkwat`. Direct curl test: `POST https://axdcledcyhyvzrnfkwat.supabase.co/functions/v1/upsert-telegram-channel` returned `{"code":"NOT_FOUND","message":"Requested function was not found"}` (HTTP 404). Prod `sxkpcovbyaficvtkpsdo` returned 401 (function exists). The browser showed the "Could not reach..." catch-block message (not the 404 body) because the 404 response's CORS preflight allowed only `authorization, x-client-info, apikey` (missing `content-type`), so the browser blocked the request before it could read the 404 body.
 - **Fix:** `supabase functions deploy upsert-telegram-channel --project-ref axdcledcyhyvzrnfkwat --use-api` (CLI is linked to prod, so the staging ref was explicit; prod untouched). Post-deploy verification: no-auth POST returns 401 (function exists), CORS preflight returns 200 with `Access-Control-Allow-Headers: Content-Type, Authorization, X-Client-Info, Apikey`.
@@ -446,6 +489,7 @@
 
 ### 2026-08-07 — New doc: statement-by-statement breakdown of the idempotency guard migration SQL
 
+- **Plain English:** Wrote a plain-English doc explaining what each statement in the duplicate-trade database migration does.
 - **Context (user request):** "break down everything the sql is saying into a different doc". Companion to `docs/migration-20260805000000-trades-idempotency-guard.md` (which holds the SQL-only file). Explains each of the 5 statements in plain English.
 - **Changes:**
   - NEW `docs/migration-20260805000000-trades-idempotency-guard-breakdown.md` — walks through (1) the `DO $$` pre-flight duplicate-count check (read-only, raises and rolls back if any `<broker_account_id, metaapi_order_id>` duplicate exists at/after cutoff), (2) the partial `CREATE UNIQUE INDEX trades_broker_order_unique_idx` (the guard; `IF NOT EXISTS`; partial `WHERE` excludes NULL tickets and pre-cutoff rows), (3) the non-unique `CREATE INDEX trades_signal_broker_opened_idx` (read performance only), (4) `COMMENT ON INDEX`, (5) the `INSERT INTO supabase_migrations.schema_migrations` registration with `ON CONFLICT (version) DO NOTHING`. Covers idempotency, rollback behavior, the one real side effect (short lock on `trades` while the unique index is built), and the safety argument (no UPDATE/DELETE/DROP/ALTER anywhere). Full SQL included at the end.
@@ -457,6 +501,7 @@
 
 ### 2026-08-06 — Review flow refinement: informational auto-popup modal returns (countdown + "go to Live Trades") — approve/dismiss still lives on the trades page
 
+- **Plain English:** Brought back a pop-up that automatically appears when an AI signal needs review, with a countdown and a link to the Live Trades page (approval still happens there).
 - **Context (user follow-up):** After removing the review modal/floating button and moving reviews inline to `/account-trades`, the user asked to bring back a modal — but only as an informational popup that auto-appears when an AI signal is escalated, showing a countdown timer, and telling the user to approve on the Live Trades page. No approve/dismiss inside the modal (that stays on the trades page, in the amber card and the click-to-open `SignalReviewDetailModal`).
 - **Changes:**
   - `src/context/HumanReviewContext.tsx` — restored `isOpen` / `openModal` / `closeModal` to the context value; realtime listener sets `isOpen=true` again when a new review signal arrives (still plays the sound).
@@ -469,6 +514,7 @@
 
 ### 2026-08-06 — App UX: review modal + floating button removed; reviews live inline on the Trades page; bell gets a yellow review dot
 
+- **Plain English:** Removed the pop-up and floating review button; pending reviews now live inline on the Trades page, and the notification bell shows a yellow dot when a review is waiting.
 - **Context (user directive):** The "Signal review required" flow currently auto-opens a modal (`HumanReviewModal`), has a floating "Review" button (`HumanReviewIndicator`), and review notifications in the bell open the modal. User wants: no review modal and no floating button; reviews should live inline on the live trades page (`/account-trades`, already the case via `AwaitingApprovalSection`), styled like that page's brand but visually distinct (amber); the notification bell should indicate pending reviews the way it shows trade notifications — a yellow dot instead of the blue/teal indicator.
 - **Changes (main app `src/`):**
   - Deleted `src/components/dashboard/HumanReviewModal.tsx` and `src/components/dashboard/HumanReviewIndicator.tsx` (explicitly requested).
@@ -485,6 +531,7 @@
 
 ### 2026-08-06 — Root-cause fix: Cerebras silently falling back to OpenAI (429 rate-limit + 500-token reasoning truncation) + admin model-chain transparency
 
+- **Plain English:** AI parsing was silently switching to a weaker model when Cerebras hit rate limits or when the reasoning output was cut off at 500 tokens — and the admin had no way to see it. Fixed the limits and made the model chain (and fallback reason) visible.
 - **Context (staging live bug):** Signal `0e42bbf6-617f-4d6c-a581-2aa0616b63ed` (tm 33319, channel `3b491a96`, user `f1d54bc2`) — ambiguous `GOLD XAUUSD 2650 🎯 Buy or Sell, take profit 2670 or 2630 — one of them will hit` — was NOT escalated to human review. Stage 2 fell back from Cerebras to OpenAI (`ai_source: openai` in `ai_entry_parsed` listener event) and the weaker `gpt-4o-mini` fallback confidently misclassified it as `entry BUY 0.9` → dispatched → only saved by the `entry_price_moved_adverse` guard at execution. NO `ai_parse_fallback` listener event and NO `_verification` were stored, so the admin had no explanation.
 - **Root cause (proven by direct API tests + live repro):** `gpt-oss-120b` is a REASONING model. The worker hard-coded `max_tokens: 500` (`callChatCompletions`), so reasoning consumed the budget and content came back empty/truncated (`finish_reason=length`, `reasoning_tokens=376/500` in one test). Separately, Cerebras aggressively rate-limits: 9/12 of direct test calls returned HTTP 429. Either failure → `raw: null` → silent fallback to OpenAI. The worker had NO logging inside `callStageTwo`, and the OpenAI-success fallback path (`parseRouting.ts`) set no `fallbackReason`, so the `ai_parse_fallback` event (hooked at `userListener.ts:2523`) never fired.
 - **Worker fixes (`worker/src/signalIntent/`):** `parseConfig.ts` adds `cerebrasParseMaxTokens()` (env `CEREBRAS_PARSE_MAX_TOKENS`, default **2000**, bounded 500–8000) and `cerebrasParseRetries()` (env `CEREBRAS_PARSE_RETRIES`, default 2, bounded 0–5). `universalSignalParser.ts` `callChatCompletions` now (a) uses the configurable `maxTokens`, (b) retries HTTP 429/5xx with 400ms×attempt backoff, (c) logs failures via `console.error`/`console.warn`, (d) treats empty/invalid-JSON as failures instead of returning `{}`. `callStageTwo` now returns the Cerebras error as `fallbackReason` when OpenAI succeeds, `UniversalParseResult` gained `fallback_reason`, and `parseUniversalSignal` threads it through. `parseRouting.ts` sets `aiMeta.fallbackReason` from `universal.fallback_reason` on the stage-2 success, veto, and review paths → `ai_parse_fallback` event now records WHY.
@@ -496,6 +543,7 @@
 
 ### 2026-08-06 — Escalation email notification (signal awaiting approval) + email preference toggle
 
+- **Plain English:** Users now get an email when a signal needs their approval, and can turn that email off in Settings.
 - **Context:** Finishing the human-review escalation feature. The app-side awaiting-approval queue, amber bell review item, and auto-open review modal already shipped in the prior session. User's last ask: notify by EMAIL when a signal is escalated for review, and let users disable it. Escalation window is 2 minutes (`AI_REVIEW_MAX_AGE_MS` = `worker/src/retrySignal.ts:16`; frontend `HUMAN_REVIEW_WINDOW_MS` = `src/lib/humanReview.ts:6`).
 - **Trigger choice:** fire the email from the WORKER at the exact escalation moment, not a DB trigger/pg_cron. The worker already holds `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` and already calls edge functions (parse-signal); firing at the moment of escalation means no cron cadence is needed inside the 2-minute window and no dependency on custom `app.settings` DB config.
 - **Worker:** `worker/src/userListener.ts` — new `notifyHumanReviewEmail(signalId)` fire-and-forget `fetch` to `/functions/v1/signal-review-email` (Bearer service-role key), called in the `aiMeta?.reviewRequired` branch (`userListener.ts:2523`). Best-effort; `.catch()` logs, never blocks parsing.
@@ -508,6 +556,7 @@
 
 ### 2026-08-06 — Per-stage model timing in pipeline + admin model decision chain + full-detail trade explainer
 
+- **Plain English:** The admin now shows which model decided each step and how long each stage took, and the AI trade explainer gets the full trade record instead of a thin summary.
 - **Context:** User wants the admin pipeline to show who decided (deterministic / OSS / GPT-4o) and how fast each stage ran, in the trade modal, signal modal and copier log modal; and the trade explainer LLM must receive ALL details concerning the trade (the 2-4 sentence output was too thin).
 - **Worker:** `routeSignalParse` now stamps `t_stage1_started_at/done_at` (deterministic regex), `t_stage2_started_at/done_at` (OSS call) and `t_stage3_started_at/done_at` (GPT-4o reconcile) into `pipeline_ts` (new keys in `pipelineTimestamps.ts` type). `RoutedParseResult.verification` (`_verification` in parsed_data) gained per-stage `duration_ms` via `StageTimings`; `userListener` passes `pipelineTs` through to routing.
 - **Admin (`tscopier-admin`):** new `ModelDecisionChainSection` in `PipelineSections.tsx` — vertical chain: 1 Deterministic regex → 2 OSS (Cerebras/OpenAI badge) → 3 GPT-4o → final decision card with path label (fast_lane/stage2/stage3/review/grounding_skip/…) and per-stage duration pills; legacy fallback derives the chain from `_intent`, confidence and listener events when `_verification` is absent. Wired into TradePipelineModal, SignalDetailModal (now also fetches listener events) and CopierLogDetailModal (fetches source signal + events). `pipelineTimeline.ts` adds stage1/stage2/stage3 timeline events + stage stats + Gantt rows.
@@ -518,6 +567,7 @@
 
 ### 2026-08-06 — Fix modify-TP applied as absolute price instead of pips + empty raw_message in Copier Logs
 
+- **Plain English:** A "add 30 pips take profit" instruction was applied as an absolute price of 30 instead of 30 pips, and some copier log rows showed empty messages. Fixed pip conversion and preserved the original message text.
 - **Context (staging test):** Replay `Add 30 pips take profit to gold` (signal 33312) was first skipped `modification_no_open_trade` (no gold trade open at 12:22). After the grounding fix, re-send 33313 (`f2e3012a`, 13:14) parsed correctly (`modify XAUUSD tp [30] tp_unit pips`, confidence 0.94) but EXECUTED with absolute `tp=30` — the modify path ignored `tp_unit=pips` and wrote the raw number as a price. Separately, a signal (`0f27d1ba`, tm 6062, "I'll move my SL to 4250 temporarily traders") stored `raw_message=""` → frontend Copier Logs showed the `—` placeholder.
 - **Root causes:**
   1. **Empty raw_message:** python listener persists the signal row WITH `raw_message` then dispatches a payload WITHOUT it (`telegram-listener/app/user_listener.py:466-475`). The trade worker's `ensureSignalRow` upsert-by-id wrote `raw_message: args.raw_message ?? ''` (`worker/src/ensureSignalRow.ts:39`), clobbering the stored text. `dispatch.ts` even passed `raw_message: ''` explicitly.
@@ -531,6 +581,7 @@
 
 ### 2026-08-06 — Fix modification grounding false "no open trade" on broker-suffixed symbols (XAUUSD ↔ XAUUSDm)
 
+- **Plain English:** A TP modification was skipped as "no open trade" even though the gold trade was open — because the symbol is stored with a broker suffix (XAUUSDm). Symbol matching now treats them as the same instrument.
 - **Context (staging test):** Test Signal replay `Add 30 pips take profit to gold` (signal 33312) was skipped `modification_no_open_trade` while the user's XAU sell trade was OPEN at the broker as `XAUUSDm`. Earlier `Move the Stop loss to 4280` (33307) executed because it took the deterministic fastpath (grounding bypassed) → management executor's lenient `symbolsCompatibleForBasket` matched the `XAUUSDm` trade. The pips-based TP message did not qualify for fastpath → universal parse → grounding → skip.
 - **Root cause:** `modificationTargetsOpenTrade` in `worker/src/signalModificationGrounding.ts` compared symbols with EXACT equality (`t.symbol === sym`). The `trades` table stores the broker symbol (`orderLegExecution.ts` writes `symbol: sendArgs.symbol`, and `entryPrepare.ts` resolves canonical `XAUUSD` → broker `XAUUSDm` before order send). The parsed intent symbol is canonical `XAUUSD` → exact match failed even though the trade was open. The rest of the system (managementScope, basketModFollowUp, mergeRouting, channelActiveTradeParams, virtualPendingMonitor) already treats XAUUSD == XAUUSDm via `symbolsCompatibleForBasket`; the new grounding module was the only exact-match outlier.
 - **Fix:** `modificationTargetsOpenTrade` now uses `symbolsCompatibleForBasket(sym, t.symbol)` (imported from `./basketModFollowUp`, no circular import). Same bug class fixed in `resolveModificationParentSymbol`: parent `XAUUSD` ↔ model `XAUUSDm` is now `ok` instead of a false `conflict` (would otherwise skip replied TP messages when reconcile is off). Grounded intent stays canonical `XAUUSD`; the trade worker resolves it to `XAUUSDm` at the broker.
@@ -540,6 +591,7 @@
 
 ### 2026-08-06 — TP-modification classification fix + frontend human-review notification & modal
 
+- **Plain English:** Take-profit messages like "add 30 pips take profit" weren't recognized as modifications, so they went to human review; classification fixed. Also added the review notification + approve modal in the app.
 - **Context (staging test findings):** Two Test Signal messages — `You can add a Take Profit of 30 pips` and `30 pips take profit to Gold sell` — were skipped as `AI classified as uncertain; human review required`. The second parsed perfectly (`sell XAUUSD tp [30] pips`) but still went to review. Root cause: neither message was classified as modification-class (`looksLikeChannelManagementUpdate` had NO take-profit modification patterns, only `take profit ... hit`), so `open_trades` was never loaded into the model context → model had no grounding → returned `uncertain`. The parse was correct; the classification was wrong. User also reported the frontend does nothing for human review — no notification, no approval UI.
 - **Worker fix:** `signalManagementIntent.ts` `looksLikeChannelManagementUpdate` now recognizes TP modifications: verb + take-profit (`set/move/add TP`), `take profit of/to/at N`, and `N pips take profit` — with a required preposition for bare `TP 4256` so structured entries (`SELL GOLD 4276 TP 4256`) stay entry-class (regression-tested). These messages now load `open_trades` → the model returns `modify` → grounding validates → executes; still-uncertain results flow to GPT-4o or review as designed.
 - **Frontend (new):** `src/lib/humanReview.ts` (isHumanReviewSignal, 2-min review window, parsed-level display mapping + 10 vitest tests), `src/context/HumanReviewContext.tsx` (initial fetch + realtime subscription to `signals` INSERT/UPDATE filtered by user; new review signals dedupe into a pending queue, play notification sound, auto-open the modal), `src/components/dashboard/HumanReviewModal.tsx` (message + symbol/action/entry/SL/TP chips + countdown + Approve/Dismiss; Approve calls the existing `retry-signal` edge function which enforces the 2-minute window and live-price check server-side), `HumanReviewIndicator.tsx` (floating amber button with pending count). All wired in `AppShell.tsx`.
@@ -549,6 +601,7 @@
 
 ### 2026-08-06 — Parent-symbol enforcement + few-shot examples for OSS and GPT-4o
 
+- **Plain English:** Replies to a signal must now modify that signal's own symbol (e.g. XAUUSD), not another open trade, and both AI models were given example signals to reduce made-up prices and other errors.
 - **Context:** User asked how modifications disambiguate when multiple trades run. Answer: Telegram reply linkage exists (replyTo → `parent_signal_id`, orphan relink sweeps), but the parent's symbol was only *suggested* to the model — a reply to the XAU entry with both XAU and EURUSD open could still pick EURUSD (the open-trade grounding check alone cannot catch a wrong-but-open symbol). User approved implementing parent-symbol enforcement.
 - **Implementation:** `signalModificationGrounding.ts` gains `loadParentSignalSymbol` (reads parent signal's parsed symbol) and pure `resolveModificationParentSymbol` (no_parent / ok / fill / conflict). `groundModificationResult` in `parseRouting.ts` now: model symbol null + parent known → fill directly (zero AI calls); model contradicts parent → forced GPT-4o reconcile with open-trade list, GPT-4o must return the parent's symbol or skip as `modification_parent_symbol_conflict`; then the open-trade grounding check runs on the (possibly overridden) result. New `fewShotExamples.ts` embeds 10 stage-2 (OSS) + 6 stage-3 (GPT-4o) examples in both system prompts via `formatFewShots` — teaches invented-price rejection (`4276 To 4256` target post), pips-stay-pips, symbol-from-parent-reply, results-recap commentary, multi-trade ambiguity → uncertain, parent-wins conflicts, and confirming real trades wrongly blocked by stage 2.
 - **Latency (answered user concern):** fast lane 0ms added; normal AI-lane ≈0 (Cerebras faster than gpt-4o-mini); modification-class +10–40ms (two parallel indexed queries); stage 3 +2–8s only on trigger-firing messages; AI-tagged entries +200–500ms quote check on trade worker. No additions on the fast-lane hot path.
@@ -558,6 +611,7 @@
 
 ### 2026-08-06 — Modification grounding: SL/TP changes must target an open trade
 
+- **Plain English:** SL/TP change messages are now checked against what's actually open on the account — the model can no longer apply a change to a trade that closed hours ago, and clear skips are returned when nothing matches.
 - **Context:** User tested a TP modification (`You can add a Take Profit of 30 pips`, signal `e87ec17c`) meant for the open XAU trade ("Sell Gold now Sl: 4300"). The model parsed it with `symbol: EURUSD` — a trade closed 8h earlier — plus invented `sl: 1.08`; the guard skipped it, so the TP was never applied to gold. Root cause: `buildAiModificationContext.recent_signals` filters `status='parsed'` (executed signals drop out) and `parent_signal` only exists with reply linkage — the model had no reliable "what is actually open" grounding and guessed.
 - **Implementation:** New `worker/src/signalModificationGrounding.ts` — `loadOpenTradesForChannel` (user's OPEN trades whose signals came from this channel; returns `null` on query failure = fail-open) and `modificationTargetsOpenTrade`. `buildUniversalParseContext` now includes `open_trades` in the prompt when `isModificationClass`; both universal + reconcile prompts require a modification's symbol to match an open trade. `parseRouting.ts` runs `groundModificationResult` after stage 2 (and validates again after stage 3) for parsed `modify`/`close`/`breakeven`/`partial_close`: no open trades → skip `modification_no_open_trade`; symbol mismatch → forced GPT-4o reconcile with the open-trade list (when reconcile enabled; otherwise skip); GPT-4o's result must also hit an open trade. `cancel_pending` excluded (targets pendings).
 - **Safety:** Fail-open on query failure (Supabase outage never blocks modifications wholesale); the trade-worker merge still only modifies open baskets, so a wrong symbol fails safely downstream. Fast lane, entries, and all existing triggers unchanged. Grounding adds a cheap 2-query DB read only for parsed modification results.
@@ -567,6 +621,7 @@
 
 ### 2026-08-06 — GPT-4o reconciliation narrowed to Option 1 (trust OSS for recoveries)
 
+- **Plain English:** Simplified the AI verification: the cheaper model is trusted when it recovers a trade, and the expensive model is only called for genuine uncertainty, guard rejections, or when the cheap model blocks something deterministic found.
 - **Context:** User reviewed the 5 reconciliation triggers and rejected two: when stage 2 (OSS) recovers a trade from a deterministic skip, and when stage 2 disagrees with stage 1 on SL/TP values, GPT-4o was being called unnecessarily. Rule chosen: OSS is the trusted interpreter; GPT-4o only when OSS is uncertain, when the hallucination guard rejects OSS (fabricated prices — the `bb4909ea` / `e87ec17c` class), or when OSS blocks a trade/modification the deterministic parser found.
 - **Implementation:** `shouldReconcileSignal` in `worker/src/signalIntent/parseRouting.ts` now returns true only for: `uncertain`, `intent_validation_failed:*` / `entry_missing_side`, and deterministic-parsed-but-OSS-says-non-trade. Removed the OSS-recovery trigger and the `compareParseShadowDiff` value-disagreement trigger. All routing/execution flow, stage-3 dispatch, guard, and veto semantics unchanged.
 - **Modifications:** SL/TP messages flow through the same stages. A pip-based modification (`You can add a Take Profit of 30 pips`) whose OSS parse invented an absolute price (`sl: 1.08`) is guard-rejected → GPT-4o → correct `modify, tp [30], tp_unit pips` from parent context. Guard accepts pip values whose numbers appear in the message. Adverse-price entry guard intentionally does not apply to modifications (they don't enter at a price).
@@ -576,6 +631,7 @@
 
 ### 2026-08-06 — Adverse-price entry guard for the AI verification lane
 
+- **Plain English:** AI-verified buy/sell entries now check the live price before opening — if the market has already moved too far against the signal, the entry is skipped instead of opening at a loss.
 - **Context:** After the 3-stage pipeline (regex → Cerebras gpt-oss-120b → GPT-4o), the user required a mechanical guard on top of GPT-4o's enter/skip/escalate decision: an AI-reconciled entry must not execute when the market has moved too far from the signal's entry point (adverse fill = immediate loss risk).
 - **Implementation:** New pure module `worker/src/signalEntryPriceGuard.ts` — `entryPriceMovedAdverse({action, entryPrice, zoneLow, zoneHigh, bid, ask, tolerancePips, pipSize})` blocks only ADVERSE movement (buy: ask > entry/zoneHigh + tol; sell: bid < entry/zoneLow − tol; better price never blocked). `worker/src/tradeExecutor/entryPrepare.ts` runs it for `dispatch_source ∈ {ai_parsed, ai_reconciled}` buy/sell entries with an explicit anchor, using the broker's `signal_entry_pip_tolerance` (default 10) × symbol point; skips with reason `entry_price_moved_adverse` + quote/entry/tolerance in the log row. Strict-entry and range-strict brokers excluded (their machinery already defers adverse prices to broker pendings). Fail-open on missing quote (mirrors the far-from-market guard). Listener tags AI dispatches (`worker/src/userListener.ts`): stage 2 → `ai_parsed`, stage 3 → `ai_reconciled`; fast lane untouched. `dispatch_source` now carried in the HTTP push body (`worker/src/tradeSignalPush.ts`) — Redis queue path already embedded it.
 - **Safety:** Fast lane (≥0.99) never tagged → never guarded. Untagged dispatches behave byte-for-byte as before. Favorable price movement never blocked. Missing quotes never block. Deterministic fallback dispatches (aiMeta source `deterministic`) never tagged.
@@ -585,6 +641,7 @@
 
 ### 2026-08-06 — Three-stage signal verification (regex → Cerebras OSS → GPT-4o)
 
+- **Plain English:** Signals are now verified in three stages: a fast keyword parser, a cheap AI model on Cerebras, and a final stronger AI check for anything uncertain or rejected — so hallucinated prices get caught instead of traded.
 - **Context:** Signal `bb4909ea` (`🥇 #XAUUSD | 4276.00 To 4256.00 💸 That's 2000$ Per Lot`) was skipped as `intent_validation_failed:invented_sl` — the single LLM stage hallucinated SL 4281 / TPs that don't exist in the message. The hallucination guard caught it, but the design needed a final arbiter. User requested a 3-stage system: (1) fast regex keyword engine, (2) GPT OSS on Cerebras for context interpretation, (3) GPT-4o as final model for reconciliation or escalation to user.
 - **Implementation:** Stage 2 now prefers Cerebras Inference (`https://api.cerebras.ai/v1`, OpenAI-compatible, key `CEREBRAS_API_KEY`, model default `gpt-oss-120b` via `CEREBRAS_PARSE_MODEL`) with automatic fallback to OpenAI when the key is unset or the call fails. Stage 3 (`reconcileUniversalSignal`) calls OpenAI `gpt-4o` (`UNIVERSAL_PARSE_RECONCILE_MODEL`, timeout `UNIVERSAL_PARSE_RECONCILE_TIMEOUT_MS` default 8000) when `shouldReconcileSignal` trips: stage 2 `uncertain`, hallucination-guard rejection (`intent_validation_failed:*`, `entry_missing_side`), deterministic-vs-stage2 action disagreement, or value disagreement via `compareParseShadowDiff`. GPT-4o's clear result wins; `uncertain` from GPT-4o escalates to the existing human review path; GPT-4o unavailable falls back to stage-2 policy unchanged. Shared post-processing extracted into `finalizeIntent` (same validation + eligibility checks for both stages). New sources `cerebras` and `gpt4o` flow through `aiMeta.source` and the listener log line. New env: `CEREBRAS_API_KEY`, `CEREBRAS_PARSE_ENABLED` (default true), `CEREBRAS_PARSE_MODEL`, `UNIVERSAL_PARSE_RECONCILE_ENABLED` (default false — safe rollout), `UNIVERSAL_PARSE_RECONCILE_MODEL`, `UNIVERSAL_PARSE_RECONCILE_TIMEOUT_MS`.
 - **Safety:** Fast lane (≥0.99) still bypasses all AI. When reconcile is disabled or GPT-4o unavailable, behavior is byte-for-byte the previous pipeline. Reconciliation runs only on conflicted/uncertain/rejected messages, so clean messages keep Cerebras-only latency. Stage-3 output still passes the same `validateTradeIntent` hallucination guard before it can execute.
@@ -594,6 +651,7 @@
 
 ### 2026-08-06 — FxSocket-native broker reconnect (no deletion)
 
+- **Plain English:** The Reconnect button was broken and now works again: it re-links the broker through FxSocket without ever deleting the account.
 - **Context:** The Reconnect button was a dead noop since commit `69a62ee6` "Overhall" deleted `metatraderapi.ts`/`useBrokerReconnect`. Restoring a real reconnect flow that re-triggers the FxSocket terminal link WITHOUT deleting the account (per explicit requirement: no DELETE `/v1/accounts/{id}`).
 - **Implementation:** New edge action `reconnect` in `supabase/functions/fxsocket-broker/index.ts` — loads the owned broker row, re-submits login/password/server to FxSocket `POST /v1/accounts` (their link endpoint, which re-provisions the terminal pod). If FxSocket returns a different account id, it verifies the old terminal via `getV1Account` and only repoints the row when the old link is confirmed gone (avoids duplicate sessions). Row is set to `pending/connecting`, error cleared. Frontend `reconnect()` added to `src/lib/fxsocketBroker.ts`. `BrokerAccountsContext.tsx` now has a real `reconnectBroker`: password queue + `BrokerReconnectPasswordModal` render, `reconnectingBrokerIds` set, then `waitUntilConnected` (11 min window for pod provisioning) and success/error handlers.
 - **Safety:** No account deletion anywhere in the reconnect path. Old terminal kept if still alive. Credentials never stored — prompted fresh each reconnect.
@@ -601,6 +659,9 @@
 - **Affected files:** `supabase/functions/fxsocket-broker/index.ts`, `src/lib/fxsocketBroker.ts`, `src/context/BrokerAccountsContext.tsx`.
 - **Follow-up:** Deploy `fxsocket-broker` edge function to staging; test reconnect against the frozen Test Account (FxSocket pod was down — "Terminal pod not ready within 10 minutes"). Also note staging DB is missing `connection_error_kind`/`connection_error_message` columns (dropped by `20260616120000_fxsocket_unify_broker_accounts.sql` while worker still writes them) — schema-cache errors freeze status.
 
+### 2026-08-06 — AI verification fastpath: deterministic skips → AI fallback, explicit `uncertain` intent + commentary guard
+
+- **Plain English:** When the fast parser couldn't confidently decide a message, it used to send rejections to humans or guess; it now asks the AI for clear entries, keeps clear skips quiet, sends only genuine uncertainty to human review, and blocks promotional/commentary messages from being traded.
 - **Context:** The signal parser needed to recover deterministic false negatives without sending every AI rejection to humans. The required policy is: clear AI entries execute, clear AI skips remain skipped without alerts, and only explicit AI uncertainty enters human review.
 - **Implementation:** Added an explicit `uncertain` universal intent. In fastpath mode, deterministic skips and sub-threshold parses are sent to AI. AI-confirmed entries can proceed; clear `ignore`/`commentary` results stay skipped; `uncertain` results persist a `ai_parse_review_required` listener event. AI outage/timeout continues the existing deterministic policy and records `ai_parse_fallback`.
 - **Safety:** The deterministic fastpath default is now `0.99`. Human approval is available only for AI-uncertain signals, only for two minutes after the signal, and only while every matching active broker quote remains within the signal entry price/zone plus the broker's configured pip tolerance. Expired or price-passed approvals are marked skipped. Existing Copier Logs retry UI recognizes the review reason.
@@ -613,6 +674,7 @@
 
 ### 2026-08-05 — Prod migration audit + two handover .md files
 
+- **Plain English:** Checked which of four database migrations were actually applied in production (two were missing/incomplete) and wrote handover docs for applying them.
 - **Context:** User shared a review comment listing 4 migrations (`trades_idempotency_guard`, `range_pending_broker_pending_unique_step`, `fix_signal_reconcile_sweep_cron_vault`, `enforce_plan_broker_channel_limits`) and asked whether they are on prod.
 - **Audit findings (live queries on prod `sxkpcovbyaficvtkpsdo` + staging `axdcledcyhyvzrnfkwat` via Management API):**
   - `trades_idempotency_guard` — NOT on prod (no index, not registered). Pre-flight duplicate check on prod: 0 post-cutoff duplicate groups → applies cleanly. Staging has it.
@@ -628,6 +690,7 @@
 
 ### 2026-08-05 — Team prompt updated: per-person memory files to avoid merge conflicts
 
+- **Plain English:** Updated the team's memory prompt so each teammate appends to their own file, making memory merge conflicts impossible.
 - **Context:** User reviewed git history — teammates Emma (emmydapson) maintains a shared `CHANGELOG.md` (release-notes style, updated 2026-08-04), the other teammates (mosodi007, sebchi-crtl) have no logs at all, and nobody has a problem-context memory file. User wanted each teammate's log saved in a separate file so shared logs never produce merge conflicts.
 - **Solution:** Reworked `docs/team-project-memory-prompt.md`: every teammate now gets their OWN append-only file `docs/PROJECT_MEMORY_<github-username>.md`. Rationale documented in the prompt: git only conflicts when two people edit the same lines of the same file, so per-person files make conflicts impossible. Teammates may read each other's files but never write to them. `docs/PROJECT_MEMORY.md` stays BZetsu's; Emma's `CHANGELOG.md` stays untouched (shared release notes, separate purpose).
 - **Affected files:** `docs/team-project-memory-prompt.md` (rewritten), `docs/PROJECT_MEMORY.md` (this entry).
@@ -637,6 +700,7 @@
 
 ### 2026-08-05 — Team prompt for per-repo Project Memory files
 
+- **Plain English:** Wrote a ready-to-paste prompt so teammates keep a dated change log per repo with a fixed structure.
 - **Context:** User wants teammates to maintain their own Change Log / Project Memory files (problem context, solution, files edited, verifications, blockers, follow-ups) via their AI coding tools.
 - **Solution:** Wrote `docs/team-project-memory-prompt.md` — a ready-to-paste prompt that goes into each tool's rules file (Codex: `AGENTS.md`, Cursor: `.cursor/rules/*.mdc`, Claude Code: `CLAUDE.md`). The prompt mandates reading the memory file at session start, appending a dated entry to the top of the changelog after every material change, a fixed entry structure (Context / Root cause / Solution / Affected files / Verification / Blockers / Follow-up), a no-secrets rule, and a no-fabrication rule. Each repo gets its own in-repo `docs/PROJECT_MEMORY.md`.
 - **Affected files:** `docs/team-project-memory-prompt.md` (new), `docs/PROJECT_MEMORY.md` (this entry).
@@ -646,6 +710,7 @@
 
 ### 2026-08-05 — Full upstream integration: main + staging + dev merged into local work
 
+- **Plain English:** Merged all three upstream branches into local work (48 commits preserved, 10 conflicts resolved) and documented every commit's context.
 - **Context:** All three upstream branches had diverged from each other and from local work. User asked to pull in all upstream code while preserving local commits, then asked for detailed regression-safe merge tracking.
 - **Process:** Created `backup/all-local-work-2026-08-05` (48 local commits incl. incident fix `26e09770`) and pushed to origin. Stashed dirty `dist/`/`worker/dist/` artifacts. Created `integrate/upstream-sync` from the backup, then merged dev → staging → main (commits `b64aa7c2`, `3cbfa628`, `91afd9ba`). All upstream commits now contained (0 missing each); 0 local commits lost.
 - **Conflicts resolved (10 total):** layering GA (took upstream, flags removed — `configurationAllowed = advancedAllowed && listed`); trade-duplication fix (took staging's `blockNewEntry` over our interim claim-reuse); `entryPrepare.ts` hybrid (our `sameSignalRefresh` line 311 + staging's `blockNewEntry`); planner teaser/no-TP (took main); `signalBrokerDispatchClaim` combined (our fail-closed + their `dispatch_claim_error` log); `AccountConfigPage` took dev's `normalizeManualSettings`; `PROJECT_MEMORY.md` took ours.
@@ -655,6 +720,7 @@
 
 ### 2026-08-05 — User trade list now shows execution-type tags
 
+- **Plain English:** The admin user trade list now tags each trade as single, range, layered, or unknown based on execution evidence.
 - **Context:** User needed the trade list to identify whether each row was a single trade, range trade, layered trade, or another multi-trade result. Broker-page configuration was reviewed, including `trade_style`, `range_trading`, `layering_mode`, `range_layering_type`, and TP/layer settings.
 - **Implementation:** Added an evidence-based classifier in `tscopier-admin/src/lib/tradeExecutionType.ts`. It uses successful order comments and execution actions (`virtual_pending_fired`, `range_basket_tp_rebalance`, `range_broker_pending_inserted`, and `multi_range_plan`) before falling back to the number of linked rows. Broker settings are treated as configuration context, not proof of what actually executed.
 - **User trade list:** `UserTradesTab` now loads execution logs and source channels for the visible rows and adds `Type` and `Channel` columns. Range evidence is labeled `range`; layered markers are labeled `layered`; a normal one-order execution is labeled `single`; unsupported evidence remains `unknown`.
@@ -665,6 +731,7 @@
 
 ### 2026-08-05 — Admin signal list now resolves source channels and suppresses range duplicate warnings
 
+- **Plain English:** The admin signal list now shows the actual source channel name and stops flagging legitimate range-basket legs as duplicates.
 - **Context:** User reported that the signal table showed `Channel —` and that legitimate range-basket legs should not be presented as duplicate trades.
 - **Channel fix:** `UserSignalsTab` now resolves `signals.channel_id` directly through `telegram_channels` and uses the channel display name or username. This is an explicit lookup in addition to the embedded relation, so the UI remains correct when the embedded relation is absent.
 - **Trade modal fix:** `TradePipelineModal` now performs the same direct channel lookup when the embedded channel is missing, so the selected trade’s source channel appears in the modal.
@@ -675,6 +742,7 @@
 
 ### 2026-08-05 — Trade modal now explains broker stop failures in plain English
 
+- **Plain English:** When a broker rejects a stop, the trade modal now explains it in plain English ("the broker rejected the stop price under its rules") instead of a cryptic error.
 - **Context:** User reviewed XAUUSD sell trade `8c39946f-d9c6-495f-a985-c86a588f3aa8` and required the dashboard to explain why the broker rejected a stop update.
 - **Evidence:** The broker returned `Invalid stops` for attempted SL `4164.79` on ticket `1841898215`. The log does not contain the market price or broker minimum stop distance, so the exact validation value cannot be reconstructed. The selected trade ticket was `282029333`, so the stop failure must not be attributed to it without a ticket match.
 - **Admin changes:** Execution attempts now preserve the raw broker error and show a plain-English failure reason for `Invalid stops`: the broker rejected the stop price under its current price/distance rules, with the exact missing values called out. The trade integrity section also shows whether the initial SL/TP was actually sent and warns when management logs point to another ticket.
@@ -685,6 +753,7 @@
 
 ### 2026-08-05 — Trades broker-ticket idempotency guard: modified to install "on top" of history + applied & verified on STAGING only (prod NOT touched)
 
+- **Plain English:** Changed the duplicate-trade database guard to only cover new trades (so it can be installed despite 22 historical duplicate groups) and applied it on staging only — production untouched.
 - **Context:** User asked to run `supabase/migrations/20260805000000_trades_idempotency_guard.sql` on staging. Per its documented order: ran `docs/admin-trade-type-classification.sql` Query 1 (preflight) + Query 2 (classification) first.
 - **Findings (staging `axdcledcyhyvzrnfkwat`):**
   - Query 1: **22 duplicate broker-ticket groups = 44 trade rows**, ALL on one account: `MT5 • 436990480` (`15434164-…`, Emmanuel Iloris, multi/range, XAUUSDm sells). Two patterns: (a) 21 groups = same ticket persisted twice with different SL/TP (worker writes an SL/TP change as a NEW row instead of updating — TP-ladder step on a range account); (b) 1 group = same ticket under two different signals (demo-account artifact).
@@ -697,6 +766,7 @@
 
 ### 2026-08-05 — Trade execution type classification added to admin modal and SQL audit
 
+- **Plain English:** The admin trade modal now shows each trade's actual execution type (single/range/layered/etc.) based on evidence, and a SQL audit script was written.
 - **Context:** User required the admin dashboard to identify the actual trade type for each trade—single, range, layered, range + layered, duplicate replay candidate, or unknown—especially in Luis ESp’s user-detail trade modals.
 - **Codebase findings:** `trade_style` controls single vs multi planning; `range_trading` creates range legs whose order comments use `:rg...`; multi TP/layer plans use `:tpN`/`:tp.rem`; newer layering uses `layer_...` references. Account configuration alone is not proof of the actual execution type.
 - **Admin changes (`tartarixinc/tscopier-admin`):** `TradePipelineModal` now derives an evidence-based actual execution type from successful `order_send` logs, persisted order comments, the linked signal/broker trade family, and duplicate signatures. It shows `unknown` when the evidence is missing instead of guessing.
@@ -707,6 +777,7 @@
 
 ### 2026-08-05 — Admin dashboard: AI explainer truth fixes (log order, channel FK, full history) + embedded-relation type fixes (in `tartarixinc/tscopier-admin`, branch `feat/trade-pipeline-analytics`)
 
+- **Plain English:** The AI trade explainer was telling a one-sided story (reading only the oldest failure logs) and never showed the channel name. Fixed the log order and channel lookup, and gave the explainer the full history.
 - **Context:** User flagged 3 issues on a prod trade modal (XAUUSD+ `3f73ec93`, signal `8bbcd0c7`): (1) AI said "order_send failed (Not enough money)" though the visible attempts were all successes; (2) channel name + skip reasons never shown; (3) what model and does it get all the info. All three root-caused with live prod data before fixing.
 - **Bug 1 — AI read only the OLDEST 10 logs (ascending, limit 10):** Real history of `8bbcd0c7`: **34× `order_send` failed "Not enough money" (07:54:58–07:55:00), then 32× succeeded** (account funded mid-retry). The modal shows newest 50 (all successes); the edge function fetched the oldest 10 (all failures) → AI truthfully described the failure window, but presented it as the whole story. Fix (`supabase/functions/trade-pipeline-explainer/index.ts`): logs fetched **newest-first (limit 15)** + a **full-status aggregate query** (counts: total/failed/skipped/success) + new system-prompt rule: "if early attempts failed but later succeeded, describe the outcome timeline, do not conclude the signal failed overall." Model stays `gpt-4o-mini` (temp 0.2, JSON mode); raw-message snippet 600→1000 chars, parsed 300→600.
 - **Bug 2 — channel never displayed + wrong FK on canonical lookup:** `TradePipelineModal` never fetched/rendered the channel name; both modals looked up `channel_signals` with `eq('signal_channel_id', signals.channel_id)` — but `signals.channel_id` is a **telegram_channels FK**, while `channel_signals.signal_channel_id` references **signal_channels** (different ID spaces; e.g. `0bf29f93` vs `ba71164f`) → canonical row never matched → skip reasons never shown. Fix: signals select now embeds `telegram_channels(display_name, signal_channel_id)`; lookup prefers `signals.channel_signal_id`, else `telegram_channels.signal_channel_id` + `telegram_message_id`. Modal header + "Signal data" section now show channel name; signal skip reason shown in amber with label; channel-signal skip reason labeled. Applied to `TradePipelineModal.tsx` AND `SignalDetailModal.tsx`.
@@ -716,6 +787,7 @@
 
 ### 2026-08-05 — Admin user trade modal now exposes idempotency and duplicate-trade evidence
 
+- **Plain English:** The admin's trade modal now shows all trades for the same signal/account, broker ticket IDs, and duplicate warnings — evidence-only, the worker fix is still pending.
 - **Context:** User requested the idempotency and trade-tracking details in the admin dashboard's user trade modals as well as the global analytics views, specifically for Luis ESp (`dd18ad68-cab1-4d02-8bd8-6d975db5f959`).
 - **Changes in `tartarixinc/tscopier-admin`:** Extended `TradePipelineModal` to load and display all trades for the same signal and broker account, broker ticket IDs (`metaapi_order_id`), duplicate-signature warnings, dispatch-claim status/timestamp, listener-event history, and signal/broker context. Extended `UserTradesTab` to pass `broker_account_id` and `metaapi_order_id` into the modal.
 - **Behavior:** The modal now compares one selected trade with its complete signal/account trade family, warns when multiple trades share symbol/direction/lot/SL/TP, and shows the existing pipeline/execution details alongside claim and listener evidence.
@@ -725,6 +797,7 @@
 
 ### 2026-08-04 — Admin dashboard: trades drill-down on analytics + auth session guard fix (in `tartarixinc/tscopier-admin`, branch `feat/trade-pipeline-analytics`)
 
+- **Plain English:** Added click-through from analytics charts to the underlying trades, and fixed the admin showing "0 users" when the auth session was missing.
 - **Context:** User asked for "insight into the trades leading to these" on the analytics dashboard (lists of the underlying trades). While building it, user reported **prod dashboard showing 0 users** — diagnosed and fixed (below).
 - **Prod 0-users root cause (NOT a DB issue):** Prod DB verified healthy — 209 profiles / 8 admins, correct RLS (`Admins can view all profiles` → `is_admin()`), `is_admin()` exists (STABLE, SECURITY DEFINER), anon key valid (REST 200). The symptom "0 users with no error" exactly matches an **unauthenticated request**: PostgREST returns HTTP 200 + `[]` for anon (RLS silently filters everything) and the Users page renders "0 total users" without error. Cause: `AuthGuard` only checked the `admin_authed_<env>` sessionStorage flag — the real Supabase JWT for prod (`sb-sxkpcovbyaficvtkpsdo-auth-token` in localStorage) can be missing/expired (e.g. after env-toggle switches or storage changes), so the app rendered as anonymous.
   - **Fix (`src/components/AuthGuard.tsx`):** guard now verifies `authSupabase.auth.getSession()` for the current env and redirects to `/login?env=…` when no session exists (brief null render while checking). Flag check retained (prod legacy fallback). Expired-but-present tokens still auto-refresh via supabase-js on first 401 (normal flow unchanged).
@@ -737,6 +810,7 @@
 
 ### 2026-08-05 — Incident + verification docs corrected with live-DB facts (FTMO is multi, 3 dups now CLOSED, real Telegram edits confirmed)
 
+- **Plain English:** Corrected the incident docs with live database facts: the account isn't single-style, the three open duplicate trades are now closed, and even real Telegram edits re-entered instead of amending.
 - User: "update the documents with the correct info, especially the incident response docs". Re-verified everything against the live prod DB + execution logs. Corrections:
 - **FTMO account (`8556fff2`) is NOT "single"** — `copier_mode: manual`, `trade_style: multi`, `range_trading: true`, `add_new_trades_to_existing: true`, config unchanged since **Jun 22** (13da4830 since Jul 20, 9e869a6f same). All three of Luis's accounts are multi/range. The 3 FTMO orders are still CONFIRMED duplication (identical lot 0.41 / SL 4077 / TP 4097, comment `TScopier:44sClub:ead1ebb8` with NO `:tpN` layer suffix, three separate `order_send` successes in `trade_execution_logs` within 24s) — but the "single-style account opened 3" framing was wrong; it's the same single-entry plan executed 3× on a multi account.
 - **The 3 FTMO duplicates are now CLOSED** — all 3 at 2026-08-05 00:19:33.138 (was "STILL OPEN" in both docs). No close/keep decision needed; compensation decision remains.
@@ -748,33 +822,40 @@
 
 ### 2026-08-04 — Incident report updated with listener-log evidence: FIVE re-dispatch mechanisms drive the duplication
 
+- **Plain English:** Found via listener logs that a message can be re-dispatched by up to five mechanisms (settle polls, catch-up, reconcile sweeps, live edits), each re-opening the same plan.
 - User pointed to `docs/Prod_Logs/Listener/logs.1785871948065.log` (Aug 4 09:07–11:22 UTC, listener). Reading it revealed the duplication driver is BROADER than settle-poll alone: the same message is re-dispatched as a revision by up to 5 mechanisms — `entry_settle_poll`, `catchup`, `reconcile_reconcile_sweep`, `reconcile_reconcile_poll_hook`, `live_edit`. Log proof for `22628a24` (msg #17279, 53 orders): 1 original dispatch (10:47:07) + 3 revision dispatches (10:47:21 settle_poll, 10:47:33 catchup, 10:47:56 reconcile_poll_hook). Per-signal revision counts in the 2h window: up to 4× (ce211b02, b199d15e, a5cd28c2, 5a56f595), 3× (22628a24, 39e6d69d, 0dff3ec3). Each revision → trade worker `message_revision` → `sameSignalRefresh` → claim bypass (`TradeExecutor.ts:1466`) → plan re-executes.
 - `docs/incident-2026-08-04-trade-duplication.md` §3 updated: chain table now lists 1b/1c/1d (reconcile sweeps, catchup, live edit) + new §3.1 with the raw listener-log lines and evidence file path.
 
 ### 2026-08-04 — Luis verification doc: removed "Note on the channels" + "Why other Aug 4 groups are not listed" exclusion boxes (md + PDF)
 
+- **Plain English:** Removed the two exclusion sections from the customer verification doc per request; it now shows only the confirmed duplicate groups.
 - Per user instruction, deleted both exclusion sections from `docs/verification-luis-2026-08-04-duplicates.md` and the PDF. Doc now contains only: what "Duplicates: N" means, the 2 confirmed groups (with proof + channel timeline), and the summary table. PDF regenerated (3 pages).
 
 ### 2026-08-04 — Channel evidence added to Luis verification doc: duplicates driven by message edits/settle polls, not extra messages
 
+- **Plain English:** Confirmed from the channels that duplicates came from post-posting edits and settle polls, not from extra messages; added per-group channel timelines.
 - User: "the signal messages were not the only messages sent — confirm from the channels". Verified via `signals` + `listener_events`: 44Fx & 44's Club are MIRROR channels posting identical signals seconds apart (msg #14238 ↔ #17290 "Gold Buy Now!" 13:41); channels post ~40 messages/day (signals, mirrors, follow-ups, edits). For the 2 confirmed groups the message was posted ONCE and the duplicate dispatches were triggered by post-posting text changes: `ead1ebb8` (#14238): original → settle poll +10s revision → LIVE channel edit at 13:41:54 → 3 orders (3rd attempt deduped); `906a4b64` (#17284): original dispatch = 17 orders, +10s settle-poll revision = 17 more = 34 (2nd poll deduped). `channel_messages` and `channel_signals` tables are EMPTY (registry never populated — noted earlier in admin session).
 - Docs: `verification-luis-2026-08-04-duplicates.md` + PDF now include a per-group "What happened in the channel" timeline block + "Note on the channels" (mirror channels, edits, ~40 msg/day flow). PDF = 3 pages.
 
 ### 2026-08-04 — Verification doc trimmed to CONFIRMED duplicates only (Luis, Aug 4)
 
+- **Plain English:** Trimmed the verification doc to only the 2 proven duplicate groups (37 trades); the other 6 groups weren't provably duplicated and were excluded.
 - User pushed back: "if it is range trading then it is not a duplication" — valid. Re-audited all 8 Aug 4 groups against order comments: (a) only ONE group shows a replay signature — `906a4b64`: 34 order comments are `tp1…tp17` then the exact same `tp1…tp17` again = identical 17-order plan executed twice (CONFIRMED); (b) `ead1ebb8`: Single-style FTMO account (1 order/signal expected) opened 3 identical orders, 3 distinct tickets (281762049/205/266), STILL OPEN (CONFIRMED); (c) the other 6 groups (36/53/30/20/19/17) run on the Multi/range account — no replay proof (execution logs pruned), some genuine layering events (`virtual_pending_fired` ×2), and `0e6a362e`'s FTMO 14 orders carry the signal's TP-ladder distribution — excluded as NOT confirmed. Also: zero `:rg` (range-layer) order comments exist system-wide in 14 days, and range_step_pips=5 means 34 layers would span ~170 pips vs the observed 30 — supporting that the excluded groups were not classic layering, but they stay out of the confirmed doc anyway.
 - Docs: `verification-luis-2026-08-04-duplicates.md` + PDF rewritten → 2 confirmed groups (37 duplicates), each with a "CONFIRMED DUPLICATION" proof box and an exclusion note explaining why the other 6 groups are not listed. Incident report unchanged (keeps full analysis).
 
 ### 2026-08-04 — Trade style labels added to Luis verification doc (`docs/verification-luis-2026-08-04-duplicates.md` + PDF)
 
+- **Plain English:** Added single-vs-multi trade style labels per account to the verification doc, proving even multi-style groups exceeded their own caps.
 - User asked whether the duplicated trades were labelled single or multi. Answer (from `broker_accounts.manual_settings` + `trade_execution_logs`): trade style is per-ACCOUNT, not per-signal — "MT5 Demo for 1 Chanel" = Multi (range trading, cap `multi_trade_max_orders` 20), "FTMO USD 100K fonded" = **Single**, "ICMarketsSC-Demo" = Multi. Per group: 6× Multi, 1× Mixed (16 Multi ICMarkets + 14 Single FTMO), 1× Single (ead1ebb8, the 3 still-open FTMO dups). Direct proof of repeated execution: order comments on group 3 are `TScopier:44Fx:906a4b64:tp1…tp17` each TWICE (same 17-order multi plan ran twice → 34). `:tpN` suffixes come from `planMultiManualOrders.ts` (multi planner). Even Multi-style groups 1–3 exceed the account's own 20-order cap → duplication, not configured layering. Verification doc + PDF updated with a Trade style field per group, summary column, and a single-vs-multi explainer.
 
 ### 2026-08-04 — Luis ESp verification doc: Aug 4 duplicated trades (channel + signal message + samples) in `docs/verification-luis-2026-08-04-duplicates.md`
 
+- **Plain English:** Created a shareable sheet for the customer listing all 8 duplicated signal groups from Aug 4 (212 duplicate trades) with channels, messages, and sample trade IDs.
 - Created a shareable verification sheet for Luis: all 8 duplicated signal groups from Aug 4 (212 duplicate trades total) with signal id, channel, original Telegram message text, duplicate count, and 4 sample trade ids + timestamps each. Covers the still-open 3× FTMO group (`ead1ebb8`). Full technical root-cause analysis lives in `docs/incident-2026-08-04-trade-duplication.md`.
 
 ### 2026-08-04 — Trade duplication incident (3–75× per signal): root-caused via prod DB + logs; full report in `docs/incident-2026-08-04-trade-duplication.md`
 
+- **Plain English:** A customer's signals were opening 3–75 identical trades each. Root cause: the duplicate-prevention guard is skipped when a message is edited/re-dispatched, so the same order is sent repeatedly.
 - **Context:** User Luis ESp (`dd18ad68-…`, 14 accounts) complained trades were duplicating. Investigation confirmed a systemic bug, not config/accounts.
 - **Root cause (confirmed with evidence):** The only anti-duplicate guard (`signal_broker_dispatch_claims`, UNIQUE signal+broker) is **skipped on the message-revision path**. The listener's entry settle-poll (10s/30s after entry, `userListener.ts:1922-1994`) re-fetches the message; any text difference → `tryApplyMessageRevision` → dispatch with `dispatch_source=message_revision` → `sameSignalRefresh=true` (`dispatch.ts:526,846`) → `TradeExecutor.ts:1466` `if (!isRevisionRefresh)` skips `claimSignalBrokerDispatch` → OrderSend fires again → up to 75 identical real positions on one account, ~0.37s apart.
 - **Evidence:** 1 claim row but 34 distinct broker tickets for signal `906a4b64` (Aug 4 11:52); log shows signal `29d7d97f` claim 14:42:19.863 → order 14:42:21 (ticket 449551618) → **second** order 14:42:30 (ticket 449551887) exactly ~10s later with zero "skip duplicate" logs; all 34 rows identical (XAUUSD sell 0.03, SL 4093, TP 4073); exceeds his own caps (`multi_trade_max_orders 20/26`, `max_trades_per_zone 3`); control users 1.0–2.4 trades/signal vs Luis 19.9 (user `14bf6329` even worse: 51.8, 110 trades from one signal). Secondary bug: duplicated signals have `channel_id = NULL` → bypasses `enforce_signal_channel_filter` (account `13da4830` allowed TSA+SignalTester yet traded 44Fx msgs).
@@ -786,6 +867,7 @@
 
 ### 2026-08-04 — Admin dashboard: Global Latency Analytics readability redesign (in `tartarixinc/tscopier-admin`, branch `feat/trade-pipeline-analytics`)
 
+- **Plain English:** Redesigned the latency analytics tab so it reads as a story: speed legend up top, plain-English stage explanations, health-colored numbers, and problems shown last.
 - **Context:** User feedback — the Global Latency Analytics tab was "hard to understand, read, and interpret". Root causes: (1) no narrative order (failures card appeared BEFORE the main latency story), (2) jargon without explanation ("p50/p95", "with pipeline timestamps", stage names like "Queue wait" with no plain meaning), (3) no good/bad signal on headline numbers, (4) colors used with no legend until deep in the page, (5) stage bar chart sorted ascending (slowest at the bottom) and all bars one color.
 - **Changes (`src/components/LatencyAnalyticsTab.tsx` only — fetch logic 100% untouched):**
   - New narrative order: speed legend → headline pills → journey-time trend → "where the time goes" (stage bars) → stage detail table → problems (failures/skips/retries) → raw scatter appendix.
@@ -798,6 +880,7 @@
 
 ### 2026-08-04 — Admin dashboard: user activity tabs + deep-dive modals + repo-wide lint cleanup (in `tartarixinc/tscopier-admin`, branch `feat/trade-pipeline-analytics`)
 
+- **Plain English:** Turned the admin user page's stacked cards into tabs with full browsing, made every row open a deep-dive modal (with AI explanations of skips/failures), fixed staging access rules, and cleaned up 121 lint errors.
 - **Context:** On the admin user detail page, Recent Signals (20) / Recent Trades (20) / Copier Logs (30) were three stacked cards requiring scrolling. Requirement: turn them into tabs, let admins browse ALL of a user's rows (filters + pagination), and make every row clickable into a deep-dive modal — including AI explanation of *why* a signal was skipped / what failed, and plain-English copier log interpretation. Also: staging RLS fixed (all 20 admin policies + `is_admin()` applied and verified), and the repo's lint debt (121 errors) fully eliminated.
 - **Staging RLS (completed this session):** Ran `/tmp/opencode/staging-admin-policies-nodrop.sql` (pure CREATE, no DROPs — user requested a non-destructive version) in staging SQL Editor → "Success. No rows returned" (expected for DDL). Verified via Management API: `is_admin()` function exists (STABLE), all 20 "Admins can view all …" policies live, data present (62 users / 741 signals / 1,259 trades / 1,500 execution logs / 0 channel_signals — empty table, not an RLS issue).
 - **Changes (tscopier-admin):**
@@ -816,6 +899,7 @@
 
 ### 2026-08-03 — Admin dashboard: staging/prod toggle + trade pipeline analytics (in `tartarixinc/tscopier-admin`)
 
+- **Plain English:** Added a staging/production switch to the admin dashboard and trade analytics (per-stage pipeline timeline + latency) using data the worker already records.
 - **Context:** The deployed admin dashboard (`tscopier-admin` repo, NOT `apps/backoffice` in this repo — the local backoffice is an older 6-page app) needed (1) a staging environment switch and (2) trade analytics: per-trade pipeline timeline + latency monitoring for historical trades, without adding latency to the execution path.
 - **Key discovery:** The worker already instruments the full path — `worker/src/pipelineTimestamps.ts` (22+ stamps: telegram_source_message_at → reconciliation_completed_at), persisted on `signals.pipeline_ts` (jsonb) and `channel_signals.pipeline_ts`. `emitPipelineEvent()` is fire-and-forget + try/catch guarded ("observability must never affect trade execution"). So Option A (read existing `pipeline_ts`) required ZERO worker changes. Option B (new `trade_pipeline_events` table) documented as deferred in `tscopier-admin/docs/latency-monitoring-options.md`.
 - **Changes (tscopier-admin, branch `feat/trade-pipeline-analytics`):**
@@ -829,6 +913,7 @@
 
 ### 2026-07-31 — Listener crash loop on prod: unhandled TelegramSessionInvalidError during reconnect (root-caused, fixed, PRs opened)
 
+- **Plain English:** The production listener crashed 4 times in 20 minutes after two replicas raced the same sessions: a Telegram session error thrown during reconnect crashed the whole worker. Fixed the unguarded reconnect path and opened PRs.
 - **Context:** Prod Railway listener crashed 4 times in 20 minutes (10:16:44, 10:20:03, 10:25:21, 10:28:40 UTC) on 2026-07-31. Each crash was `Node.js v<ver>` process death after `AUTH_KEY_DUPLICATED` (406) → `AUTH_KEY_UNREGISTERED` (401) storms. Trigger: deploy overlap — new instance `eac134790f2a:12` started while old `7c45ee20abd2:12` still held leases, so two replicas raced the same sessions. Full writeup: `docs/incident-2026-07-31-listener-crash-loop.md`.
 - **Root cause:** `rethrowIfSessionInvalid` (worker/src/telegramClient.ts:101) throws `TelegramSessionInvalidError` by design. `forceReconnect` awaited `warmEntityCache()` with no try/catch, so the throw escaped through the fire-and-forget `requestReconnect('update_loop_timeout')` caller (worker/src/userListener.ts:456) as an **unhandled promise rejection** — and `worker/src/index.ts` has no `unhandledRejection` handler, so Node killed the worker. Blame: `e6a9b09b2` (thrower), `372cc38cc` (unguarded warmup), `4a0febe06` (dropped promise). `f04282e2` (prod build at crash time) exonerated as trigger; it only changed start-time warmup (which already had `.catch`) plus sessionManager healing that never fired.
 - **Fix (2 edits in `worker/src/userListener.ts`, +28/−1):**
@@ -848,6 +933,7 @@
 
 ### 2026-07-31 — Fixed layering-modes allowlist bug: empty allowlist now means unrestricted
 
+- **Plain English:** Layering modes stayed greyed out for everyone because an empty allowlist was treated as "nobody allowed" instead of "everyone allowed".
 - **Context:** Static/dynamic layering modes remained deactivated in the AccountConfigPage UI on staging even after the `LAYERING_*` flags were enabled. The layering-modes implementation (static/dynamic modes, plan persistence, calculators, edge functions) was built by Emma — he designed the flag system with an allowlist escape hatch documented as "Leave empty = no allowlist restriction", but the enforcement was inverted.
 - **Root cause:** Both `supabase/functions/layering-mode-capabilities/index.ts` and `supabase/functions/update-layering-settings/index.ts` computed `listed = allowlist().has(accountId)`. With `LAYERING_MODES_ACCOUNT_ALLOWLIST` unset (empty set), `has()` returned `false` for every account, so `configurable` was always `false` → static/dynamic stayed greyed out for everyone. The documented intent (empty list = everyone allowed) required the opposite behavior.
 - **Changes:**
@@ -860,6 +946,7 @@
 
 ### 2026-07-31 — Fixed staging Netlify build: layering fallback type error in AccountConfigPage
 
+- **Plain English:** Fixed a TypeScript type error that was breaking the staging website build after a teammate's layering changes.
 - **Context:** Staging frontend deploy (`BZetsu/TScopier:staging` → Netlify) failed with 7 TS errors in `src/pages/dashboard/AccountConfigPage.tsx` after pulling Emma's layering-modes commits (PRs #63–#65, `8be5388e`) from upstream staging. The build is `tsc -b && vite build`, so `tsc` blocked the deploy.
 - **Root cause:** The ternary `normalizedFallbackManual` had two branches: `normalizeManualSettings(...) as ManualSettings` and `(configAccount.manual_settings ?? {})`. `configAccount.manual_settings` is typed `Json | null` (`src/types/database.ts`), so the fallback branch widened the union to `ManualSettings | Json`, and `.layering_mode` / `.range_layering_type` / `.static_layer_count` / `.dynamic_step_pips` / `.dynamic_max_layers` were not accessible on the `string` member of the union.
 - **Changes:**
@@ -870,6 +957,7 @@
 
 ### 2026-07-31 — Added "Manage" button to trade detail modal (deep-link into Manage Signals edit modal)
 
+- **Plain English:** Added a "Manage" button to the trade modal that jumps straight to editing that trade's signal in Manage Signals.
 - **Context:** On the Trades page (`/account-trades`), clicking a trade opens `TradeDetailModal`. User wanted a "Manage" button in the modal header that jumps to the manage signals page (`/manage-signals`) and opens the exact `EditSignalOverrideModal` for that trade's linked signal.
 - **Changes:**
   - **`src/components/trades/TradeDetailModal.tsx`:** Added "Manage" button in the sticky header, before the X close button. Uses `useNavigate`; on click closes the modal and navigates to `/manage-signals?edit=<signalId>`. Disabled until the linked signal context resolves (`context?.signal?.id`).
@@ -882,6 +970,7 @@
 
 ### 2026-07-31 — Merged upstream/main (prod) into feat/remaining-weekly-plan-items
 
+- **Plain English:** Merged the latest production code (session healing + start timeouts) into the feature branch, resolving two conflicts.
 - **Context:** User requested pulling the latest push from prod before continuing feature work. Current branch had diverged; merge had 2 conflicts (`worker/.env.example`, `worker/src/sessionManager.ts`).
 - **What prod brought in (commit `f04282e2` "feat: enhance session management with new listener timeout and healing logic"):**
   - **Disconnected-listener healing:** New `disconnectedRenewTicks` Map counter in `UserSessionManager`. If a listener stays disconnected for N renew ticks (`LISTENER_DISCONNECT_HEAL_TICKS`, default 3 ≈ 60s), it hard-resets via `stopListener()` so `syncSessions` can restart cleanly. Prevents "No lease forever" / UI "Copier engine offline" from a wedged reconnect-only path.
@@ -900,6 +989,7 @@
 
 ### 2026-07-30 — Added DB trigger to update signal_channels.last_live_at on all signal inserts
 
+- **Plain English:** Channel activity timestamps weren't updating for some channels, so the Popular Channels page showed "No activity". Added a database trigger so every new signal bumps the channel's last-active time.
 - **Context:** `signal_channels.last_live_at` was only updated by the canonical ingest pipeline (elected reader). The Python listener and legacy TS listener write directly to the per-user `signals` table, so `last_live_at` stayed null for those channels. `channel_signals` was also empty. The PopularChannelsPage showed "No activity recorded" despite active trades.
 - **Root cause:** No mechanism existed to propagate per-user signal creation back to the global `signal_channels.last_live_at`.
 - **Changes:**
@@ -912,6 +1002,7 @@
 
 ### 2026-07-30 — Fixed PopularChannelsPage search (controlled input + live filtering) and sort filter icon
 
+- **Plain English:** Search now filters live as you type (it only ran on Enter before), and the sort dropdown looks like a filter.
 - **Context:** Search input used `defaultValue` (uncontrolled) so filtering only triggered on Enter/click — users expected live filtering as they typed. Sort dropdown had no visual indicator it was a filter, looked like a plain button.
 - **Changes:**
   - Made search input controlled: `value={searchQuery}` + `onChange` for real-time filtering
@@ -924,6 +1015,7 @@
 
 ### 2026-07-30 — Added search text highlighting in PopularChannelsPage results
 
+- **Plain English:** Search results now highlight the matching text in yellow so you can see why a channel matched.
 - **Context:** When searching channels, matched text in `display_name` and `channel_username` wasn't highlighted, making it hard to see why a result matched.
 - **Changes:**
   - Added `highlightText()` helper that splits text by the query and wraps matches in a `<mark>` element with yellow background
@@ -934,6 +1026,7 @@
 
 ### 2026-07-30 — Added Discover section to sidebar, moved Popular Channels into it
 
+- **Plain English:** Added a "Discover" section to the sidebar and moved Popular Channels into it.
 - **Context:** Popular Channels was under SIGNALS in the sidebar. User requested a new DISCOVER section between SIGNALS and TRADING TOOLS with Popular Channels moved there.
 - **Changes:**
   - Added `discover` to `NavTranslations.sections` type in `types.ts`
@@ -945,6 +1038,7 @@
 
 ### 2026-07-30 — Added search button + sort dropdown to PopularChannelsPage; fixed lint issues
 
+- **Plain English:** The search icon is now a real button, sort filters became a dropdown, and pre-existing lint errors were fixed.
 - **Context:** Search icon was decorative (`pointer-events-none`) and didn't trigger search. Sort filters were inline buttons that didn't work well on mobile. Three pre-existing lint errors blocked clean CI.
 - **Changes:**
   - Search icon is now a clickable button — triggers filter on click or Enter key
@@ -957,6 +1051,7 @@
 
 ### 2026-07-30 — Fixed "No activity recorded" for channels with signals but null last_live_at
 
+- **Plain English:** Channels with signals but a missing activity timestamp no longer show "No activity recorded" — the latest signal time is used as a fallback.
 - **Context:** `PopularChannelsPage` showed "No activity recorded" for channels where `signal_channels.last_live_at` was null, even though the channels had generated signals (visible in `channel_signals` table) and had executed trades. The `channelStatus()` function only checked `last_live_at` — if null, it immediately returned "No activity recorded" with no fallback.
 - **Changes:**
   - Modified the `channel_signals` query in `loadChannels()` to also fetch `created_at` (with descending sort), computing the latest signal timestamp per channel into a new `lastSignalAt` map
@@ -969,6 +1064,7 @@
 
 ### 2026-07-29 — Added [httpServer] debug logging for Telegram auth + pushed all commits to dev/staging
 
+- **Plain English:** Added debug logging for the Telegram login endpoints (with phone numbers redacted) and pushed all pending commits.
 - **Context:** Uncommitted debug logging for Telegram auth endpoints (`send_code`, `verify_code`, `start_qr`, `qr_status`, `verify_qr_password`) was left from the July 23-24 auth debugging sessions. Added and committed after verifying no sensitive data is logged (phone numbers redacted, no passwords or secrets).
 - **Changes:**
   - Added `console.log`/`console.warn` with `[httpServer]` prefix before and after each auth handler call, logging user_id and action outcome
@@ -979,6 +1075,7 @@
 
 ### 2026-07-29 — Fixed channelTradingConfig healing loop: persisted healed configs to DB
 
+- **Plain English:** The worker kept re-creating missing channel settings every cycle and never saved them; healed settings are now persisted so the loop stops.
 - **Context:** `healChannelTradingConfigsMap()` created default per-channel trading settings in memory for channels missing config, but never wrote them to the database. Every signal dispatch re-detected the missing config, re-healed, and logged the warning. For channel `daa27d5a-e17e-4025-904e-8da28a4e30f4` this repeated every ~60s forever.
 - **Root cause:** The function was a pure in-memory computation — it produced healed configs, returned them for execution, then discarded them. The `broker_accounts.channel_trading_configs` JSONB column and `broker_channel_trading_configs` table were never updated, so every call re-read stale DB data.
 - **Changes:**
@@ -991,6 +1088,7 @@
 
 ### 2026-07-29 — Added popularChannelsPage translations to all locale files
 
+- **Plain English:** Added translations for the Popular Channels page to all 9 languages.
 - **Context:** `popularChannelsPage` section was added to `en.ts` and `types.ts` but missing from other locale files that define `channelsPage`.
 - **Changes:**
   - Added `popularChannelsPage` with Spanish translations to `es.ts`
@@ -1003,6 +1101,7 @@
 
 ### 2026-07-29 — Added recentlyFailed cooldown to syncSessions + fixed stale tests
 
+- **Plain English:** A session stuck in a failure loop was retried every 30 seconds forever; a cooldown now skips recently-failed sessions for 5 minutes.
 - **Context:** User `6b0410f1` stuck in AUTH_KEY_DUPLICATED retry storm — `syncSessions` retried every 30s forever with no cooldown.
 - **Changes:**
   - Added `recentlyFailed: Map<string, number>` field to `UserSessionManager` — tracks `userId → timestamp` of last start failure
@@ -1015,6 +1114,7 @@
 
 ### 2026-07-29 — Popular Channels discovery page added
 
+- **Plain English:** Built the Popular Channels discovery page (ranked list, search, sort, expandable details) so users can find channels to join.
 - **Context:** New informational page under the SIGNALS section that lists all `signal_channels` ranked by `subscriber_count` descending. Purely a discovery directory — users cannot add channels from this page (they must join on Telegram first).
 - **Change:**
   - Created `src/pages/dashboard/PopularChannelsPage.tsx` — queries `signal_channels` ordered by subscriber count, renders a Card with rank (#1, #2...), display name, @username, live/offline indicator, and subscriber count
@@ -1039,6 +1139,7 @@
 
 ### 2026-07-28 — Hotfix deployed to production (reconnect storm), 3 remaining issues identified
 
+- **Plain English:** Deployed the reconnect-storm hotfix to production (confirmed working) and identified three remaining issues: offline banners, a stuck session, and broker pod failures.
 - **Context:** Hotfix PR #53 (reconnect storm: 11 hardening fixes + realtime health check + reconnect monkeypatch + signals_pipeline_ts migration) was cherry-picked from staging into `upstream/main` via `origin/hotfix/reconnect-storm`. Merged at `e7df374c`. Production deployment confirmed working: flood-wait aggregated (`count=18 window=60s`), malformed RPC counted but NOT triggering reconnects, 9+ listeners connected with heartbeats.
 - **Production log findings:**
   1. **"Copier engine offline" on production** — Driven by `worker_session_leases` table. `renewAllLeases` runs every 20s with per-user 8s timeout, concurrency 6, lease TTL 45s. Need to verify leases are being written properly on production.
@@ -1051,6 +1152,7 @@
 
 ### 2026-07-28 — GramJS _updateLoop reconnect storm causes session invalidation (NOT AUTH_KEY_UNREGISTERED) — fixed by monkeypatching _sender.reconnect
 
+- **Plain English:** The real culprit in the second session death was GramJS's own reconnect loop (not a revoked key); patched its internal reconnect to respect our auto-reconnect setting.
 - **Context:** After rollback + 11 hardening fixes, user's session kept getting invalidated. Two deaths:
   - **First death (AUTH_KEY_UNREGISTERED):** Telegram revoked the auth key during the `af12737d` storm. Session properly invalidated.
   - **Second death (GramJS storm):** After re-linking, the new session worked briefly but then GramJS's `_updateLoop` (`telegram/client/updates.js:212`) started an infinite reconnect storm. This caused `BinaryReader.readUInt32LE` crashes (malformed RPC results), which triggered `noteMalformedRpcResult` exhaustion, which incorrectly called `onAuthKeyDuplicatedRecoveryExhausted` — invalidating a perfectly valid session.
@@ -1062,6 +1164,7 @@
 
 ### 2026-07-28 — Telegram reconnect storm fixes (11 fixes) — ALL TESTS PASS
 
+- **Plain English:** Applied 11 hardening fixes for the Telegram reconnect storm: fewer retries, a cooldown gate, suppressed log noise, and a heartbeat.
 - **Context:** Deployment `af12737d` caused all users' Telegram listeners to enter a death spiral of disconnect/reconnect. Root cause: 10 flat-30s reconnect attempts (273s cycle) replaced the original 4 escalating + deferred retry (56s). GramJS internal crashes also triggered reconnects. 83% of log noise was GramJS flood-wait suppression messages.
 - **11 fixes applied on `feat/fix-telegram-reconnect-storm`:**
   - **Fix 1-2:** `authKeyDuplicatedRecovery.ts` — max attempts 10→4, delays `[first, retry, 15s, 30s]`, deferred retry restored
@@ -1077,6 +1180,7 @@
 
 ### 2026-07-28 — Staging test checklist + Marti's 8 commits merged + Section 5 promoted
 
+- **Plain English:** Merged a teammate's 8 commits, wrote a staging test checklist, and promoted the realtime reconnect fix to staging.
 - **Context:** Created comprehensive staging test checklist (`docs/staging-test-checklist.md`) covering all 6 sections plus Martins' 8 commits. Pushed all changes (Section 5 + Martins commits + existing fixes) to both upstream/dev and upstream/staging at `964152e3`. dev and staging are now identical.
 - **Martins' 8 commits analyzed:**
   - `186c8d1c` ensureSignalRow — MEDIUM risk (signal FK persistence)
@@ -1092,6 +1196,7 @@
 
 ### 2026-07-28 — Section 5: Realtime subscription reconnect gap fix
 
+- **Plain English:** The realtime connection silently dropped every 20-40 minutes and never reconnected; it now detects the drop and re-subscribes automatically.
 - **Context:** Implemented Section 5 of the weekly plan — Supabase Realtime WebSocket drops every 20-40 min but the reference is never cleared, so the guard (`if (this.channelChannel) return`) prevents re-subscription forever.
 - **Changes:**
   - **5.1:** Both `subscribeToChannelChanges()` and `subscribeToAuthPendingChanges()` now null the channel reference on `CLOSED`/`CHANNEL_ERROR` and schedule a re-subscribe via `setTimeout(..., 5000)`
@@ -1102,6 +1207,7 @@
 
 ### 2026-07-28 — PR #49 review: CHANNEL_INVALID auto-disable (Section 4) — ALL PASS
 
+- **Plain English:** Reviewed a PR that auto-disables channels Telegram reports as invalid after repeated failures — all tests passed.
 - **Context:** Reviewed PR #49 (commit `991bf6d2`, merged at `a6ed746a`) against Section 4 of the weekly plan. All 10 tests pass, all 4 checklist items covered.
 - **Verification results:**
   - **4.1:** `ChannelInvalidFailureState` interface (line 276) + `channelInvalidFailures` Map (line 403) — DONE ✅
@@ -1114,6 +1220,7 @@
 
 ### 2026-07-27 — Section 6 scale validation: prod data copied to staging, listener restart triggered
 
+- **Plain English:** Copied production data (59 sessions, 170 channels) into staging with a safe script to validate the system at scale.
 - **Context:** Set up 59 synthetic sessions + 170 channels on staging by copying production data safely (no session strings, all PII blanked). Deleted 34 orphaned synthetic users from earlier failed script runs. Ready to monitor.
 - **Changes:**
   - Created `scripts/section6-scale-test.js` — idempotent script that exports production sessions/channels/profiles, creates staging auth users (detects existing by email), upserts data, removes orphans
@@ -1125,6 +1232,7 @@
 
 ### 2026-07-27 — Completed remaining fix items 2.4, 3.2, + patch script security
 
+- **Plain English:** Finished the last two planned fixes (connection trace logging, malformed-response error handling) and hardened the patch script with version checks.
 - **Context:** After PRs #47 and #48, items 2.4 and 3.2 were still PARTIAL. Completed them plus hardened the patch script.
 - **Changes:**
   - **2.4:** Added `[telegram-conn]` connect-trace log in `telegramClient.ts:buildClient()` with redacted session fingerprint (`worker/src/telegramClient.ts`)
@@ -1136,6 +1244,7 @@
 
 ### 2026-07-27 — Verified all claims in weekly plan, regenerated PDF, fixed 3 doc inaccuracies
 
+- **Plain English:** Checked every claim in the weekly plan against the code with subagents, fixed three inaccuracies, and regenerated the PDF.
 - **Context:** Ran comprehensive claim verification across all 6 sections of `docs/weekly-plan-2026-07-27.md` using 5 explore subagents. Found and fixed 3 inaccuracies. Regenerated the PDF with proper wkhtmltopdf CSS (tighter margins, no squished content, proper line spacing, table page-break handling).
 - **Verification results:**
   - **Section 1 (merge staging):** ALL CONFIRMED — 16 commits ahead, 9 specific hashes on staging, migration file exists, auth fixes on both branches via different hashes
@@ -1154,6 +1263,7 @@
 
 ### 2026-07-27 — Production log analysis: found 3 gaps in weekly plan, added items 2.5, 2.6, and BinaryReader line fix
 
+- **Plain English:** Reviewed fresh production logs and found three gaps in the plan: a lease cleanup race on startup, a stuck "auth in progress" state, and the wrong crash line number.
 - **Context:** Reviewed fresh production log stream from the user. Identified 3 patterns not fully covered in the existing plan:
   1. **Lease cleanup race on startup (2.5):** The `disconnectAll()` in shutdown only releases leases for listeners in the in-memory map. Sessions mid-connect or errored leave orphaned leases that block the new worker for up to 41s.
   2. **Stale "auth in progress" state (2.6):** Once a session exhausts AUTH_KEY_DUPLICATED retries, it falls into `auth_pending` state and gets skipped every `syncSessions()` cycle forever. The user sees "linking Telegram" in the UI but never recovers.
@@ -1166,6 +1276,7 @@
 
 ### 2026-07-27 — Documented weekly plan: production vs staging gap analysis + 6-section fix checklist
 
+- **Plain English:** Analyzed production vs staging and wrote a six-section fix checklist covering every outstanding issue.
 - **Context:** Analyzed production logs (53 sessions, build channel-scoped-listener-1) vs staging logs (3 sessions). Mapped every production error to root cause and staging fix status. Documented what's on staging that production needs, plus the 5 remaining unfixed production issues.
 - **Changes:**
   - Created `docs/weekly-plan-2026-07-27.md` — comprehensive checklist with 6 sections, each containing: plain English fix description, technical detail, plain English explanation, user impact, expected outcome, and actionable checklist items
@@ -1176,6 +1287,7 @@
 
 ### 2026-07-24 — Fixed _updateLoop TIMEOUT handler: missing `await` broke reconnect
 
+- **Plain English:** A missing "await" meant reconnect ran in the background while the loop kept pinging the dead connection; now the loop waits for the reconnect to finish.
 - **Context:** The `onError` TIMEOUT handler pushed to staging (commit 0218a215) called `this.requestReconnect()` without `await`. The `_updateLoop` would continue pinging on the dead connection while `forceReconnect` ran in the background. The `this.isConnected` guard then made things worse — after the first TIMEOUT, `forceReconnect` set `isConnected = false`, and all subsequent TIMEOUTs were silently skipped. The loop kept spinning forever on TIMEOUTs.
 - **Changes:** Added `await` before `this.requestReconnect()` so the old `_updateLoop` blocks until the reconnect completes. Removed `this.isConnected` guard — `reconnectInFlight` dedup already prevents concurrent reconnects.
 - **Files:** `worker/src/userListener.ts:364`
@@ -1183,11 +1295,13 @@
 
 ### 2026-07-24 — Promoted QR login AUTH_KEY_UNREGISTERED fix to staging
 
+- **Plain English:** Pushed the QR-login fix to staging so it matches dev.
 - **Context:** The fix was previously committed to `upstream/dev` only. `upstream/staging` was behind `dev` and missing this fix.
 - **Changes:** Pushed to `upstream/staging` along with the TIMEOUT handler fix. Both branches now identical at `b3a8f38a`.
 
 ### 2026-07-24 — Added pipeline_ts column to signals table on staging Supabase
 
+- **Plain English:** Staging logs complained about a missing pipeline_ts column; added it to the signals table.
 - **Context:** Staging logs showed `Could not find the 'pipeline_ts' column of 'signals' in the schema cache`. The column existed on `channel_signals` (canonical) but not on `signals` (per-user projection). The listener code writes `pipeline_ts` on signal upsert.
 - **Changes:** Created and applied migration `20260724120000_signals_pipeline_ts.sql` on staging project `axdcledcyhyvzrnfkwat`. Column `pipeline_ts jsonb` added to `signals` table.
 - **Files:** `supabase/migrations/20260724120000_signals_pipeline_ts.sql`
@@ -1195,11 +1309,13 @@
 
 ### 2026-07-24 — Identified missing TRADE_WORKER_URL on staging listener
 
+- **Plain English:** The staging listener couldn't forward signals because the trade-worker URL secret wasn't set; identified and documented the fix.
 - **Context:** Staging logs show `[tradeSignalPush] no trade worker URL for action=sell user=ed0ab337... — set TRADE_WORKER_URL / TRADE_MGMT_WORKER_URL on listener`. Listener cannot forward signals to trade worker.
 - **Fix:** Set Railway secrets on listener service: `TRADE_WORKER_URL=https://tscopier-staging.up.railway.app` and `TRADE_MGMT_WORKER_URL=https://tscopier-staging.up.railway.app`.
 
 ### 2026-07-24 — Fixed QR login AUTH_KEY_UNREGISTERED death spiral
 
+- **Plain English:** QR login with an unregistered Telegram key looped forever spamming errors every ~200ms; it now errors out cleanly instead.
 - **Context:** User `4d2c9a06` attempted QR login, but the Telegram auth key was already unregistered. `onError` handler in `runQrLoginBackground` returned `false` (meaning "not fatal, keep trying"), so GramJS looped `account.GetPassword` → `AUTH_KEY_UNREGISTERED` → `onError` forever, spamming logs every ~200ms.
 - **Changes:** Added `isAuthKeyUnregistered` check in the `onError` callback that throws instead of returning `false`, breaking the retry loop. The outer `catch` handler then properly cleans up pending state, disconnects the client, and marks the QR login as errored.
 - **Files:** `worker/src/authService.ts:396`
@@ -1207,6 +1323,7 @@
 
 ### 2026-07-23 — Fixed _updateLoop TIMEOUT death spiral for connected user listeners
 
+- **Plain English:** Connected listeners threw TIMEOUT errors every 9-30 seconds and never recovered; a reconnect handler now forces a clean reconnect instead of the silent no-op.
 - **Context:** Connected user listeners logging `Error: TIMEOUT` every 9-30 seconds from GramJS's `_updateLoop` ping loop, never recovering. Caused by `autoReconnect: false` setting — `client._sender.reconnect()` silently no-ops when `_userConnected` is false, so the loop repeats forever.
 - **Changes:** Registered `client.onError` handler in `UserListener` constructor that catches TIMEOUT errors and calls `requestReconnect('update_loop_timeout')`, forcing a proper disconnect + reconnect cycle that actually tears down and rebuilds the connection.
 - **Files:** `worker/src/userListener.ts:359`
@@ -1214,6 +1331,7 @@
 
 ### 2026-07-23 — Fixed Telegram auth: session persistence, GramJS timeout recovery, error code propagation
 
+- **Plain English:** Fixed three Telegram login bugs: sessions lost on restart, timeout death spirals mid-login, and error responses without stable codes for the app to detect.
 - **Context:** Three auth bugs found during staging testing:
   1. Railway worker restart between `send_code` and `verify_code` lost MTProto session → "Login session expired"
   2. GramJS `_updateLoop` entered a TIMEOUT death spiral after a connection drop mid-auth, making the client unusable for 30+ minutes
@@ -1228,6 +1346,7 @@
 
 ### 2026-07-22 — Full staging environment setup: Cloudflare DNS, Netlify staging site, Railway listener, Supabase edge functions, Telegram auth
 
+- **Plain English:** Set up the entire staging environment end-to-end: DNS, staging website, listener worker, edge functions, and Telegram login.
 - **Context:** Massive session. Set up complete staging environment infrastructure end-to-end. Started with domain DNS management (Cloudflare), then Netlify staging site (cross-team workaround), Railway listener worker, Supabase edge functions with Telegram auth.
 - **Change:**
   - **Cloudflare:** Added tscopier.ai to Cloudflare, imported all 34 DNS records (A, CNAME, MX, TXT, DKIM). Identified and added missing records (sso CNAME, Stripe billing records, _acme-challenge.sso TXT). Set proxy status (hostingermail DKIM → DNS only, staging CNAME → DNS only). Created `docs/cloudflare-setup.md`. Domain registered through Netlify (reseller for Name.com) — nameserver change requires Netlify support ticket.
@@ -1253,6 +1372,7 @@
 
 ### 2026-07-22 — Updated git workflow: feature branches off dev, annotated step-by-step docs
 
+- **Plain English:** Updated the git workflow (feature → dev → staging → main) and rewrote the staging docs with step-by-step commands.
 - **Context:** CTO changed deployment flow to: individual branches → `dev` (integration) → `staging` (admin approval) → `main` (production). Documented every command with full comments explaining what each does and why.
 - **Change:**
   - Updated `AGENTS.md` git workflow: feature branches off `dev`, admin promotes `dev → staging` and `staging → main`, hotfix cherry-picks to `dev` only
@@ -1266,6 +1386,7 @@
 
 ### 2026-07-22 — Set up dev + staging branches on production repo, full pipeline documented
 
+- **Plain English:** Created the dev and staging branches on the production repo and documented the full promotion pipeline.
 - **Context:** User clarified their workflow: work on fork → push to dev branch on production → staging → main. Railway auto-deploys from main/staging, so dev branch must be safe. Also added "never delete" rule after incident.
 - **Change:**
   - Created `dev` branch (from main) on tartarixinc/TScopier — no auto-deploys
@@ -1278,6 +1399,7 @@
 
 ### 2026-07-22 — Documented three branches + step-by-step promotion commands
 
+- **Plain English:** Documented what dev/staging/main are and the exact commands to move code through them.
 - **Context:** User needed a simpler explanation of upstream/dev/staging/main and exact commands to push from fork → dev → staging → main.
 - **Change:** Added to `docs/staging-environment.md`:
   - "Three branches on production" section with plain explanation + analogy (desk / testing room / live stage)
@@ -1288,12 +1410,14 @@
 
 ### 2026-07-22 — Documented full git workflow with sync, rebase, and hotfix
 
+- **Plain English:** Documented daily sync, rebasing, and hotfix procedures.
 - **Context:** User asked how to pull production code, avoid merge conflicts, and the correct workflow from fork → dev → staging → main.
 - **Change:** Added "Git sync & workflow" section to `docs/staging-environment.md` covering: daily sync before work, feature branch creation, rebase on upstream/dev before PR, why rebase vs merge, small PRs, hotfix with cherry-pick, and pulling mid-work.
 - **Files:** `docs/staging-environment.md`
 
 ### 2026-07-22 — Documented Railway architecture for CEO provisioning
 
+- **Plain English:** Documented the three Railway services (listener, worker, backtest) so the CEO could provision the staging project.
 - **Context:** User needed to understand the 3 Railway services (Listener, Worker, Backtest) so they could ask the CEO to create a staging Railway project. User got "not authorized" trying to create one.
 - **Change:** Created `docs/railway-architecture.md` explaining each service's purpose (Listener = Telegram connection + signal parse, Worker = MT4/5 execution via FxSocket, Backtest = historical simulation), data flow, constraints (1 replica per listener shard), and what the CEO needs to create for staging.
 - **Files:** `docs/railway-architecture.md`
@@ -1301,6 +1425,7 @@
 
 ### 2026-07-22 — Added staging deployment pipeline documentation
 
+- **Plain English:** Wrote the full staging setup guide: branch strategy, infrastructure, env vars, promotion, rollback, and hotfix procedures.
 - **Context:** User needed a clear plan for safely promoting changes from staging to production, including infrastructure setup, branch strategy, and rollback procedures.
 - **Change:**
   - Created `docs/staging-environment.md` with full staging setup guide: branch strategy, infra table per service, env vars per service, deployment pipeline for each service (Netlify, Railway, Supabase), promotion checklist, rollback procedures, and hotfix flow
@@ -1311,6 +1436,7 @@
 
 ### 2026-07-22 — Setup: staging environment from production fork
 
+- **Plain English:** Forked the production repo into a local staging workspace and created the agent guide and project memory.
 - **Context:** Forked the production TScopier repo into `~/projects/TSCopier` to create a staging environment. No production infra credentials or secrets were copied.
 - **Change:**
   - Cloned `https://github.com/BZetsu/TScopier.git` into `/home/jbzetsu/projects/TSCopier`
