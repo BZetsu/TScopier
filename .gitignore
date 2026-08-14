@@ -2,6 +2,27 @@ node_modules/
 .env
 load-results/
 
+# Build output (Netlify/Railway build from source)
+dist/
+worker/dist/
+worker.zip
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Local runtime / dev artifacts
+dump.rdb
+logs.*.log
+logs.*.json
+toPdfViaTempFile*
+
+# Export / debug log dumps
+docs/Prod_Logs/
+docs/Staging_Logs/
+
+# Supabase local temp
+supabase/.temp/
+
 # Local-only agent files (personal config + investigation scratchpads)
 AGENTS.md
 docs/scratchpads/
