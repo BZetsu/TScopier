@@ -17,12 +17,18 @@ export const MARKETING_ORIGIN = trimOrigin(
   DEFAULT_MARKETING_ORIGIN,
 )
 
+function isAbsoluteHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value)
+}
+
 function normalizePath(path: string): string {
+  if (isAbsoluteHttpUrl(path)) return path
   if (!path || path === '/') return '/'
   return path.startsWith('/') ? path : `/${path}`
 }
 
 export function joinOrigin(origin: string, path: string): string {
+  if (isAbsoluteHttpUrl(path)) return path
   const p = normalizePath(path)
   return p === '/' ? origin : `${origin}${p}`
 }
@@ -44,12 +50,13 @@ function withDevSite(path: string, site: 'app' | 'marketing'): string {
  * Avoids broken URLs like `/pricing?site=marketing?ref=x`.
  */
 export function withQuery(path: string, params: Record<string, string | null | undefined>): string {
-  const normalized = normalizePath(path)
-  const url = new URL(normalized, 'http://local.invalid')
+  const absolute = isAbsoluteHttpUrl(path)
+  const url = absolute ? new URL(path) : new URL(normalizePath(path), 'http://local.invalid')
   for (const [key, value] of Object.entries(params)) {
     if (value == null || value === '') continue
     url.searchParams.set(key, value)
   }
+  if (absolute) return url.toString()
   return `${url.pathname}${url.search}${url.hash}`
 }
 

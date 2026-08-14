@@ -3,9 +3,9 @@ import { evaluateSignupEmail, signupErrorPolicyCode } from './signupEmailPolicy'
 
 describe('evaluateSignupEmail', () => {
   it('allows normal addresses', () => {
-    expect(evaluateSignupEmail('user@example.com')).toEqual({
+    expect(evaluateSignupEmail('user@gmail.com')).toEqual({
       allowed: true,
-      normalizedEmail: 'user@example.com',
+      normalizedEmail: 'user@gmail.com',
     })
   })
 
@@ -19,6 +19,26 @@ describe('evaluateSignupEmail', () => {
 
   it('blocks disposable domains', () => {
     const result = evaluateSignupEmail('test@mailinator.com')
+    expect(result.allowed).toBe(false)
+    if (!result.allowed) expect(result.code).toBe('disposable_domain')
+  })
+
+  it('blocks adult brand domains', () => {
+    expect(evaluateSignupEmail('gaylord297426@pornhub.com').allowed).toBe(false)
+  })
+
+  it('blocks keyword locals like gay*', () => {
+    expect(evaluateSignupEmail('gaylord297426@hotmail.com').allowed).toBe(false)
+    expect(evaluateSignupEmail('user@something-porn.example').allowed).toBe(false)
+  })
+
+  it('blocks MS consumer name+digits bots', () => {
+    expect(evaluateSignupEmail('mamadou429302@hotmail.com').allowed).toBe(false)
+    expect(evaluateSignupEmail('john.smith@hotmail.com').allowed).toBe(true)
+  })
+
+  it('blocks RFC example domains', () => {
+    const result = evaluateSignupEmail('bot@example.com')
     expect(result.allowed).toBe(false)
     if (!result.allowed) expect(result.code).toBe('disposable_domain')
   })
