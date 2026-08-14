@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-08-14 — Risk/lot calculator: gold pip = 0.1 (not point 0.01)
+
+- Bug: calculator treated gold as if 1 pip = 0.01 (broker point) instead of trader pip **0.1**, especially for `GOLD` and when the modal kept a sticky parent quote.
+- Fix: `normalizePipInstrument` aliases `GOLD`/`XAU` → `XAUUSD` (and silver aliases) in frontend + worker `pipMath` / `pipCalculator`; modal sizes from the **form symbol**.
+- Tests: 30 SL pips × 0.01 lot on XAUUSD/GOLD = **$3** (point-based would be $0.30).
+- Scratchpad: `docs/scratchpad-risk-lot-calculator-xauusd-pips-2026-08-14.md`. Needs frontend deploy.
+
 ### 2026-08-14 — Unblock hotmail/outlook/proton signup domains
 
 - Removed full-domain signup block for `hotmail.com`, `outlook.com`, `outlook.co.uk`, `proton.me`.
