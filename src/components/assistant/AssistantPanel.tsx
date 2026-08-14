@@ -39,6 +39,7 @@ import {
 import { AssistantChatBubble, AssistantTypingIndicator } from './AssistantChatBubble'
 import { AssistantTelegramLinkCard } from './AssistantTelegramLinkCard'
 import { AssistantBrokerConnectCard } from './AssistantBrokerConnectCard'
+import { AssistantTradesCard } from './AssistantTradesCard'
 import { Button } from '../ui/Button'
 import clsx from 'clsx'
 import { ensureFreshAuthSession } from '../../lib/fxsocketBroker'
@@ -76,6 +77,7 @@ export function AssistantPanel() {
   const [attaching, setAttaching] = useState(false)
   const [error, setError] = useState('')
   const [confirmBusy, setConfirmBusy] = useState<string | null>(null)
+  const [toolResults, setToolResults] = useState<Array<{ tool: string; result: string }>>([])
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -124,6 +126,7 @@ export function AssistantPanel() {
     persistMessages([])
     setPendingConfirmations([])
     setPendingClientActions([])
+    setToolResults([])
     resetTelegramLinkFlow()
     resetBrokerConnectFlow()
     setError('')
@@ -384,6 +387,7 @@ export function AssistantPanel() {
     setDraft('')
     const images = draftImages
     setDraftImages([])
+    setToolResults([])
     const userContent = text ? redactTelegramPhones(text) : a.imageOnlyCaption
     const nextMessages = [
       ...messages,
@@ -401,6 +405,7 @@ export function AssistantPanel() {
         ...nextMessages,
         { role: 'assistant', content: res.assistant_message || a.emptyReply },
       ])
+      setToolResults(res.tool_results ?? [])
       await applySideEffects(res.pending_client_actions, res.pending_confirmations)
     } catch (e) {
       setError(e instanceof Error ? e.message : a.errorFallback)
@@ -565,6 +570,15 @@ export function AssistantPanel() {
               hidePlainCaption={
                 Boolean(m.images?.length) && m.content.trim() === a.imageOnlyCaption
               }
+            />
+          ))}
+
+          {toolResults.map((tr, i) => (
+            <AssistantTradesCard
+              key={`${tr.tool}-${i}`}
+              tool={tr.tool}
+              result={tr.result}
+              copy={a.tradesCard}
             />
           ))}
 

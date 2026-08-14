@@ -148,6 +148,21 @@ export interface NavTranslations {
       composerPhoneHint: string
       composerCodeHint: string
     }
+    tradesCard: {
+      title: string
+      noTrades: string
+      ticket: string
+      legs: string
+      statusExecuted: string
+      statusFailed: string
+      statusSkipped: string
+      statusPending: string
+      statusParsed: string
+      statusDispatched: string
+      statusIgnored: string
+      statusError: string
+      statusCancelled: string
+    }
     broker: {
       title: string
       hint: string

@@ -12,6 +12,10 @@ const NAV_ALLOWLIST = new Set([
   '/billing',
   '/contact-support',
   '/pricing',
+  '/account-trades',
+  '/copier-logs',
+  '/activities',
+  '/manage-signals',
 ])
 
 /** Legacy assistant paths → real routes (avoid /:referralCode catch-all → signup). */

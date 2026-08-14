@@ -154,6 +154,22 @@ export const chromeSv: AppChromeTranslations = {
         missingFields: 'Login, server, and password are required.',
         connectedSuccess: 'Broker connected. Tell me which channel to configure and your lot size when you’re ready.',
       },
+      tradesCard: {
+        title: 'Trades',
+        noTrades: 'No recent trades found.',
+        ticket: 'Ticket',
+        legs: 'Legs',
+        statusExecuted: 'Executed',
+        statusFailed: 'Failed',
+        statusSkipped: 'Skipped',
+        statusPending: 'Pending',
+        statusParsed: 'Parsed',
+        statusDispatched: 'Dispatched',
+        statusIgnored: 'Ignored',
+        statusError: 'Error',
+        statusCancelled: 'Cancelled',
+      },
+
     },
 
   },

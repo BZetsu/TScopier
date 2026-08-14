@@ -157,7 +157,22 @@ export const en: Translations = {
         composerPhoneHint: 'Type your number here or use the field above…',
         composerCodeHint: 'Use the secure code field above…',
       },
-      broker: {
+      tradesCard: {
+        title: 'Trades',
+        noTrades: 'No recent trades found.',
+        ticket: 'Ticket',
+        legs: 'Legs',
+        statusExecuted: 'Executed',
+        statusFailed: 'Failed',
+        statusSkipped: 'Skipped',
+        statusPending: 'Pending',
+        statusParsed: 'Parsed',
+        statusDispatched: 'Dispatched',
+        statusIgnored: 'Ignored',
+        statusError: 'Error',
+        statusCancelled: 'Cancelled',
+      },
+broker: {
         title: 'Connect trading account',
         hint: 'Enter your broker details. The password stays in this secure card — never type it in chat.',
         platformLabel: 'Platform',
