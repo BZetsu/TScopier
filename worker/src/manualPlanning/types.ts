@@ -216,6 +216,8 @@ export interface PlannerResult {
   isBuy?: boolean
   closeWorseEntries?: PlannerCloseWorseEntries
   partialTps?: PlannerPartialTp[]
+  /** Absolute TP price for Move-SL-on-TP-hit (from finalTps ladder / partials). */
+  autoBeTpHitTriggerPrice?: number | null
   strictEntry?: PlannerStrictEntry
   rangeEntryWait?: PlannerRangeEntryWait
   rangeLayering?: PlannerRangeLayering

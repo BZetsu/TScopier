@@ -81,7 +81,11 @@ export async function placeStrictSignalEntryPending(
     const ticket = result.ticket
     const isBuyLeg = se.isBuy
     const pendingSl = clamped.args.stoploss && clamped.args.stoploss > 0 ? clamped.args.stoploss : null
-    const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, pendingSl)
+    const pendingTp = clamped.args.takeprofit && clamped.args.takeprofit > 0 ? clamped.args.takeprofit : null
+    const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, pendingSl, {
+      tpHitTriggerPrice: plan.autoBeTpHitTriggerPrice
+        ?? pendingTp,
+    })
     const tradeInsert = await ctx.supabase
       .from('trades')
       .insert({
@@ -94,7 +98,7 @@ export async function placeStrictSignalEntryPending(
         direction: isBuyLeg ? 'buy' : 'sell',
         entry_price: entryPx,
         sl: pendingSl,
-        tp: clamped.args.takeprofit && clamped.args.takeprofit > 0 ? clamped.args.takeprofit : null,
+        tp: pendingTp,
         lot_size: result.lots ?? vol,
         status: 'pending',
         opened_at: new Date().toISOString(),

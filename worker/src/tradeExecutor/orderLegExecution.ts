@@ -6,7 +6,11 @@ import {
 } from '../fxsocketClient'
 import { isMtBridgeGlitchMessage } from '../brokerConnectError'
 import type { ChannelKeywords, ManualSettings, PlannerResult, VirtualPendingLeg } from '../manualPlanner'
-import { autoManagementTradeSnapshot } from '../autoManagement'
+import {
+  autoManagementTradeSnapshot,
+  normalizeAutoBeConfig,
+  resolveAutoBeTpHitTriggerPrice,
+} from '../autoManagement'
 import { stripInvalidStopsForSide } from '../channelActiveTradeParams'
 import { isInvalidStopsError } from '../orderModifySafe'
 import { humanizeOrderSendError, tradeFailureReasonFromBrokerMessage } from '../brokerTradeError'
@@ -518,7 +522,14 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       entryPx,
       openSl,
     )
-    const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, openSl)
+    const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, openSl, {
+      tpHitTriggerPrice: leg.autoBeTpHitTriggerPrice
+        ?? resolveAutoBeTpHitTriggerPrice({
+          tpIndex: normalizeAutoBeConfig(manual)?.tpIndex ?? 1,
+          partialTps: leg.partialTps,
+          brokerTp: openTp,
+        }),
+    })
     const tradeRowPayload = {
       user_id: signal.user_id,
       signal_id: signal.id,

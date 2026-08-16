@@ -3,7 +3,9 @@ import {
   clampBreakevenModifyStops,
   computeBreakevenStopLoss,
   isAutoBeTriggerMet,
+  isAutoBeTpHitAbsolutePrice,
   isSlAtOrBeyondBreakeven,
+  pricesNearlyEqual,
   resolveSlForBreakevenCheck,
   type AutoBeMode,
   type AutoBeType,
@@ -356,7 +358,17 @@ export class AutoManagementMonitor {
       freezeLevel: symEntry.freezeLevel,
     })
     const modifySl = clamped.stoploss
-    const modifyTp = clamped.takeprofit
+    // When TP-hit trigger == broker TP (typical predefined single-TP override),
+    // clear takeprofit on the BE modify so the trade is not closed at that level.
+    let modifyTp = clamped.takeprofit
+    if (mode === 'tp_hit' && modifyTp > 0) {
+      const hitPrice = isAutoBeTpHitAbsolutePrice(triggerValue, entry, isBuy)
+        ? triggerValue
+        : (brokerTp != null && partialTpTriggers.length === 0 ? brokerTp : null)
+      if (hitPrice != null && pricesNearlyEqual(modifyTp, hitPrice)) {
+        modifyTp = 0
+      }
+    }
 
     try {
       await api.orderModify(uuid, {
@@ -384,6 +396,9 @@ export class AutoManagementMonitor {
       const patch: Record<string, unknown> = {
         sl: modifySl,
         auto_be_applied_at: new Date().toISOString(),
+      }
+      if (modifyTp !== tpSanitize) {
+        patch.tp = modifyTp > 0 ? modifyTp : null
       }
       if (remainingLots < 0.0001) {
         patch.status = 'closed'

@@ -1,7 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { hasFxsocketConfigured, normalizeSymbolParams, type SymbolParams } from './fxsocketClient'
 import { apiForFxsocketAccount, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
-import { autoManagementTradeSnapshot } from './autoManagement'
+import { autoManagementTradeSnapshot, resolveAutoBeTpHitTriggerPriceFromManual } from './autoManagement'
+import { signalPipPrice } from './signalPip'
 import { tryApplyBasketFollowUpToNewFill } from './basketModFollowUp'
 import { assignNakedBrokerFillStops } from './brokerPendingFillStops'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
@@ -194,7 +195,16 @@ async function markBrokerRangeLegFilled(
   const rawManual = await loadManualForLeg(supabase, leg.broker_account_id, channelId)
   const manual = normalizeManualSettingsForExecution(rawManual)
   // Broker fill is naked (limits placed with SL=0/TP=0). Seed auto-BE from desired SL.
-  const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, desiredSl)
+  const desiredTp = leg.takeprofit != null && Number(leg.takeprofit) > 0 ? Number(leg.takeprofit) : null
+  const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, desiredSl, {
+    tpHitTriggerPrice: resolveAutoBeTpHitTriggerPriceFromManual({
+      manual,
+      entryPrice: Number(entryPx),
+      isBuy: Boolean(leg.is_buy),
+      pipSize: signalPipPrice(leg.symbol),
+      brokerTp: desiredTp,
+    }),
+  })
 
   const ticketForTrade = positionTicket?.trim() && /^\d+$/.test(positionTicket.trim())
     ? positionTicket.trim()
