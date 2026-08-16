@@ -149,11 +149,48 @@ test('isAutoBeTriggerMet: pips', () => {
   )
 })
 
-test('isAutoBeTriggerMet: rr', () => {
+test('isAutoBeTriggerMet: tp_hit uses absolute trigger price (predefined override)', () => {
   assert.equal(
     isAutoBeTriggerMet({
-      mode: 'rr',
-      triggerValue: 1,
+      mode: 'tp_hit',
+      triggerValue: 2030, // absolute TP snapped at open
+      tpIndex: 1,
+      isBuy: true,
+      entryPrice: 2000,
+      riskSl: 1990,
+      bid: 2030,
+      ask: 2030.1,
+      pipPrice: 0.1,
+      pipValuePerLot: 10,
+      partialTpFiredIndices: [],
+      partialTpTriggers: [],
+      brokerTp: null, // omitted so trade is not closed at trigger
+    }),
+    true,
+  )
+  assert.equal(
+    isAutoBeTriggerMet({
+      mode: 'tp_hit',
+      triggerValue: 2030,
+      tpIndex: 1,
+      isBuy: true,
+      entryPrice: 2000,
+      riskSl: 1990,
+      bid: 2020,
+      ask: 2020.1,
+      pipPrice: 0.1,
+      pipValuePerLot: 10,
+      partialTpFiredIndices: [],
+      partialTpTriggers: [],
+      brokerTp: null,
+    }),
+    false,
+  )
+  // Legacy unused pips default (10) must not look like a price trigger
+  assert.equal(
+    isAutoBeTriggerMet({
+      mode: 'tp_hit',
+      triggerValue: 10,
       tpIndex: 1,
       isBuy: true,
       entryPrice: 2000,
@@ -166,7 +203,76 @@ test('isAutoBeTriggerMet: rr', () => {
       partialTpTriggers: [],
       brokerTp: null,
     }),
+    false,
+  )
+})
+
+test('autoManagementTradeSnapshot: tp_hit stores absolute trigger price', () => {
+  const row = autoManagementTradeSnapshot(
+    {
+      move_sl_to_entry_after_mode: 'tp_hit',
+      move_sl_to_entry_tp_index: 1,
+      breakeven_offset_pips: 3,
+    },
+    2000,
+    1990,
+    { tpHitTriggerPrice: 2030 },
+  )
+  assert.equal(row.auto_be_mode, 'tp_hit')
+  assert.equal(row.auto_be_trigger_value, 2030)
+})
+
+test('resolveAutoBeTpHitTriggerPrice + shouldOmitBrokerTpForAutoBeTpHit for single override TP', async () => {
+  const {
+    resolveAutoBeTpHitTriggerPrice,
+    shouldOmitBrokerTpForAutoBeTpHit,
+  } = await import('./autoManagement')
+  const finalTps = [2030]
+  const trigger = resolveAutoBeTpHitTriggerPrice({
+    tpIndex: 1,
+    finalTps,
+    brokerTp: 2030,
+  })
+  assert.equal(trigger, 2030)
+  assert.equal(
+    shouldOmitBrokerTpForAutoBeTpHit({
+      manual: {
+        move_sl_to_entry_after_mode: 'tp_hit',
+        move_sl_to_entry_tp_index: 1,
+        trade_style: 'single',
+      },
+      brokerTp: 2030,
+      finalTps,
+      partialTps: [],
+    }),
     true,
+  )
+  assert.equal(
+    shouldOmitBrokerTpForAutoBeTpHit({
+      manual: {
+        move_sl_to_entry_after_mode: 'tp_hit',
+        move_sl_to_entry_tp_index: 1,
+        trade_style: 'multi',
+      },
+      brokerTp: 2030,
+      finalTps,
+      partialTps: [],
+    }),
+    false,
+  )
+  // Multi-TP with farther broker TP must keep broker TP
+  assert.equal(
+    shouldOmitBrokerTpForAutoBeTpHit({
+      manual: {
+        move_sl_to_entry_after_mode: 'tp_hit',
+        move_sl_to_entry_tp_index: 1,
+        trade_style: 'single',
+      },
+      brokerTp: 2060,
+      finalTps: [2030, 2060],
+      partialTps: [{ tpIdx: 1, triggerPrice: 2030 }],
+    }),
+    false,
   )
 })
 

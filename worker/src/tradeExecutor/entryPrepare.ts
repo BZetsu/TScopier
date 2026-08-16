@@ -1062,6 +1062,9 @@ export async function prepareEntryExecution(
     args,
     idx,
     ...(idx === 0 && plan.partialTps?.length ? { partialTps: plan.partialTps } : {}),
+    ...(plan.autoBeTpHitTriggerPrice != null
+      ? { autoBeTpHitTriggerPrice: plan.autoBeTpHitTriggerPrice }
+      : {}),
   }))
 
   // Single trade style: one broker order only (partials ride on partial_tp_legs).

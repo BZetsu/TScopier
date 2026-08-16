@@ -18,6 +18,7 @@ import { buildDistributedPerLegTakeProfits, buildEntryQualityTakeProfitMap } fro
 import { resolveMultiTradeTargetUnits, multiTradeUnitsToLot } from './multiTradeLegUnits'
 import { resolveRangeDistancePips } from './signalEntryRange'
 import { resolvedParsedEntryZone } from './parsedEntry'
+import { normalizeAutoBeConfig, resolveAutoBeTpHitTriggerPrice } from '../autoManagement'
 
 export interface PlanMultiManualOrdersArgs {
   parsed: ParsedSignal
@@ -485,6 +486,15 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     })
   }
 
+  const autoBeCfg = normalizeAutoBeConfig(manual)
+  const autoBeTpHitTriggerPrice = autoBeCfg?.mode === 'tp_hit'
+    ? resolveAutoBeTpHitTriggerPrice({
+      tpIndex: autoBeCfg.tpIndex,
+      finalTps,
+      brokerTp: null,
+    })
+    : null
+
   return {
     orders,
     ...(virtualPendings.length ? { virtualPendings } : {}),
@@ -500,5 +510,6 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
         : {}),
     delay_ms,
     ...(rangeFallbackReason ? { fallback_reason: rangeFallbackReason } : {}),
+    ...(autoBeTpHitTriggerPrice != null ? { autoBeTpHitTriggerPrice } : {}),
   }
 }
