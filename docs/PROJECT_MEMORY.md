@@ -2,6 +2,14 @@
 
 ## Changelog
 
+### 2026-08-16 — All copier engines offline: lease renew wedged (prod)
+
+- **Symptom:** Admin Copier Engine showed every account offline.
+- **Prod state:** Listener process alive at `https://tscopier-listener-production.up.railway.app` (instance `883f80b61aeb:12`, ~25/32 connected) but `worker_session_leases` had **0 live** rows (last HB ~10:30 UTC). Health: `lease_mismatch=true`, `lease_gap=25`.
+- **Cause:** `renewAllLeases` in-flight guard stuck when a per-user path hung outside the lease-write timeout (eligibility / auth-pending / stopListener), so later ticks skipped and all leases expired.
+- **Ops recovery:** Restart Railway production listener; leases should refresh within ~1 minute.
+- **Code:** Harden renew — force-clear stuck in-flight after cycle budget; timeout per-user renew body + whole cycle (`sessionManager.ts`). Scratchpad: `docs/scratchpad-all-copiers-offline-2026-08-16.md`.
+
 ### 2026-08-14 — Risk/lot calculator: gold pip = 0.1 (not point 0.01)
 
 - Bug: calculator treated gold as if 1 pip = 0.01 (broker point) instead of trader pip **0.1**, especially for `GOLD` and when the modal kept a sticky parent quote.

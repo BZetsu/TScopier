@@ -101,6 +101,8 @@ export class UserSessionManager {
   private authGuard: ((userId: string) => boolean) | null = null
   /** Guards renewAllLeases so slow cycles cannot stack up and exhaust sockets. */
   private renewLeasesInFlight = false
+  /** Wall-clock start of the in-flight renew cycle (for stuck-guard). */
+  private renewLeasesInFlightSinceMs = 0
   /** Renew ticks spent disconnected; cleared when connected again. */
   private disconnectedRenewTicks = new Map<string, number>()
   private channelListenerManager: ChannelListenerManager | null = null
@@ -283,14 +285,30 @@ export class UserSessionManager {
 
   async renewAllLeases(): Promise<void> {
     if (this.shuttingDown) return
-    // A previous cycle is still running (a wedged Supabase call). Skip rather
-    // than stacking overlapping runs that each re-hang and leak sockets — that
-    // race froze every lease but the first listener, taking the engine offline.
+    // A previous cycle is still running (a wedged Supabase / Telegram call).
+    // Skip rather than stacking overlapping runs — but if the previous cycle
+    // has been stuck longer than the budget, force-clear the guard. Without
+    // this, one hung eligibility/auth/stopListener call leaves renewLeasesInFlight
+    // true forever: every later tick skips, all leases expire, Admin shows
+    // every copier offline while Telegram listeners stay connected in-memory.
+    const cycleBudgetMs = Math.max(
+      30_000,
+      Math.min(180_000, Number(process.env.WORKER_LEASE_RENEW_CYCLE_TIMEOUT_MS ?? 90_000)),
+    )
     if (this.renewLeasesInFlight) {
-      console.warn('[sessionManager] renewAllLeases skipped — previous cycle still running')
-      return
+      const stuckForMs = Date.now() - this.renewLeasesInFlightSinceMs
+      if (stuckForMs < cycleBudgetMs) {
+        console.warn('[sessionManager] renewAllLeases skipped — previous cycle still running')
+        return
+      }
+      console.error(
+        `[sessionManager] renewAllLeases force-clearing stuck in-flight guard`
+        + ` after ${stuckForMs}ms (budget ${cycleBudgetMs}ms)`,
+      )
+      this.renewLeasesInFlight = false
     }
     this.renewLeasesInFlight = true
+    this.renewLeasesInFlightSinceMs = Date.now()
     try {
       const staleMs = Math.max(
         60_000,
@@ -300,6 +318,12 @@ export class UserSessionManager {
         3_000,
         Math.min(30_000, Number(process.env.WORKER_LEASE_RENEW_TIMEOUT_MS ?? 8_000)),
       )
+      // Eligibility + auth checks + optional stopListener are not covered by the
+      // lease-write timeout alone — budget the whole per-user renew body.
+      const perUserBudgetMs = Math.max(
+        perUserTimeoutMs + 5_000,
+        Math.min(45_000, Number(process.env.WORKER_LEASE_RENEW_USER_BUDGET_MS ?? 20_000)),
+      )
       const concurrency = Math.max(
         1,
         Math.min(16, Number(process.env.WORKER_LEASE_RENEW_CONCURRENCY ?? 6)),
@@ -308,71 +332,102 @@ export class UserSessionManager {
       // Renew with bounded parallelism and a per-user timeout so a single slow
       // or wedged lease write cannot block renewal for every other listener.
       const entries = Array.from(this.listeners.entries())
-      await parallelMap(entries, concurrency, async ([userId, listener]) => {
-        if (!(await userMayRunCopierListener(this.supabase, userId))) {
-          await this.stopListenerIfCopierInactive(userId)
-          return
-        }
-        // Realtime can lag; also stop when auth / mtproto_hold appears in DB.
-        if (await this.hasActivePendingAuthInDb(userId)) {
-          await this.stopListenerForPendingAuth(userId)
-          return
-        }
-        if (!listener.isTelegramConnected()) {
-          // Dead Map entries used to skip renew forever (UI "Copier engine offline").
-          // Kick reconnect first; after several failed ticks, hard-reset so syncSessions
-          // can startListener cleanly (reconnect-only can leave No lease forever).
-          const ticks = (this.disconnectedRenewTicks.get(userId) ?? 0) + 1
-          this.disconnectedRenewTicks.set(userId, ticks)
-          const healAfter = disconnectedRenewHealTicks()
-          if (ticks >= healAfter) {
-            console.warn(
-              `[sessionManager] hard-reset disconnected listener user=${userId}`
-              + ` after ${ticks} renew ticks — syncSessions will restart`,
+      await withTimeout(
+        parallelMap(entries, concurrency, async ([userId, listener]) => {
+          try {
+            await withTimeout(
+              this.renewOneListenerLease(userId, listener, {
+                staleMs,
+                perUserTimeoutMs,
+              }),
+              perUserBudgetMs,
+              `lease renew body ${userId}`,
             )
-            this.disconnectedRenewTicks.delete(userId)
-            await this.stopListener(userId)
-            return
+          } catch (err) {
+            console.warn(
+              `[sessionManager] lease renew body failed ${userId}:`,
+              err instanceof Error ? err.message : err,
+            )
           }
-          console.log(
-            `[sessionManager] listener disconnected but renewing lease anyway`
-            + ` user=${userId} — kicking reconnect in background`,
-          )
-          listener.requestReconnectIfDisconnected('lease_renew_disconnected')
-        }
-        this.disconnectedRenewTicks.delete(userId)
-
-        try {
-          const result = await withTimeout(
-            ensureSessionLeaseFresh(this.supabase, userId),
-            perUserTimeoutMs,
-            `lease renew ${userId}`,
-          )
-          if (!result.ok) {
-            console.warn(`[sessionManager] lease refresh failed ${userId}: ${result.reason}`)
-            return
-          }
-          if (result.recovered && this.tradeExecutor) {
-            const { replaySignalsAfterListenerRecovery } = await import('./listenerSignalReplay')
-            void replaySignalsAfterListenerRecovery(this.tradeExecutor, userId)
-          }
-        } catch (err) {
-          console.warn(
-            `[sessionManager] lease refresh failed ${userId}:`,
-            err instanceof Error ? err.message : err,
-          )
-          return
-        }
-
-        if (!listener.isListenerHealthy(staleMs)) {
-          console.warn(
-            `[sessionManager] listener quiet but lease renewed user=${userId}`
-            + ' (no Telegram events recently — normal for low-traffic channels)',
-          )
-        }
-      })
+        }),
+        cycleBudgetMs,
+        'renewAllLeases cycle',
+      )
+    } catch (err) {
+      console.warn(
+        '[sessionManager] renewAllLeases cycle aborted:',
+        err instanceof Error ? err.message : err,
+      )
     } finally {
       this.renewLeasesInFlight = false
+    }
+  }
+
+  private async renewOneListenerLease(
+    userId: string,
+    listener: UserListener,
+    opts: { staleMs: number; perUserTimeoutMs: number },
+  ): Promise<void> {
+    if (!(await userMayRunCopierListener(this.supabase, userId))) {
+      await this.stopListenerIfCopierInactive(userId)
+      return
+    }
+    // Realtime can lag; also stop when auth / mtproto_hold appears in DB.
+    if (await this.hasActivePendingAuthInDb(userId)) {
+      await this.stopListenerForPendingAuth(userId)
+      return
+    }
+    if (!listener.isTelegramConnected()) {
+      // Dead Map entries used to skip renew forever (UI "Copier engine offline").
+      // Kick reconnect first; after several failed ticks, hard-reset so syncSessions
+      // can startListener cleanly (reconnect-only can leave No lease forever).
+      const ticks = (this.disconnectedRenewTicks.get(userId) ?? 0) + 1
+      this.disconnectedRenewTicks.set(userId, ticks)
+      const healAfter = disconnectedRenewHealTicks()
+      if (ticks >= healAfter) {
+        console.warn(
+          `[sessionManager] hard-reset disconnected listener user=${userId}`
+          + ` after ${ticks} renew ticks — syncSessions will restart`,
+        )
+        this.disconnectedRenewTicks.delete(userId)
+        await this.stopListener(userId)
+        return
+      }
+      console.log(
+        `[sessionManager] listener disconnected but renewing lease anyway`
+        + ` user=${userId} — kicking reconnect in background`,
+      )
+      listener.requestReconnectIfDisconnected('lease_renew_disconnected')
+    }
+    this.disconnectedRenewTicks.delete(userId)
+
+    try {
+      const result = await withTimeout(
+        ensureSessionLeaseFresh(this.supabase, userId),
+        opts.perUserTimeoutMs,
+        `lease renew ${userId}`,
+      )
+      if (!result.ok) {
+        console.warn(`[sessionManager] lease refresh failed ${userId}: ${result.reason}`)
+        return
+      }
+      if (result.recovered && this.tradeExecutor) {
+        const { replaySignalsAfterListenerRecovery } = await import('./listenerSignalReplay')
+        void replaySignalsAfterListenerRecovery(this.tradeExecutor, userId)
+      }
+    } catch (err) {
+      console.warn(
+        `[sessionManager] lease refresh failed ${userId}:`,
+        err instanceof Error ? err.message : err,
+      )
+      return
+    }
+
+    if (!listener.isListenerHealthy(opts.staleMs)) {
+      console.warn(
+        `[sessionManager] listener quiet but lease renewed user=${userId}`
+        + ' (no Telegram events recently — normal for low-traffic channels)',
+      )
     }
   }
 
