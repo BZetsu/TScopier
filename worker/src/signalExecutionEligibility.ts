@@ -3,6 +3,8 @@ import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
 import { messageHasImperativeEntryPhrase } from './signalImperativeEntry'
 import {
   ENTRY_REQUIRES_NOW_REASON,
+  ENTRY_TP_WITHOUT_SL_REASON,
+  entryHasTpWithoutSl,
   entryMissingSlTpRequiresNow,
   messageHasExplicitSlTpLabels,
   parsedHasSlOrTp,
@@ -12,6 +14,7 @@ import { looksLikeChannelManagementUpdate } from './signalManagementIntent'
 import { minPlausibleQuotePrice, reconcileSymbolWithQuoteLevels, sanitizeParsedSymbol, filterPlausibleInstrumentPrices } from './tradableSymbol'
 
 export { ENTRY_REQUIRES_NOW_REASON } from './signalEntryNowRequirement'
+export { ENTRY_TP_WITHOUT_SL_REASON } from './signalEntryNowRequirement'
 export const COMMENTARY_NOT_SIGNAL_REASON = 'commentary_not_trade_signal'
 export const ENTRY_MISSING_STRUCTURE_REASON = 'entry_missing_sl_tp_structure'
 export const ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON =
@@ -48,6 +51,11 @@ export function evaluateParsedSignalExecutionEligibility(
       && !/\b(buy|sell|long|short)\b/i.test(raw)) {
       return { eligible: false, skipReason: COMMENTARY_NOT_SIGNAL_REASON }
     }
+  }
+
+  // TP levels without a stop loss are never executable (signal-level; no account fallbacks).
+  if (entryHasTpWithoutSl(parsed)) {
+    return { eligible: false, skipReason: ENTRY_TP_WITHOUT_SL_REASON }
   }
 
   const imperative = messageHasImperativeEntryPhrase(raw, channelKeywords)

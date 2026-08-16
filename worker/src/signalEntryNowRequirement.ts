@@ -5,6 +5,8 @@ export type MarketNowKeywordFields = {
 }
 
 export const ENTRY_REQUIRES_NOW_REASON = 'entry_requires_now_without_sl_tp'
+/** Buy/sell has take-profit levels but no stop loss — never execute. */
+export const ENTRY_TP_WITHOUT_SL_REASON = 'entry_tp_without_sl'
 
 function positivePrice(v: unknown): number | null {
   const n = Number(v)
@@ -17,6 +19,24 @@ export function parsedHasSlOrTp(parsed: { sl?: unknown; tp?: unknown }): boolean
     ? parsed.tp.map(positivePrice).filter((n): n is number => n != null)
     : []
   return sl != null || tp.length > 0
+}
+
+export function parsedHasPositiveSl(parsed: { sl?: unknown }): boolean {
+  return positivePrice(parsed.sl) != null
+}
+
+export function parsedHasPositiveTp(parsed: { tp?: unknown }): boolean {
+  if (!Array.isArray(parsed.tp)) return false
+  return parsed.tp.some(t => positivePrice(t) != null)
+}
+
+/**
+ * True when the entry lists take-profit(s) but no stop loss.
+ * Eligibility uses this at signal level (no account fallbacks).
+ * Entry prep may still allow when predefined/RR SL can be derived.
+ */
+export function entryHasTpWithoutSl(parsed: { sl?: unknown; tp?: unknown }): boolean {
+  return parsedHasPositiveTp(parsed) && !parsedHasPositiveSl(parsed)
 }
 
 function escapeRegExp(s: string): string {

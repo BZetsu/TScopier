@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { missingRequiredSlFailure } from './entryPrepare'
+import { missingRequiredSlFailure } from './entryPrepareMissingSl'
 import type { ManualSettings, ParsedSignal } from '../manualPlanner'
 
 function parsed(overrides: Partial<ParsedSignal>): ParsedSignal {
@@ -24,7 +24,7 @@ describe('missingRequiredSlFailure', () => {
       tp: null,
       raw_instruction: 'GOLD BUY SL premium',
     }), { add_new_trades_to_existing: false })
-    assert.deepEqual(result, { withheldByProvider: true })
+    assert.deepEqual(result, { withheldByProvider: true, reason: 'SIGNAL_MISSING_REQUIRED_SL' })
   })
 
   it('detects SL for premium members when required stops have no fallback', () => {
@@ -32,7 +32,7 @@ describe('missingRequiredSlFailure', () => {
       tp: null,
       raw_instruction: 'GOLD BUY SL for premium members',
     }), { add_new_trades_to_existing: false })
-    assert.deepEqual(result, { withheldByProvider: true })
+    assert.deepEqual(result, { withheldByProvider: true, reason: 'SIGNAL_MISSING_REQUIRED_SL' })
   })
 
   it('detects subscribe-for-SL wording when required stops have no fallback', () => {
@@ -40,7 +40,7 @@ describe('missingRequiredSlFailure', () => {
       tp: null,
       raw_instruction: 'GOLD BUY subscribe for SL',
     }), { add_new_trades_to_existing: false })
-    assert.deepEqual(result, { withheldByProvider: true })
+    assert.deepEqual(result, { withheldByProvider: true, reason: 'SIGNAL_MISSING_REQUIRED_SL' })
   })
 
   it('detects VIP SL wording when required stops have no fallback', () => {
@@ -48,14 +48,27 @@ describe('missingRequiredSlFailure', () => {
       tp: null,
       raw_instruction: 'GOLD BUY SL available to VIP',
     }), { add_new_trades_to_existing: false })
-    assert.deepEqual(result, { withheldByProvider: true })
+    assert.deepEqual(result, { withheldByProvider: true, reason: 'SIGNAL_MISSING_REQUIRED_SL' })
   })
 
-  it('does not make SL globally mandatory when TP satisfies the existing explicit-stops rule', () => {
+  it('rejects TP-only entries that have no stop loss', () => {
     const result = missingRequiredSlFailure(parsed({
-      raw_instruction: 'GOLD BUY TP 2400 SL premium',
+      raw_instruction: 'GOLD BUY NOW\nTP: 4503\nTP: 4506\nSL: NONE',
     }), { add_new_trades_to_existing: false })
-    assert.equal(result, null)
+    assert.deepEqual(result, {
+      withheldByProvider: false,
+      reason: 'entry_tp_without_sl',
+    })
+  })
+
+  it('rejects TP-only entries even when add_new_trades_to_existing is on', () => {
+    const result = missingRequiredSlFailure(parsed({
+      raw_instruction: 'GOLD BUY TP 2400',
+    }), {})
+    assert.deepEqual(result, {
+      withheldByProvider: false,
+      reason: 'entry_tp_without_sl',
+    })
   })
 
   it('preserves numeric SL as executable', () => {
@@ -66,25 +79,43 @@ describe('missingRequiredSlFailure', () => {
     assert.equal(result, null)
   })
 
+  it('allows SL-only entries (no TP)', () => {
+    const result = missingRequiredSlFailure(parsed({
+      sl: 4500,
+      tp: null,
+      raw_instruction: 'GOLD BUY NOW\nSL: 4500',
+    }), {})
+    assert.equal(result, null)
+  })
+
   it('does not treat generic premium wording away from SL as withheld SL', () => {
     const result = missingRequiredSlFailure(parsed({
       raw_instruction: 'Premium signal GOLD BUY TP 2400',
     }), {})
-    assert.equal(result, null)
+    assert.deepEqual(result, {
+      withheldByProvider: false,
+      reason: 'entry_tp_without_sl',
+    })
   })
 
   it('does not treat VIP entry wording as withheld SL', () => {
     const result = missingRequiredSlFailure(parsed({
       raw_instruction: 'VIP entry GOLD BUY TP 2400',
     }), {})
-    assert.equal(result, null)
+    assert.deepEqual(result, {
+      withheldByProvider: false,
+      reason: 'entry_tp_without_sl',
+    })
   })
 
   it('does not treat premium channel marketing as withheld SL', () => {
     const result = missingRequiredSlFailure(parsed({
       raw_instruction: 'GOLD BUY TP 2400 - Join premium for more signals',
     }), {})
-    assert.equal(result, null)
+    assert.deepEqual(result, {
+      withheldByProvider: false,
+      reason: 'entry_tp_without_sl',
+    })
   })
 
   it('distinguishes a required missing stop from provider-withheld wording', () => {
@@ -92,7 +123,7 @@ describe('missingRequiredSlFailure', () => {
       tp: null,
       raw_instruction: 'GOLD BUY NOW',
     }), { add_new_trades_to_existing: false })
-    assert.deepEqual(result, { withheldByProvider: false })
+    assert.deepEqual(result, { withheldByProvider: false, reason: 'SIGNAL_MISSING_REQUIRED_SL' })
   })
 
   it('preserves SL-optional behavior when config does not require a stop', () => {
@@ -103,11 +134,14 @@ describe('missingRequiredSlFailure', () => {
     assert.equal(result, null)
   })
 
-  it('preserves SL-optional behavior when provider withheld SL but config does not require one', () => {
+  it('rejects provider-withheld SL when TP is present and no fallback SL exists', () => {
     const result = missingRequiredSlFailure(parsed({
       raw_instruction: 'GOLD BUY TP 2400 SL premium',
     }), {})
-    assert.equal(result, null)
+    assert.deepEqual(result, {
+      withheldByProvider: true,
+      reason: 'entry_tp_without_sl',
+    })
   })
 
   it('does not fail premium-SL signals when a configured fallback stop can be derived', () => {
@@ -118,6 +152,19 @@ describe('missingRequiredSlFailure', () => {
     const result = missingRequiredSlFailure(parsed({
       entry_price: 2320,
       raw_instruction: 'GOLD BUY 2320 TP 2400 SL premium',
+    }), manual)
+    assert.equal(result, null)
+  })
+
+  it('allows TP-only when predefined SL pips can supply the stop', () => {
+    const manual: ManualSettings = {
+      use_predefined_sl_pips: true,
+      predefined_sl_pips: 30,
+    }
+    const result = missingRequiredSlFailure(parsed({
+      entry_price: 4500,
+      tp: [4503, 4506],
+      raw_instruction: 'GOLD BUY NOW\nTP: 4503\nTP: 4506\nSL: NONE',
     }), manual)
     assert.equal(result, null)
   })

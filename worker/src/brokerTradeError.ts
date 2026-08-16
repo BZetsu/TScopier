@@ -17,6 +17,7 @@ export type TradeFailureReason = {
 }
 
 export const SIGNAL_MISSING_REQUIRED_SL = 'SIGNAL_MISSING_REQUIRED_SL'
+export const ENTRY_TP_WITHOUT_SL = 'entry_tp_without_sl'
 export const BROKER_SYMBOL_NOT_FOUND = 'BROKER_SYMBOL_NOT_FOUND'
 
 function cleanSymbol(value: unknown): string | undefined {
@@ -47,6 +48,18 @@ function tradeFailureCopy(
           ? 'The signal did not include a usable Stop Loss price. The provider appears to have reserved the Stop Loss for premium/VIP subscribers.'
           : 'The signal did not include a usable Stop Loss price required by the current copier configuration.',
         recommendedAction: 'Check the original signal before copying this trade.',
+        retryable: false,
+        userActionRequired: true,
+      }
+    }
+    case ENTRY_TP_WITHOUT_SL:
+    case 'entry_tp_without_sl': {
+      return {
+        category: 'signal',
+        title: 'Trade not copied - Stop Loss required',
+        explanation:
+          'This signal listed take-profit level(s) but no stop loss. Trades with TP and without SL are not copied.',
+        recommendedAction: 'Wait for a signal that includes a stop loss, or enable predefined SL in your account settings.',
         retryable: false,
         userActionRequired: true,
       }
