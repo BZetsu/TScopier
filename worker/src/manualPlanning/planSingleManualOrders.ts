@@ -56,7 +56,7 @@ export function planSingleManualOrders(args: PlanSingleManualOrdersArgs): Planne
     singleTpTarget: manual.single_tp_target,
     isBuy,
   })
-  let brokerTp =
+  let brokerTp: number | null =
     partialPlan.brokerTp
     ?? (finalTps.length >= 2 ? (finalTps[finalTps.length - 1] ?? null) : (finalTps[0] ?? null))
   const autoBeCfg = normalizeAutoBeConfig(manual)
@@ -86,7 +86,7 @@ export function planSingleManualOrders(args: PlanSingleManualOrdersArgs): Planne
       ...orderBase,
       volume: manualLot,
       stoploss: roundPrice(finalSl),
-      takeprofit: roundPrice(brokerTp),
+      takeprofit: brokerTp != null ? roundPrice(brokerTp) : 0,
       ...expirationFields,
     }],
     delay_ms,
