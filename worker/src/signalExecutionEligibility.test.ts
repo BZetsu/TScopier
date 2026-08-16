@@ -5,6 +5,7 @@ import {
   ENTRY_MISSING_STRUCTURE_REASON,
   ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON,
   ENTRY_REQUIRES_NOW_REASON,
+  ENTRY_TP_WITHOUT_SL_REASON,
   deterministicEntryNeedsAiRepair,
   evaluateParsedSignalExecutionEligibility,
 } from './signalExecutionEligibility'
@@ -29,6 +30,27 @@ describe('evaluateParsedSignalExecutionEligibility', () => {
       tp: [],
     }, 'Gold buy now')
     assert.equal(eligibility.eligible, true)
+  })
+
+  it('allows GOLD BUY NOW with SL only (no TP)', () => {
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'buy',
+      symbol: 'XAUUSD',
+      sl: 4500,
+      tp: [],
+    }, 'GOLD BUY NOW\nSL: 4500')
+    assert.equal(eligibility.eligible, true)
+  })
+
+  it('rejects GOLD BUY NOW with TP levels but no SL', () => {
+    const eligibility = evaluateParsedSignalExecutionEligibility({
+      action: 'buy',
+      symbol: 'XAUUSD',
+      sl: null,
+      tp: [4503, 4506],
+    }, 'GOLD BUY NOW\nTP: 4503\nTP: 4506\nSL: NONE')
+    assert.equal(eligibility.eligible, false)
+    assert.equal(eligibility.skipReason, ENTRY_TP_WITHOUT_SL_REASON)
   })
 
   it('accepts structured entry signal', () => {

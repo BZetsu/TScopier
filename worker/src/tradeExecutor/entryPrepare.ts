@@ -34,10 +34,10 @@ import {
   ENTRY_PRICE_MOVED_ADVERSE_REASON,
   entryPriceMovedAdverse,
 } from '../signalEntryPriceGuard'
+import { ENTRY_TP_WITHOUT_SL_REASON } from '../signalEntryNowRequirement'
 import { pipCalculator } from '../pipCalculator'
 import {
   SIGNAL_MISSING_REQUIRED_SL,
-  isStopLossWithheldByProvider,
   tradeFailureReasonFromCode,
 } from '../brokerTradeError'
 import {
@@ -56,6 +56,9 @@ import {
 import { resolveTscopierCommentPrefix } from '../tradeComment'
 import type { TradeExecutorContext } from './context'
 import { applySymbolMapping, computeLot, isBuySideOp, isExcluded, isMt5OnlyOperation, roundLot, triggerPriceFor, brokerSessionUuid, type Leg } from './helpers'
+import { missingRequiredSlFailure } from './entryPrepareMissingSl'
+
+export { missingRequiredSlFailure } from './entryPrepareMissingSl'
 import type {
   BrokerRow,
   ParsedSignal,
@@ -136,42 +139,6 @@ export type PreparedEntry = {
 export type PrepareEntryResult =
   | { ok: false; outcome: SendOrderOutcome }
   | { ok: true; prep: PreparedEntry }
-
-function positiveNumber(value: unknown): number | null {
-  const n = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(n) && n > 0 ? n : null
-}
-
-function parsedEntryAnchorForFallback(parsed: ParsedSignal): number | null {
-  const entry = resolvedParsedEntryPrice(parsed)
-  if (entry != null) return entry
-  const zone = resolvedParsedEntryZone(parsed)
-  return zone != null ? (zone.lo + zone.hi) / 2 : null
-}
-
-function configuredFallbackSlPossible(parsed: ParsedSignal, manual: ManualSettings): boolean {
-  const anchor = parsedEntryAnchorForFallback(parsed)
-  if (manual.use_predefined_sl_pips === true && positiveNumber(manual.predefined_sl_pips) != null && anchor != null) {
-    return true
-  }
-  const firstTp = (parsed.tp ?? []).map(positiveNumber).find((n): n is number => n != null)
-  return manual.rr_for_sl_enabled === true
-    && positiveNumber(manual.rr_for_sl) != null
-    && firstTp != null
-    && anchor != null
-}
-
-export function missingRequiredSlFailure(parsed: ParsedSignal, manual: ManualSettings): {
-  withheldByProvider: boolean
-} | null {
-  if (positiveNumber(parsed.sl) != null) return null
-  const withheldByProvider = isStopLossWithheldByProvider(parsed.raw_instruction)
-  if (manual.add_new_trades_to_existing === false && !parsedSignalHasExplicitStops(parsed)) {
-    if (withheldByProvider && configuredFallbackSlPossible(parsed, manual)) return null
-    return { withheldByProvider }
-  }
-  return null
-}
 
 /** Fill missing symbol for re-enter posts that omit instrument name. */
 async function resolveReEnterSymbolFromChannel(
@@ -356,18 +323,22 @@ export async function prepareEntryExecution(
   const sameSignalRefresh = sendOpts?.sameSignalRefresh === true
   const missingSl = isManual && !sameSignalRefresh ? missingRequiredSlFailure(parsed, manual) : null
   if (missingSl) {
-    const tradeFailure = tradeFailureReasonFromCode(SIGNAL_MISSING_REQUIRED_SL, {
-      missingField: 'stop_loss',
-      withheldByProvider: missingSl.withheldByProvider,
-      requestedSymbol,
-      brokerSymbol: symbol,
-    })
-    await ctx.logSendSkipped(signal, broker, SIGNAL_MISSING_REQUIRED_SL, {
+    const skipReason = missingSl.reason
+    const tradeFailure = tradeFailureReasonFromCode(
+      skipReason === ENTRY_TP_WITHOUT_SL_REASON ? ENTRY_TP_WITHOUT_SL_REASON : SIGNAL_MISSING_REQUIRED_SL,
+      {
+        missingField: 'stop_loss',
+        withheldByProvider: missingSl.withheldByProvider,
+        requestedSymbol,
+        brokerSymbol: symbol,
+      },
+    )
+    await ctx.logSendSkipped(signal, broker, skipReason, {
       symbol,
-      reason_code: SIGNAL_MISSING_REQUIRED_SL,
+      reason_code: skipReason,
       ...(tradeFailure ? { trade_failure: tradeFailure } : {}),
     })
-    return { ok: false, outcome: { finalizeSkipReason: SIGNAL_MISSING_REQUIRED_SL } }
+    return { ok: false, outcome: { finalizeSkipReason: skipReason } }
   }
 
   // A Telegram revision is never a new entry once the first dispatch already

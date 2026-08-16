@@ -2,6 +2,12 @@
 
 ## Changelog
 
+### 2026-08-16 — Block TP-without-SL entries
+
+- **Rule:** Buy/sell with take-profit level(s) but no stop loss must not execute. SL-only (no TP) and bare `buy now` still execute.
+- **Gates:** Eligibility skip `entry_tp_without_sl`; entry prep `missingRequiredSlFailure` (allows predefined/RR SL fallback).
+- Files: `signalEntryNowRequirement.ts`, `signalExecutionEligibility.ts`, `entryPrepareMissingSl.ts`, `entryPrepare.ts`, `brokerTradeError.ts`.
+
 ### 2026-08-16 — Move SL on TP hit broken with predefined/override TP
 
 - **Bug:** With "Override signal TPs" (e.g. single TP 30 pips) + Move SL after movement → TP hit, SL never moved. Channel multi-TP without override still worked.
