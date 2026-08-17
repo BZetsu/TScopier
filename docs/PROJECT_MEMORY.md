@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-08-17 — Override signal TP on multi / range legs
+
+- **Wanted:** Predefined TP pips should work like predefined SL pips: N pips from *that* fill/trigger, not the first basket price.
+- **Fix:** Range virtuals and range fire compute TP from that leg’s trigger/fill. Multi post-fill restamps per-leg TP (keeps TP1/TP2 buckets).
+- Files: `manualStops.ts`, `planMultiManualOrders.ts`, `postFillFollowUp.ts`, `virtualPendingMonitor.ts`.
+- Scratchpad: `docs/scratchpad-multi-tp-override-2026-08-17.md`. Needs trade worker deploy.
+
 ### 2026-08-17 — Missing-SL skip log tells user to set predefined SL pips
 
 - **Wanted:** Copier log for no-SL skips should not be a generic “Skipped” / `entry tp without sl`.

@@ -21,6 +21,15 @@ export function resolvePredefinedSlPips(
   return slPips
 }
 
+/** Positive override TP pip distances, or null when Override signal TPs is off. */
+export function resolvePredefinedTpPips(
+  manual: Pick<ManualSettings, 'use_predefined_tp_pips' | 'predefined_tp_pips'>,
+): number[] | null {
+  if (manual.use_predefined_tp_pips !== true) return null
+  const tps = (manual.predefined_tp_pips ?? []).map(Number).filter(n => Number.isFinite(n) && n > 0)
+  return tps.length > 0 ? tps : null
+}
+
 /** Absolute SL price: buy below entry, sell above entry, by `slPips * pip`. */
 export function predefinedSlPriceFromEntry(args: {
   entry: number
@@ -42,6 +51,85 @@ export function predefinedSlPriceFromEntry(args: {
   return raw
 }
 
+/** Absolute TP price: buy above entry, sell below entry, by `tpPips * pip`. */
+export function predefinedTpPriceFromEntry(args: {
+  entry: number
+  isBuy: boolean
+  pip: number
+  tpPips: number
+  digits?: number
+}): number | null {
+  const { entry, isBuy, pip, tpPips } = args
+  if (!Number.isFinite(entry) || entry <= 0) return null
+  if (!Number.isFinite(pip) || pip <= 0) return null
+  if (!Number.isFinite(tpPips) || tpPips <= 0) return null
+  const raw = isBuy ? entry + tpPips * pip : entry - tpPips * pip
+  if (!Number.isFinite(raw) || raw <= 0) return null
+  if (args.digits != null && Number.isFinite(args.digits)) {
+    const d = Math.max(0, Math.min(8, Math.floor(args.digits)))
+    return Number(raw.toFixed(d))
+  }
+  return raw
+}
+
+export function predefinedTpPricesFromEntry(args: {
+  entry: number
+  isBuy: boolean
+  pip: number
+  tpPips: number[]
+  digits?: number
+}): number[] {
+  return args.tpPips
+    .map(tpPips => predefinedTpPriceFromEntry({ ...args, tpPips }))
+    .filter((n): n is number => n != null)
+}
+
+/** Ladder index whose override TP at `entry` is closest to `existingTp`. */
+export function matchPredefinedTpPipsIndex(args: {
+  existingTp: number | null | undefined
+  entry: number
+  isBuy: boolean
+  pip: number
+  tpPips: number[]
+}): number {
+  const { tpPips } = args
+  if (tpPips.length <= 1) return 0
+  const existing = Number(args.existingTp)
+  if (!Number.isFinite(existing) || existing <= 0) return 0
+  let best = 0
+  let bestDist = Infinity
+  for (let i = 0; i < tpPips.length; i++) {
+    const price = predefinedTpPriceFromEntry({
+      entry: args.entry,
+      isBuy: args.isBuy,
+      pip: args.pip,
+      tpPips: tpPips[i]!,
+    })
+    if (price == null) continue
+    const d = Math.abs(price - existing)
+    if (d < bestDist) {
+      bestDist = d
+      best = i
+    }
+  }
+  return best
+}
+
+function pipSizeForPredefinedStops(args: {
+  symbol: string
+  point?: number
+  digits?: number
+  contractSize?: number | null
+}): number {
+  const pipQuote = pipCalculator(
+    args.symbol,
+    args.point ?? 0.00001,
+    args.digits ?? 5,
+    args.contractSize ?? null,
+  )
+  return resolvePipSize({ symbol: args.symbol, brokerPipPrice: pipQuote.pipPrice })
+}
+
 /**
  * Override signal SL from this fill/trigger. Used by the multi planner, post-fill,
  * and range-fire so each leg is  N pips from *that* entry, not the first basket anchor.
@@ -57,18 +145,48 @@ export function resolvePredefinedSlForEntry(args: {
 }): number | null {
   const slPips = resolvePredefinedSlPips(args.manual)
   if (slPips == null) return null
-  const pipQuote = pipCalculator(
-    args.symbol,
-    args.point ?? 0.00001,
-    args.digits ?? 5,
-    args.contractSize ?? null,
-  )
-  const pip = resolvePipSize({ symbol: args.symbol, brokerPipPrice: pipQuote.pipPrice })
+  const pip = pipSizeForPredefinedStops(args)
   return predefinedSlPriceFromEntry({
     entry: args.entry,
     isBuy: args.isBuy,
     pip,
     slPips,
+    digits: args.digits,
+  })
+}
+
+/**
+ * Override signal TP from this fill/trigger. `matchEntry` + `existingTp` pick the
+ * Targets % bucket (TP1/TP2/…) from the planned ladder, then restamp that same
+ * pip distance onto `entry` so range/multi legs are N pips from *that* fill.
+ */
+export function resolvePredefinedTpForEntry(args: {
+  manual: Pick<ManualSettings, 'use_predefined_tp_pips' | 'predefined_tp_pips'>
+  entry: number
+  isBuy: boolean
+  symbol: string
+  point?: number
+  digits?: number
+  contractSize?: number | null
+  existingTp?: number | null
+  matchEntry?: number | null
+}): number | null {
+  const tpPips = resolvePredefinedTpPips(args.manual)
+  if (tpPips == null) return null
+  const pip = pipSizeForPredefinedStops(args)
+  const matchAt = args.matchEntry != null && args.matchEntry > 0 ? args.matchEntry : args.entry
+  const idx = matchPredefinedTpPipsIndex({
+    existingTp: args.existingTp,
+    entry: matchAt,
+    isBuy: args.isBuy,
+    pip,
+    tpPips,
+  })
+  return predefinedTpPriceFromEntry({
+    entry: args.entry,
+    isBuy: args.isBuy,
+    pip,
+    tpPips: tpPips[idx] ?? tpPips[0]!,
     digits: args.digits,
   })
 }
@@ -80,11 +198,8 @@ export function resolvePredefinedSlForEntry(args: {
  */
 export function reverseSignalGateSatisfied(manual: ManualSettings, entryAnchor: number | null): boolean {
   if (entryAnchor == null) return false
-  if (manual.use_predefined_sl_pips !== true || manual.use_predefined_tp_pips !== true) return false
-  const slPips = Number(manual.predefined_sl_pips)
-  if (!Number.isFinite(slPips) || slPips <= 0) return false
-  const tps = (manual.predefined_tp_pips ?? []).map(Number).filter(n => Number.isFinite(n) && n > 0)
-  return tps.length > 0
+  if (resolvePredefinedSlPips(manual) == null) return false
+  return resolvePredefinedTpPips(manual) != null
 }
 
 export interface DerivedManualStops {
@@ -144,13 +259,10 @@ export function deriveManualStopsWithClamp(args: {
   if (slPips != null && entryAnchor != null) {
     finalSl = predefinedSlPriceFromEntry({ entry: entryAnchor, isBuy, pip, slPips })
   }
-  if (usePreTp && Array.isArray(manual.predefined_tp_pips) && entryAnchor != null) {
-    const tps = manual.predefined_tp_pips
-      .map(Number)
-      .filter(n => Number.isFinite(n) && n > 0)
-    if (tps.length) {
-      finalTps = tps.map(t => (isBuy ? entryAnchor + t * pip : entryAnchor - t * pip))
-    }
+  const tpPips = resolvePredefinedTpPips(manual)
+  if (tpPips != null && entryAnchor != null) {
+    const prices = predefinedTpPricesFromEntry({ entry: entryAnchor, isBuy, pip, tpPips })
+    if (prices.length) finalTps = prices
   }
 
   if (manual.rr_for_sl_enabled && Number.isFinite(manual.rr_for_sl ?? NaN) && entryAnchor != null && finalTps.length && finalSl == null) {

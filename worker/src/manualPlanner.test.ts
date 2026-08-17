@@ -464,6 +464,49 @@ test('planMultiManualOrders: empty-TP range override SL is still per trigger', (
   }
 })
 
+test('planMultiManualOrders: override TP 30 pips is per range trigger, not shared basket TP', () => {
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      entry_price: 2650,
+      sl: 2600,
+      tp: [2700],
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      ...baseManual,
+      multi_trade_leg_percent: 50,
+      range_percent: 100,
+      range_step_pips: 10,
+      range_distance_pips: 100,
+      use_predefined_tp_pips: true,
+      predefined_tp_pips: [30],
+    },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  const virtuals = plan.virtualPendings ?? []
+  assert.ok(virtuals.length >= 2, `expected >=2 range legs, got ${virtuals.length}`)
+  assert.notEqual(virtuals[0]!.takeprofit, virtuals[1]!.takeprofit)
+  const pip = plan.pip ?? 0
+  assert.ok(pip > 0)
+  const triggerMap = buildRangeLayerTriggerMap({
+    virtualPendings: virtuals,
+    anchor: 2650,
+    digits: 2,
+    rangeLayering: plan.rangeLayering,
+    pip,
+  })
+  for (const v of virtuals.slice(0, 2)) {
+    const trigger = triggerMap.get(v.stepIdx)
+    assert.ok(trigger != null && trigger > 0)
+    assert.equal(v.takeprofit, Number((trigger + 30 * pip).toFixed(2)))
+  }
+})
+
 test('planMultiManualOrders: passes rangeLayeringType from manual settings', () => {
   const manual: ManualSettings = {
     ...baseManual,

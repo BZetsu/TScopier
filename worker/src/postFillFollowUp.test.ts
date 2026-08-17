@@ -59,8 +59,7 @@ test('applyPostFillFollowUp: multi override SL 80 restamps from fill and leaves 
     trade_style: 'multi',
     use_predefined_sl_pips: true,
     predefined_sl_pips: 80,
-    use_predefined_tp_pips: true,
-    predefined_tp_pips: [30],
+    use_predefined_tp_pips: false,
   }
   await applyPostFillFollowUp({
     supabase: makeSupabase(tradeUpdates) as never,
@@ -156,4 +155,123 @@ test('applyPostFillFollowUp: multi without override SL does not flatten TPs or m
     hooks,
   })
   assert.equal(modifies.length, 0)
+})
+
+test('applyPostFillFollowUp: multi override TP 30 restamps from fill and keeps bucket', async () => {
+  const modifies: Array<{ ticket: number; stoploss?: number | null; takeprofit?: number | null }> = []
+  const tradeUpdates: Record<string, unknown>[] = []
+  const manual: ManualSettings = {
+    trade_style: 'multi',
+    use_predefined_sl_pips: false,
+    use_predefined_tp_pips: true,
+    predefined_tp_pips: [30],
+  }
+  await applyPostFillFollowUp({
+    supabase: makeSupabase(tradeUpdates) as never,
+    api: {
+      async orderModify(_uuid: string, args: { ticket: number; stoploss?: number | null; takeprofit?: number | null }) {
+        modifies.push(args)
+        return { ticket: args.ticket }
+      },
+    } as never,
+    uuid: 'acct-1',
+    signal: makeSignal(),
+    parsed,
+    op: 'Buy',
+    broker: { id: 'broker-1', manual_settings: manual, default_lot_size: 0.01, last_balance: null },
+    channelKeywords: null,
+    symbol: 'XAUUSD',
+    baseLot: 0.01,
+    params: {
+      point: 0.01,
+      digits: 2,
+      minLot: 0.01,
+      lotStep: 0.01,
+      contractSize: 100,
+      stopsLevel: 0,
+      freezeLevel: 0,
+      defaultLot: 0.01,
+      lastBalance: null,
+    },
+    filledLegs: [{
+      tradeRowId: 'trade-1',
+      ticket: 42,
+      symbol: 'XAUUSD',
+      direction: 'buy',
+      entryPrice: 1990,
+      openSl: 1982,
+      openTp: 2003,
+    }],
+    hooks,
+  })
+
+  assert.equal(modifies.length, 1)
+  assert.equal(modifies[0]?.ticket, 42)
+  assert.equal(modifies[0]?.takeprofit, 1993)
+  assert.equal(modifies[0]?.stoploss, undefined)
+  assert.equal(tradeUpdates.length, 1)
+  assert.equal(tradeUpdates[0]?.tp, 1993)
+  assert.equal('sl' in (tradeUpdates[0] ?? {}), false)
+})
+
+test('applyPostFillFollowUp: multi override TPs keep TP1 vs TP2 buckets', async () => {
+  const modifies: Array<{ ticket: number; stoploss?: number | null; takeprofit?: number | null }> = []
+  const manual: ManualSettings = {
+    trade_style: 'multi',
+    use_predefined_tp_pips: true,
+    predefined_tp_pips: [30, 50],
+  }
+  await applyPostFillFollowUp({
+    supabase: makeSupabase([]) as never,
+    api: {
+      async orderModify(_uuid: string, args: { ticket: number; stoploss?: number | null; takeprofit?: number | null }) {
+        modifies.push(args)
+        return { ticket: args.ticket }
+      },
+    } as never,
+    uuid: 'acct-1',
+    signal: makeSignal(),
+    parsed,
+    op: 'Buy',
+    broker: { id: 'broker-1', manual_settings: manual, default_lot_size: 0.01, last_balance: null },
+    channelKeywords: null,
+    symbol: 'XAUUSD',
+    baseLot: 0.01,
+    params: {
+      point: 0.01,
+      digits: 2,
+      minLot: 0.01,
+      lotStep: 0.01,
+      contractSize: 100,
+      stopsLevel: 0,
+      freezeLevel: 0,
+      defaultLot: 0.01,
+      lastBalance: null,
+    },
+    filledLegs: [
+      {
+        tradeRowId: 'trade-1',
+        ticket: 41,
+        symbol: 'XAUUSD',
+        direction: 'buy',
+        entryPrice: 2000.2,
+        openSl: 0,
+        openTp: 2003,
+      },
+      {
+        tradeRowId: 'trade-2',
+        ticket: 42,
+        symbol: 'XAUUSD',
+        direction: 'buy',
+        entryPrice: 2000.2,
+        openSl: 0,
+        openTp: 2005,
+      },
+    ],
+    hooks,
+  })
+
+  assert.equal(modifies.length, 2)
+  assert.equal(modifies[0]?.takeprofit, 2003.2)
+  assert.equal(modifies[1]?.takeprofit, 2005.2)
 })

@@ -572,6 +572,41 @@ test('VirtualPendingMonitor.fireLeg: override SL 80 is from fill, not shared bas
   assert.ok((h.sendArgs[0]?.stoploss ?? 0) > 2010)
 })
 
+test('VirtualPendingMonitor.fireLeg: override TP 30 is from fill, not shared basket TP (buy)', async () => {
+  const h = makeFireLegHarness({
+    manual: { use_predefined_tp_pips: true, predefined_tp_pips: [30] },
+    openPrice: 2005,
+  })
+  const result = await h.fireLeg(makeTestLeg({
+    trigger_price: 2005,
+    stoploss: 1992,
+    takeprofit: 2003,
+    anchor_price: 2000,
+  }), 2004.9, 2005)
+  assert.equal(result.outcome, 'fired')
+  assert.equal(h.brokerSends, 1)
+  assert.equal(h.sendArgs[0]?.takeprofit, 2008)
+  assert.ok((h.sendArgs[0]?.takeprofit ?? 0) > 2005)
+})
+
+test('VirtualPendingMonitor.fireLeg: override TP 30 is from fill, not shared basket TP (sell)', async () => {
+  const h = makeFireLegHarness({
+    manual: { use_predefined_tp_pips: true, predefined_tp_pips: [30] },
+    openPrice: 1990,
+  })
+  const result = await h.fireLeg(makeTestLeg({
+    is_buy: false,
+    trigger_price: 1990,
+    stoploss: 2008,
+    takeprofit: 1997,
+    anchor_price: 2000,
+  }), 1990, 1990.1)
+  assert.equal(result.outcome, 'fired')
+  assert.equal(h.brokerSends, 1)
+  assert.equal(h.sendArgs[0]?.takeprofit, 1987)
+  assert.ok((h.sendArgs[0]?.takeprofit ?? 0) < 1990)
+})
+
 test('VirtualPendingMonitor.enqueueReconcileForLegBasket emits exactly one issue on enqueue failure', async () => {
   const mock = setupSentry()
   const monitor = new VirtualPendingMonitor({

@@ -17,7 +17,7 @@ import { resolveEffectiveBasketStops } from './basketEffectiveStops'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { markRangeLegFired } from './rangePendingLadderSync'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
-import { resolvePredefinedSlForEntry } from './manualPlanning/manualStops'
+import { resolvePredefinedSlForEntry, resolvePredefinedTpForEntry } from './manualPlanning/manualStops'
 import { resolveFiringLegStops, syncRangeBasketTakeProfits, toRangeBasketParsedSlice } from './rangeBasketTpSync'
 import {
   hasWorkOnShard,
@@ -1150,6 +1150,22 @@ export class VirtualPendingMonitor {
     if (predefinedSlFromFire != null) {
       args.stoploss = predefinedSlFromFire
     }
+    const predefinedTpFromFire = leg.cwe_close_price != null
+      ? null
+      : resolvePredefinedTpForEntry({
+        manual,
+        entry: refPrice,
+        isBuy: leg.is_buy,
+        symbol: leg.symbol,
+        point: params?.point,
+        digits: params?.digits,
+        contractSize: params?.contractSize,
+        existingTp: leg.takeprofit,
+        matchEntry: Number(leg.trigger_price) > 0 ? Number(leg.trigger_price) : null,
+      })
+    if (predefinedTpFromFire != null) {
+      args.takeprofit = predefinedTpFromFire
+    }
     if (params) {
       const clamped = this.clampOrderStops(args, refPrice, params)
       if (clamped.adjustments.length) {
@@ -1172,10 +1188,13 @@ export class VirtualPendingMonitor {
         )
       }
       Object.assign(args, cleanup.args)
-      // Shared basket SL is often on the wrong side of a deeper range fill and
-      // gets dropped. Restore Override signal SL from this fire price.
+      // Shared basket SL/TP is often on the wrong side of a deeper range fill and
+      // gets dropped. Restore Override signal SL/TP from this fire price.
       if (predefinedSlFromFire != null && !(Number(args.stoploss) > 0)) {
         args.stoploss = predefinedSlFromFire
+      }
+      if (predefinedTpFromFire != null && !(Number(args.takeprofit) > 0) && leg.cwe_close_price == null) {
+        args.takeprofit = predefinedTpFromFire
       }
     }
 
@@ -1208,9 +1227,23 @@ export class VirtualPendingMonitor {
             contractSize: params?.contractSize,
           })
         : null
+      const predefinedTpFromFill = entryPx != null && leg.cwe_close_price == null
+        ? resolvePredefinedTpForEntry({
+            manual,
+            entry: entryPx,
+            isBuy: leg.is_buy,
+            symbol: leg.symbol,
+            point: params?.point,
+            digits: params?.digits,
+            contractSize: params?.contractSize,
+            existingTp: leg.takeprofit,
+            matchEntry: Number(leg.trigger_price) > 0 ? Number(leg.trigger_price) : null,
+          })
+        : null
       const desiredSl = predefinedSlFromFill
         ?? (Number(args.stoploss) > 0 ? Number(args.stoploss) : null)
-      const desiredTp = Number(args.takeprofit) > 0 ? Number(args.takeprofit) : null
+      const desiredTp = predefinedTpFromFill
+        ?? (Number(args.takeprofit) > 0 ? Number(args.takeprofit) : null)
       const brokerSl = Number(result.stopLoss) > 0 ? Number(result.stopLoss) : null
       const brokerTp = Number(result.takeProfit) > 0 ? Number(result.takeProfit) : null
       // Persist only what the broker actually has. Intended stops on a naked
