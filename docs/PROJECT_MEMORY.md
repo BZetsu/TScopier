@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-08-17 — Reverse + predefined SL/TP applied on the flipped side
+
+- **Bug:** Reverse flipped the ticket, but override SL/TP pips were still computed as a buy from the original signal/entry. Wrong-side prices were stripped, so the sell opened with no stops.
+- **Fix:** Post-fill stamps from the ticket side. Planner uses the reversed live quote when predefined pips are on. Quote is prefetched for reverse/predefined. V2 desired-state seed skips reverse accounts.
+- Files: `postFillFollowUp.ts`, `postFillSide.ts`, `planManualOrders.ts`, `entryPrepare.ts`, `dispatch.ts`.
+- Scratchpad: `docs/scratchpad-reverse-signal-2026-08-17.md`. Needs trade worker deploy.
+
 ### 2026-08-17 — Reverse Signal actually flips buy/sell
 
 - **Bug:** Reverse was a no-op unless the signal had an entry price/zone **and** both predefined SL and TP were on. BUY NOW still opened a buy. The UI also silently refused the toggle without those settings.

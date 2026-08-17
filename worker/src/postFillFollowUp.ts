@@ -22,6 +22,7 @@ import type { ChannelKeywords, ManualSettings, ParsedSignal } from './manualPlan
 import type { SignalRow } from './tradeExecutor'
 import { isBenignOrderModifyError } from './orderModifyBenign'
 import { captureDeferredBusinessFailure } from './observability/deferredBusinessEvents'
+import { resolvePostFillIsBuy } from './postFillSide'
 
 /** Minimal broker fields for post-fill (avoids circular import from tradeExecutor). */
 export type PostFillBrokerRow = {
@@ -112,13 +113,17 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
   if (isMulti && !multiPredefinedSl && !multiPredefinedTp) {
     return
   }
-  const parsedIsBuy = !String(parsed.action ?? '').toLowerCase().includes('sell')
+  const reverse = manual.reverse_signal === true
 
   for (const leg of filledLegs) {
     const entry = leg.entryPrice
     if (entry == null || !Number.isFinite(entry) || entry <= 0) continue
     if (!Number.isFinite(leg.ticket) || leg.ticket <= 0) continue
-    const isBuy = isMulti ? leg.direction === 'buy' : parsedIsBuy
+    const isBuy = resolvePostFillIsBuy({
+      direction: leg.direction,
+      parsedAction: parsed.action,
+      reverse,
+    })
 
     let plannerParsed: ParsedSignal = { ...parsed }
     if (

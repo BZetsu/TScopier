@@ -1812,6 +1812,46 @@ test('planManualOrders: reverse_signal flips buy to sell without predefined stop
   assert.equal(plan.orders[0]?.takeprofit, Number((2 * entry - 1.12).toFixed(5)))
 })
 
+test('planManualOrders: reverse + predefined uses live quote not signal buy entry', () => {
+  const signalEntry = 2650
+  const bid = 2640
+  const plan = planManualOrders({
+    parsed: {
+      action: 'buy',
+      symbol: 'XAUUSD',
+      entry_price: signalEntry,
+      entry_zone_low: null,
+      entry_zone_high: null,
+      sl: 2640,
+      tp: [2680],
+      lot_size: null,
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      risk_mode: 'fixed_lot',
+      fixed_lot: 0.1,
+      trade_style: 'single',
+      range_trading: false,
+      reverse_signal: true,
+      use_predefined_sl_pips: true,
+      predefined_sl_pips: 80,
+      use_predefined_tp_pips: true,
+      predefined_tp_pips: [50],
+    },
+    channelKeywords: null,
+    manualLot: 0.1,
+    ctx: { ...baseCtx, liveBid: bid, liveAsk: 2640.5 },
+    commentPrefix: 'TScopier:abc',
+  })
+  const pip = plan.pip ?? 0.1
+  assert.equal(plan.isBuy, false)
+  assert.ok(String(plan.orders[0]?.operation ?? '').startsWith('Sell'))
+  assert.equal(plan.orders[0]?.stoploss, Number((bid + 80 * pip).toFixed(2)))
+  assert.equal(plan.orders[0]?.takeprofit, Number((bid - 50 * pip).toFixed(2)))
+  assert.notEqual(plan.orders[0]?.stoploss, Number((signalEntry + 80 * pip).toFixed(2)))
+})
+
 test('planManualOrders: reverse_signal flips BUY NOW using live quote when predefined stops are on', () => {
   const bid = 1999.8
   const plan = planManualOrders({

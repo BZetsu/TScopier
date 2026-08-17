@@ -275,3 +275,61 @@ test('applyPostFillFollowUp: multi override TPs keep TP1 vs TP2 buckets', async 
   assert.equal(modifies[0]?.takeprofit, 2003.2)
   assert.equal(modifies[1]?.takeprofit, 2005.2)
 })
+
+test('applyPostFillFollowUp: reverse fill uses ticket side not parsed buy for predefined stops', async () => {
+  const modifies: Array<{ ticket: number; stoploss?: number | null; takeprofit?: number | null }> = []
+  const tradeUpdates: Record<string, unknown>[] = []
+  const manual: ManualSettings = {
+    trade_style: 'single',
+    reverse_signal: true,
+    use_predefined_sl_pips: true,
+    predefined_sl_pips: 80,
+    use_predefined_tp_pips: true,
+    predefined_tp_pips: [30],
+  }
+  await applyPostFillFollowUp({
+    supabase: makeSupabase(tradeUpdates) as never,
+    api: {
+      async orderModify(_uuid: string, args: { ticket: number; stoploss?: number | null; takeprofit?: number | null }) {
+        modifies.push(args)
+        return { ticket: args.ticket }
+      },
+    } as never,
+    uuid: 'acct-1',
+    signal: makeSignal(),
+    parsed,
+    op: 'Sell',
+    broker: { id: 'broker-1', manual_settings: manual, default_lot_size: 0.01, last_balance: null },
+    channelKeywords: null,
+    symbol: 'XAUUSD',
+    baseLot: 0.01,
+    params: {
+      point: 0.01,
+      digits: 2,
+      minLot: 0.01,
+      lotStep: 0.01,
+      contractSize: 100,
+      stopsLevel: 0,
+      freezeLevel: 0,
+      defaultLot: 0.01,
+      lastBalance: null,
+    },
+    filledLegs: [{
+      tradeRowId: 'trade-1',
+      ticket: 42,
+      symbol: 'XAUUSD',
+      direction: 'sell',
+      entryPrice: 1990,
+      openSl: 0,
+      openTp: 0,
+    }],
+    hooks,
+  })
+
+  assert.equal(modifies.length, 1)
+  assert.equal(modifies[0]?.ticket, 42)
+  assert.equal(modifies[0]?.stoploss, 1998)
+  assert.equal(modifies[0]?.takeprofit, 1987)
+  assert.equal(tradeUpdates[0]?.sl, 1998)
+  assert.equal(tradeUpdates[0]?.tp, 1987)
+})
