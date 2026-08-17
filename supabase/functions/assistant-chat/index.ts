@@ -439,7 +439,7 @@ const TOOL_DEFS = [
     function: {
       name: "open_trades",
       description:
-        "Open the live trades page (/account-trades) so the user can see their open/closed broker positions. Use when they ask to see their trades or navigate to the trades page.",
+        "Open the live trades page (/account-trades) so the user can see their open/closed broker positions. Navigation-only — it does NOT return trade data. Use get_recent_trades or get_trade_detail to actually report a trade's status/ticket. Use when they ask to see their trades or navigate to the trades page.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -854,6 +854,86 @@ async function fetchBrokerLabels(
   return map;
 }
 
+const BROKER_TRADE_SELECT =
+  "signal_id,broker_account_id,metaapi_order_id,symbol,status,entry_price,sl,tp,lot_size,opened_at,closed_at,profit";
+
+type BrokerTradeRow = {
+  signal_id: unknown;
+  broker_account_id: string | null;
+  metaapi_order_id: string | null;
+  symbol: string | null;
+  status: string | null;
+  entry_price: number | null;
+  sl: number | null;
+  tp: number | null;
+  lot_size: number | null;
+  opened_at: string | null;
+  closed_at: string | null;
+  profit: number | null;
+};
+
+/**
+ * Fetch live broker positions for the given signal ids. The `trades` table is
+ * the authoritative source for the broker ticket (`metaapi_order_id`) and the
+ * live position status (`open`/`closed`) — execution-log rows may lack a
+ * ticket even when the trade is open at the broker.
+ */
+async function fetchLiveTrades(
+  supabase: SupabaseClient,
+  userId: string,
+  signalIds: string[],
+): Promise<{ map: Map<string, BrokerTradeRow[]>; error: string | null }> {
+  const map = new Map<string, BrokerTradeRow[]>();
+  const ids = [...new Set(signalIds)].filter(Boolean);
+  if (!ids.length) return { map, error: null };
+  const { data, error } = await supabase
+    .from("trades")
+    .select(BROKER_TRADE_SELECT)
+    .eq("user_id", userId)
+    .in("signal_id", ids);
+  if (error) return { map, error: error.message };
+  for (const t of data ?? []) {
+    const sid = String(t.signal_id);
+    if (!map.has(sid)) map.set(sid, []);
+    map.get(sid)!.push(t as BrokerTradeRow);
+  }
+  return { map, error: null };
+}
+
+function numOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** Model-facing snapshot of live broker positions for a signal. */
+function summarizeLiveTrades(
+  rows: BrokerTradeRow[],
+  labelById: Map<string, string>,
+): Array<Record<string, unknown>> {
+  return rows.map((t) => ({
+    status: t.status ?? null,
+    ticket: t.metaapi_order_id != null ? t.metaapi_order_id : null,
+    symbol: t.symbol ?? null,
+    broker: t.broker_account_id ? (labelById.get(t.broker_account_id) ?? null) : null,
+    entry_price: numOrNull(t.entry_price),
+    sl: numOrNull(t.sl),
+    tp: numOrNull(t.tp),
+    lot_size: numOrNull(t.lot_size),
+    opened_at: t.opened_at ?? null,
+    closed_at: t.closed_at ?? null,
+    profit: numOrNull(t.profit),
+  }));
+}
+
+function liveTickets(rows: BrokerTradeRow[]): string[] {
+  const out: string[] = [];
+  for (const t of rows) {
+    if (t.metaapi_order_id == null) continue;
+    const n = Number(t.metaapi_order_id);
+    if (Number.isFinite(n) && n > 0) out.push(String(n));
+  }
+  return [...new Set(out)];
+}
+
 function parsedTradeFields(parsed: Record<string, unknown> | null) {
   const p = parsed ?? {};
   const action = String(p.action ?? "");
@@ -955,12 +1035,22 @@ async function buildTradeSummaries(
       if (l.broker_account_id) brokerIds.add(String(l.broker_account_id));
     }
   }
+
+  const { map: tradesBySignal, error: liveError } = await fetchLiveTrades(supabase, userId, allIds);
+  for (const rows of tradesBySignal.values()) {
+    for (const t of rows) {
+      if (t.broker_account_id) brokerIds.add(String(t.broker_account_id));
+    }
+  }
   const labelById = await fetchBrokerLabels(supabase, [...brokerIds]);
 
   const summarize = (s: SignalRow, kids: SignalRow[]): Record<string, unknown> => {
     const fields = parsedTradeFields(s.parsed_data);
     const logs = [s, ...kids].flatMap((x) => logsBySignal.get(x.id) ?? []);
     const { tickets, errors, rows } = summarizeLogs(logs, labelById);
+    const liveRows = [s, ...kids].flatMap((x) => tradesBySignal.get(x.id) ?? []);
+    const positions = summarizeLiveTrades(liveRows, labelById);
+    const liveTicketNumbers = liveTickets(liveRows);
     return {
       signal_id: s.id,
       time: s.created_at,
@@ -974,11 +1064,13 @@ async function buildTradeSummaries(
       lot_size: fields.lot_size,
       status: s.status,
       skip_reason: s.skip_reason,
-      tickets,
+      tickets: [...new Set([...tickets, ...liveTicketNumbers])],
       failure_count: errors.length,
       errors,
       legs: kids.length,
       execution_logs: rows.slice(0, 10),
+      positions,
+      positions_error: liveError,
     };
   };
 
@@ -1007,7 +1099,7 @@ async function toolGetRecentTrades(
   return {
     content: JSON.stringify({
       trades,
-      hint: "The app renders a card with these trades — reply in one or two short lines and do NOT repeat the list in prose. Offer get_trade_detail for a specific trade or open_trades to see live positions. If the user asked about their LAST or MOST RECENT trade, answer with the most recent EXECUTED or FAILED trade (one with a symbol/ticket); skipped non-actionable promo messages are not trades — say so plainly if the newest signal is just a skip.",
+      hint: "The app renders a card with these trades — reply in one or two short lines and do NOT repeat the list in prose. Offer get_trade_detail for a specific trade or open_trades to let the user view their live positions in the app. If the user asked about their LAST or MOST RECENT trade, answer with the most recent EXECUTED or FAILED trade (one with a symbol/ticket); skipped non-actionable promo messages are not trades — say so plainly if the newest signal is just a skip. IMPORTANT for status questions like 'is it still on' / 'is it open': each trade has a `positions` array from the broker (status open/closed/pending + ticket). Prefer `positions` for live status — if a trade has positions with status 'open', say it is still open and quote the ticket; if status 'closed', say it closed; if 'pending' (limit/stop order), say it has not filled yet. Only say 'no ticket' when BOTH tickets and positions are empty. If `positions_error` is present, positions are unavailable — do NOT claim there is no ticket.",
     }),
   };
 }
@@ -1037,7 +1129,7 @@ async function toolGetCopierLogs(
   return {
     content: JSON.stringify({
       trades,
-      hint: "This mirrors the /copier-logs page. The app renders a card with these rows — reply briefly and do NOT repeat the list in prose. Offer get_trade_detail for failures.",
+      hint: "This mirrors the /copier-logs page. The app renders a card with these rows — reply briefly and do NOT repeat the list in prose. Offer get_trade_detail for failures. Each row has a `positions` array (live broker state: status open/closed/pending + ticket) — use it for status questions like 'is it still on'. If `positions_error` is present, positions are unavailable — do NOT claim there is no ticket.",
     }),
   };
 }
@@ -1052,22 +1144,35 @@ async function toolGetTradeDetail(
   if (!signalId) {
     const ticket = args.ticket != null ? String(args.ticket) : "";
     if (ticket) {
-      const { data: logs } = await supabase
-        .from("trade_execution_logs")
-        .select("signal_id,response_payload")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(300);
-      const hit = (logs ?? []).find((l) => {
+      const [logsRes, tradesRes] = await Promise.all([
+        supabase
+          .from("trade_execution_logs")
+          .select("signal_id,response_payload")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(300),
+        supabase
+          .from("trades")
+          .select("signal_id,metaapi_order_id")
+          .eq("user_id", userId)
+          .eq("metaapi_order_id", ticket)
+          .limit(1),
+      ]);
+      const hit = (logsRes.data ?? []).find((l) => {
         const p = l.response_payload && typeof l.response_payload === "object"
           ? (l.response_payload as Record<string, unknown>)
           : {};
         return typeof p.ticket === "number" && String(p.ticket) === ticket;
       });
-      if (!hit) {
+      const tradeHit = tradesRes.data?.[0];
+      if (!hit && !tradeHit) {
+        const lookupError = logsRes.error ?? tradesRes.error;
+        if (lookupError) {
+          return { content: JSON.stringify({ error: `Lookup failed: ${lookupError.message}` }) };
+        }
         return { content: JSON.stringify({ error: "No trade found with that ticket." }) };
       }
-      signalId = String(hit.signal_id);
+      signalId = String(hit?.signal_id ?? tradeHit?.signal_id);
     }
   }
   if (!signalId) {
@@ -1113,6 +1218,8 @@ async function toolGetTradeDetail(
       .in("signal_id", allIds),
   ]);
 
+  const { map: tradesBySignal, error: liveError } = await fetchLiveTrades(supabase, userId, allIds);
+
   const brokerIds = new Set<string>();
   const logsBySignal = new Map<string, ExecLogRow[]>();
   for (const l of logsRes.data ?? []) {
@@ -1124,12 +1231,20 @@ async function toolGetTradeDetail(
   for (const c of claimsRes.data ?? []) {
     if (c.broker_account_id) brokerIds.add(String(c.broker_account_id));
   }
+  for (const rows of tradesBySignal.values()) {
+    for (const t of rows) {
+      if (t.broker_account_id) brokerIds.add(String(t.broker_account_id));
+    }
+  }
   const labelById = await fetchBrokerLabels(supabase, [...brokerIds]);
   const channelNames = await fetchChannelNames(supabase, [root.channel_id].filter((c): c is string => Boolean(c)));
 
   const summarize = (s: SignalRow): Record<string, unknown> => {
     const fields = parsedTradeFields(s.parsed_data);
     const { tickets, errors, rows } = summarizeLogs(logsBySignal.get(s.id) ?? [], labelById);
+    const liveRows = tradesBySignal.get(s.id) ?? [];
+    const positions = summarizeLiveTrades(liveRows, labelById);
+    const liveTicketNumbers = liveTickets(liveRows);
     return {
       signal_id: s.id,
       time: s.created_at,
@@ -1143,10 +1258,12 @@ async function toolGetTradeDetail(
       lot_size: fields.lot_size,
       status: s.status,
       skip_reason: s.skip_reason,
-      tickets,
+      tickets: [...new Set([...tickets, ...liveTicketNumbers])],
       failure_count: errors.length,
       errors,
       execution_logs: rows.slice(0, 15),
+      positions,
+      positions_error: liveError,
     };
   };
 
@@ -1158,7 +1275,7 @@ async function toolGetTradeDetail(
         broker: c.broker_account_id ? (labelById.get(String(c.broker_account_id)) ?? null) : null,
         time: c.created_at,
       })),
-      hint: "Explain the outcome per leg. If execution_logs have status failed, quote error_message and suggest report_trade or /copier-logs.",
+      hint: "Explain the outcome per leg. The `positions` array is the live broker state (status open/closed/pending + ticket) — use it to answer 'is it still on' / 'is it open'; 'pending' means a limit/stop order that has not filled yet. If `positions_error` is present, positions are unavailable — do NOT claim there is no ticket. If execution_logs have status failed, quote error_message and suggest report_trade or /copier-logs.",
     }),
   };
 }
@@ -1939,7 +2056,11 @@ function runClientActionTool(name: string, args: Record<string, unknown>): ToolR
         return { content: JSON.stringify({ error: `Path not allowed: ${raw}` }) };
       }
       return {
-        content: JSON.stringify({ queued: true, path }),
+        content: JSON.stringify({
+          queued: true,
+          path,
+          hint: `A client navigation to ${path} was scheduled on the frontend. This "queued" flag only means the navigation action is pending on the client — it does NOT mean the user's trades are queued.`,
+        }),
         pendingClientAction: {
           type: "navigate",
           summary: `Go to ${path}`,
@@ -1957,7 +2078,11 @@ function runClientActionTool(name: string, args: Record<string, unknown>): ToolR
       };
     case "open_backtest":
       return {
-        content: JSON.stringify({ queued: true, path: "/backtest" }),
+        content: JSON.stringify({
+          queued: true,
+          path: "/backtest",
+          hint: 'A client navigation to the Backtest page was scheduled. "queued" here only means the navigation action is pending on the client — it does NOT mean the user\'s trades are queued.',
+        }),
         pendingClientAction: {
           type: "navigate",
           summary: "Open Backtest",
@@ -1966,7 +2091,11 @@ function runClientActionTool(name: string, args: Record<string, unknown>): ToolR
       };
     case "open_trades":
       return {
-        content: JSON.stringify({ queued: true, path: "/account-trades" }),
+        content: JSON.stringify({
+          queued: true,
+          path: "/account-trades",
+          hint: 'A client navigation to the Trades page was scheduled. "queued" here only means the navigation action is pending on the client — it does NOT mean the user\'s trades are queued. Do not claim the user\'s trades are queued.',
+        }),
         pendingClientAction: {
           type: "navigate",
           summary: "Open Trades",

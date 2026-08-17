@@ -188,6 +188,8 @@ export const fr: Translations = {
         statusIgnored: 'Ignorée',
         statusError: 'Erreur',
         statusCancelled: 'Annulée',
+        positionOpen: 'Ouverte',
+        positionClosed: 'Fermée',
       },
     },
 

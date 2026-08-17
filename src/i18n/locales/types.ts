@@ -163,6 +163,8 @@ export interface NavTranslations {
       statusIgnored: string
       statusError: string
       statusCancelled: string
+      positionOpen: string
+      positionClosed: string
     }
     broker: {
       title: string

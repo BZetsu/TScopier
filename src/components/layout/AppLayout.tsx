@@ -125,12 +125,13 @@ export function AppLayout() {
           { to: '/performance', label: t.nav.items.performance },
         ],
       },
-      {
-        label: t.nav.sections.discover,
-        items: [
-          { to: '/popular-channels', label: t.nav.items.popularChannels },
-        ],
-      },
+      // Popular channels disabled for now.
+      // {
+      //   label: t.nav.sections.discover,
+      //   items: [
+      //     { to: '/popular-channels', label: t.nav.items.popularChannels },
+      //   ],
+      // },
       {
         label: t.nav.sections.tradingTools,
         items: [

@@ -170,6 +170,8 @@ export const chromePl: AppChromeTranslations = {
         statusIgnored: 'Ignored',
         statusError: 'Error',
         statusCancelled: 'Cancelled',
+        positionOpen: 'Open',
+        positionClosed: 'Closed',
       },
 
     },

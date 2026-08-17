@@ -169,6 +169,8 @@ export const chromeJa: AppChromeTranslations = {
         statusIgnored: 'Ignored',
         statusError: 'Error',
         statusCancelled: 'Cancelled',
+        positionOpen: 'Open',
+        positionClosed: 'Closed',
       },
 
     },

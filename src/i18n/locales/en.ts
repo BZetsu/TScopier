@@ -172,6 +172,8 @@ export const en: Translations = {
         statusIgnored: 'Ignored',
         statusError: 'Error',
         statusCancelled: 'Cancelled',
+        positionOpen: 'Open',
+        positionClosed: 'Closed',
       },
 broker: {
         title: 'Connect trading account',

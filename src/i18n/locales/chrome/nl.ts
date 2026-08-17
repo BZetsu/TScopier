@@ -169,6 +169,8 @@ export const chromeNl: AppChromeTranslations = {
         statusIgnored: 'Ignored',
         statusError: 'Error',
         statusCancelled: 'Cancelled',
+        positionOpen: 'Open',
+        positionClosed: 'Closed',
       },
 
     },

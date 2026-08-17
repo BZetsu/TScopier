@@ -2,6 +2,22 @@
 
 ## Changelog
 
+### 2026-08-17 — Disabled Popular Channels page (temporary)
+
+- **Change:** The `/popular-channels` page is hidden for now. Nav item ("discover" section) and route commented out in `src/App.tsx` + `src/components/layout/AppLayout.tsx`; the route now redirects stale deep links to `/dashboard` (prevents authenticated users with saved links being bounced to `/signup` via the referral catch-all).
+- **Intentional leftovers for re-enable:** page file, i18n keys, nav icon (`appNavIcons.ts`), and the reserved referral segment `'popular-channels'` in `referralCapture.ts` (must stay reserved — otherwise the catch-all would store a bogus referral code).
+- **Verification:** `tsc -b` clean for changed files (only pre-existing `src/lib/supabase.ts` realtime-js debt remains); `subscriptionNavAccess.test.ts` 2/2 pass; eslint clean for the change. Code-review: PASS_WITH_NOTES (no CRITICAL/HIGH/MEDIUM).
+- **Deploy state:** frontend change only — needs Netlify redeploy. Re-enable = uncomment nav + route, drop the redirect.
+
+### 2026-08-17 — Registered all unregistered migrations (staging + prod)
+
+- **Symptom:** `supabase migration list` showed dozens of local migrations as "local only" (not registered in `schema_migrations`) on both staging (`axdcledcyhyvzrnfkwat`) and prod (`sxkpcovbyaficvtkpsdo`); the tracker disagreed with what was actually applied, risking re-runs or skipped deploys.
+- **Root cause:** Migrations applied manually via the dashboard / SQL editor never insert a `supabase_migrations.schema_migrations` row (only `supabase db push` auto-registers). Registration ≠ applied; the tracker was just missing receipts.
+- **Verification:** Built read-only classifier (`/tmp/opencode/pdfinspect/verify_migrations.py`) that parses each migration file's created objects (tables/views/functions/indexes/columns/triggers/policies) and checks their existence in the live DB via Management API `database/query`. For `DO`-block/data-only migrations, verified `cron.job`, constraints, storage buckets, publications, and vault secrets directly.
+- **Result:** staging 20 unregistered (19 applied + 1 applied now), prod 65 (58 applied + 7 applied now: `mt_server_connect_locks`, `fxsocket_broker_accounts`, layering foundation + trigger + `layering_plans`, `trade_reports`, `trade_reports_signal_id`). Both envs now have **0 local-only** migrations.
+- **Found data issue:** `trades_idempotency_guard` (`20260805000000`) correctly refused to create the unique index on prod — 3 duplicate broker-ticket groups existed from signal `c723dc0f` (XAUUSD sell, Aug 10). Rows carried tickets not matching the broker's issue sequence (ticket backfill bug: planned layer row at 17:14:33 was later reconciled with a ticket belonging to a *different*, later order). Deleted the 3 phantom closed rows (`18dd580a`, `c57ac5d6`, `ea42493f`), re-ran the migration, registered it; both indexes now exist on prod.
+- **Follow-ups:** stray ad-hoc `schema_migrations` rows on prod (`20260805082647` etc.) remain as remote-only — harmless, optional cleanup.
+
 ### 2026-08-16 — Block TP-without-SL entries
 
 - **Rule:** Buy/sell with take-profit level(s) but no stop loss must not execute. SL-only (no TP) and bare `buy now` still execute.

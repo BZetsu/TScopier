@@ -2,6 +2,20 @@ import { useMemo } from 'react'
 import clsx from 'clsx'
 import { ChevronRight } from 'lucide-react'
 
+export type AssistantPosition = {
+  status?: string | null
+  ticket?: string | null
+  symbol?: string | null
+  broker?: string | null
+  entry_price?: number | null
+  sl?: number | null
+  tp?: number | null
+  lot_size?: number | null
+  opened_at?: string | null
+  closed_at?: string | null
+  profit?: number | null
+}
+
 export type AssistantTradeRow = {
   signal_id?: string | null
   time?: string | null
@@ -19,6 +33,7 @@ export type AssistantTradeRow = {
   failure_count?: number
   errors?: string[]
   legs?: number
+  positions?: AssistantPosition[]
 }
 
 export type AssistantTradesCardCopy = {
@@ -36,6 +51,8 @@ export type AssistantTradesCardCopy = {
   statusIgnored: string
   statusError: string
   statusCancelled: string
+  positionOpen: string
+  positionClosed: string
 }
 
 type ParsedResult = {
@@ -122,6 +139,32 @@ function formatPrice(value: number | null | undefined): string | null {
   return Number.isInteger(value) ? text : text.replace(/\.?0+$/, '')
 }
 
+function LivePositionBadge({
+  position,
+  copy,
+}: {
+  position: AssistantPosition
+  copy: AssistantTradesCardCopy
+}) {
+  const status = (position.status ?? '').toLowerCase()
+  const isOpen = status === 'open'
+  const isClosed = status === 'closed'
+  const label = isOpen ? copy.positionOpen : isClosed ? copy.positionClosed : null
+  if (!label) return null
+  return (
+    <span
+      className={clsx(
+        'rounded-full px-2 py-0.5 text-[10px] font-semibold',
+        isOpen
+          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+          : 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300',
+      )}
+    >
+      {label}
+    </span>
+  )
+}
+
 function TradeRow({
   trade,
   copy,
@@ -168,6 +211,9 @@ function TradeRow({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {trade.positions?.map((p, i) => (
+            <LivePositionBadge key={i} position={p} copy={copy} />
+          ))}
           <span
             className={clsx(
               'rounded-full px-2 py-0.5 text-[10px] font-semibold',

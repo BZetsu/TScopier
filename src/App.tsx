@@ -29,9 +29,9 @@ const AccountConfigPage = lazy(() =>
 const CopierEnginePage = lazy(() =>
   import('./pages/dashboard/CopierEnginePage').then(m => ({ default: m.CopierEnginePage })),
 )
-const PopularChannelsPage = lazy(() =>
-  import('./pages/dashboard/PopularChannelsPage').then(m => ({ default: m.PopularChannelsPage })),
-)
+// const PopularChannelsPage = lazy(() =>
+//   import('./pages/dashboard/PopularChannelsPage').then(m => ({ default: m.PopularChannelsPage })),
+// )
 const CopierLogsPage = lazy(() =>
   import('./pages/dashboard/CopierLogsPage').then(m => ({ default: m.CopierLogsPage })),
 )
@@ -143,7 +143,9 @@ export default function App() {
             <Route path="/account-configuration" element={<Navigate to="/brokers" replace />} />
             <Route path="/account-trades" element={<LazyPage><TradesPage /></LazyPage>} />
             <Route path="/channels" element={<LazyPage><CopierEnginePage /></LazyPage>} />
-            <Route path="/popular-channels" element={<LazyPage><PopularChannelsPage /></LazyPage>} />
+            {/* Popular channels disabled for now — redirect stale deep links to the dashboard. */}
+            {/* <Route path="/popular-channels" element={<LazyPage><PopularChannelsPage /></LazyPage>} /> */}
+            <Route path="/popular-channels" element={<Navigate to="/dashboard" replace />} />
             <Route path="/copier-engine" element={<Navigate to="/channels" replace />} />
             <Route path="/backtest" element={<LazyPage><Backtest /></LazyPage>} />
             <Route path="/copier-templates" element={<Navigate to="/backtest" replace />} />
