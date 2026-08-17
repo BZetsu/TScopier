@@ -1,8 +1,15 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
+  initWorkerSentry,
+  resetWorkerSentryForTests,
+  setSentryAdapterForTests,
+} from './observability/sentry'
+import { resetBusinessEventsForTests } from './observability/businessEvents'
+import {
   backfillNakedLegTakeProfits,
   buildRangeBasketTpTargets,
+  classifyBasketTpSyncLegFailure,
   coercePositiveTpLevels,
   deepestFinalTp,
   estimatePlanImmediateLegCount,
@@ -69,6 +76,56 @@ const stubApi = {
   quote: async () => ({ bid: 4390, ask: 4391 }),
 } as unknown as FxsocketBrokerClient
 
+class MockScope {
+  level: string | null = null
+  tags: Record<string, string> = {}
+  contexts: Record<string, unknown> = {}
+  fingerprint: string[] | null = null
+  setLevel(level: string): void { this.level = level }
+  setTag(key: string, value: string): void { this.tags[key] = value }
+  setContext(key: string, value: unknown): void { this.contexts[key] = value }
+  setFingerprint(value: string[]): void { this.fingerprint = value }
+}
+
+function mockSentry() {
+  const mock = {
+    initCalls: [] as unknown[],
+    capturedMessages: [] as unknown[],
+    scopes: [] as MockScope[],
+    tags: {} as Record<string, string>,
+    contexts: {} as Record<string, unknown>,
+    init(opts: unknown) { mock.initCalls.push(opts) },
+    captureException() { return 'event-id' },
+    captureMessage(msg: string, level?: string) {
+      mock.capturedMessages.push({ msg, level })
+      return 'event-id'
+    },
+    addBreadcrumb() {},
+    setTag(key: string, value: string) { mock.tags[key] = value },
+    setContext(key: string, value: unknown) { mock.contexts[key] = value },
+    withScope(fn: (scope: MockScope) => void) {
+      const scope = new MockScope()
+      mock.scopes.push(scope)
+      fn(scope)
+    },
+    async flush() { return true },
+  }
+  return mock
+}
+
+function setupSentry() {
+  resetWorkerSentryForTests()
+  resetBusinessEventsForTests()
+  const mock = mockSentry()
+  setSentryAdapterForTests(mock as never)
+  initWorkerSentry({
+    SENTRY_ENABLED: 'true',
+    SENTRY_DSN: 'https://public@example.invalid/1',
+    SENTRY_BUSINESS_EVENT_COOLDOWN_MS: '0',
+  } as NodeJS.ProcessEnv)
+  return mock
+}
+
 const TP_LOTS = [
   { label: 'TP1', lot: 0, percent: 50, enabled: true },
   { label: 'TP2', lot: 0, percent: 30, enabled: true },
@@ -88,6 +145,66 @@ function openLeg(id: string, entry: number, openedAt: string): BasketOpenLeg {
     direction: 'buy',
     symbol: 'XAUUSD',
   }
+}
+
+function rangeSyncLeg(id: string, ticket: number, entry: number): BasketOpenLeg {
+  return {
+    ...openLeg(id, entry, `2026-01-01T00:00:0${ticket % 10}Z`),
+    metaapi_order_id: String(ticket),
+    sl: 4376,
+    tp: 0,
+  }
+}
+
+function apiForModifyPlan(plan: Record<number, Array<'ok' | 'timeout'>>) {
+  const calls: Array<{ ticket: number; stoploss?: number; takeprofit?: number }> = []
+  return {
+    calls,
+    quote: async () => ({ bid: 4390, ask: 4391, symbol: 'XAUUSD' }),
+    openedOrders: async () =>
+      Object.keys(plan).map(ticket => ({ ticket: Number(ticket) })),
+    orderModify: async (_uuid: string, args: { ticket: number; stoploss?: number; takeprofit?: number }) => {
+      calls.push(args)
+      const steps = plan[args.ticket] ?? ['ok']
+      const next = steps.shift() ?? 'ok'
+      if (next === 'timeout') throw new Error('TradingHelper.OrderModify timed out')
+      return { stopLoss: args.stoploss ?? null, takeProfit: args.takeprofit ?? null }
+    },
+  }
+}
+
+async function runRangeSyncScenario(
+  family: BasketOpenLeg[],
+  api: ReturnType<typeof apiForModifyPlan>,
+): Promise<ReturnType<typeof mockSentry>> {
+  process.env.RANGE_REBALANCE_RETRY_DELAY_MS = '0'
+  const mock = setupSentry()
+  const captured: LogRow[] = []
+  const supabase = fakeSupabaseForRebalance(family, captured)
+  await syncRangeBasketTakeProfits({
+    supabase: supabase as never,
+    api: api as never,
+    uuid: 'uuid',
+    symbol: 'XAUUSD',
+    direction: 'buy',
+    baseLot: 0.05,
+    params: null,
+    signalId: 'sig-range',
+    userId: 'user-range',
+    brokerAccountId: 'broker-range',
+    manual: { range_trading: true },
+    parsed: { sl: 4376, tp: [4410, 4420, 4430] },
+    forceLayeringRebalance: true,
+  })
+  return mock
+}
+
+function capturedBasketFailureExtra(mock: ReturnType<typeof mockSentry>): Record<string, unknown> {
+  const scope = mock.scopes.find(s => s.tags.event_name === 'basket_tp_sync_failed')
+  assert.ok(scope, 'basket_tp_sync_failed should be captured')
+  const context = scope.contexts.pipeline as { extra?: Record<string, unknown> }
+  assert.ok(context.extra, 'pipeline extra context should be present')
+  return context.extra!
 }
 
 test('resolveRangeBasketLegCounts: phase B after first range leg', () => {
@@ -592,4 +709,112 @@ test('syncRangeBasketTakeProfits: no TP ladder skip writes status=skipped with n
   assert.equal(row!.request_payload.failed, 0)
   assert.equal(row!.request_payload.skipped_reason, 'no_tp_ladder')
   assert.equal(row!.request_payload.modified, 0)
+})
+
+test('classifyBasketTpSyncLegFailure: normalizes modify failures without raw broker payloads', () => {
+  assert.equal(
+    classifyBasketTpSyncLegFailure({
+      error: 'TradingHelper.OrderModify timed out',
+    }),
+    'BROKER_TIMEOUT',
+  )
+  assert.equal(
+    classifyBasketTpSyncLegFailure({
+      error: 'Invalid stops',
+    }),
+    'INVALID_STOPS',
+  )
+  assert.equal(
+    classifyBasketTpSyncLegFailure({
+      error: 'ticket not in OpenedOrders',
+      skip_reason: 'skipped_not_on_broker',
+    }),
+    'POSITION_GONE',
+  )
+})
+
+test('syncRangeBasketTakeProfits: all legs succeed first pass emits no final failure', async () => {
+  const family = [
+    rangeSyncLeg('leg-1', 101, 4389),
+    rangeSyncLeg('leg-2', 102, 4388),
+  ]
+  const api = apiForModifyPlan({ 101: ['ok'], 102: ['ok'] })
+  const mock = await runRangeSyncScenario(family, api)
+
+  assert.equal(mock.scopes.some(s => s.tags.event_name === 'basket_tp_sync_failed'), false)
+  assert.deepEqual(api.calls.map(c => c.ticket).sort(), [101, 102])
+})
+
+test('syncRangeBasketTakeProfits: failed first pass that succeeds retry emits no final failure', async () => {
+  const family = [
+    rangeSyncLeg('leg-1', 201, 4389),
+    rangeSyncLeg('leg-2', 202, 4388),
+  ]
+  const api = apiForModifyPlan({ 201: ['ok'], 202: ['timeout', 'ok'] })
+  const mock = await runRangeSyncScenario(family, api)
+
+  assert.equal(mock.scopes.some(s => s.tags.event_name === 'basket_tp_sync_failed'), false)
+  assert.deepEqual(api.calls.map(c => c.ticket), [201, 202, 202])
+})
+
+test('syncRangeBasketTakeProfits: partial final failure captures safe context and retries only failed legs', async () => {
+  const family = [
+    rangeSyncLeg('leg-1', 301, 4389),
+    rangeSyncLeg('leg-2', 302, 4388),
+    rangeSyncLeg('leg-3', 303, 4387),
+  ]
+  const api = apiForModifyPlan({
+    301: ['ok'],
+    302: ['ok'],
+    303: ['timeout', 'timeout'],
+  })
+  const mock = await runRangeSyncScenario(family, api)
+  const extra = capturedBasketFailureExtra(mock)
+  const scope = mock.scopes.find(s => s.tags.event_name === 'basket_tp_sync_failed')!
+
+  assert.equal(scope.level, 'warning')
+  assert.equal(scope.tags.reason_code, 'BASKET_TP_SYNC_FINAL_FAILURE')
+  assert.equal(extra.partial_success, true)
+  assert.equal(extra.total_failure, false)
+  assert.equal(extra.targeted_count, 4)
+  assert.equal(extra.successful_count, 2)
+  assert.equal(extra.failed_count, 1)
+  assert.equal(extra.final_retry_exhausted, true)
+  assert.equal(extra.retry_pass_count, 1)
+  assert.equal(extra.underlying_failure_category, 'BROKER_TIMEOUT')
+  assert.deepEqual(extra.underlying_failure_categories, { BROKER_TIMEOUT: 1 })
+  assert.equal(extra.failed_leg_diagnostic_count, 1)
+  assert.deepEqual(api.calls.map(c => c.ticket), [301, 302, 303, 303])
+  const diagnostics = extra.failed_leg_diagnostics as Array<Record<string, unknown>>
+  assert.equal(diagnostics.length, 1)
+  assert.equal(diagnostics[0]!.trade_id, 'leg-3')
+  assert.equal(diagnostics[0]!.ticket, 303)
+  assert.equal(diagnostics[0]!.failure_category, 'BROKER_TIMEOUT')
+  assert.equal(typeof diagnostics[0]!.desired_sl, 'number')
+  assert.equal(typeof diagnostics[0]!.desired_tp, 'number')
+  const payload = JSON.stringify(scope)
+  assert.doesNotMatch(payload, /TradingHelper\.OrderModify timed out/)
+  assert.doesNotMatch(payload, /password|token|session_string/i)
+})
+
+test('syncRangeBasketTakeProfits: total final failure keeps error severity and total-failure context', async () => {
+  const family = [
+    rangeSyncLeg('leg-1', 401, 4389),
+    rangeSyncLeg('leg-2', 402, 4388),
+  ]
+  const api = apiForModifyPlan({
+    401: ['timeout', 'timeout'],
+    402: ['timeout', 'timeout'],
+  })
+  const mock = await runRangeSyncScenario(family, api)
+  const extra = capturedBasketFailureExtra(mock)
+  const scope = mock.scopes.find(s => s.tags.event_name === 'basket_tp_sync_failed')!
+
+  assert.equal(scope.level, 'error')
+  assert.equal(extra.partial_success, false)
+  assert.equal(extra.total_failure, true)
+  assert.equal(extra.successful_count, 0)
+  assert.equal(extra.failed_count, 2)
+  assert.deepEqual(extra.underlying_failure_categories, { BROKER_TIMEOUT: 2 })
+  assert.deepEqual(api.calls.map(c => c.ticket), [401, 402, 401, 402])
 })

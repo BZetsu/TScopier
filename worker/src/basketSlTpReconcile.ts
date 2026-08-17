@@ -10,8 +10,7 @@ import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistributio
 import type { ManualTpLot } from './manualPlanning/types'
 import { symbolsCompatibleForBasket } from './basketModFollowUp'
 import { stripInvalidStopsForSide } from './channelActiveTradeParams'
-import { isMtBridgeGlitchMessage } from './brokerConnectError'
-import { isBenignOrderModifyError, stopsAlreadyMatchDb } from './orderModifyBenign'
+import { isBenignOrderModifyError, isPositionGoneError } from './orderModifyBenign'
 import { modifyLegSlTpWithFallback } from './orderModifySafe'
 import { isSlMoreProtective } from './basketEffectiveStops'
 import { mgmtLegConcurrency, parallelMap } from './parallelPool'
@@ -55,8 +54,15 @@ export type LegModifyError = {
   skip_reason?: string
 }
 
+export type BasketLegModifySummary = MergeModifySummary & {
+  skippedNotOnBroker: number
+  skippedUnfixable: number
+  benignModify: number
+  positionGone: number
+}
+
 export type RunBasketLegModifyResult = {
-  summary: MergeModifySummary & { skippedNotOnBroker: number; skippedUnfixable: number }
+  summary: BasketLegModifySummary
   legErrors: LegModifyError[]
   modifiedTradeIds: string[]
 }
@@ -241,15 +247,6 @@ export async function markBasketReconcileDoneForAnchor(
 export const GHOST_BASKET_CLOSED_USER_MESSAGE =
   'Open basket existed only in TScopier (not on the broker); stale legs were closed. Send a new entry to open on MT.'
 
-function stopsAlreadyMatch(
-  tr: BasketOpenLeg,
-  target: PerLegStopTarget,
-  nImmCwe: number,
-  legIdx: number,
-): boolean {
-  return stopsAlreadyMatchDb(tr, target, nImmCwe, legIdx)
-}
-
 export async function logBasketLegModify(
   supabase: SupabaseClient,
   args: {
@@ -330,7 +327,7 @@ export async function runBasketLegModifies(args: {
     supabase, api, uuid, symbol, direction, baseLot, params,
     signalId, userId, brokerAccountId, familyTrades, perLegTargets: rawTargets,
     signalTps, tpLots, nImmCwe, strictEntryPrefetch, openedTickets, alreadyModified,
-    liveMgmtFast, parallelLegs, internalRebalance, effectiveStoploss,
+    liveMgmtFast, parallelLegs, internalRebalance,
     orderCommentsEnabled, explicitChannelTargets,
   } = args
   void args.skipAlreadySynced // retained for callers; DB-only skip removed (naked-fill bug)
@@ -345,7 +342,7 @@ export async function runBasketLegModifies(args: {
     tpLots,
   }) as PerLegStopTarget[]
 
-  const summary: MergeModifySummary & { skippedNotOnBroker: number; skippedUnfixable: number } = {
+  const summary: BasketLegModifySummary = {
     openLegs: familyTrades.length,
     attempted: 0,
     modified: 0,
@@ -353,6 +350,8 @@ export async function runBasketLegModifies(args: {
     skippedNoTicket: 0,
     skippedNotOnBroker: 0,
     skippedUnfixable: 0,
+    benignModify: 0,
+    positionGone: 0,
   }
   const legErrors: LegModifyError[] = []
   const modifiedTradeIds: string[] = []
@@ -379,6 +378,8 @@ export async function runBasketLegModifies(args: {
     skippedNoTicket: number
     skippedNotOnBroker: number
     skippedUnfixable: number
+    benignModify: number
+    positionGone: number
   }
   const noopOutcome = (): LegOutcome => ({
     attempted: 0,
@@ -387,6 +388,8 @@ export async function runBasketLegModifies(args: {
     skippedNoTicket: 0,
     skippedNotOnBroker: 0,
     skippedUnfixable: 0,
+    benignModify: 0,
+    positionGone: 0,
   })
 
   const processLeg = async (i: number): Promise<LegOutcome> => {
@@ -434,7 +437,7 @@ export async function runBasketLegModifies(args: {
         targetTp: cweIdx < nImmCwe ? 0 : target.takeprofit,
         skipReason: 'skipped_not_on_broker',
       })
-      return { ...noopOutcome(), legError: err, skippedNotOnBroker: 1 }
+      return { ...noopOutcome(), legError: err, skippedNotOnBroker: 1, positionGone: 1 }
     }
 
     let ref = Number(tr.entry_price) || 0
@@ -610,7 +613,14 @@ export async function runBasketLegModifies(args: {
             targetTp: modTp,
             skipReason: 'already_synced_on_broker',
           })
-          return { ...noopOutcome(), modifiedId: tr.id, attempted: 1, modified: 1 }
+          return {
+            ...noopOutcome(),
+            modifiedId: tr.id,
+            attempted: 1,
+            modified: 1,
+            benignModify: 1,
+            positionGone: isPositionGoneError(failMsg) ? 1 : 0,
+          }
         }
         const legErr: LegModifyError = {
           trade_id: tr.id,
@@ -668,7 +678,14 @@ export async function runBasketLegModifies(args: {
         targetSl: safe.slApplied ? safe.appliedSl : 0,
         targetTp: safe.tpApplied ? safe.appliedTp : 0,
       })
-      return { ...noopOutcome(), modifiedId: tr.id, attempted: 1, modified: 1 }
+      return {
+        ...noopOutcome(),
+        modifiedId: tr.id,
+        attempted: 1,
+        modified: 1,
+        benignModify: safe.benign === true ? 1 : 0,
+        positionGone: safe.positionGone === true ? 1 : 0,
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (isBenignOrderModifyError(msg)) {
@@ -685,7 +702,14 @@ export async function runBasketLegModifies(args: {
           targetTp: modTp,
           skipReason: 'already_synced_on_broker',
         })
-        return { ...noopOutcome(), modifiedId: tr.id, attempted: 1, modified: 1 }
+        return {
+          ...noopOutcome(),
+          modifiedId: tr.id,
+          attempted: 1,
+          modified: 1,
+          benignModify: 1,
+          positionGone: isPositionGoneError(msg) ? 1 : 0,
+        }
       }
       const legErr: LegModifyError = {
         trade_id: tr.id,
@@ -738,6 +762,8 @@ export async function runBasketLegModifies(args: {
     summary.skippedNoTicket += o.skippedNoTicket
     summary.skippedNotOnBroker += o.skippedNotOnBroker
     summary.skippedUnfixable += o.skippedUnfixable
+    summary.benignModify += o.benignModify
+    summary.positionGone += o.positionGone
     if (o.modifiedId) modifiedTradeIds.push(o.modifiedId)
     if (o.legError) legErrors.push(o.legError)
   }
@@ -760,7 +786,7 @@ export async function runBasketLegModifies(args: {
 }
 
 export type ApplyBasketLegSyncResult = {
-  summary: MergeModifySummary & { skippedNotOnBroker: number; skippedUnfixable: number }
+  summary: BasketLegModifySummary
   legErrors: LegModifyError[]
   modifiedTradeIds: Set<string>
   mergeFailed: boolean
@@ -820,7 +846,7 @@ export async function applyBasketLegSync(args: {
 
   const modifiedTradeIds = new Set<string>()
   let openedTickets = args.openedTickets
-  let summary: MergeModifySummary & { skippedNotOnBroker: number; skippedUnfixable: number } = {
+  let summary: BasketLegModifySummary = {
     openLegs: familyTrades.length,
     attempted: 0,
     modified: 0,
@@ -828,6 +854,8 @@ export async function applyBasketLegSync(args: {
     skippedNoTicket: 0,
     skippedNotOnBroker: 0,
     skippedUnfixable: 0,
+    benignModify: 0,
+    positionGone: 0,
   }
   let legErrors: LegModifyError[] = []
 
