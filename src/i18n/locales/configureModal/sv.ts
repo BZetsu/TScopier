@@ -488,7 +488,7 @@ export const configureModalSv: ConfigureModalTranslations = {
     reverseSignal: 'Omvänd signal',
     addToExisting: 'Lägg till ny handel till befintlig',
     closeOpposite: 'Stäng på motsatt signal',
-    reverseHint: 'Omvänt: flips köp/sälj endast när signalen har ett ingångspris eller zon och både fördefinierade SL och TP är aktiverade med positiva pip-värden — så speglad risk använder din mall, inte kanalens stopp.',
+    reverseHint: 'Omvänd: en kanal-köp kopieras som sälj, och sälj som köp. Fördefinierad SL/TP (pips från entry) används på den omvända sidan.',
     closeOppositeHint: 'Stäng på motsatt: i manuellt läge stänger en ny kanal köp/sälj alla öppna affärer på samma symbol som är vända åt motsatt håll (kanalriktning, före omvänd), avbryter deras virtuella intervall väntande, sedan körs den nya planen.',
     addExistingHint: 'Lägg till befintliga: uppföljning på samma sida uppdaterar varje öppet ben som tillhör samma originalsignal (samma korg), i fyllningsordning (äldsta ben först), med hjälp av planerarens multi-trade TP-distribution (varje etapp får SL/TP för den matchande omedelbara ordern från dina TP lots procentsatser). Virtuella väntande intervall för den korgen avbryts och infogas igen under föräldrasignalen. Svarstråd eller 4 timmars tidsfönster gäller fortfarande. Enkeltrade partiella TP-rader återskapas endast när korgen är ett enda ben.',
     rrFallbacksTitle: 'R:R fallbacks',

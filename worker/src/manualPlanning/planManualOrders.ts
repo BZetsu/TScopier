@@ -1,6 +1,6 @@
 import type { MtOperation } from '../fxsocketClient'
 import type { ChannelKeywords, ManualSettings, ParsedSignal, PlannerContext, PlannerResult } from './types'
-import { deriveManualStopsWithClamp, reverseSignalGateSatisfied } from './manualStops'
+import { deriveManualStopsWithClamp, mirrorParsedAbsoluteStopsForReverse } from './manualStops'
 import { flipOperation, resolveOpExecAndStrict } from './executionShape'
 import { signalEntryPriceStrictEnabled, signalEntryRangeStrictEnabled } from './manualSettings'
 import {
@@ -89,14 +89,18 @@ export function planManualOrders(args: {
   const entryOk = entry != null && Number.isFinite(entry) && entry > 0
   const entryAnchorFromSignal = entryOk ? entry : null
 
-  const effectiveReverse = manual.reverse_signal === true && reverseSignalGateSatisfied(manual, entryAnchorFromSignal)
+  const effectiveReverse = manual.reverse_signal === true
   const opSplit: MtOperation = effectiveReverse ? flipOperation(baseOperation) : baseOperation
   const isBuy = opSplit.startsWith('Buy')
 
   let entryAnchor: number | null = entryAnchorFromSignal
   if (
     entryAnchor == null
-    && (manual.use_predefined_sl_pips === true || manual.use_predefined_tp_pips === true)
+    && (
+      effectiveReverse
+      || manual.use_predefined_sl_pips === true
+      || manual.use_predefined_tp_pips === true
+    )
   ) {
     const ask = ctx.liveAsk
     const bid = ctx.liveBid
@@ -104,8 +108,12 @@ export function planManualOrders(args: {
     else if (!isBuy && typeof bid === 'number' && Number.isFinite(bid) && bid > 0) entryAnchor = bid
   }
 
+  const parsedForStops = effectiveReverse
+    ? mirrorParsedAbsoluteStopsForReverse(parsed, entryAnchor, channelKeywords)
+    : parsed
+
   const { pipQuote, pip, finalSl, finalTps, minStopDist, roundPrice } = deriveManualStopsWithClamp({
-    parsed,
+    parsed: parsedForStops,
     manual,
     channelKeywords,
     resolvedSymbol,

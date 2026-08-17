@@ -2,9 +2,41 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   deriveManualStopsWithClamp,
+  mirrorParsedAbsoluteStopsForReverse,
   resolvePredefinedSlForEntry,
   resolvePredefinedTpForEntry,
 } from './manualStops'
+
+test('mirrorParsedAbsoluteStopsForReverse: reflects price-unit SL/TP and leaves pip offsets', () => {
+  const entry = 2000
+  const mirrored = mirrorParsedAbsoluteStopsForReverse({
+    action: 'buy',
+    symbol: 'XAUUSD',
+    entry_price: entry,
+    entry_zone_low: null,
+    entry_zone_high: null,
+    sl: 1990,
+    tp: [2010, 2020],
+    lot_size: null,
+  }, entry, null)
+  assert.equal(mirrored.sl, 2010)
+  assert.deepEqual(mirrored.tp, [1990, 1980])
+
+  const pipStops = mirrorParsedAbsoluteStopsForReverse({
+    action: 'buy',
+    symbol: 'XAUUSD',
+    entry_price: entry,
+    entry_zone_low: null,
+    entry_zone_high: null,
+    sl: 80,
+    tp: [50],
+    sl_unit: 'pips',
+    tp_unit: 'pips',
+    lot_size: null,
+  }, entry, null)
+  assert.equal(pipStops.sl, 80)
+  assert.deepEqual(pipStops.tp, [50])
+})
 
 test('resolvePredefinedTpForEntry: 30 pips from fill, even when shared TP would be dropped', () => {
   const manual = { use_predefined_tp_pips: true as const, predefined_tp_pips: [30] }

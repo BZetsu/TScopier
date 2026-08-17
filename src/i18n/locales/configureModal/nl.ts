@@ -488,7 +488,7 @@ export const configureModalNl: ConfigureModalTranslations = {
     reverseSignal: 'Omgekeerd signaal',
     addToExisting: 'Voeg nieuwe handel toe aan bestaande',
     closeOpposite: 'Sluit op tegenoverstaand signaal',
-    reverseHint: 'Omgekeerd: wisselt kopen/verkopen alleen wanneer het signaal een invoerprijs of -zone heeft en zowel vooraf gedefinieerde SL als TP zijn ingeschakeld met positieve pip-waarden - dus gespiegeld risico gebruikt uw sjabloon, niet de stops van het kanaal.',
+    reverseHint: 'Omgekeerd: een kanaal-buy wordt als sell gekopieerd en een sell als buy. Vooraf ingestelde SL/TP (pips vanaf entry) gelden op de omgekeerde kant.',
     closeOppositeHint: 'Sluiten aan de tegenovergestelde kant: in de handmatige modus sluit een nieuw kanaal kopen/verkopen alle open transacties op hetzelfde symbool in de tegenovergestelde richting (kanaalrichting, voordat het omgekeerd wordt), annuleert hun virtuele bereik in afwachting, waarna het nieuwe plan wordt uitgevoerd.',
     addExistingHint: 'Toevoegen aan bestaande: follow-up aan dezelfde kant ververst elke open etappe die tot hetzelfde originele signaal behoort (dezelfde mand), in vulvolgorde (oudste etappe eerst), met behulp van de multi-trade TP-distributie van de planner (elke etappe krijgt de SL/TP van de overeenkomende onmiddellijke bestelling uit de rijen van uw TP-partijpercentage). Virtuele bereikbereiken voor dat mandje worden geannuleerd en opnieuw ingevoegd onder het bovenliggende signaal. Antwoordthread of tijdvenster van 4 uur is nog steeds van toepassing. Gedeeltelijke TP-rijen voor één transactie worden alleen opnieuw gemaakt als de mand een enkele etappe is.',
     rrFallbacksTitle: 'R:R-terugval',

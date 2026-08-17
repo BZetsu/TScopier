@@ -192,14 +192,46 @@ export function resolvePredefinedTpForEntry(args: {
 }
 
 /**
- * Reverse Signal only applies when predefined SL **and** TP are enabled with
- * valid values and an entry anchor exists — so mirrored risk comes from your
- * settings, not channel stops (which would be on the wrong side after flip).
+ * Reverse Signal flips buy/sell whenever the setting is on. Predefined SL/TP
+ * (when enabled) are rebuilt on the reversed side from entry or live quote.
+ * Absolute signal SL/TP prices are mirrored around that anchor so they stay
+ * on the correct side after the flip.
  */
-export function reverseSignalGateSatisfied(manual: ManualSettings, entryAnchor: number | null): boolean {
-  if (entryAnchor == null) return false
-  if (resolvePredefinedSlPips(manual) == null) return false
-  return resolvePredefinedTpPips(manual) != null
+export function reverseSignalGateSatisfied(
+  manual: ManualSettings,
+  _entryAnchor?: number | null,
+): boolean {
+  return resolvePredefinedSlPips(manual) != null && resolvePredefinedTpPips(manual) != null
+}
+
+/** Reflect an absolute price through `entry` (buy SL below → sell SL above). */
+export function mirrorPriceAroundEntry(price: number, entry: number): number {
+  return 2 * entry - price
+}
+
+/** Mirror absolute (price-unit) SL/TP around entry after a reverse flip. Pip offsets stay as-is. */
+export function mirrorParsedAbsoluteStopsForReverse(
+  parsed: ParsedSignal,
+  entry: number | null,
+  channelKeywords: ChannelKeywords | null,
+): ParsedSignal {
+  if (entry == null || !Number.isFinite(entry) || entry <= 0) return parsed
+  const slInPips =
+    parsed.sl_unit === 'pips' || channelKeywords?.additional?.sl_in_pips === true
+  const tpInPips =
+    parsed.tp_unit === 'pips' || channelKeywords?.additional?.tp_in_pips === true
+  const sl =
+    !slInPips && parsed.sl != null && Number.isFinite(parsed.sl) && parsed.sl > 0
+      ? mirrorPriceAroundEntry(parsed.sl, entry)
+      : parsed.sl
+  const tp = !tpInPips && Array.isArray(parsed.tp)
+    ? parsed.tp.map(t => (
+      typeof t === 'number' && Number.isFinite(t) && t > 0
+        ? mirrorPriceAroundEntry(t, entry)
+        : t
+    ))
+    : parsed.tp
+  return { ...parsed, sl, tp }
 }
 
 export interface DerivedManualStops {

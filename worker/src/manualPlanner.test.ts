@@ -1761,27 +1761,33 @@ test('clampPendingExpiryHours: clamps high values to 24', () => {
   assert.equal(clampPendingExpiryHours(-3), 0)
 })
 
-test('reverseSignalGateSatisfied: requires both predefined sides + anchor', () => {
+test('reverseSignalGateSatisfied: predefined SL and TP only (entry optional)', () => {
   const manual: ManualSettings = {
     use_predefined_sl_pips: true,
     predefined_sl_pips: 30,
     use_predefined_tp_pips: true,
     predefined_tp_pips: [40, 80],
   }
-  assert.equal(reverseSignalGateSatisfied(manual, null), false)
+  assert.equal(reverseSignalGateSatisfied(manual, null), true)
   assert.equal(reverseSignalGateSatisfied(manual, 1.1), true)
+  assert.equal(reverseSignalGateSatisfied({
+    use_predefined_sl_pips: true,
+    predefined_sl_pips: 30,
+    use_predefined_tp_pips: false,
+  }, 1.1), false)
 })
 
-test('planManualOrders: reverse_signal ignored when gate not satisfied', () => {
+test('planManualOrders: reverse_signal flips buy to sell without predefined stops', () => {
+  const entry = 1.1
   const plan = planManualOrders({
     parsed: {
       action: 'buy',
       symbol: 'EURUSD',
-      entry_price: 1.1,
+      entry_price: entry,
       entry_zone_low: null,
       entry_zone_high: null,
-      sl: null,
-      tp: [1.11],
+      sl: 1.09,
+      tp: [1.12],
       lot_size: null,
     },
     resolvedSymbol: 'EURUSD',
@@ -1800,8 +1806,48 @@ test('planManualOrders: reverse_signal ignored when gate not satisfied', () => {
     ctx: { ...baseCtx, point: 0.0001, digits: 5 },
     commentPrefix: 'TScopier:abc',
   })
-  assert.equal(plan.isBuy, true)
-  assert.ok(String(plan.orders[0]?.operation ?? '').startsWith('Buy'))
+  assert.equal(plan.isBuy, false)
+  assert.ok(String(plan.orders[0]?.operation ?? '').startsWith('Sell'))
+  assert.equal(plan.orders[0]?.stoploss, Number((2 * entry - 1.09).toFixed(5)))
+  assert.equal(plan.orders[0]?.takeprofit, Number((2 * entry - 1.12).toFixed(5)))
+})
+
+test('planManualOrders: reverse_signal flips BUY NOW using live quote when predefined stops are on', () => {
+  const bid = 1999.8
+  const plan = planManualOrders({
+    parsed: {
+      action: 'buy',
+      symbol: 'XAUUSD',
+      entry_price: null,
+      entry_zone_low: null,
+      entry_zone_high: null,
+      sl: null,
+      tp: [2400],
+      lot_size: null,
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      risk_mode: 'fixed_lot',
+      fixed_lot: 0.1,
+      trade_style: 'single',
+      range_trading: false,
+      reverse_signal: true,
+      use_predefined_sl_pips: true,
+      predefined_sl_pips: 80,
+      use_predefined_tp_pips: true,
+      predefined_tp_pips: [50],
+    },
+    channelKeywords: null,
+    manualLot: 0.1,
+    ctx: { ...baseCtx, liveBid: bid, liveAsk: 2000 },
+    commentPrefix: 'TScopier:abc',
+  })
+  const pip = plan.pip ?? 0.1
+  assert.equal(plan.isBuy, false)
+  assert.ok(String(plan.orders[0]?.operation ?? '').startsWith('Sell'))
+  assert.equal(plan.orders[0]?.stoploss, Number((bid + 80 * pip).toFixed(2)))
+  assert.equal(plan.orders[0]?.takeprofit, Number((bid - 50 * pip).toFixed(2)))
 })
 
 test('planManualOrders: reverse_signal flips when predefined gate satisfied', () => {
