@@ -180,6 +180,8 @@ export const channelWorkerJa: ChannelWorkerTranslations = {
       'このチャネルは single-slot モードです（Add to Existing Trades がオフ）。新規エントリーには TP/SL パラメータが必要です',
     entry_requires_imperative_or_labeled_stops:
       'メッセージにエントリー命令（buy now、gold sell now など）またはラベル付き SL/TP がありませんでした',
+    entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
+    signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
   },
   dispatchSkipped: 'このシグナルはコピーされませんでした（{reason}）。',
   rangeRebalanceSkippedNamed: '{symbol}の利益確定リバランスをスキップしました（{reason}）',

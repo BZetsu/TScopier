@@ -181,6 +181,8 @@ export const channelWorkerPl: ChannelWorkerTranslations = {
       'ten kanał działa w trybie pojedynczego slotu (Add to Existing Trades jest wyłączone), więc nowe wejścia muszą zawierać parametry TP/SL',
     entry_requires_imperative_or_labeled_stops:
       'wiadomość nie zawierała frazy wejścia (np. buy now, gold sell now) ani oznaczonych SL/TP',
+    entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
+    signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
   },
   dispatchSkipped: 'Nie skopiowano tego sygnału ({reason}).',
   rangeRebalanceSkippedNamed: 'Pominięto zmianę take profit {symbol} ({reason})',

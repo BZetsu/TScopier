@@ -828,6 +828,8 @@ broker: {
       entry_not_execution_eligible: 'Not eligible to trade',
       duplicate_provider_signal: 'Duplicate signal',
       explicit_stops_required_when_add_to_existing_off: 'SL/TP required',
+      entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
+      signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
       basket_modify_failed: 'Could not update open trades',
       parameter_follow_up_no_open_basket: 'No open trade to update',
       mgmt_no_open_trades: 'No matching open trade',

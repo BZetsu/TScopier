@@ -181,6 +181,8 @@ export const channelWorkerRu: ChannelWorkerTranslations = {
       'этот канал работает в режиме одного слота (Add to Existing Trades отключен), поэтому новые входы должны включать параметры TP/SL',
     entry_requires_imperative_or_labeled_stops:
       'в сообщении не было фразы входа (например buy now, gold sell now) или помеченных SL/TP',
+    entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
+    signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
   },
   dispatchSkipped: 'Этот сигнал не был скопирован ({reason}).',
   rangeRebalanceSkippedNamed: 'Пропущен ребаланс тейк-профита {symbol} ({reason})',

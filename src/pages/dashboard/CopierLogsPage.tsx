@@ -74,7 +74,7 @@ function useCopierLogDisplay(
   const channelName = channelLabel(signal.channel_id, channelDisplayNames)
   const reason = formatCopierSkipReasonShort(signal.skip_reason, copierLogs)
   const reasonShort = signal.skip_reason
-    ? (reason.length > 48 ? `${reason.slice(0, 48)}…` : reason)
+    ? (reason.length > 80 ? `${reason.slice(0, 80)}…` : reason)
     : '—'
   const messagePreview = signal.raw_message
     ? (signal.raw_message.length > 60 ? `${signal.raw_message.slice(0, 60)}…` : signal.raw_message)

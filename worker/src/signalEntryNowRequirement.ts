@@ -32,8 +32,8 @@ export function parsedHasPositiveTp(parsed: { tp?: unknown }): boolean {
 
 /**
  * True when the entry lists take-profit(s) but no stop loss.
- * Eligibility uses this at signal level (no account fallbacks).
- * Entry prep may still allow when predefined/RR SL can be derived.
+ * Signal eligibility does not skip on this — some accounts supply SL via
+ * Override signal SL / RR. Entry prep still blocks accounts with no fallback.
  */
 export function entryHasTpWithoutSl(parsed: { sl?: unknown; tp?: unknown }): boolean {
   return parsedHasPositiveTp(parsed) && !parsedHasPositiveSl(parsed)

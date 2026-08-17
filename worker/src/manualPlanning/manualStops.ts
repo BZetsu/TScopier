@@ -11,6 +11,68 @@ export function usesPredefinedStops(manual: ManualSettings): boolean {
   return manual.use_predefined_sl_pips === true || manual.use_predefined_tp_pips === true
 }
 
+/** Positive override SL pip distance, or null when Override signal SL is off. */
+export function resolvePredefinedSlPips(
+  manual: Pick<ManualSettings, 'use_predefined_sl_pips' | 'predefined_sl_pips'>,
+): number | null {
+  if (manual.use_predefined_sl_pips !== true) return null
+  const slPips = Number(manual.predefined_sl_pips)
+  if (!Number.isFinite(slPips) || slPips <= 0) return null
+  return slPips
+}
+
+/** Absolute SL price: buy below entry, sell above entry, by `slPips * pip`. */
+export function predefinedSlPriceFromEntry(args: {
+  entry: number
+  isBuy: boolean
+  pip: number
+  slPips: number
+  digits?: number
+}): number | null {
+  const { entry, isBuy, pip, slPips } = args
+  if (!Number.isFinite(entry) || entry <= 0) return null
+  if (!Number.isFinite(pip) || pip <= 0) return null
+  if (!Number.isFinite(slPips) || slPips <= 0) return null
+  const raw = isBuy ? entry - slPips * pip : entry + slPips * pip
+  if (!Number.isFinite(raw) || raw <= 0) return null
+  if (args.digits != null && Number.isFinite(args.digits)) {
+    const d = Math.max(0, Math.min(8, Math.floor(args.digits)))
+    return Number(raw.toFixed(d))
+  }
+  return raw
+}
+
+/**
+ * Override signal SL from this fill/trigger. Used by the multi planner, post-fill,
+ * and range-fire so each leg is  N pips from *that* entry, not the first basket anchor.
+ */
+export function resolvePredefinedSlForEntry(args: {
+  manual: Pick<ManualSettings, 'use_predefined_sl_pips' | 'predefined_sl_pips'>
+  entry: number
+  isBuy: boolean
+  symbol: string
+  point?: number
+  digits?: number
+  contractSize?: number | null
+}): number | null {
+  const slPips = resolvePredefinedSlPips(args.manual)
+  if (slPips == null) return null
+  const pipQuote = pipCalculator(
+    args.symbol,
+    args.point ?? 0.00001,
+    args.digits ?? 5,
+    args.contractSize ?? null,
+  )
+  const pip = resolvePipSize({ symbol: args.symbol, brokerPipPrice: pipQuote.pipPrice })
+  return predefinedSlPriceFromEntry({
+    entry: args.entry,
+    isBuy: args.isBuy,
+    pip,
+    slPips,
+    digits: args.digits,
+  })
+}
+
 /**
  * Reverse Signal only applies when predefined SL **and** TP are enabled with
  * valid values and an entry anchor exists — so mirrored risk comes from your
@@ -78,9 +140,9 @@ export function deriveManualStopsWithClamp(args: {
 
   let finalSl = parsedSl
   let finalTps = parsedTps
-  if (usePreSl && Number.isFinite(manual.predefined_sl_pips ?? NaN) && entryAnchor != null) {
-    const sl_pips = Number(manual.predefined_sl_pips)
-    finalSl = isBuy ? entryAnchor - sl_pips * pip : entryAnchor + sl_pips * pip
+  const slPips = resolvePredefinedSlPips(manual)
+  if (slPips != null && entryAnchor != null) {
+    finalSl = predefinedSlPriceFromEntry({ entry: entryAnchor, isBuy, pip, slPips })
   }
   if (usePreTp && Array.isArray(manual.predefined_tp_pips) && entryAnchor != null) {
     const tps = manual.predefined_tp_pips

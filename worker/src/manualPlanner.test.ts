@@ -377,6 +377,93 @@ test('planMultiManualOrders: 100% SELL range can produce zero immediates plus on
   assert.equal(plan.virtualPendings?.[0]?.isBuy, false)
 })
 
+test('planMultiManualOrders: override SL 80 pips is per range trigger, not shared basket SL', () => {
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      entry_price: 2650,
+      sl: 2600,
+      tp: [2700],
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      ...baseManual,
+      multi_trade_leg_percent: 50,
+      range_percent: 100,
+      range_step_pips: 10,
+      range_distance_pips: 100,
+      use_predefined_sl_pips: true,
+      predefined_sl_pips: 80,
+    },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  const virtuals = plan.virtualPendings ?? []
+  assert.ok(virtuals.length >= 2, `expected >=2 range legs, got ${virtuals.length}`)
+  assert.notEqual(virtuals[0]!.stoploss, virtuals[1]!.stoploss)
+  const pip = plan.pip ?? 0
+  assert.ok(pip > 0)
+  const triggerMap = buildRangeLayerTriggerMap({
+    virtualPendings: virtuals,
+    anchor: 2650,
+    digits: 2,
+    rangeLayering: plan.rangeLayering,
+    pip,
+  })
+  for (const v of virtuals.slice(0, 2)) {
+    const trigger = triggerMap.get(v.stepIdx)
+    assert.ok(trigger != null && trigger > 0)
+    const expected = Number((trigger - 80 * pip).toFixed(2))
+    assert.equal(v.stoploss, expected)
+  }
+})
+
+test('planMultiManualOrders: empty-TP range override SL is still per trigger', () => {
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      entry_price: 2650,
+      sl: 2600,
+      tp: [],
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      ...baseManual,
+      multi_trade_leg_percent: 50,
+      range_percent: 100,
+      range_step_pips: 10,
+      range_distance_pips: 100,
+      use_predefined_sl_pips: true,
+      predefined_sl_pips: 80,
+    },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  const virtuals = plan.virtualPendings ?? []
+  assert.ok(virtuals.length >= 2)
+  assert.notEqual(virtuals[0]!.stoploss, virtuals[1]!.stoploss)
+  const pip = plan.pip ?? 0
+  assert.ok(pip > 0)
+  const triggerMap = buildRangeLayerTriggerMap({
+    virtualPendings: virtuals,
+    anchor: 2650,
+    digits: 2,
+    rangeLayering: plan.rangeLayering,
+    pip,
+  })
+  for (const v of virtuals.slice(0, 2)) {
+    const trigger = triggerMap.get(v.stepIdx)
+    assert.ok(trigger != null && trigger > 0)
+    assert.equal(v.stoploss, Number((trigger - 80 * pip).toFixed(2)))
+  }
+})
+
 test('planMultiManualOrders: passes rangeLayeringType from manual settings', () => {
   const manual: ManualSettings = {
     ...baseManual,
@@ -1742,6 +1829,43 @@ test('planManualOrders: predefined SL wins over rr_for_sl when both apply', () =
   const pip = pipCalculator('EURUSD', 0.0001, 5).pipPrice
   const expectedSl = Number((entry - 50 * pip).toFixed(5))
   assert.equal(plan.orders[0]?.stoploss, expectedSl)
+})
+
+test('planManualOrders: predefined SL/TP replace wrong-side signal stops using live quote', () => {
+  const ask = 2000
+  const plan = planManualOrders({
+    parsed: {
+      action: 'buy',
+      symbol: 'XAUUSD',
+      entry_price: null,
+      entry_zone_low: null,
+      entry_zone_high: null,
+      sl: 2100,
+      tp: [1900],
+      lot_size: null,
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      risk_mode: 'fixed_lot',
+      fixed_lot: 0.1,
+      trade_style: 'single',
+      range_trading: false,
+      use_predefined_sl_pips: true,
+      predefined_sl_pips: 80,
+      use_predefined_tp_pips: true,
+      predefined_tp_pips: [50],
+    },
+    channelKeywords: null,
+    manualLot: 0.1,
+    ctx: { ...baseCtx, liveBid: 1999.8, liveAsk: ask },
+    commentPrefix: 'TScopier:abc',
+  })
+  const pip = plan.pip ?? 0.1
+  assert.equal(plan.orders[0]?.stoploss, Number((ask - 80 * pip).toFixed(2)))
+  assert.equal(plan.orders[0]?.takeprofit, Number((ask + 50 * pip).toFixed(2)))
+  assert.ok((plan.orders[0]?.stoploss ?? 0) < ask)
+  assert.ok((plan.orders[0]?.takeprofit ?? 0) > ask)
 })
 
 test('planManualOrders: use_signal_entry_range uses zone width for range layering', () => {

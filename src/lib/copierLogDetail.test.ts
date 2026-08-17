@@ -18,6 +18,14 @@ test('formatCopierSkipReasonShort uses friendly label', () => {
   assert.equal(label, 'Daily risk limit reached')
 })
 
+test('formatCopierSkipReasonShort maps missing-SL skips to predefined SL hint', () => {
+  const missing = formatCopierSkipReasonShort('SIGNAL_MISSING_REQUIRED_SL', en.copierLogs)
+  const tpOnly = formatCopierSkipReasonShort('entry_tp_without_sl', en.copierLogs)
+  assert.match(missing, /SL not given/)
+  assert.match(missing, /predefined SL pips/)
+  assert.equal(tpOnly, missing)
+})
+
 test('formatCopierSkipReasonDetail returns actionable text', () => {
   const detail = formatCopierSkipReasonDetail('invalid_stops', en.copierLogs)
   assert.match(detail ?? '', /broker rejected/i)
