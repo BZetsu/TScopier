@@ -142,13 +142,33 @@ the prod failures are real.
 ## What to do
 
 **Recommended: apply changes #1 and #2 to prod now** — they fix the live
-trade-report failure for both the manual button and the assistant. Steps:
+trade-report failure for both the manual button and the assistant. Apply them
+the usual way, through the **main Supabase Dashboard** (SQL Editor), because the
+dashboard does **not** auto-register migrations — the tracker entry has to be
+added by hand afterwards.
 
-1. Run the SQL against the prod database (via the Supabase Management API, using
-   an admin token).
-2. Register the changes in the `supabase_migrations` list so the migration
-   tracker knows they were applied.
-3. Re-check that the table, column, and indexes exist.
+1. In the Supabase Dashboard, open the **prod** project
+   (`sxkpcovbyaficvtkpsdo`) → **SQL Editor**.
+2. Paste and run `supabase/migrations/20260810000000_trade_reports.sql`.
+3. Then paste and run
+   `supabase/migrations/20260816000000_trade_reports_signal_id.sql` — this order
+   matters, change #2 depends on #1.
+4. Register both in the migration tracker so future scripts see them as applied:
+
+   ```sql
+   INSERT INTO supabase_migrations.schema_migrations (version, statements, name)
+   VALUES
+     ('20260810000000', ARRAY['-- applied via dashboard'], '20260810000000_trade_reports.sql'),
+     ('20260816000000', ARRAY['-- applied via dashboard'], '20260816000000_trade_reports_signal_id.sql')
+   ON CONFLICT (version) DO NOTHING;
+   ```
+
+5. Re-check that the table, column, and indexes exist (see "How we know this").
+
+**Alternative (scripted):** `scripts/apply-missing.sh` diffs the local migration
+files against the tracker and applies + registers every missing one via the
+Management API. Point its `PROJECT` variable at the prod ref first — it defaults
+to the staging project.
 
 **Decision needed:** whether to also apply #3 and #4 to prod now, or wait until
 the layering feature is scheduled. They're safe either way — they don't change

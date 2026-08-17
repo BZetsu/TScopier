@@ -217,14 +217,35 @@ is sound — the prod failures are real.</p>
 <h2 id="what-to-do">What to do</h2>
 <p><strong>Recommended: apply changes #1 and #2 to prod now</strong> —
 they fix the live trade-report failure for both the manual button and
-the assistant. Steps:</p>
+the assistant. Apply them the usual way, through the <strong>main
+Supabase Dashboard</strong> (SQL Editor), because the dashboard does
+<strong>not</strong> auto-register migrations — the tracker entry has to
+be added by hand afterwards.</p>
 <ol type="1">
-<li>Run the SQL against the prod database (via the Supabase Management
-API, using an admin token).</li>
-<li>Register the changes in the <code>supabase_migrations</code> list so
-the migration tracker knows they were applied.</li>
-<li>Re-check that the table, column, and indexes exist.</li>
+<li><p>In the Supabase Dashboard, open the <strong>prod</strong> project
+(<code>sxkpcovbyaficvtkpsdo</code>) → <strong>SQL
+Editor</strong>.</p></li>
+<li><p>Paste and run
+<code>supabase/migrations/20260810000000_trade_reports.sql</code>.</p></li>
+<li><p>Then paste and run
+<code>supabase/migrations/20260816000000_trade_reports_signal_id.sql</code>
+— this order matters, change #2 depends on #1.</p></li>
+<li><p>Register both in the migration tracker so future scripts see them
+as applied:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode sql"><code class="sourceCode sql"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="kw">INSERT</span> <span class="kw">INTO</span> supabase_migrations.schema_migrations (version, statements, name)</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="kw">VALUES</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  (<span class="st">&#39;20260810000000&#39;</span>, <span class="dt">ARRAY</span>[<span class="st">&#39;-- applied via dashboard&#39;</span>], <span class="st">&#39;20260810000000_trade_reports.sql&#39;</span>),</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  (<span class="st">&#39;20260816000000&#39;</span>, <span class="dt">ARRAY</span>[<span class="st">&#39;-- applied via dashboard&#39;</span>], <span class="st">&#39;20260816000000_trade_reports_signal_id.sql&#39;</span>)</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="kw">ON</span> CONFLICT (version) DO <span class="kw">NOTHING</span>;</span></code></pre></div></li>
+<li><p>Re-check that the table, column, and indexes exist (see “How we
+know this”).</p></li>
 </ol>
+<p><strong>Alternative (scripted):</strong>
+<code>scripts/apply-missing.sh</code> diffs the local migration files
+against the tracker and applies + registers every missing one via the
+Management API. Point its <code>PROJECT</code> variable at the prod ref
+first — it defaults to the staging project.</p>
 <p><strong>Decision needed:</strong> whether to also apply #3 and #4 to
 prod now, or wait until the layering feature is scheduled. They’re safe
 either way — they don’t change anything until the feature is switched
