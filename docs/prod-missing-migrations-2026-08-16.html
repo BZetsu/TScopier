@@ -1,0 +1,309 @@
+<h1 id="missing-production-migrations-tscopier">Missing Production
+Migrations — TSCopier</h1>
+<p><strong>Date:</strong> 2026-08-16 <strong>Environment:</strong>
+Production (<code>sxkpcovbyaficvtkpsdo</code>) <strong>Status:</strong>
+Verified missing via direct DB checks (not just the migration
+registry)</p>
+<hr />
+<h2 id="summary">Summary</h2>
+<p>Production is <strong>behind staging by 4 migrations</strong>. Two of
+them are a <strong>live bug</strong> — a deployed feature writes to a
+table that does not exist on prod. The other two are groundwork for a
+<strong>dormant</strong> (kill-switched) feature and are safe to
+defer.</p>
+<table>
+<colgroup>
+<col style="width: 7%" />
+<col style="width: 26%" />
+<col style="width: 23%" />
+<col style="width: 23%" />
+<col style="width: 19%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>#</th>
+<th>Migration</th>
+<th>On prod?</th>
+<th>Priority</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td><code>20260810000000_trade_reports</code></td>
+<td>❌ Missing</td>
+<td><strong>HIGH</strong></td>
+<td>Base table for trade reports — deployed code writes to it</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td><code>20260816000000_trade_reports_signal_id</code></td>
+<td>❌ Missing</td>
+<td><strong>HIGH</strong></td>
+<td>Depends on #1; adds <code>signal_id</code> column</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td><code>20260730120000_layering_modes_foundation</code></td>
+<td>❌ Missing</td>
+<td>MEDIUM</td>
+<td>Additive foundation columns (feature dormant)</td>
+</tr>
+<tr class="even">
+<td>4</td>
+<td><code>20260731120000_layering_plans</code></td>
+<td>❌ Missing</td>
+<td>MEDIUM</td>
+<td>Layering blueprint feature (feature dormant); depends on #3</td>
+</tr>
+</tbody>
+</table>
+<p>Production <strong>already has</strong>
+<code>enforce_plan_broker_channel_limits</code> (registered as
+<code>20260805082647</code>, functions + triggers verified live since
+2026-08-05).</p>
+<hr />
+<h2 id="what-each-missing-migration-does">What each missing migration
+does</h2>
+<h3 id="trade_reports-high-priority-live-bug">1.
+<code>20260810000000_trade_reports</code> — HIGH priority (live
+bug)</h3>
+<p><strong>Plain English:</strong> Creates the
+<code>trade_reports</code> table — the queue where users file complaints
+about trades (“wrong entry”, “wrong SL/TP”, “not executed”, etc.) for
+support staff to review. Both reporting paths insert into this
+table:</p>
+<ul>
+<li>The <strong>manual “Report” button</strong> in the trade detail
+modal (<code>src/components/trades/ReportTradeModal.tsx</code> —
+client-side INSERT).</li>
+<li>The <strong>in-app assistant</strong> <code>report_trade</code> tool
+(<code>supabase/functions/assistant-chat/index.ts</code>).</li>
+</ul>
+<p><strong>What it creates:</strong> - <code>trade_reports</code> table:
+<code>user_id</code>, trade snapshot (<code>symbol</code>,
+<code>direction</code>, <code>ticket</code>, <code>broker_label</code>,
+<code>entry_price</code>, <code>sl</code>, <code>tp</code>,
+<code>lot_size</code>), <code>category</code>, <code>reason</code>,
+<code>status</code> (<code>open</code>/<code>resolved</code>),
+timestamps. - Row Level Security: users can insert/view only their
+<strong>own</strong> reports. - Indexes on
+<code>(user_id, created_at)</code> and <code>(status)</code>.</p>
+<p><strong>Impact without it:</strong> Any attempt to file a trade
+report fails with
+<code>ERROR 42P01: relation "trade_reports" does not exist</code>. This
+is a live, user-facing defect on prod.</p>
+<h3 id="trade_reports_signal_id-high-priority">2.
+<code>20260816000000_trade_reports_signal_id</code> — HIGH priority</h3>
+<p><strong>Plain English:</strong> Adds a <code>signal_id</code> column
+so reports stay traceable back to the originating signal — including
+reports on <strong>skipped / non-actionable</strong> trades that have no
+symbol or ticket (which the assistant can now file).</p>
+<p><strong>What it creates:</strong> -
+<code>trade_reports.signal_id</code> (nullable, backwards compatible). -
+Index <code>trade_reports_signal_idx</code> on
+<code>signal_id</code>.</p>
+<p><strong>Impact without it:</strong> Once #1 is applied, reports still
+work — they just can’t link to a signal. This column is required for the
+assistant’s skipped-trade reporting fix to function correctly.</p>
+<h3 id="layering_modes_foundation-medium-dormant-feature">3.
+<code>20260730120000_layering_modes_foundation</code> — MEDIUM (dormant
+feature)</h3>
+<p><strong>Plain English:</strong> Prepares the
+<code>range_pending_legs</code> table (the ladder of pending orders for
+range trades) for future “static/dynamic” layering modes, where the
+ladder is planned up-front instead of built the legacy way. This
+migration only <strong>adds empty columns</strong> — existing rows are
+untouched and keep behaving exactly as before.</p>
+<p><strong>What it creates:</strong> -
+<code>range_pending_legs.layer_plan_id</code> (text, nullable). -
+<code>range_pending_legs.layer_plan_metadata</code> (jsonb, nullable). -
+Partial index on <code>layer_plan_id</code>.</p>
+<h3 id="layering_plans-medium-dormant-feature">4.
+<code>20260731120000_layering_plans</code> — MEDIUM (dormant
+feature)</h3>
+<p><strong>Plain English:</strong> Creates the
+<code>layering_plans</code> table — the “blueprint” for static/dynamic
+range-layering ladders (mode, status lifecycle, frozen calculator
+metadata, semantic fingerprint), plus the
+<code>activate_layering_plan</code> function that materializes plans
+into executable legs. Adds many <strong>nullable</strong> columns to
+<code>range_pending_legs</code> and unique indexes preventing duplicate
+ladder steps. Pure additive — nothing executes Static/Dynamic until
+Phase D ships, and the feature is behind kill-switch flags
+(<code>LAYERING_MODES_EXECUTION_ENABLED</code>,
+<code>LAYERING_MODES_PREPARE_ONLY</code>) restricted to staging
+allowlisted accounts.</p>
+<p><strong>What it creates:</strong> - <code>layering_plans</code> table
+(service-role only; no client access). -
+<code>activate_layering_plan(...)</code> function + layering-settings
+guard triggers. - Unique indexes:
+<code>(signal_id, broker_account_id, basket_key, mode)</code>,
+<code>(layer_plan_id, step_idx)</code> on
+<code>range_pending_legs</code>,
+<code>(broker_account_id,   broker_client_reference)</code>. - 17
+additive nullable columns on <code>range_pending_legs</code>
+(<code>broker_client_reference</code>,
+<code>native_submission_status</code>,
+<code>submission_claimed_at</code>, <code>cancellation_*</code>,
+<code>reconciliation_*</code>, etc.).</p>
+<p><strong>Dependency:</strong> requires #3 first (its unique index on
+<code>range_pending_legs(layer_plan_id, step_idx)</code> needs the
+<code>layer_plan_id</code> column).</p>
+<hr />
+<h2 id="relevance-to-the-codebase">Relevance to the codebase</h2>
+<p>These migrations exist because the worker (<code>worker/</code>)
+already implements the static/dynamic layering execution path and
+reads/writes these tables. Without the migrations, the following modules
+fail at runtime or at typecheck against the schema.</p>
+<h3 id="what-consumes-migration-3-foundation-columns">What consumes
+migration 3 (foundation columns)</h3>
+<p><code>range_pending_legs.layer_plan_id</code> and
+<code>.layer_plan_metadata</code> are the link between an executed leg
+and the immutable plan that produced it:</p>
+<ul>
+<li><code>worker/src/manualPlanning/layeringPlanPersistence.ts</code> —
+the persistence layer: inserts rows into <code>layering_plans</code>,
+reads a plan back by <code>layer_plan_id</code>, and calls the RPC
+<code>activate_layering_plan</code> to materialize funded legs. It
+compares <code>data.layer_plan_id !== snapshot.planId</code> and writes
+<code>layer_plan_id</code> on every materialized
+<code>range_pending_legs</code> row.</li>
+<li><code>worker/src/layeringPlanLifecycle.ts</code> — drives a plan
+through its status lifecycle
+(<code>prepared → activating → active → entries_complete/completed</code>,
+or cancelled) and resolves each leg via
+<code>range_pending_legs(layer_plan_id)</code>.</li>
+<li><code>worker/src/manualPlanning/layeringModes.ts</code> — the
+calculator/constants (<code>LAYERING_MODES</code>,
+<code>DEFAULT_STATIC_LAYER_COUNT</code>,
+<code>DEFAULT_DYNAMIC_STEP_PIPS</code>,
+<code>LAYERING_PLAN_SCHEMA_VERSION</code>); its output is frozen into
+<code>layer_plan_metadata</code> exactly as the migration’s comment
+describes.</li>
+</ul>
+<h3
+id="what-consumes-migration-4-layering_plans-table-range_pending_legs-additions">What
+consumes migration 4 (layering_plans table + range_pending_legs
+additions)</h3>
+<p>The <code>layering_plans</code> table + the 17 new
+<code>range_pending_legs</code> columns
+(<code>broker_client_reference</code>,
+<code>native_submission_status</code>,
+<code>submission_claimed_*</code>, <code>reconciliation_*</code>,
+<code>cancellation_*</code>, …) back the broker-native pending-order
+engine:</p>
+<ul>
+<li><code>worker/src/tradeExecutor/layeringModeBrokerPending.ts</code> —
+the submit/claim/confirm path: writes
+<code>broker_client_reference</code> and transitions
+<code>native_submission_status</code> through
+<code>planned → submission_claimed → confirmed</code>, querying
+<code>range_pending_legs</code> on <code>broker_client_reference</code>
+and <code>native_submission_status</code>. This is the code the
+<code>range_pending_legs_broker_client_ref_idx</code> unique index
+protects.</li>
+<li><code>worker/src/rangeBrokerPendingMonitor.ts</code> +
+<code>rangeBrokerPendingHelpers.ts</code> — sweeps broker-native
+pendings; relies on <code>submission_claimed_*</code> /
+<code>reconciliation_*</code> columns for durable claiming.</li>
+<li><code>worker/src/tradeExecutor/layeringModeBrokerPendingRecovery.ts</code>
+— restart recovery parses persisted <code>layer_plan_metadata</code>
+instead of re-running calculators (the exact property the runbook calls
+out).</li>
+<li><code>worker/src/tradeExecutor/orderLegExecution.ts</code> — the
+<code>onImmediateFill</code> hook fires
+<code>layering_first_fill_activation</code> (dynamic first-fill gating),
+which calls into <code>activate_layering_plan</code>.</li>
+<li><code>worker/src/virtualPendingMonitor.ts</code> — materializes
+virtual pendings into <code>range_pending_legs</code> and marks
+<code>category: 'layering'</code> events on failure.</li>
+</ul>
+<p><strong>Bottom line:</strong> migrations 3 &amp; 4 are not
+speculative — they are the schema backing for worker code already merged
+in this repo (<code>staging</code>). Staging has them; prod does not, so
+any staging-validated layering rollout would be broken on prod the
+moment it is enabled.</p>
+<hr />
+<h2 id="verification-evidence-how-we-know">Verification evidence (how we
+know)</h2>
+<p>Same 5 queries run against <strong>staging</strong> (control —
+applied) and <strong>prod</strong>:</p>
+<table>
+<colgroup>
+<col style="width: 21%" />
+<col style="width: 59%" />
+<col style="width: 18%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Check</th>
+<th>Staging (control)</th>
+<th>Prod</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>to_regclass('public.trade_reports')</code></td>
+<td><code>trade_reports</code></td>
+<td><code>null</code></td>
+</tr>
+<tr class="even">
+<td><code>information_schema.tables</code> (%report%)</td>
+<td>found</td>
+<td><code>[]</code></td>
+</tr>
+<tr class="odd">
+<td><code>pg_tables</code> (%trade_report%)</td>
+<td>found</td>
+<td><code>[]</code></td>
+</tr>
+<tr class="even">
+<td><code>schema_migrations</code> (trade_reports)</td>
+<td>both versions</td>
+<td><code>[]</code></td>
+</tr>
+<tr class="odd">
+<td><code>SELECT count(*) FROM trade_reports</code></td>
+<td>works (8 rows)</td>
+<td><code>42P01: relation does not exist</code></td>
+</tr>
+</tbody>
+</table>
+<p>Additional prod checks: <code>layering_plans</code> →
+<code>to_regclass</code> returns <code>null</code>;
+<code>range_pending_legs</code> has no <code>layer_plan_id</code> /
+<code>layer_plan_metadata</code> / <code>broker_client_reference</code>
+columns; no layering guard triggers present.</p>
+<p>The staging control proves the query method is sound — the prod
+negatives are real.</p>
+<hr />
+<h2 id="what-has-to-be-done">What has to be done</h2>
+<p><strong>Recommended: apply #1 and #2 to prod now</strong> (they fix
+the live trade-report failure for both the manual modal and the
+assistant). Application path:</p>
+<ol type="1">
+<li>Apply SQL via the Supabase Management API:
+<code>POST https://api.supabase.com/v1/projects/{ref}/database/query</code>
+with <code>Authorization: Bearer &lt;token&gt;</code> and body
+<code>{"query": "&lt;sql&gt;"}</code>.</li>
+<li>Register in <code>supabase_migrations.schema_migrations</code>:
+<code>INSERT ... VALUES ('{version}', ARRAY['-- {name}'], '{name}') ON CONFLICT (version) DO NOTHING</code>.</li>
+<li>Verify objects exist (table, column, indexes) — mirror the evidence
+above.</li>
+</ol>
+<p><strong>Decision needed:</strong> whether to also apply #3 and #4 to
+prod. They are additive and dormant; apply them to keep prod in lockstep
+with staging, or defer until the layering feature is scheduled for
+rollout.</p>
+<p><strong>Also pending (code, not migration):</strong> redeploy the
+<code>assistant-chat</code> edge function to staging then prod with the
+skipped-trade <code>report_trade</code> fix (the code is committed in
+the working tree; the function is deployed manually).</p>
+<hr />
+<p><em>Plain English: TSCopier’s production database is missing 4
+things. Two of them (the trade-reports table) mean users can’t file a
+trade complaint right now — the button errors out. The other two are
+behind-the-scenes prep for a future feature that isn’t turned on yet.
+Staging has all 4.</em></p>

@@ -364,7 +364,7 @@ const TOOL_DEFS = [
     function: {
       name: "get_recent_trades",
       description:
-        "List the user's recent trades (signals that were executed, skipped, failed, or pending) with outcome, tickets, and any execution errors. Use BEFORE answering questions like 'what happened with my trades', 'show my recent trades', 'did my signal execute', or before reporting a trade.",
+        "List the user's recent trades (signals that were executed, skipped, failed, or pending) with outcome, tickets, and any execution errors. Use BEFORE answering questions like 'what happened with my trades', 'show my recent trades', 'did my signal execute', or before reporting a trade. IMPORTANT when the user asks about THEIR LAST TRADE / MOST RECENT TRADE: they mean the most recent trade that actually EXECUTED or FAILED (has a symbol/ticket) — prefer a row with a symbol/ticket even if a newer signal was skipped or ignored; only if no executed/failed trade exists, report the newest signal and say it never traded.",
       parameters: {
         type: "object",
         properties: {
@@ -415,12 +415,12 @@ const TOOL_DEFS = [
     function: {
       name: "report_trade",
       description:
-        "File a trade report for the user (stored in trade_reports for support review). First gather the trade via get_recent_trades / get_trade_detail, then call with signal_id (preferred — fills symbol/ticket from data) plus category and reason. The first call returns a Confirm card; the client re-executes with confirmed=true. Categories: wrong_entry, wrong_sl, wrong_tp, wrong_direction, wrong_lots, not_executed, other.",
+        "File a trade report for the user (stored in trade_reports for support review). Call with signal_id (preferred — fills symbol/ticket from data when available) plus category and reason. A report does NOT require a symbol or ticket: skipped / non-actionable / not-executed trades are reportable too — pass the signal_id and the report will be filed regardless. The first call returns a Confirm card; the client re-executes with confirmed=true. Categories: wrong_entry, wrong_sl, wrong_tp, wrong_direction, wrong_lots, not_executed, other.",
       parameters: {
         type: "object",
         properties: {
           signal_id: { type: "string", description: "Signal UUID of the trade to report (preferred)" },
-          symbol: { type: "string", description: "Symbol (required if no signal_id)" },
+          symbol: { type: "string", description: "Symbol (optional — filled from signal_id when available)" },
           ticket: { type: "number" },
           category: {
             type: "string",
@@ -1007,7 +1007,7 @@ async function toolGetRecentTrades(
   return {
     content: JSON.stringify({
       trades,
-      hint: "Explain each trade's outcome plainly (executed with tickets, skipped with reason, failed with errors). Offer get_trade_detail for a specific trade or open_trades to see live positions.",
+      hint: "The app renders a card with these trades — reply in one or two short lines and do NOT repeat the list in prose. Offer get_trade_detail for a specific trade or open_trades to see live positions. If the user asked about their LAST or MOST RECENT trade, answer with the most recent EXECUTED or FAILED trade (one with a symbol/ticket); skipped non-actionable promo messages are not trades — say so plainly if the newest signal is just a skip.",
     }),
   };
 }
@@ -1037,7 +1037,7 @@ async function toolGetCopierLogs(
   return {
     content: JSON.stringify({
       trades,
-      hint: "This mirrors the /copier-logs page. Explain statuses; offer get_trade_detail for failures.",
+      hint: "This mirrors the /copier-logs page. The app renders a card with these rows — reply briefly and do NOT repeat the list in prose. Offer get_trade_detail for failures.",
     }),
   };
 }
@@ -1189,6 +1189,7 @@ async function toolReportTrade(
   let lotSize: number | null = null;
 
   const signalId = String(args.signal_id ?? "").trim();
+  let signalOwned = false;
   if (signalId) {
     const { data: sig } = await supabase
       .from("signals")
@@ -1197,6 +1198,7 @@ async function toolReportTrade(
       .eq("user_id", userId)
       .maybeSingle();
     if (sig) {
+      signalOwned = true;
       const fields = parsedTradeFields(sig.parsed_data as Record<string, unknown> | null);
       symbol = symbol || fields.symbol || "";
       direction = fields.direction || direction;
@@ -1231,17 +1233,25 @@ async function toolReportTrade(
     }
   }
 
-  if (!symbol) {
+  if (signalId && !signalOwned) {
     return {
       content: JSON.stringify({
-        error: "symbol is required (and could not be resolved from signal_id). Call get_recent_trades first and pass the signal_id.",
+        error: "That trade was not found for this account. Use get_recent_trades to pick one of your trades.",
+      }),
+    };
+  }
+
+  if (!symbol && !ticket && !signalId) {
+    return {
+      content: JSON.stringify({
+        error: "Provide a signal_id (preferred), symbol, or ticket to identify the trade.",
       }),
     };
   }
 
   if (!confirmed) {
     const categoryLabel = category.replace(/_/g, " ");
-    const summary = `Report ${symbol}${ticket ? ` #${ticket}` : ""} — ${categoryLabel}: ${reason.length > 90 ? `${reason.slice(0, 90)}…` : reason}`;
+    const summary = `Report ${symbol || "this trade"}${ticket ? ` #${ticket}` : ""} — ${categoryLabel}: ${reason.length > 90 ? `${reason.slice(0, 90)}…` : reason}`;
     return {
       content: JSON.stringify({
         needs_confirmation: true,
@@ -1262,6 +1272,7 @@ async function toolReportTrade(
 
   const { error } = await supabase.from("trade_reports").insert({
     user_id: userId,
+    signal_id: signalOwned ? signalId : null,
     symbol,
     direction,
     ticket,

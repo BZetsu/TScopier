@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import clsx from 'clsx'
+import { ChevronRight } from 'lucide-react'
 
 export type AssistantTradeRow = {
   signal_id?: string | null
@@ -25,6 +26,7 @@ export type AssistantTradesCardCopy = {
   noTrades: string
   ticket: string
   legs: string
+  viewDetails: string
   statusExecuted: string
   statusFailed: string
   statusSkipped: string
@@ -120,11 +122,41 @@ function formatPrice(value: number | null | undefined): string | null {
   return Number.isInteger(value) ? text : text.replace(/\.?0+$/, '')
 }
 
-function TradeRow({ trade, copy }: { trade: AssistantTradeRow; copy: AssistantTradesCardCopy }) {
+function TradeRow({
+  trade,
+  copy,
+  onClick,
+}: {
+  trade: AssistantTradeRow
+  copy: AssistantTradesCardCopy
+  onClick?: () => void
+}) {
   const status = trade.status ?? ''
   const symbol = trade.symbol ?? 'Trade'
+  const clickable = Boolean(onClick)
   return (
-    <li className="rounded-xl border border-neutral-200 bg-white p-2.5 dark:border-neutral-800 dark:bg-neutral-900/70">
+    <li
+      className={clsx(
+        'rounded-xl border border-neutral-200 bg-white p-2.5 dark:border-neutral-800 dark:bg-neutral-900/70',
+        clickable &&
+          'cursor-pointer transition hover:border-teal-300 hover:bg-neutral-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/60 dark:hover:border-teal-700 dark:hover:bg-neutral-800/60',
+      )}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      aria-label={clickable ? `${copy.viewDetails}: ${symbol}` : undefined}
+      title={clickable ? copy.viewDetails : undefined}
+      onClick={clickable ? onClick : undefined}
+      onKeyDown={
+        clickable
+          ? e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onClick?.()
+              }
+            }
+          : undefined
+      }
+    >
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="truncate font-semibold text-neutral-900 dark:text-neutral-50">{symbol}</span>
@@ -135,14 +167,19 @@ function TradeRow({ trade, copy }: { trade: AssistantTradeRow; copy: AssistantTr
             </span>
           ) : null}
         </div>
-        <span
-          className={clsx(
-            'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold',
-            statusStyles(status),
-          )}
-        >
-          {statusLabel(status, copy)}
-        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          <span
+            className={clsx(
+              'rounded-full px-2 py-0.5 text-[10px] font-semibold',
+              statusStyles(status),
+            )}
+          >
+            {statusLabel(status, copy)}
+          </span>
+          {clickable ? (
+            <ChevronRight className="h-3.5 w-3.5 text-neutral-400 dark:text-neutral-500" />
+          ) : null}
+        </div>
       </div>
 
       {trade.time ? (
@@ -199,10 +236,12 @@ export function AssistantTradesCard({
   tool,
   result,
   copy,
+  onTradeClick,
 }: {
   tool: string
   result: string
   copy: AssistantTradesCardCopy
+  onTradeClick?: (trade: AssistantTradeRow) => void
 }) {
   const data = useMemo(() => parseResult(result), [result])
 
@@ -224,7 +263,12 @@ export function AssistantTradesCard({
       </p>
       <ul className="space-y-2">
         {trades.map(t => (
-          <TradeRow key={t.signal_id ?? `${tool}-${t.symbol}-${t.time}`} trade={t} copy={copy} />
+          <TradeRow
+            key={t.signal_id ?? `${tool}-${t.symbol}-${t.time}`}
+            trade={t}
+            copy={copy}
+            onClick={t.signal_id && onTradeClick ? () => onTradeClick(t) : undefined}
+          />
         ))}
       </ul>
     </div>

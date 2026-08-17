@@ -160,6 +160,7 @@ export const chromePl: AppChromeTranslations = {
         noTrades: 'No recent trades found.',
         ticket: 'Ticket',
         legs: 'Legs',
+        viewDetails: 'View details',
         statusExecuted: 'Executed',
         statusFailed: 'Failed',
         statusSkipped: 'Skipped',
