@@ -136,6 +136,8 @@ export interface Leg {
   idx: number
   cweClosePrice?: number | null
   partialTps?: import('../manualPlanner').PlannerPartialTp[]
+  /** Absolute Move-SL-on-TP-hit trigger from the plan's TP ladder. */
+  autoBeTpHitTriggerPrice?: number | null
 }
 
 /**

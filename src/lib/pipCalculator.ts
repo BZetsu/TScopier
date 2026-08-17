@@ -5,7 +5,7 @@
  * both files in the same commit.
  */
 
-import { classifySymbol, type SymbolClass } from './pipMath'
+import { classifySymbol, normalizePipInstrument, type SymbolClass } from './pipMath'
 
 export interface PipQuote {
   pipPrice: number
@@ -59,7 +59,8 @@ function pipPriceFor(symbol: string, klass: SymbolClass, point: number, digits: 
     return d === 3 || d === 5 ? point * 10 : point
   }
   if (klass === 'metal') {
-    const core = String(symbol || '').toUpperCase().replace(/[^A-Z].*$/, '')
+    // GOLD/XAU → XAUUSD so we never treat broker point (0.01) as 1 pip.
+    const core = normalizePipInstrument(symbol)
     const base = core.length >= 3 ? core.slice(0, 3) : core
     if (base === 'XAU' || base === 'XPT' || base === 'XPD') return 0.1
     return Math.max(point * 10, 0.01)
@@ -76,8 +77,9 @@ export function pipCalculator(
   digits: number,
   contractSize?: number | null,
 ): PipQuote {
-  const klass = classifySymbol(symbol)
-  const quoteCurrency = inferQuoteCurrency(symbol, klass)
+  const instrument = normalizePipInstrument(symbol) || String(symbol || '')
+  const klass = classifySymbol(instrument || symbol)
+  const quoteCurrency = inferQuoteCurrency(instrument || symbol, klass)
 
   if (!Number.isFinite(point) || point <= 0) {
     return {
@@ -91,13 +93,13 @@ export function pipCalculator(
     }
   }
 
-  const pipPrice = pipPriceFor(symbol, klass, point, digits)
+  const pipPrice = pipPriceFor(instrument || symbol, klass, point, digits)
 
   let resolvedContract = resolveContractSize(klass, contractSize)
   if (klass === 'metal') {
     const explicit = Number(contractSize)
     if (!Number.isFinite(explicit) || explicit <= 0) {
-      resolvedContract = String(symbol || '').toUpperCase().includes('XAG')
+      resolvedContract = String(instrument || symbol || '').toUpperCase().includes('XAG')
         ? XAG_DEFAULT_CONTRACT_SIZE
         : XAU_DEFAULT_CONTRACT_SIZE
     }

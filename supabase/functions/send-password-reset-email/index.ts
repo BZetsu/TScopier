@@ -4,7 +4,9 @@ import { buildAuthEmailHtml } from "../_shared/authEmailLayout.ts";
 import { resolveEmailLogoUrl } from "../_shared/brandEmailAssets.ts";
 import { evaluateSignupEmail } from "../_shared/emailSignupPolicy.ts";
 import {
+  AUTH_EMAIL_MAX_PER_HOUR_GLOBAL,
   AUTH_EMAIL_MAX_PER_HOUR_IP,
+  enforceGlobalRateLimit,
   enforceIpRateLimit,
   extractClientIp,
   verifyTurnstileToken,
@@ -70,6 +72,14 @@ Deno.serve(async (req: Request) => {
 
     const clientIp = extractClientIp(req);
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    const globalLimitResponse = await enforceGlobalRateLimit(
+      supabase,
+      "password_reset_email",
+      AUTH_EMAIL_MAX_PER_HOUR_GLOBAL,
+      corsHeaders,
+    );
+    if (globalLimitResponse) return globalLimitResponse;
 
     const ipLimitResponse = await enforceIpRateLimit(
       req,

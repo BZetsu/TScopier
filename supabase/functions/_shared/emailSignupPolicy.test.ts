@@ -2,10 +2,10 @@ import { assertEquals } from "jsr:@std/assert@1.0.13/equals";
 import { evaluateSignupEmail, isSuspiciousSignupEmail } from "./emailSignupPolicy.ts";
 
 Deno.test("evaluateSignupEmail allows normal addresses", () => {
-  const result = evaluateSignupEmail("user@example.com");
+  const result = evaluateSignupEmail("user@gmail.com");
   assertEquals(result.allowed, true);
   if (result.allowed) {
-    assertEquals(result.normalizedEmail, "user@example.com");
+    assertEquals(result.normalizedEmail, "user@gmail.com");
   }
 });
 

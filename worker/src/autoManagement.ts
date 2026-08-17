@@ -108,6 +108,139 @@ export function normalizeAutoBeConfig(manual: {
   }
 }
 
+/**
+ * Absolute price of the configured TP-hit trigger (TP1/TP2/…).
+ * Used so Move-SL-on-TP-hit still works when predefined/override TPs leave no
+ * partial_tp_legs (e.g. a single "TP: 30 pips" override).
+ */
+export function resolveAutoBeTpHitTriggerPrice(args: {
+  tpIndex: number
+  partialTps?: Array<{ tpIdx: number; triggerPrice: number }> | null
+  finalTps?: number[] | null
+  brokerTp?: number | null
+}): number | null {
+  const target = Math.max(1, Math.floor(Number(args.tpIndex) || 1))
+  const fromPartial = (args.partialTps ?? []).find(p => p.tpIdx === target)
+  if (fromPartial && Number.isFinite(fromPartial.triggerPrice) && fromPartial.triggerPrice > 0) {
+    return Number(fromPartial.triggerPrice)
+  }
+  const ladder = (args.finalTps ?? []).filter(n => Number.isFinite(n) && n > 0)
+  if (ladder.length > 0) {
+    const px = ladder[Math.min(target - 1, ladder.length - 1)]
+    if (px != null && Number.isFinite(px) && px > 0) return Number(px)
+  }
+  // Single-TP / no-partial fallback: broker TP is the only level (common with
+  // predefined one-row override). Only safe for TP1 — higher indices must come
+  // from the ladder above.
+  if (
+    target === 1
+    && args.brokerTp != null
+    && Number.isFinite(args.brokerTp)
+    && Number(args.brokerTp) > 0
+  ) {
+    return Number(args.brokerTp)
+  }
+  return null
+}
+
+/**
+ * Prefer an explicit plan price; otherwise rebuild the TP-hit level from
+ * predefined pip overrides + entry (needed when broker TP was omitted).
+ */
+export function resolveAutoBeTpHitTriggerPriceFromManual(args: {
+  manual: {
+    move_sl_to_entry_after_mode?: string
+    move_sl_to_entry_after_value?: number
+    move_sl_to_entry_tp_index?: number
+    move_sl_to_entry_type?: string
+    breakeven_offset_pips?: number
+    use_predefined_tp_pips?: boolean
+    predefined_tp_pips?: number[]
+  }
+  entryPrice: number
+  isBuy: boolean
+  pipSize: number
+  partialTps?: Array<{ tpIdx: number; triggerPrice: number }> | null
+  brokerTp?: number | null
+  plannedTriggerPrice?: number | null
+}): number | null {
+  if (args.plannedTriggerPrice != null && Number.isFinite(args.plannedTriggerPrice) && args.plannedTriggerPrice > 0) {
+    return Number(args.plannedTriggerPrice)
+  }
+  const cfg = normalizeAutoBeConfig(args.manual)
+  if (!cfg || cfg.mode !== 'tp_hit') return null
+  let finalTps: number[] = []
+  if (
+    args.manual.use_predefined_tp_pips === true
+    && Array.isArray(args.manual.predefined_tp_pips)
+    && Number.isFinite(args.entryPrice)
+    && args.entryPrice > 0
+    && Number.isFinite(args.pipSize)
+    && args.pipSize > 0
+  ) {
+    finalTps = args.manual.predefined_tp_pips
+      .map(Number)
+      .filter(n => Number.isFinite(n) && n > 0)
+      .map(t => (args.isBuy ? args.entryPrice + t * args.pipSize : args.entryPrice - t * args.pipSize))
+  }
+  return resolveAutoBeTpHitTriggerPrice({
+    tpIndex: cfg.tpIndex,
+    partialTps: args.partialTps,
+    finalTps,
+    brokerTp: args.brokerTp,
+  })
+}
+
+/** True when triggerValue was snapped as an absolute TP price (not legacy unused pips). */
+export function isAutoBeTpHitAbsolutePrice(
+  triggerValue: number,
+  entryPrice: number,
+  isBuy: boolean,
+): boolean {
+  if (!Number.isFinite(triggerValue) || triggerValue <= 0) return false
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) return false
+  return isBuy ? triggerValue > entryPrice : triggerValue < entryPrice
+}
+
+export function pricesNearlyEqual(a: number, b: number): boolean {
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false
+  const scale = Math.max(1, Math.abs(a), Math.abs(b))
+  return Math.abs(a - b) <= scale * 1e-8 + 1e-8
+}
+
+/**
+ * Single-trade: when the Move-SL TP-hit level is also the broker takeprofit,
+ * the position closes at that price before SL can move. Omit broker TP so the
+ * monitor can move SL to breakeven when price reaches the (stored) trigger.
+ * Multi-trade keeps per-leg broker TPs (TP1 legs are meant to close).
+ */
+export function shouldOmitBrokerTpForAutoBeTpHit(args: {
+  manual: {
+    move_sl_to_entry_after_mode?: string
+    move_sl_to_entry_after_value?: number
+    move_sl_to_entry_tp_index?: number
+    move_sl_to_entry_type?: string
+    breakeven_offset_pips?: number
+    trade_style?: string
+  }
+  brokerTp: number | null
+  finalTps: number[]
+  partialTps?: Array<{ tpIdx: number; triggerPrice: number }> | null
+}): boolean {
+  if (String(args.manual.trade_style ?? '').toLowerCase() === 'multi') return false
+  const cfg = normalizeAutoBeConfig(args.manual)
+  if (!cfg || cfg.mode !== 'tp_hit') return false
+  if (args.brokerTp == null || !Number.isFinite(args.brokerTp) || args.brokerTp <= 0) return false
+  const trigger = resolveAutoBeTpHitTriggerPrice({
+    tpIndex: cfg.tpIndex,
+    partialTps: args.partialTps,
+    finalTps: args.finalTps,
+    brokerTp: args.brokerTp,
+  })
+  if (trigger == null) return false
+  return pricesNearlyEqual(trigger, args.brokerTp)
+}
+
 /** DB columns to set on trades.insert when auto-management is active. */
 export function autoManagementTradeSnapshot(
   manual: {
@@ -119,6 +252,7 @@ export function autoManagementTradeSnapshot(
   },
   entryPrice: number | null | undefined,
   sl: number | null | undefined,
+  opts?: { tpHitTriggerPrice?: number | null },
 ): Record<string, string | number | null> {
   if (!isAutoManagementEnabled(manual)) return {}
   const entry = Number(entryPrice)
@@ -126,9 +260,17 @@ export function autoManagementTradeSnapshot(
   const cfg = normalizeAutoBeConfig(manual)
   if (!cfg) return {}
   const riskSl = sl != null && Number.isFinite(Number(sl)) && Number(sl) > 0 ? Number(sl) : null
+  // For tp_hit, persist the absolute TP price so the monitor can fire even when
+  // there are no partial_tp_legs (predefined single-TP override) and/or broker TP
+  // was omitted to avoid closing the trade at the trigger level.
+  let triggerValue = cfg.triggerValue
+  if (cfg.mode === 'tp_hit') {
+    const abs = opts?.tpHitTriggerPrice
+    if (abs != null && Number.isFinite(abs) && abs > 0) triggerValue = Number(abs)
+  }
   return {
     auto_be_mode: cfg.mode,
-    auto_be_trigger_value: cfg.triggerValue,
+    auto_be_trigger_value: triggerValue,
     auto_be_tp_index: cfg.tpIndex,
     auto_be_type: cfg.beType,
     auto_be_offset_pips: cfg.offsetPips,
@@ -263,6 +405,11 @@ export function isAutoBeTriggerMet(input: AutoBeTriggerInput): boolean {
       const leg = partialTpTriggers.find(p => p.tpIdx === target)
       if (leg && Number.isFinite(leg.triggerPrice) && leg.triggerPrice > 0) {
         return isPartialTpTriggered(isBuy, leg.triggerPrice, bid, ask)
+      }
+      // Absolute TP price snapped at open (predefined/override TPs, multi-leg
+      // siblings waiting on TP1, or single-TP where broker TP was omitted).
+      if (isAutoBeTpHitAbsolutePrice(triggerValue, entryPrice, isBuy)) {
+        return isPartialTpTriggered(isBuy, triggerValue, bid, ask)
       }
       if (target === 1 && brokerTp != null && Number.isFinite(brokerTp) && brokerTp > 0) {
         return isPartialTpTriggered(isBuy, brokerTp, bid, ask)

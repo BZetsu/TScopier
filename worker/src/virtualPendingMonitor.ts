@@ -8,7 +8,8 @@ import {
   SymbolParams,
 } from './fxsocketClient'
 import { apiForFxsocketAccount, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
-import { autoManagementTradeSnapshot } from './autoManagement'
+import { autoManagementTradeSnapshot, resolveAutoBeTpHitTriggerPriceFromManual } from './autoManagement'
+import { signalPipPrice } from './signalPip'
 import { tryApplyBasketFollowUpToNewFill, symbolsCompatibleForBasket } from './basketModFollowUp'
 import { loadOpenBasketLegs, upsertBasketReconcileJob } from './basketSlTpReconcile'
 import { resolveFreshBasketReconcileTargets } from './basketReconcileTargets'
@@ -1185,7 +1186,18 @@ export class VirtualPendingMonitor {
       const persistSl = result.openedNaked ? null : (brokerSl ?? desiredSl)
       const persistTp = result.openedNaked ? null : (brokerTp ?? desiredTp)
       const manual = await this.loadManualSettingsForLeg(leg.broker_account_id, channelIdForTrade)
-      const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, desiredSl ?? persistSl)
+      const pipSize = signalPipPrice(leg.symbol)
+      const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, desiredSl ?? persistSl, {
+        tpHitTriggerPrice: entryPx != null
+          ? resolveAutoBeTpHitTriggerPriceFromManual({
+            manual,
+            entryPrice: Number(entryPx),
+            isBuy: Boolean(leg.is_buy),
+            pipSize,
+            brokerTp: desiredTp ?? persistTp,
+          })
+          : null,
+      })
       const { data: insTrade, error: insErr } = await this.supabase.from('trades').insert({
         user_id: leg.user_id,
         signal_id: leg.signal_id,

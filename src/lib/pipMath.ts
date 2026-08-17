@@ -16,6 +16,14 @@ const FX_CURRENCY_CODES = new Set([
 
 const METAL_PREFIXES = ['XAU', 'XAG', 'XPT', 'XPD']
 
+/** Broker / chat aliases → canonical metal pair used for pip sizing. */
+const METAL_NAME_ALIASES: Record<string, string> = {
+  GOLD: 'XAUUSD',
+  XAU: 'XAUUSD',
+  SILVER: 'XAGUSD',
+  XAG: 'XAGUSD',
+}
+
 const CRYPTO_TOKENS = new Set([
   'BTC', 'ETH', 'LTC', 'XRP', 'ADA', 'DOT', 'DOGE', 'SOL',
   'BNB', 'AVAX', 'MATIC', 'LINK', 'TRX', 'XLM', 'BCH', 'EOS',
@@ -45,9 +53,21 @@ function cleanSymbol(symbol: string): string {
   return core
 }
 
+/**
+ * Canonical instrument id for pip math (GOLD → XAUUSD, XAUUSDm → XAUUSDm cleaned).
+ * Keeps metal trader pip = 0.1 instead of broker point (0.01).
+ */
+export function normalizePipInstrument(symbol: string): string {
+  const cleaned = cleanSymbol(symbol)
+  if (!cleaned) return ''
+  return METAL_NAME_ALIASES[cleaned] ?? cleaned
+}
+
 export function classifySymbol(symbol: string): SymbolClass {
-  const s = cleanSymbol(symbol)
+  const s = normalizePipInstrument(symbol)
   if (!s) return 'other'
+
+  if (METAL_NAME_ALIASES[cleanSymbol(symbol)]) return 'metal'
 
   for (const p of METAL_PREFIXES) {
     if (s.startsWith(p)) return 'metal'
@@ -88,8 +108,9 @@ export function smartPipSize(symbol: string, point: number, digits: number): num
     return d === 3 || d === 5 ? point * 10 : point
   }
   if (klass === 'metal') {
-    const core = String(symbol || '').toUpperCase().replace(/[^A-Z].*$/, '')
+    const core = normalizePipInstrument(symbol)
     const base = core.length >= 3 ? core.slice(0, 3) : core
+    // Gold/platinum/palladium: 1 pip = 0.10 (not broker point 0.01).
     if (base === 'XAU' || base === 'XPT' || base === 'XPD') return 0.1
     return Math.max(point * 10, 0.01)
   }

@@ -21,7 +21,7 @@ import {
 import { loadUserProfile } from '../../lib/userProfile'
 import { capturePendingPlanFromUrl, postAuthAppPath } from '../../lib/pendingPlanSelection'
 import { TurnstileWidget, type TurnstileWidgetHandle } from '../../components/auth/TurnstileWidget'
-import { isTurnstileEnabled } from '../../lib/turnstile'
+import { isTurnstileEnabled, isTurnstileMisconfigured } from '../../lib/turnstile'
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -62,6 +62,7 @@ export function AuthPage() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const turnstileRef = useRef<TurnstileWidgetHandle>(null)
   const captchaRequired = isTurnstileEnabled()
+  const captchaMisconfigured = isTurnstileMisconfigured()
 
   useEffect(() => {
     const fromUrl = captureReferralFromUrl(window.location.search)
@@ -92,6 +93,10 @@ export function AuthPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    if (captchaMisconfigured) {
+      setError('Login protection is misconfigured. Please try again later.')
+      return
+    }
     if (captchaRequired && !captchaToken) {
       setError(auth.oauth.captchaRequired)
       return
@@ -216,7 +221,7 @@ export function AuthPage() {
         <Button
           type="submit"
           loading={loading}
-          disabled={captchaRequired && !captchaToken}
+          disabled={captchaMisconfigured || (captchaRequired && !captchaToken)}
           className="w-full !mt-6"
           size="lg"
         >
