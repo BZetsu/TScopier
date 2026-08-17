@@ -183,6 +183,8 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
       'broker bridge unavailable — enable Algo Trading on MT5 and confirm Trade EA ready in Account Configuration',
     entry_requires_imperative_or_labeled_stops:
       'message did not include an entry order phrase (e.g. buy now, gold sell now) or labeled SL/TP',
+    entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
+    signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
   },
   dispatchSkipped: 'Did not copy this signal ({reason}).',
   rangeRebalanceSkippedNamed: 'Skipped {symbol} take-profit rebalance ({reason})',

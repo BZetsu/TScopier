@@ -16,9 +16,21 @@ describe('resolveTradeFailureDisplay', () => {
       safeContext: { withheldByProvider: true, missingField: 'stop_loss' },
     })
     assert.equal(display?.reasonCode, 'SIGNAL_MISSING_REQUIRED_SL')
-    assert.match(display?.title ?? '', /Stop Loss missing/)
+    assert.match(display?.title ?? '', /SL not given/)
+    assert.match(display?.title ?? '', /predefined SL pips/)
     assert.match(display?.explanation ?? '', /premium\/VIP subscribers/)
+    assert.match(display?.explanation ?? '', /Override signal SL/)
     assert.equal(display?.retryable, false)
+  })
+
+  it('maps TP-without-SL skip codes to the predefined-SL hint', () => {
+    const display = resolveTradeFailureDisplay({
+      reasonCode: 'entry_tp_without_sl',
+    })
+    assert.equal(display?.reasonCode, 'ENTRY_TP_WITHOUT_SL')
+    assert.match(display?.title ?? '', /SL not given/)
+    assert.match(display?.title ?? '', /predefined SL pips/)
+    assert.match(display?.explanation ?? '', /take-profit/)
   })
 
   it('maps broker symbol failures and legacy SYMBOL_UNSUPPORTED to one code', () => {

@@ -104,22 +104,25 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
     plannedBrokerTp, hasPartialTpSchedule,
   } = args
   const manual = (broker.manual_settings ?? {}) as ManualSettings
-  const isSingleTradeStyle = (manual.trade_style ?? 'single') !== 'multi'
-  if (!isSingleTradeStyle) {
-    // Multi-trade legs already carry per-bucket TPs from the planner; syncMultiBasketLegTakeProfits
-    // reconciles them. Flattening to tp[0] here caused wrong targets on layered baskets.
+  const isMulti = (manual.trade_style ?? 'single') === 'multi'
+  // Multi legs already carry per-bucket TPs; flattening to tp[0] here was wrong.
+  // Still stamp Override signal SL from *this* fill when that setting is on.
+  const multiPredefinedSlOnly = isMulti && manual.use_predefined_sl_pips === true
+  if (isMulti && !multiPredefinedSlOnly) {
     return
   }
-  const isBuy = !String(parsed.action ?? '').toLowerCase().includes('sell')
+  const parsedIsBuy = !String(parsed.action ?? '').toLowerCase().includes('sell')
 
   for (const leg of filledLegs) {
     const entry = leg.entryPrice
     if (entry == null || !Number.isFinite(entry) || entry <= 0) continue
     if (!Number.isFinite(leg.ticket) || leg.ticket <= 0) continue
+    const isBuy = isMulti ? leg.direction === 'buy' : parsedIsBuy
 
     let plannerParsed: ParsedSignal = { ...parsed }
     if (
-      signal.channel_id
+      !isMulti
+      && signal.channel_id
       && shouldMergeChannelParamsForEntry(plannerParsed)
       && !shouldPreferParsedStopsOnEntry(plannerParsed)
     ) {
@@ -148,7 +151,18 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
 
     let targetSl = leg.openSl
     let targetTp = leg.openTp
-    if (hasPartialTpSchedule && plannedBrokerTp != null && plannedBrokerTp > 0) {
+    if (isMulti) {
+      const derived = deriveManualStopsWithClamp({
+        parsed: plannerParsed,
+        manual,
+        channelKeywords,
+        resolvedSymbol: symbol,
+        ctx,
+        entryAnchor: entry,
+        isBuy,
+      })
+      if (derived.finalSl != null) targetSl = derived.roundPrice(derived.finalSl)
+    } else if (hasPartialTpSchedule && plannedBrokerTp != null && plannedBrokerTp > 0) {
       targetTp = plannedBrokerTp
     } else if (usesPredefinedStops(manual)) {
       const derived = deriveManualStopsWithClamp({
@@ -173,26 +187,27 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
 
     const stripped = stripInvalidStopsForSide({
       stoploss: Number(targetSl) || 0,
-      takeprofit: Number(targetTp) || 0,
+      takeprofit: isMulti ? 0 : (Number(targetTp) || 0),
       referencePrice: entry,
       isBuy,
     })
     const newSl = stripped.stoploss > 0 ? stripped.stoploss : null
-    const newTp = stripped.takeprofit > 0 ? stripped.takeprofit : null
+    const newTp = isMulti
+      ? leg.openTp
+      : (stripped.takeprofit > 0 ? stripped.takeprofit : null)
     const slChanged = newSl != null && newSl !== leg.openSl
-    const tpChanged = newTp != null && newTp !== leg.openTp
+    const tpChanged = !isMulti && newTp != null && newTp !== leg.openTp
     if (!slChanged && !tpChanged) continue
 
     try {
-      await api.orderModify(uuid, {
-        ticket: leg.ticket,
-        stoploss: newSl,
-        takeprofit: newTp,
-      })
+      await api.orderModify(uuid, isMulti
+        ? { ticket: leg.ticket, stoploss: newSl }
+        : { ticket: leg.ticket, stoploss: newSl, takeprofit: newTp })
       if (leg.tradeRowId) {
+        const patch = isMulti ? { sl: newSl } : { sl: newSl, tp: newTp }
         await args.supabase
           .from('trades')
-          .update({ sl: newSl, tp: newTp })
+          .update(patch)
           .eq('id', leg.tradeRowId)
       }
     } catch (err) {

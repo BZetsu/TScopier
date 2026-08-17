@@ -2,6 +2,27 @@
 
 ## Changelog
 
+### 2026-08-17 — Missing-SL skip log tells user to set predefined SL pips
+
+- **Wanted:** Copier log for no-SL skips should not be a generic “Skipped” / `entry tp without sl`.
+- **Fix:** Title is “SL not given — set predefined SL pips in broker configuration”, with Account Configuration action copy. Worker now matches uppercased `ENTRY_TP_WITHOUT_SL`.
+- Files: `brokerTradeError.ts`, `tradeFailureDisplay.ts`, `copierSkipReasonLabels.ts`, channel-worker / copier-log i18n.
+
+### 2026-08-17 — Predefined SL/TP override signal stops (incl. TP-only / Premium)
+
+- **Wanted:** When Override signal SL (and TP) is on, execute using those pips even if the signal has no SL, SL: Premium, or stops on the wrong side.
+- **Bug:** Signal-level `entry_tp_without_sl` skipped the parse before account settings. Fallback also required a signal entry price.
+- **Fix:** Eligibility lets TP-only entries through; entry prep allows any missing/withheld SL when predefined SL pips are set. Planner already prefers override from fill/quote.
+- Files: `signalExecutionEligibility.ts`, `entryPrepareMissingSl.ts`, `signalEntryNowRequirement.ts`.
+- Scratchpad: `docs/scratchpad-predefined-stops-override-2026-08-17.md`. Needs trade worker deploy.
+
+### 2026-08-17 — Override signal SL on multi / range legs
+
+- **Bug:** Override signal SL (e.g. 80 pips) is not single-only in the UI, but multi skipped post-fill SL stamping and range legs reused one shared SL that often got dropped.
+- **Fix:** Post-fill applies predefined SL only on multi (TPs unchanged). Range virtuals and range fire compute SL from that leg’s trigger/fill.
+- Files: `postFillFollowUp.ts`, `planMultiManualOrders.ts`, `virtualPendingMonitor.ts`, `manualStops.ts`.
+- Scratchpad: `docs/scratchpad-multi-sl-override-2026-08-17.md`. Needs trade worker deploy.
+
 ### 2026-08-16 — Block TP-without-SL entries
 
 - **Rule:** Buy/sell with take-profit level(s) but no stop loss must not execute. SL-only (no TP) and bare `buy now` still execute.

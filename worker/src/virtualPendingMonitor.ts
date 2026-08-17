@@ -17,6 +17,7 @@ import { resolveEffectiveBasketStops } from './basketEffectiveStops'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { markRangeLegFired } from './rangePendingLadderSync'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
+import { resolvePredefinedSlForEntry } from './manualPlanning/manualStops'
 import { resolveFiringLegStops, syncRangeBasketTakeProfits, toRangeBasketParsedSlice } from './rangeBasketTpSync'
 import {
   hasWorkOnShard,
@@ -1134,6 +1135,21 @@ export class VirtualPendingMonitor {
 
     // Last-second SL/TP clamp using the fire-time quote as the reference.
     const refPrice = leg.is_buy ? fireAsk : fireBid
+    const manual = normalizeManualSettingsForExecution(
+      await this.loadManualSettingsForLeg(leg.broker_account_id, channelIdForTrade),
+    )
+    const predefinedSlFromFire = resolvePredefinedSlForEntry({
+      manual,
+      entry: refPrice,
+      isBuy: leg.is_buy,
+      symbol: leg.symbol,
+      point: params?.point,
+      digits: params?.digits,
+      contractSize: params?.contractSize,
+    })
+    if (predefinedSlFromFire != null) {
+      args.stoploss = predefinedSlFromFire
+    }
     if (params) {
       const clamped = this.clampOrderStops(args, refPrice, params)
       if (clamped.adjustments.length) {
@@ -1156,6 +1172,11 @@ export class VirtualPendingMonitor {
         )
       }
       Object.assign(args, cleanup.args)
+      // Shared basket SL is often on the wrong side of a deeper range fill and
+      // gets dropped. Restore Override signal SL from this fire price.
+      if (predefinedSlFromFire != null && !(Number(args.stoploss) > 0)) {
+        args.stoploss = predefinedSlFromFire
+      }
     }
 
     const t0 = Date.now()
@@ -1176,7 +1197,19 @@ export class VirtualPendingMonitor {
         + (result.openedNaked ? ' naked=1' : ''),
       )
       const entryPx = result.openPrice ?? refPrice ?? null
-      const desiredSl = Number(args.stoploss) > 0 ? Number(args.stoploss) : null
+      const predefinedSlFromFill = entryPx != null
+        ? resolvePredefinedSlForEntry({
+            manual,
+            entry: entryPx,
+            isBuy: leg.is_buy,
+            symbol: leg.symbol,
+            point: params?.point,
+            digits: params?.digits,
+            contractSize: params?.contractSize,
+          })
+        : null
+      const desiredSl = predefinedSlFromFill
+        ?? (Number(args.stoploss) > 0 ? Number(args.stoploss) : null)
       const desiredTp = Number(args.takeprofit) > 0 ? Number(args.takeprofit) : null
       const brokerSl = Number(result.stopLoss) > 0 ? Number(result.stopLoss) : null
       const brokerTp = Number(result.takeProfit) > 0 ? Number(result.takeProfit) : null
@@ -1185,7 +1218,6 @@ export class VirtualPendingMonitor {
       // think the leg was done while MT still had SL=0/TP=0.
       const persistSl = result.openedNaked ? null : (brokerSl ?? desiredSl)
       const persistTp = result.openedNaked ? null : (brokerTp ?? desiredTp)
-      const manual = await this.loadManualSettingsForLeg(leg.broker_account_id, channelIdForTrade)
       const pipSize = signalPipPrice(leg.symbol)
       const autoBeCols = autoManagementTradeSnapshot(manual, entryPx, desiredSl ?? persistSl, {
         tpHitTriggerPrice: entryPx != null

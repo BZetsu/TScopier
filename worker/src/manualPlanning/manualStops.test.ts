@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { deriveManualStopsWithClamp } from './manualStops'
+import { deriveManualStopsWithClamp, resolvePredefinedSlForEntry } from './manualStops'
 
 const baseCtx = {
   point: 0.0001,
@@ -74,3 +74,37 @@ test('deriveManualStopsWithClamp: predefined TP ignores signal TP prices', () =>
   assert.equal(Number(finalTps[1]!.toFixed(5)), Number((entry + 40 * pip).toFixed(5)))
   assert.notEqual(Number(finalTps[0]!.toFixed(5)), 1.5)
 })
+
+test('resolvePredefinedSlForEntry: 80 pips from fill, even when shared SL would be dropped', () => {
+  const manual = { use_predefined_sl_pips: true as const, predefined_sl_pips: 80 }
+  const buyFill = 1990
+  const sharedBuySl = 1992
+  const buySl = resolvePredefinedSlForEntry({
+    manual,
+    entry: buyFill,
+    isBuy: true,
+    symbol: 'XAUUSD',
+    point: 0.01,
+    digits: 2,
+    contractSize: 100,
+  })
+  assert.equal(buySl, 1982)
+  assert.ok(buySl! < buyFill)
+  assert.ok(!(sharedBuySl < buyFill), 'shared basket SL sits on the wrong side of this fill')
+
+  const sellFill = 2010
+  const sharedSellSl = 2008
+  const sellSl = resolvePredefinedSlForEntry({
+    manual,
+    entry: sellFill,
+    isBuy: false,
+    symbol: 'XAUUSD',
+    point: 0.01,
+    digits: 2,
+    contractSize: 100,
+  })
+  assert.equal(sellSl, 2018)
+  assert.ok(sellSl! > sellFill)
+  assert.ok(!(sharedSellSl > sellFill), 'shared basket SL sits on the wrong side of this fill')
+})
+
