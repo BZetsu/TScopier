@@ -5,6 +5,8 @@ import {
   runBasketLegModifies,
   type BasketOpenLeg,
   type BasketSymbolParams,
+  type LegModifyError,
+  type RunBasketLegModifyResult,
 } from './basketSlTpReconcile'
 import {
   channelParamsPredateBasket,
@@ -30,6 +32,9 @@ import type { PlannerResult } from './manualPlanner'
 import { mergePlanImmediateOrders } from './multiTradeMerge'
 import { syncBrokerPendingStopsForBasket } from './brokerPendingStopsSync'
 import { captureDeferredBusinessFailure } from './observability/deferredBusinessEvents'
+import { classifyBrokerFailureReason } from './observability/businessEvents'
+import { isInvalidStopsError } from './orderModifySafe'
+import { isBenignOrderModifyError, isPositionGoneError } from './orderModifyBenign'
 
 export type RangeBasketParsedSlice = {
   sl?: number | null
@@ -298,6 +303,64 @@ export function rangeBasketTpRebalanceStatus(args: {
 }): 'skipped' | 'success' | 'failed' {
   if (args.skippedReason) return 'skipped'
   return args.modified > 0 || args.attempted === 0 ? 'success' : 'failed'
+}
+
+const MAX_FAILED_LEG_DIAGNOSTICS = 5
+
+export function classifyBasketTpSyncLegFailure(error: Pick<LegModifyError, 'error' | 'skip_reason'>): string {
+  if (error.skip_reason === 'skipped_not_on_broker') return 'POSITION_GONE'
+  const message = String(error.error ?? '')
+  if (isPositionGoneError(message)) return 'POSITION_GONE'
+  if (isBenignOrderModifyError(message)) return 'BENIGN_ORDER_MODIFY'
+  if (isInvalidStopsError(message)) return 'INVALID_STOPS'
+  return classifyBrokerFailureReason(message)
+}
+
+function countByValue(values: string[]): Record<string, number> {
+  return values.reduce<Record<string, number>>((acc, value) => {
+    acc[value] = (acc[value] ?? 0) + 1
+    return acc
+  }, {})
+}
+
+export function summarizeBasketTpSyncFinalFailure(
+  result: RunBasketLegModifyResult,
+  familyTrades: BasketOpenLeg[],
+): Record<string, unknown> {
+  const byTradeId = new Map(familyTrades.map(tr => [tr.id, tr]))
+  const categories = result.legErrors.map(classifyBasketTpSyncLegFailure)
+  const primary = categories[0] ?? 'UNKNOWN_MODIFY_FAILURE'
+  const failedLegDiagnostics = result.legErrors.slice(0, MAX_FAILED_LEG_DIAGNOSTICS).map((legError, index) => {
+    const trade = byTradeId.get(legError.trade_id)
+    return {
+      trade_id: legError.trade_id,
+      ticket: legError.ticket,
+      leg_index: legError.leg_index,
+      failure_category: categories[index] ?? classifyBasketTpSyncLegFailure(legError),
+      desired_sl: legError.target_sl,
+      desired_tp: legError.target_tp,
+      current_sl: trade?.sl ?? null,
+      current_tp: trade?.tp ?? null,
+      skip_reason: legError.skip_reason ?? null,
+    }
+  })
+
+  return {
+    partial_success: result.summary.modified > 0 && result.summary.failed > 0,
+    total_failure: result.summary.modified === 0 && result.summary.failed > 0,
+    final_retry_exhausted: true,
+    retry_pass_count: 1,
+    underlying_failure_category: primary,
+    underlying_failure_categories: countByValue(categories),
+    failed_leg_diagnostic_count: result.legErrors.length,
+    failed_leg_diagnostics_truncated: result.legErrors.length > MAX_FAILED_LEG_DIAGNOSTICS,
+    failed_leg_diagnostics: failedLegDiagnostics,
+    skipped_no_ticket_count: result.summary.skippedNoTicket,
+    skipped_not_on_broker_count: result.summary.skippedNotOnBroker,
+    skipped_unfixable_count: result.summary.skippedUnfixable,
+    benign_modify_count: result.summary.benignModify,
+    position_gone_like_count: result.summary.positionGone,
+  }
 }
 
 async function logRangeBasketTpRebalance(
@@ -955,6 +1018,10 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
             skippedNotOnBroker: retryResult.summary.skippedNotOnBroker,
             skippedUnfixable: (modifyResult.summary.skippedUnfixable ?? 0)
               + (retryResult.summary.skippedUnfixable ?? 0),
+            benignModify: (modifyResult.summary.benignModify ?? 0)
+              + (retryResult.summary.benignModify ?? 0),
+            positionGone: (modifyResult.summary.positionGone ?? 0)
+              + (retryResult.summary.positionGone ?? 0),
           },
           legErrors: retryResult.legErrors,
           modifiedTradeIds: [
@@ -1010,6 +1077,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
           phase: effectivePhase,
           frozen,
           user_visible_state_may_be_stale: true,
+          ...summarizeBasketTpSyncFinalFailure(modifyResult, familyTrades),
         },
       },
     })

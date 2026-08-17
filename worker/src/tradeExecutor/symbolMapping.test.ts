@@ -87,3 +87,89 @@ test('resolveBrokerSymbolFromInventory: does not pick BarrickGold for XAUUSD', (
   const resolved = resolveBrokerSymbolFromInventory(noopCtx, inv, 'XAUUSD')
   assert.equal(resolved, 'XAUUSD')
 })
+
+test('resolveBrokerSymbolFromInventory: NAS100 resolves to US100', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['US100']), 'NAS100'), 'US100')
+})
+
+test('resolveBrokerSymbolFromInventory: NAS100 resolves to USTEC', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['USTEC']), 'NAS100'), 'USTEC')
+})
+
+test('resolveBrokerSymbolFromInventory: NAS100 resolves to NDX', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['NDX']), 'NAS100'), 'NDX')
+})
+
+test('resolveBrokerSymbolFromInventory: NAS100 resolves to NASDAQ100', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['NASDAQ100']), 'NAS100'), 'NASDAQ100')
+})
+
+test('resolveBrokerSymbolFromInventory: NAS100 resolves to suffixed index alias', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['USTEC.a']), 'NAS100'), 'USTEC.a')
+})
+
+test('resolveBrokerSymbolFromInventory: NAS100 resolves to prefixed index alias', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['mUS100']), 'NAS100'), 'mUS100')
+})
+
+test('resolveBrokerSymbolFromInventory: manual mapping beats automatic index aliasing', () => {
+  const broker = {
+    manual_settings: { symbol_mapping: { NAS100: 'NAS100.cash' } },
+  } as unknown as BrokerRow
+  const mapped = applySymbolMapping('NAS100', broker)
+  assert.equal(mapped.symbol, 'NAS100.CASH')
+  assert.equal(mapped.userDecorated, true)
+  assert.equal(
+    resolveBrokerSymbolFromInventory(noopCtx, inventory(['US100', 'NAS100.CASH']), mapped.symbol, {
+      userDecorated: mapped.userDecorated,
+    }),
+    'NAS100.CASH',
+  )
+})
+
+test('resolveBrokerSymbolFromInventory: exact NAS100 beats aliases', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['NAS100', 'US100']), 'NAS100'), 'NAS100')
+})
+
+test('resolveBrokerSymbolFromInventory: ambiguous index aliases do not guess', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['US100', 'USTEC']), 'NAS100'), 'NAS100')
+})
+
+test('resolveBrokerSymbolFromInventory: empty inventory does not fabricate index aliases', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory([]), 'NAS100'), 'NAS100')
+})
+
+test('resolveBrokerSymbolFromInventory: unsupported symbol remains requested', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['US100']), 'MOON100'), 'MOON100')
+})
+
+test('resolveBrokerSymbolFromInventory: SP500 family resolves safely', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['SPX500']), 'US500'), 'SPX500')
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['S&P500']), 'SP500'), 'S&P500')
+})
+
+test('resolveBrokerSymbolFromInventory: Dow family resolves safely', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['DJ30']), 'US30'), 'DJ30')
+})
+
+test('resolveBrokerSymbolFromInventory: DAX family resolves safely', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['DE40.pro']), 'GER40'), 'DE40.pro')
+})
+
+test('resolveBrokerSymbolFromInventory: FTSE family resolves safely', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['FTSE100']), 'UK100'), 'FTSE100')
+})
+
+test('resolveBrokerSymbolFromInventory: Nikkei family resolves safely', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['NIKKEI225']), 'JP225'), 'NIKKEI225')
+})
+
+test('resolveBrokerSymbolFromInventory: FX behavior remains exact/prefix-suffix only', () => {
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['EURUSD', 'US100']), 'EURUSD'), 'EURUSD')
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inventory(['EURUSD.R']), 'EURUSD'), 'EURUSD.R')
+})
+
+test('resolveBrokerSymbolFromInventory: Deriv synthetic behavior remains specialized', () => {
+  const inv = inventory(['Volatility 75 Index', 'US100'])
+  assert.equal(resolveBrokerSymbolFromInventory(noopCtx, inv, 'R_75'), 'Volatility 75 Index')
+})

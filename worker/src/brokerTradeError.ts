@@ -69,8 +69,8 @@ function tradeFailureCopy(
       return {
         category: 'broker',
         title: 'Trade not copied - Broker symbol not found',
-        explanation: `We could not find the matching ${instrument} instrument on your broker account. Your broker may use a different symbol name.`,
-        recommendedAction: 'Check the instrument name in your broker terminal, then contact support if a custom symbol mapping is required.',
+        explanation: `We could not find ${instrument} or a supported equivalent on your broker account. Your broker may use a custom symbol name.`,
+        recommendedAction: 'Check the instrument name in your broker terminal, then add a symbol mapping or contact support.',
         retryable: false,
         userActionRequired: true,
       }

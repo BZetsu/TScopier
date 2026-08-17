@@ -109,6 +109,7 @@ describe('modifyLegSlTpWithFallback', () => {
     const out = await modifyLegSlTpWithFallback(api, 'u', 111, 4065, 4089)
     assert.equal(out.ok, true)
     assert.equal(out.slApplied, true)
+    assert.equal(out.benign, true)
     assert.equal(api.calls.length, 1)
   })
 
@@ -117,6 +118,7 @@ describe('modifyLegSlTpWithFallback', () => {
     const out = await modifyLegSlTpWithFallback(api, 'u', 111, 4065, 4089)
     assert.equal(out.ok, true, 'benign classification stays')
     assert.equal(out.positionGone, true, 'caller knows the position is gone')
+    assert.equal(out.benign, true)
     assert.equal(out.error, 'unknown ticket', 'original broker reply carried')
   })
 
