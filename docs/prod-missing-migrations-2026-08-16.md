@@ -1,195 +1,162 @@
 # Missing Production Migrations — TSCopier
 
-**Date:** 2026-08-16
+**Date checked:** 2026-08-16
 **Environment:** Production (`sxkpcovbyaficvtkpsdo`)
-**Status:** Verified missing via direct DB checks (not just the migration registry)
+**Status:** Verified missing by checking the database directly (not just the migration list)
 
 ---
 
 ## Summary
 
-Production is **behind staging by 4 migrations**. Two of them are a **live bug** —
-a deployed feature writes to a table that does not exist on prod. The other two
-are groundwork for a **dormant** (kill-switched) feature and are safe to defer.
+Production is **missing 4 database changes** that staging already has.
 
-| # | Migration | On prod? | Priority | Reason |
-|---|-----------|----------|----------|--------|
-| 1 | `20260810000000_trade_reports` | ❌ Missing | **HIGH** | Base table for trade reports — deployed code writes to it |
-| 2 | `20260816000000_trade_reports_signal_id` | ❌ Missing | **HIGH** | Depends on #1; adds `signal_id` column |
-| 3 | `20260730120000_layering_modes_foundation` | ❌ Missing | MEDIUM | Additive foundation columns (feature dormant) |
-| 4 | `20260731120000_layering_plans` | ❌ Missing | MEDIUM | Layering blueprint feature (feature dormant); depends on #3 |
+Two of them are a **live problem**: the app code is already running on production,
+and it writes to a place in the database that was never created. Right now, when
+a user clicks "Report" on a trade (or asks the assistant to report a trade), the
+action fails with an error.
 
-Production **already has** `enforce_plan_broker_channel_limits` (registered as
-`20260805082647`, functions + triggers verified live since 2026-08-05).
+The other two are **prep work for a feature that is switched off**. They are safe
+to wait.
+
+| # | Change | On prod? | Priority | Why |
+|---|--------|----------|----------|-----|
+| 1 | `20260810000000_trade_reports` | ❌ Missing | **HIGH** | The table where trade reports are stored — live code writes to it |
+| 2 | `20260816000000_trade_reports_signal_id` | ❌ Missing | **HIGH** | Adds a link from a report back to its signal; needs #1 first |
+| 3 | `20260730120000_layering_modes_foundation` | ❌ Missing | MEDIUM | Extra storage space for a future (off) feature |
+| 4 | `20260731120000_layering_plans` | ❌ Missing | MEDIUM | The future feature's main storage; needs #3 first |
+
+Production **already has** the broker-channel limits change
+(`20260805082647`), verified working since 2026-08-05.
 
 ---
 
-## What each missing migration does
+## What each change does
 
-### 1. `20260810000000_trade_reports` — HIGH priority (live bug)
+### 1. Trade reports table — HIGH priority (live problem)
 
-**Plain English:** Creates the `trade_reports` table — the queue where users file
-complaints about trades ("wrong entry", "wrong SL/TP", "not executed", etc.) for
-support staff to review. Both reporting paths insert into this table:
+**What it does:** Creates the `trade_reports` table — the place where user
+complaints about trades ("wrong entry", "wrong stop-loss", "not executed", etc.)
+are stored for support staff to review. Each report keeps a snapshot of the trade
+(symbol, direction, ticket, broker, entry price, stop-loss, take-profit, lot
+size), plus a category, a reason, and a status (`open` or `resolved`). Users can
+only see and file their **own** reports.
 
-- The **manual "Report" button** in the trade detail modal
-  (`src/components/trades/ReportTradeModal.tsx` — client-side INSERT).
-- The **in-app assistant** `report_trade` tool
-  (`supabase/functions/assistant-chat/index.ts`).
+**Where it's used in the code:**
+- **Manual report button:** `src/components/trades/ReportTradeModal.tsx` — saves
+  the report from the trade detail modal.
+- **Assistant report tool:** `supabase/functions/assistant-chat/index.ts` — the
+  assistant's `report_trade` tool saves a report the same way.
 
-**What it creates:**
-- `trade_reports` table: `user_id`, trade snapshot (`symbol`, `direction`,
-  `ticket`, `broker_label`, `entry_price`, `sl`, `tp`, `lot_size`), `category`,
-  `reason`, `status` (`open`/`resolved`), timestamps.
-- Row Level Security: users can insert/view only their **own** reports.
-- Indexes on `(user_id, created_at)` and `(status)`.
-
-**Impact without it:** Any attempt to file a trade report fails with
-`ERROR 42P01: relation "trade_reports" does not exist`. This is a live,
+**What happens without it:** Every attempt to file a report fails with
+`ERROR 42P01: relation "trade_reports" does not exist`. This is a real,
 user-facing defect on prod.
 
-### 2. `20260816000000_trade_reports_signal_id` — HIGH priority
+### 2. Link reports to their signal — HIGH priority
 
-**Plain English:** Adds a `signal_id` column so reports stay traceable back to
-the originating signal — including reports on **skipped / non-actionable**
-trades that have no symbol or ticket (which the assistant can now file).
+**What it does:** Adds a `signal_id` column to each trade report, so a report
+can point back to the signal it came from. This matters for **skipped or
+non-actionable** trades — the ones with no symbol or ticket — because the
+assistant can now file reports on those too, and support needs to know which
+signal the report was about. The column is optional and old reports are
+untouched.
 
-**What it creates:**
-- `trade_reports.signal_id` (nullable, backwards compatible).
-- Index `trade_reports_signal_idx` on `signal_id`.
+**Where it's used in the code:**
+- **Writer:** `supabase/functions/assistant-chat/index.ts` (`report_trade`) —
+  saves the `signal_id` when the assistant files a report, so it can be traced
+  back to the original signal.
+- Nothing else reads this column; it exists for support traceability.
 
-**Impact without it:** Once #1 is applied, reports still work — they just can't
-link to a signal. This column is required for the assistant's skipped-trade
-reporting fix to function correctly.
+**What happens without it:** Once change #1 is applied, reports still save —
+they just can't be linked back to their signal.
 
-### 3. `20260730120000_layering_modes_foundation` — MEDIUM (dormant feature)
+### 3. Storage space for future layering modes — MEDIUM (feature is off)
 
-**Plain English:** Prepares the `range_pending_legs` table (the ladder of pending
-orders for range trades) for future "static/dynamic" layering modes, where the
-ladder is planned up-front instead of built the legacy way. This migration only
-**adds empty columns** — existing rows are untouched and keep behaving exactly as
-before.
+**What it does:** Adds two empty boxes to the table that holds the ladder of
+pending orders for range trades: `layer_plan_id` (which plan a waiting order
+belongs to) and `layer_plan_metadata` (extra details about that link). It also
+adds an index so lookups are fast. Existing orders are untouched and behave
+exactly as before.
 
-**What it creates:**
-- `range_pending_legs.layer_plan_id` (text, nullable).
-- `range_pending_legs.layer_plan_metadata` (jsonb, nullable).
-- Partial index on `layer_plan_id`.
+**Where it's used in the code:**
+- **Writers:** `worker/src/manualPlanning/layeringPlanPersistence.ts` fills
+  these boxes on the waiting orders; `worker/src/layeringPlanLifecycle.ts` and
+  `worker/src/tradeExecutor/layeringModeBrokerPending.ts` read them as the
+  orders move through execution.
 
-### 4. `20260731120000_layering_plans` — MEDIUM (dormant feature)
+**What happens without it:** The worker code already writes and reads these
+boxes. On prod the boxes don't exist, so those writes fail **the moment** the
+feature is switched on. While the feature stays off, nothing breaks.
 
-**Plain English:** Creates the `layering_plans` table — the "blueprint" for
-static/dynamic range-layering ladders (mode, status lifecycle, frozen calculator
-metadata, semantic fingerprint), plus the `activate_layering_plan` function that
-materializes plans into executable legs. Adds many **nullable** columns to
-`range_pending_legs` and unique indexes preventing duplicate ladder steps. Pure
-additive — nothing executes Static/Dynamic until Phase D ships, and the feature
-is behind kill-switch flags (`LAYERING_MODES_EXECUTION_ENABLED`,
-`LAYERING_MODES_PREPARE_ONLY`) restricted to staging allowlisted accounts.
+### 4. Main storage for the future layering feature — MEDIUM (feature is off)
 
-**What it creates:**
-- `layering_plans` table (service-role only; no client access).
-- `activate_layering_plan(...)` function + layering-settings guard triggers.
-- Unique indexes: `(signal_id, broker_account_id, basket_key, mode)`,
-  `(layer_plan_id, step_idx)` on `range_pending_legs`, `(broker_account_id,
-  broker_client_reference)`.
-- 17 additive nullable columns on `range_pending_legs`
-  (`broker_client_reference`, `native_submission_status`, `submission_claimed_at`,
-  `cancellation_*`, `reconciliation_*`, etc.).
+**What it does:** Creates the `layering_plans` table — the saved plan for a
+range-trade ladder (which mode, its lifecycle status, the frozen calculator
+details, and a fingerprint to spot duplicate plans). It also adds the
+`activate_layering_plan` function that turns a saved plan into real waiting
+orders, plus a set of empty boxes on the waiting orders for tracking each order
+through the broker (submitted, waiting, confirmed, cancelled). Internal-only —
+users have no access to this table.
 
-**Dependency:** requires #3 first (its unique index on
-`range_pending_legs(layer_plan_id, step_idx)` needs the `layer_plan_id` column).
+**Needs #3 first:** its index on `range_pending_legs(layer_plan_id, step_idx)`
+requires the `layer_plan_id` column added in change #3.
 
----
+**Where it's used in the code:**
+- **Writer:** `worker/src/manualPlanning/layeringPlanPersistence.ts` — saves the
+  plan and calls `activate_layering_plan(...)` to turn it into waiting orders.
+- **Readers:** `worker/src/tradeExecutor/layeringModeBrokerPending.ts` (submits
+  orders and records their broker status), `layeringModeBrokerPendingRecovery.ts`
+  (reads the saved plan to resume after a restart),
+  `layeringPlanLifecycle.ts`, and `worker/src/virtualPendingMonitor.ts`.
 
-## Relevance to the codebase (plain English)
-
-### What "the bot" is
-
-By "the bot" this document means the **worker** — the software that runs the
-whole copy-trading machine on a server called Railway. There are two parts:
-
-- **The Listener** — sits inside Telegram and watches your signal channels.
-  When a channel posts "Buy XAUUSD now", the listener grabs it and decides if
-  it is a real trade signal or just a promo message.
-- **The Trade Worker** — takes a confirmed signal and sends the actual order to
-  your broker (through the FxSocket bridge into MT4/MT5). It handles entries,
-  take-profits, stop-losses, baskets (multi-leg trades), and management
-  messages.
-
-**In one line:** the worker is the robot that turns a Telegram message into a
-real trade on your trading account. The Trade Worker is the one that places
-range-layering orders.
-
-### Why these migrations matter for the worker
-
-These two migrations are not new ideas — they are the "database paperwork" for
-a trading feature the worker already knows how to do. Think of it like a
-contractor building a house:
-
-- **Migration 3** gives every waiting order a place to write down *"I belong to
-  blueprint #123"* — so the worker can tell which orders came from which plan.
-- **Migration 4** creates the actual blueprint *file* (the plan: how many
-  orders, at what prices) and gives each waiting order extra blank boxes to fill
-  in as it moves through the process (submitted, waiting, confirmed, cancelled).
-
-### Why the worker breaks without them
-
-The worker's code is already written to use these boxes. Today:
-
-- When a plan is activated, the worker writes the plan to a database table that
-  **does not exist on prod** → the write fails.
-- When it submits a pending order, it records the status in a **column that
-  does not exist on prod** → the write fails.
-- If the worker restarts mid-trade, it reads the saved plan to continue — but
-  there is **nowhere to read it from** → it cannot recover.
-
-So the migrations are the shelves and files the already-written software
-expects to find. **Staging has them; prod does not.** As long as the feature is
-switched off, nothing breaks. The moment anyone turns layering on, prod breaks —
-because the software would try to use space that was never created.
+**What happens without it:** With no table on prod, saving a plan fails; with no
+status boxes, tracking submitted orders fails; and if the worker restarts
+mid-trade, there is no saved plan to read, so it can't continue. Pure additive —
+nothing runs this feature until it's switched on, and it's behind kill-switch
+flags (`LAYERING_MODES_EXECUTION_ENABLED`, `LAYERING_MODES_PREPARE_ONLY`) that
+only allowlist staging accounts can use.
 
 ---
 
-## Verification evidence (how we know)
+## How we know this
 
-Same 5 queries run against **staging** (control — applied) and **prod**:
+We ran the same 5 checks against **staging** (which has the changes) and
+**prod**:
 
-| Check | Staging (control) | Prod |
-|-------|-------------------|------|
-| `to_regclass('public.trade_reports')` | `trade_reports` | `null` |
-| `information_schema.tables` (%report%) | found | `[]` |
-| `pg_tables` (%trade_report%) | found | `[]` |
-| `schema_migrations` (trade_reports) | both versions | `[]` |
-| `SELECT count(*) FROM trade_reports` | works (8 rows) | `42P01: relation does not exist` |
+| Check | Staging (has it) | Prod |
+|-------|------------------|------|
+| Does the `trade_reports` table exist? | Yes | No |
+| Any tables matching "%report%"? | Yes | None |
+| Any tables matching "%trade_report%"? | Yes | None |
+| Changes registered in the migration list? | Both versions | None |
+| Can we count the rows in `trade_reports`? | Yes (8 rows) | Error: table does not exist |
 
-Additional prod checks: `layering_plans` → `to_regclass` returns `null`;
-`range_pending_legs` has no `layer_plan_id` / `layer_plan_metadata` /
-`broker_client_reference` columns; no layering guard triggers present.
+Prod also fails the checks for the layering changes: no `layering_plans` table,
+no `layer_plan_id` / `layer_plan_metadata` / `broker_client_reference` columns
+on the waiting orders, and no layering guard triggers.
 
-The staging control proves the query method is sound — the prod negatives are
-real.
+Because staging passes the same checks, we know the checking method is sound —
+the prod failures are real.
 
 ---
 
-## What has to be done
+## What to do
 
-**Recommended: apply #1 and #2 to prod now** (they fix the live trade-report
-failure for both the manual modal and the assistant). Application path:
+**Recommended: apply changes #1 and #2 to prod now** — they fix the live
+trade-report failure for both the manual button and the assistant. Steps:
 
-1. Apply SQL via the Supabase Management API:
-   `POST https://api.supabase.com/v1/projects/{ref}/database/query` with
-   `Authorization: Bearer <token>` and body `{"query": "<sql>"}`.
-2. Register in `supabase_migrations.schema_migrations`:
-   `INSERT ... VALUES ('{version}', ARRAY['-- {name}'], '{name}') ON CONFLICT (version) DO NOTHING`.
-3. Verify objects exist (table, column, indexes) — mirror the evidence above.
+1. Run the SQL against the prod database (via the Supabase Management API, using
+   an admin token).
+2. Register the changes in the `supabase_migrations` list so the migration
+   tracker knows they were applied.
+3. Re-check that the table, column, and indexes exist.
 
-**Decision needed:** whether to also apply #3 and #4 to prod. They are additive
-and dormant; apply them to keep prod in lockstep with staging, or defer until the
-layering feature is scheduled for rollout.
+**Decision needed:** whether to also apply #3 and #4 to prod now, or wait until
+the layering feature is scheduled. They're safe either way — they don't change
+anything until the feature is switched on.
 
-**Also pending (code, not migration):** redeploy the `assistant-chat` edge
-function to staging then prod with the skipped-trade `report_trade` fix (the
-code is committed in the working tree; the function is deployed manually).
+**Also pending (code, not a database change):** redeploy the `assistant-chat`
+edge function to staging then prod with the skipped-trade `report_trade` fix
+(the code is committed; the function is deployed manually).
 
 ---
 
