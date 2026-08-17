@@ -529,7 +529,7 @@ export const configureModalFr: ConfigureModalTranslations = {
     addToExisting: 'Ajouter une position à l’existant',
     closeOpposite: 'Fermer sur signal opposé',
     reverseHint:
-      'Inverser : inverse achat/vente uniquement si le signal a un prix ou une zone d’entrée et que SL et TP prédéfinis sont activés avec des valeurs en pips positives — le risque miroir utilise votre modèle, pas les stops du canal.',
+      'Inverser : un achat du canal est copié en vente, et une vente en achat. Les SL/TP prédéfinis (pips depuis l’entrée) s’appliquent au sens inversé. Sinon, les SL/TP du signal sont miroir autour de l’entrée.',
     closeOppositeHint:
       'Fermer sur opposé : en mode manuel, un nouvel achat/vente du canal ferme les positions ouvertes sur le même symbole en sens inverse (direction du canal, avant inversion), annule leurs ordres en attente virtuels de range, puis exécute le nouveau plan.',
     addExistingHint:

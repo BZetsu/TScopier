@@ -529,7 +529,7 @@ export const configureModalEs: ConfigureModalTranslations = {
     addToExisting: 'Añadir operación a posición existente',
     closeOpposite: 'Cerrar con señal opuesta',
     reverseHint:
-      'Invertir: invierte compra/venta solo si la señal tiene precio o zona de entrada y SL y TP predefinidos están activos con valores en pips positivos, de modo que el riesgo reflejado use su plantilla, no los stops del canal.',
+      'Invertir: una compra del canal se copia como venta, y una venta como compra. Los SL/TP predefinidos (pips desde la entrada) se aplican al lado invertido. Si están apagados, los SL/TP de la señal se reflejan alrededor de la entrada.',
     closeOppositeHint:
       'Cerrar con opuesta: en modo manual, una nueva compra/venta del canal cierra operaciones abiertas del mismo símbolo en sentido contrario (dirección del canal, antes de invertir), cancela sus pendientes virtuales de rango y luego ejecuta el nuevo plan.',
     addExistingHint:

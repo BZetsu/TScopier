@@ -19,7 +19,13 @@ import { resolveMultiTradeTargetUnits, multiTradeUnitsToLot } from './multiTrade
 import { resolveRangeDistancePips } from './signalEntryRange'
 import { resolvedParsedEntryZone } from './parsedEntry'
 import { normalizeAutoBeConfig, resolveAutoBeTpHitTriggerPrice } from '../autoManagement'
-import { predefinedSlPriceFromEntry, resolvePredefinedSlPips } from './manualStops'
+import {
+  matchPredefinedTpPipsIndex,
+  predefinedSlPriceFromEntry,
+  predefinedTpPriceFromEntry,
+  resolvePredefinedSlPips,
+  resolvePredefinedTpPips,
+} from './manualStops'
 
 export interface PlanMultiManualOrdersArgs {
   parsed: ParsedSignal
@@ -246,6 +252,21 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     return finalSl
   }
 
+  const triggerForRangeStep = (stepIdx: number): number | null => {
+    if (entryAnchor == null || entryAnchor <= 0) return null
+    const trigger = rangeLayerTriggerForStep({
+      stepIdx,
+      leg: { stepPriceOffset, isBuy },
+      anchor: entryAnchor,
+      digits: rangeDigits,
+      legCount: rangeLegCount,
+      rangeLayering: rangeLayeringMeta,
+      pip,
+      triggerMap: rangeTriggerMap,
+    })
+    return trigger > 0 ? trigger : null
+  }
+
   const tpForRangeIndex = (idx: number): number | null => {
     if (finalTps.length === 0) return null
     if (
@@ -294,6 +315,30 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     const price = rangeTpPrices[idx]
     if (typeof price === 'number' && Number.isFinite(price) && price > 0) return price
     return finalTps[finalTps.length - 1] ?? null
+  }
+
+  const takeprofitForRangeStep = (idx: number): number | null => {
+    const assigned = tpForRangeIndex(idx)
+    const tpPips = resolvePredefinedTpPips(manual)
+    const trigger = triggerForRangeStep(idx + 1)
+    if (tpPips != null && trigger != null && entryAnchor != null && entryAnchor > 0) {
+      const bucket = matchPredefinedTpPipsIndex({
+        existingTp: assigned,
+        entry: entryAnchor,
+        isBuy,
+        pip,
+        tpPips,
+      })
+      const tp = predefinedTpPriceFromEntry({
+        entry: trigger,
+        isBuy,
+        pip,
+        tpPips: tpPips[bucket] ?? tpPips[0]!,
+        digits: rangeDigits,
+      })
+      if (tp != null) return tp
+    }
+    return assigned
   }
 
   // Teaser / no-TP signals: never burst-split into N *full-lot* clones.
@@ -465,7 +510,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     // Unique stepIdx 1..N — never cycle/modulo (that caused duplicate broker limits).
     for (let i = 0; i < rangeLegCount; i++) {
       const stepIdx = i + 1
-      const tpPrice = tpForRangeIndex(i)
+      const tpPrice = takeprofitForRangeStep(i)
       virtualPendings.push({
         stepIdx,
         stepPriceOffset,

@@ -580,15 +580,6 @@ function normalizeManualSettings(
   }
 }
 
-/** Settings required for reverse flip (planner also requires signal entry anchor at runtime). */
-function reverseSignalPlannerGateSettingsOk(ms: ManualSettings): boolean {
-  if (ms.use_predefined_sl_pips !== true || ms.use_predefined_tp_pips !== true) return false
-  const sl = Number(ms.predefined_sl_pips)
-  if (!Number.isFinite(sl) || sl <= 0) return false
-  const tps = (ms.predefined_tp_pips ?? []).map(Number).filter(n => Number.isFinite(n) && n > 0)
-  return tps.length > 0
-}
-
 function getPlatformIconPath(platform: string): string | null {
   const key = platform.trim()
   if (!key) return null
@@ -4177,9 +4168,7 @@ export function AccountConfigPage() {
                                   hint={cm.strategy.reverseHint}
                                   value={ms.reverse_signal ? 'yes' : 'no'}
                                   onChange={e => {
-                                    const v = e.target.value === 'yes'
-                                    if (v && !reverseSignalPlannerGateSettingsOk(ms)) return
-                                    setManual({ reverse_signal: v })
+                                    setManual({ reverse_signal: e.target.value === 'yes' })
                                   }}
                                   options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
                                 />

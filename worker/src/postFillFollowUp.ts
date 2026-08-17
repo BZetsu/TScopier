@@ -15,7 +15,7 @@ import {
 import { findActiveNewsBlackout } from './newsTrading/blackout'
 import { getCalendarEventsCached } from './newsTrading/calendarProvider'
 import { isNewsTradingEnabled } from './newsTrading/settings'
-import { deriveManualStopsWithClamp } from './manualPlanning/manualStops'
+import { deriveManualStopsWithClamp, resolvePredefinedSlPips, resolvePredefinedTpPips } from './manualPlanning/manualStops'
 import { usesPredefinedStops } from './manualPlanning/manualStops'
 import { lastPositiveParsedTpPrice } from './manualPlanning/parsedEntry'
 import type { ChannelKeywords, ManualSettings, ParsedSignal } from './manualPlanning/types'
@@ -106,9 +106,10 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
   const manual = (broker.manual_settings ?? {}) as ManualSettings
   const isMulti = (manual.trade_style ?? 'single') === 'multi'
   // Multi legs already carry per-bucket TPs; flattening to tp[0] here was wrong.
-  // Still stamp Override signal SL from *this* fill when that setting is on.
-  const multiPredefinedSlOnly = isMulti && manual.use_predefined_sl_pips === true
-  if (isMulti && !multiPredefinedSlOnly) {
+  // Still stamp Override signal SL/TP from *this* fill when those settings are on.
+  const multiPredefinedSl = isMulti && resolvePredefinedSlPips(manual) != null
+  const multiPredefinedTp = isMulti && resolvePredefinedTpPips(manual) != null
+  if (isMulti && !multiPredefinedSl && !multiPredefinedTp) {
     return
   }
   const parsedIsBuy = !String(parsed.action ?? '').toLowerCase().includes('sell')
@@ -161,7 +162,16 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
         entryAnchor: entry,
         isBuy,
       })
-      if (derived.finalSl != null) targetSl = derived.roundPrice(derived.finalSl)
+      if (multiPredefinedSl && derived.finalSl != null) targetSl = derived.roundPrice(derived.finalSl)
+      if (multiPredefinedTp && derived.finalTps.length) {
+        const existing = Number(leg.openTp)
+        const picked = Number.isFinite(existing) && existing > 0
+          ? derived.finalTps.reduce((best, tp) => (
+            Math.abs(tp - existing) < Math.abs(best - existing) ? tp : best
+          ), derived.finalTps[0]!)
+          : derived.finalTps[0]!
+        targetTp = derived.roundPrice(picked)
+      }
     } else if (hasPartialTpSchedule && plannedBrokerTp != null && plannedBrokerTp > 0) {
       targetTp = plannedBrokerTp
     } else if (usesPredefinedStops(manual)) {
@@ -187,28 +197,35 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
 
     const stripped = stripInvalidStopsForSide({
       stoploss: Number(targetSl) || 0,
-      takeprofit: isMulti ? 0 : (Number(targetTp) || 0),
+      takeprofit: (isMulti && !multiPredefinedTp) ? 0 : (Number(targetTp) || 0),
       referencePrice: entry,
       isBuy,
     })
     const newSl = stripped.stoploss > 0 ? stripped.stoploss : null
-    const newTp = isMulti
+    const newTp = (isMulti && !multiPredefinedTp)
       ? leg.openTp
       : (stripped.takeprofit > 0 ? stripped.takeprofit : null)
     const slChanged = newSl != null && newSl !== leg.openSl
-    const tpChanged = !isMulti && newTp != null && newTp !== leg.openTp
+    const tpChanged = newTp != null && newTp !== leg.openTp && (!isMulti || multiPredefinedTp)
     if (!slChanged && !tpChanged) continue
 
     try {
-      await api.orderModify(uuid, isMulti
-        ? { ticket: leg.ticket, stoploss: newSl }
-        : { ticket: leg.ticket, stoploss: newSl, takeprofit: newTp })
+      const modifyArgs: { ticket: number; stoploss?: number | null; takeprofit?: number | null } = {
+        ticket: leg.ticket,
+      }
+      if (slChanged) modifyArgs.stoploss = newSl
+      if (tpChanged) modifyArgs.takeprofit = newTp
+      await api.orderModify(uuid, modifyArgs)
       if (leg.tradeRowId) {
-        const patch = isMulti ? { sl: newSl } : { sl: newSl, tp: newTp }
-        await args.supabase
-          .from('trades')
-          .update(patch)
-          .eq('id', leg.tradeRowId)
+        const patch: { sl?: number | null; tp?: number | null } = {}
+        if (slChanged) patch.sl = newSl
+        if (tpChanged) patch.tp = newTp
+        if (Object.keys(patch).length > 0) {
+          await args.supabase
+            .from('trades')
+            .update(patch)
+            .eq('id', leg.tradeRowId)
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
