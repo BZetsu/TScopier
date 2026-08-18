@@ -178,6 +178,7 @@ export const fr: Translations = {
         noTrades: 'Aucune transaction récente trouvée.',
         ticket: 'Ticket',
         legs: 'Jambes',
+        viewDetails: 'Voir les détails',
         statusExecuted: 'Exécutée',
         statusFailed: 'Échouée',
         statusSkipped: 'Ignorée',

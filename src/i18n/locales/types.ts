@@ -153,6 +153,7 @@ export interface NavTranslations {
       noTrades: string
       ticket: string
       legs: string
+      viewDetails: string
       statusExecuted: string
       statusFailed: string
       statusSkipped: string

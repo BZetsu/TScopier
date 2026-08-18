@@ -86,8 +86,22 @@ describe('tradeFailureReasonFromCode', () => {
     assert.equal(reason?.category, 'signal')
     assert.equal(reason?.retryable, false)
     assert.equal(reason?.userActionRequired, true)
+    assert.match(reason?.title ?? '', /SL not given/i)
+    assert.match(reason?.title ?? '', /predefined SL pips/i)
     assert.match(reason?.explanation ?? '', /premium\/VIP subscribers/i)
+    assert.match(reason?.explanation ?? '', /Override signal SL/i)
     assert.doesNotMatch(reason?.explanation ?? '', /\b\d+(?:\.\d+)?\b/)
+  })
+
+  it('maps TP-without-SL to the same predefined-SL hint after uppercase lookup', () => {
+    const reason = tradeFailureReasonFromCode('entry_tp_without_sl', {
+      missingField: 'stop_loss',
+    })
+    assert.equal(reason?.reasonCode, 'ENTRY_TP_WITHOUT_SL')
+    assert.match(reason?.title ?? '', /SL not given/i)
+    assert.match(reason?.title ?? '', /predefined SL pips/i)
+    assert.match(reason?.explanation ?? '', /take-profit/i)
+    assert.match(reason?.recommendedAction ?? '', /Override signal SL/i)
   })
 
   it('maps legacy SYMBOL_UNSUPPORTED to the broker-symbol user contract', () => {

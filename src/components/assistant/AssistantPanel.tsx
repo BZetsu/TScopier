@@ -9,6 +9,8 @@ import { useUserProfile } from '../../context/UserProfileContext'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import { useAuth } from '../../context/AuthContext'
 import { useLocale, useT } from '../../context/LocaleContext'
+import { supabase } from '../../lib/supabase'
+import type { Signal } from '../../types/database'
 import {
   executeAssistantAction,
   postAssistantChat,
@@ -39,16 +41,41 @@ import {
 import { AssistantChatBubble, AssistantTypingIndicator } from './AssistantChatBubble'
 import { AssistantTelegramLinkCard } from './AssistantTelegramLinkCard'
 import { AssistantBrokerConnectCard } from './AssistantBrokerConnectCard'
-import { AssistantTradesCard } from './AssistantTradesCard'
+import { AssistantTradesCard, type AssistantTradeRow } from './AssistantTradesCard'
+import { CopierLogDetailModal } from '../dashboard/CopierLogDetailModal'
 import { Button } from '../ui/Button'
 import clsx from 'clsx'
 import { ensureFreshAuthSession } from '../../lib/fxsocketBroker'
+
+type DetailStatusVariant = 'success' | 'warning' | 'error' | 'neutral' | 'primary'
+
+function detailStatusFor(
+  status: string,
+  copierLogs: ReturnType<typeof useT>['copierLogs'],
+): { variant: DetailStatusVariant; label: string } {
+  switch (status) {
+    case 'executed':
+      return { variant: 'success', label: copierLogs.statusExecuted }
+    case 'skipped':
+      return { variant: 'warning', label: copierLogs.statusSkipped }
+    case 'failed':
+    case 'error':
+      return { variant: 'error', label: copierLogs.statusFailed }
+    case 'pending':
+      return { variant: 'neutral', label: copierLogs.statusPending }
+    case 'parsed':
+    case 'dispatched':
+      return { variant: 'primary', label: copierLogs.statusParsed }
+    default:
+      return { variant: 'neutral', label: status }
+  }
+}
 
 export function AssistantPanel() {
   const t = useT()
   const { locale } = useLocale()
   const navigate = useNavigate()
-  const { session } = useAuth()
+  const { session, user } = useAuth()
   const { openAddTradingAccount, requestConfigureBroker } = useAddTradingAccount()
   const { openLiveChat } = useLiveChat()
   const { refreshProfile } = useUserProfile()
@@ -78,6 +105,11 @@ export function AssistantPanel() {
   const [error, setError] = useState('')
   const [confirmBusy, setConfirmBusy] = useState<string | null>(null)
   const [toolResults, setToolResults] = useState<Array<{ tool: string; result: string }>>([])
+  const [detailInfo, setDetailInfo] = useState<{
+    signal: Signal
+    channelName: string
+    symbol: string
+  } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -127,9 +159,40 @@ export function AssistantPanel() {
     setPendingConfirmations([])
     setPendingClientActions([])
     setToolResults([])
+    setDetailInfo(null)
     resetTelegramLinkFlow()
     resetBrokerConnectFlow()
     setError('')
+  }
+
+  const handleCloseAssistant = () => {
+    setDetailInfo(null)
+    closeAssistant()
+  }
+
+  const handleTradeClick = async (trade: AssistantTradeRow) => {
+    if (!trade.signal_id || sending) return
+    setError('')
+    try {
+      const { data, error } = await supabase
+        .from('signals')
+        .select('*')
+        .eq('id', trade.signal_id)
+        .eq('user_id', user?.id)
+        .maybeSingle()
+      if (error) throw new Error(error.message)
+      if (!data) {
+        setError(a.tradesCard.noTrades)
+        return
+      }
+      setDetailInfo({
+        signal: data as Signal,
+        channelName: trade.channel ?? '—',
+        symbol: trade.symbol ?? '—',
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : a.errorFallback)
+    }
   }
 
   const applySideEffects = async (
@@ -498,7 +561,7 @@ export function AssistantPanel() {
         type="button"
         className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
         aria-label={a.close}
-        onClick={closeAssistant}
+        onClick={handleCloseAssistant}
       />
       <div
         className={clsx(
@@ -525,7 +588,7 @@ export function AssistantPanel() {
           </button>
           <button
             type="button"
-            onClick={closeAssistant}
+            onClick={handleCloseAssistant}
             className="rounded-lg p-2 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             aria-label={a.close}
           >
@@ -579,6 +642,7 @@ export function AssistantPanel() {
               tool={tr.tool}
               result={tr.result}
               copy={a.tradesCard}
+              onTradeClick={handleTradeClick}
             />
           ))}
 
@@ -772,6 +836,16 @@ export function AssistantPanel() {
           </div>
         </footer>
       </div>
+
+      {detailInfo ? (
+        <CopierLogDetailModal
+          signal={detailInfo.signal}
+          channelName={detailInfo.channelName}
+          symbol={detailInfo.symbol}
+          status={detailStatusFor(detailInfo.signal.status, t.copierLogs)}
+          onClose={() => setDetailInfo(null)}
+        />
+      ) : null}
     </div>,
     document.body,
   )

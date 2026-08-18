@@ -486,7 +486,7 @@ test('channelWorkerLogMessage: HTTP 500 with symbol shows mapping guidance', () 
   assert.ok(message, 'expected a user-facing message')
   assert.ok(!message!.includes('HTTP 500'), `still shows raw HTTP 500: ${message}`)
   assert.ok(
-    message!.includes('GOLD#') || message!.includes('different name') || message!.includes('XAUUSD'),
+    message!.includes('GOLD#') || message!.includes('symbol mapping') || message!.includes('custom symbol') || message!.includes('XAUUSD'),
     `expected broker symbol guidance, got: ${message}`,
   )
 })
@@ -510,7 +510,7 @@ test('channelWorkerLogMessage: Symbol not found uses mapping guidance', () => {
     { 'ch-1': 'Gold Trader Mo' },
   )
   assert.ok(message?.includes('XAUUSD'))
-  assert.ok(message?.includes('Broker symbol not found') || message?.includes('different name'))
+  assert.ok(message?.includes('Broker symbol not found') || message?.includes('symbol mapping') || message?.includes('custom symbol'))
 })
 
 test('channelWorkerLogMessage: structured missing SL reason uses central friendly copy', () => {
@@ -524,9 +524,9 @@ test('channelWorkerLogMessage: structured missing SL reason uses central friendl
         trade_failure: {
           reasonCode: 'SIGNAL_MISSING_REQUIRED_SL',
           category: 'signal',
-          title: 'Trade not copied - Stop Loss missing',
-          explanation: 'The signal did not include a usable Stop Loss price. The provider appears to have reserved the Stop Loss for premium/VIP subscribers.',
-          recommendedAction: 'Check the original signal before copying this trade.',
+          title: 'SL not given — set predefined SL pips in broker configuration',
+          explanation: 'The signal did not include a usable Stop Loss (often reserved for premium/VIP subscribers). Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can still place the trade.',
+          recommendedAction: 'Open Account Configuration for this broker, turn on Override signal SL, and set Stop loss (pips from entry).',
           retryable: false,
           userActionRequired: true,
           safeContext: { missingField: 'stop_loss', withheldByProvider: true },
@@ -545,8 +545,36 @@ test('channelWorkerLogMessage: structured missing SL reason uses central friendl
     { 'ch-1': 'Gold Trader Mo' },
   )
   assert.ok(message)
-  assert.match(message!, /Stop Loss missing/i)
+  assert.match(message!, /SL not given/i)
+  assert.match(message!, /predefined SL pips/i)
   assert.doesNotMatch(message!, /SIGNAL_MISSING_REQUIRED_SL/)
+})
+
+test('channelWorkerLogMessage: TP-without-SL skip tells user to set predefined SL pips', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'dispatch_skipped',
+      status: 'skipped',
+      request_payload: {
+        skip_reason: 'entry_tp_without_sl',
+        reason_code: 'entry_tp_without_sl',
+      },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+        status: 'skipped',
+        skip_reason: 'entry_tp_without_sl',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Gold Trader Mo' },
+  )
+  assert.ok(message)
+  assert.match(message!, /SL not given/i)
+  assert.match(message!, /predefined SL pips/i)
+  assert.doesNotMatch(message!, /entry tp without sl/i)
 })
 
 test('channelWorkerLogMessage: hides unlinked channel mgmt-style skipped remap', () => {

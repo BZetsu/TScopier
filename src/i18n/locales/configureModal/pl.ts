@@ -488,7 +488,7 @@ export const configureModalPl: ConfigureModalTranslations = {
     reverseSignal: 'Sygnał cofania',
     addToExisting: 'Dodaj nową transakcję do istniejącej',
     closeOpposite: 'Zamknij po przeciwnym sygnale',
-    reverseHint: 'Odwrotne: odwraca opcję kupna/sprzedaży tylko wtedy, gdy sygnał ma cenę wejściową lub strefę, a zarówno predefiniowane SL, jak i TP są włączone z dodatnimi wartościami pipsów — więc lustrzane ryzyko korzysta z Twojego szablonu, a nie przystanków kanału.',
+    reverseHint: 'Odwróć: kupno z kanału jest kopiowane jako sprzedaż, a sprzedaż jako kupno. Predefiniowane SL/TP (pips od wejścia) działają na odwróconej stronie.',
     closeOppositeHint: 'Zamknij odwrotnie: w trybie ręcznym nowy kanał kupna/sprzedaży zamyka wszelkie otwarte transakcje na tym samym symbolu zwróconym w przeciwną stronę (kierunek kanału, przed odwróceniem), anuluje oczekujące zakresy wirtualne, a następnie uruchamiany jest nowy plan.',
     addExistingHint: 'Dodaj do istniejącego: kontynuacja po tej samej stronie odświeża każdą otwartą nogę, która należy do tego samego oryginalnego sygnału (tego samego koszyka), w kolejności wypełnienia (najpierw najstarsza noga), korzystając z wielobranżowej dystrybucji TP planisty (każda noga otrzymuje SL/TP odpowiadającego bezpośredniego zamówienia z wierszy procentowych partii TP). Oczekiwania wirtualne zakresu dla tego koszyka są anulowane i ponownie wstawiane pod sygnałem nadrzędnym. Nadal obowiązuje wątek odpowiedzi lub 4-godzinne okno czasowe. Wiersze częściowego TP dla pojedynczej transakcji są tworzone ponownie tylko wtedy, gdy koszyk jest pojedynczą nogą.',
     rrFallbacksTitle: 'Pomoce R:R',

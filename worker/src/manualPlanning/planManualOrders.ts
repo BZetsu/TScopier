@@ -1,6 +1,6 @@
 import type { MtOperation } from '../fxsocketClient'
 import type { ChannelKeywords, ManualSettings, ParsedSignal, PlannerContext, PlannerResult } from './types'
-import { deriveManualStopsWithClamp, reverseSignalGateSatisfied } from './manualStops'
+import { deriveManualStopsWithClamp, mirrorParsedAbsoluteStopsForReverse, resolvePredefinedSlPips, resolvePredefinedTpPips } from './manualStops'
 import { flipOperation, resolveOpExecAndStrict } from './executionShape'
 import { signalEntryPriceStrictEnabled, signalEntryRangeStrictEnabled } from './manualSettings'
 import {
@@ -89,23 +89,34 @@ export function planManualOrders(args: {
   const entryOk = entry != null && Number.isFinite(entry) && entry > 0
   const entryAnchorFromSignal = entryOk ? entry : null
 
-  const effectiveReverse = manual.reverse_signal === true && reverseSignalGateSatisfied(manual, entryAnchorFromSignal)
+  const effectiveReverse = manual.reverse_signal === true
   const opSplit: MtOperation = effectiveReverse ? flipOperation(baseOperation) : baseOperation
   const isBuy = opSplit.startsWith('Buy')
 
   let entryAnchor: number | null = entryAnchorFromSignal
-  if (
-    entryAnchor == null
-    && (manual.use_predefined_sl_pips === true || manual.use_predefined_tp_pips === true)
-  ) {
-    const ask = ctx.liveAsk
-    const bid = ctx.liveBid
-    if (isBuy && typeof ask === 'number' && Number.isFinite(ask) && ask > 0) entryAnchor = ask
-    else if (!isBuy && typeof bid === 'number' && Number.isFinite(bid) && bid > 0) entryAnchor = bid
+  const ask = ctx.liveAsk
+  const bid = ctx.liveBid
+  const liveForSide =
+    isBuy && typeof ask === 'number' && Number.isFinite(ask) && ask > 0
+      ? ask
+      : !isBuy && typeof bid === 'number' && Number.isFinite(bid) && bid > 0
+        ? bid
+        : null
+  const usePredefined = resolvePredefinedSlPips(manual) != null || resolvePredefinedTpPips(manual) != null
+  // After a reverse, signal entry is the original side. Predefined pips must
+  // come from the reversed live price (then post-fill restamps from the fill).
+  if (effectiveReverse && usePredefined && liveForSide != null) {
+    entryAnchor = liveForSide
+  } else if (entryAnchor == null && (effectiveReverse || usePredefined) && liveForSide != null) {
+    entryAnchor = liveForSide
   }
 
+  const parsedForStops = effectiveReverse
+    ? mirrorParsedAbsoluteStopsForReverse(parsed, entryAnchor, channelKeywords)
+    : parsed
+
   const { pipQuote, pip, finalSl, finalTps, minStopDist, roundPrice } = deriveManualStopsWithClamp({
-    parsed,
+    parsed: parsedForStops,
     manual,
     channelKeywords,
     resolvedSymbol,

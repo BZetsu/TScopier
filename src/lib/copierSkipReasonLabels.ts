@@ -33,6 +33,8 @@ export const COPIER_SKIP_REASON_LABELS: Record<string, string> = {
   entry_not_execution_eligible: 'Signal not eligible to trade',
   duplicate_provider_signal: 'Duplicate signal',
   explicit_stops_required_when_add_to_existing_off: 'SL/TP required for this channel mode',
+  entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
+  signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
   basket_modify_failed: 'Could not update open trades',
   parameter_follow_up_no_open_basket: 'No open trade to update',
   mgmt_no_open_trades: 'No matching open trade',
@@ -87,6 +89,10 @@ export const COPIER_SKIP_REASON_DETAILS: Record<string, string> = {
     'The same provider signal was already processed recently and was not copied again.',
   explicit_stops_required_when_add_to_existing_off:
     'This channel uses single-slot mode (Add to Existing Trades off). New entries must include labeled SL and TP in the message.',
+  entry_tp_without_sl:
+    'The signal had take-profit(s) but no stop loss. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can place the trade.',
+  signal_missing_required_sl:
+    'The signal did not include a usable stop loss. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can still place the trade.',
   basket_modify_failed:
     'The signal was received but updating SL/TP on open trades failed. Check open positions and broker connection.',
   parameter_follow_up_no_open_basket:

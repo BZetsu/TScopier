@@ -168,4 +168,44 @@ describe('missingRequiredSlFailure', () => {
     }), manual)
     assert.equal(result, null)
   })
+
+  it('allows TP-only predefined SL even when the signal has no entry price', () => {
+    const result = missingRequiredSlFailure(parsed({
+      entry_price: null,
+      tp: [2400],
+      raw_instruction: 'GOLD BUY NOW TP 2400',
+    }), { use_predefined_sl_pips: true, predefined_sl_pips: 80 })
+    assert.equal(result, null)
+  })
+
+  it('allows Premium/withheld SL when predefined SL is set, without a signal entry', () => {
+    const result = missingRequiredSlFailure(parsed({
+      entry_price: null,
+      tp: [2400],
+      raw_instruction: 'GOLD BUY TP 2400 SL premium',
+    }), { use_predefined_sl_pips: true, predefined_sl_pips: 80 })
+    assert.equal(result, null)
+  })
+
+  it('allows bare market buy when predefined SL is set even if stops are required', () => {
+    const result = missingRequiredSlFailure(parsed({
+      tp: null,
+      raw_instruction: 'GOLD BUY NOW',
+    }), {
+      add_new_trades_to_existing: false,
+      use_predefined_sl_pips: true,
+      predefined_sl_pips: 80,
+    })
+    assert.equal(result, null)
+  })
+
+  it('does not treat predefined TP alone as a stop-loss fallback', () => {
+    const result = missingRequiredSlFailure(parsed({
+      raw_instruction: 'GOLD BUY NOW TP 2400',
+    }), { use_predefined_tp_pips: true, predefined_tp_pips: [30] })
+    assert.deepEqual(result, {
+      withheldByProvider: false,
+      reason: 'entry_tp_without_sl',
+    })
+  })
 })

@@ -278,16 +278,22 @@ function makeFireLegHarness(opts: {
   claimedRow?: { id: string } | null
   staleReason?: string | null
   symbolPoint?: number | null
-} = {}): FireLegHarness {
+  manual?: Record<string, unknown>
+  openPrice?: number
+} = {}): FireLegHarness & { sendArgs: Array<{ stoploss?: number; takeprofit?: number }> } {
   process.env.FXSOCKET_API_KEY = process.env.FXSOCKET_API_KEY || 'test-key'
   const operations: string[] = []
+  const sendArgs: Array<{ stoploss?: number; takeprofit?: number }> = []
   let brokerSends = 0
   const supabase = new FakeSupabase({ operations, claimedRow: opts.claimedRow })
   const monitor = new VirtualPendingMonitor(supabase as never)
   const m = monitor as unknown as {
     getSymbolParams: () => Promise<{ digits: number; point: number | null; minLot: number; lotStep: number; contractSize: null; stopsLevel: number; freezeLevel: number; loadedAt: number }>
     getStaleLegReason: () => Promise<string | null>
-    sendWithStopsFallback: () => Promise<{ openPrice: number; lots: number }>
+    sendWithStopsFallback: (
+      _leg: unknown,
+      args: { stoploss?: number; takeprofit?: number },
+    ) => Promise<{ openPrice: number; lots: number }>
     markLegFiredWithRetry: () => Promise<void>
     loadManualSettingsForLeg: () => Promise<Record<string, unknown>>
     fireLeg: FireLegHarness['fireLeg']
@@ -310,15 +316,16 @@ function makeFireLegHarness(opts: {
     operations.push('stale-check')
     return opts.staleReason ?? null
   }
-  m.sendWithStopsFallback = async () => {
+  m.sendWithStopsFallback = async (_leg, args) => {
     operations.push('broker-send')
+    sendArgs.push({ stoploss: args.stoploss, takeprofit: args.takeprofit })
     brokerSends += 1
-    return { openPrice: 100, lots: 0.01 }
+    return { openPrice: opts.openPrice ?? 100, lots: 0.01 }
   }
   m.markLegFiredWithRetry = async () => {
     operations.push('mark-fired')
   }
-  m.loadManualSettingsForLeg = async () => ({})
+  m.loadManualSettingsForLeg = async () => opts.manual ?? {}
   return {
     operations,
     get brokerSends() {
@@ -328,6 +335,7 @@ function makeFireLegHarness(opts: {
     monitor,
     fireLeg: m.fireLeg.bind(monitor),
     recordFireLegResult: m.recordFireLegResult.bind(monitor),
+    sendArgs,
   }
 }
 
@@ -527,6 +535,76 @@ test('VirtualPendingMonitor.fireLeg: stale basket cleanup is skipped, not fired'
   assert.equal(h.brokerSends, 0)
   assert.deepEqual([...active.get('signal-1|broker-1') ?? []], [1])
   assert.equal(fired.has('signal-1|broker-1'), false)
+})
+
+test('VirtualPendingMonitor.fireLeg: override SL 80 is from fill, not shared basket SL (buy)', async () => {
+  const h = makeFireLegHarness({
+    manual: { use_predefined_sl_pips: true, predefined_sl_pips: 80 },
+    openPrice: 1990,
+  })
+  const result = await h.fireLeg(makeTestLeg({
+    trigger_price: 1990,
+    stoploss: 1992,
+    takeprofit: 2100,
+    anchor_price: 2000,
+  }), 1989.9, 1990)
+  assert.equal(result.outcome, 'fired')
+  assert.equal(h.brokerSends, 1)
+  assert.equal(h.sendArgs[0]?.stoploss, 1982)
+  assert.ok((h.sendArgs[0]?.stoploss ?? 0) < 1990)
+})
+
+test('VirtualPendingMonitor.fireLeg: override SL 80 is from fill, not shared basket SL (sell)', async () => {
+  const h = makeFireLegHarness({
+    manual: { use_predefined_sl_pips: true, predefined_sl_pips: 80 },
+    openPrice: 2010,
+  })
+  const result = await h.fireLeg(makeTestLeg({
+    is_buy: false,
+    trigger_price: 2010,
+    stoploss: 2008,
+    takeprofit: 1900,
+    anchor_price: 2000,
+  }), 2010, 2010.1)
+  assert.equal(result.outcome, 'fired')
+  assert.equal(h.brokerSends, 1)
+  assert.equal(h.sendArgs[0]?.stoploss, 2018)
+  assert.ok((h.sendArgs[0]?.stoploss ?? 0) > 2010)
+})
+
+test('VirtualPendingMonitor.fireLeg: override TP 30 is from fill, not shared basket TP (buy)', async () => {
+  const h = makeFireLegHarness({
+    manual: { use_predefined_tp_pips: true, predefined_tp_pips: [30] },
+    openPrice: 2005,
+  })
+  const result = await h.fireLeg(makeTestLeg({
+    trigger_price: 2005,
+    stoploss: 1992,
+    takeprofit: 2003,
+    anchor_price: 2000,
+  }), 2004.9, 2005)
+  assert.equal(result.outcome, 'fired')
+  assert.equal(h.brokerSends, 1)
+  assert.equal(h.sendArgs[0]?.takeprofit, 2008)
+  assert.ok((h.sendArgs[0]?.takeprofit ?? 0) > 2005)
+})
+
+test('VirtualPendingMonitor.fireLeg: override TP 30 is from fill, not shared basket TP (sell)', async () => {
+  const h = makeFireLegHarness({
+    manual: { use_predefined_tp_pips: true, predefined_tp_pips: [30] },
+    openPrice: 1990,
+  })
+  const result = await h.fireLeg(makeTestLeg({
+    is_buy: false,
+    trigger_price: 1990,
+    stoploss: 2008,
+    takeprofit: 1997,
+    anchor_price: 2000,
+  }), 1990, 1990.1)
+  assert.equal(result.outcome, 'fired')
+  assert.equal(h.brokerSends, 1)
+  assert.equal(h.sendArgs[0]?.takeprofit, 1987)
+  assert.ok((h.sendArgs[0]?.takeprofit ?? 0) < 1990)
 })
 
 test('VirtualPendingMonitor.enqueueReconcileForLegBasket emits exactly one issue on enqueue failure', async () => {

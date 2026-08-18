@@ -15,13 +15,14 @@ import {
 import { findActiveNewsBlackout } from './newsTrading/blackout'
 import { getCalendarEventsCached } from './newsTrading/calendarProvider'
 import { isNewsTradingEnabled } from './newsTrading/settings'
-import { deriveManualStopsWithClamp } from './manualPlanning/manualStops'
+import { deriveManualStopsWithClamp, resolvePredefinedSlPips, resolvePredefinedTpPips } from './manualPlanning/manualStops'
 import { usesPredefinedStops } from './manualPlanning/manualStops'
 import { lastPositiveParsedTpPrice } from './manualPlanning/parsedEntry'
 import type { ChannelKeywords, ManualSettings, ParsedSignal } from './manualPlanning/types'
 import type { SignalRow } from './tradeExecutor'
 import { isBenignOrderModifyError } from './orderModifyBenign'
 import { captureDeferredBusinessFailure } from './observability/deferredBusinessEvents'
+import { resolvePostFillIsBuy } from './postFillSide'
 
 /** Minimal broker fields for post-fill (avoids circular import from tradeExecutor). */
 export type PostFillBrokerRow = {
@@ -104,22 +105,30 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
     plannedBrokerTp, hasPartialTpSchedule,
   } = args
   const manual = (broker.manual_settings ?? {}) as ManualSettings
-  const isSingleTradeStyle = (manual.trade_style ?? 'single') !== 'multi'
-  if (!isSingleTradeStyle) {
-    // Multi-trade legs already carry per-bucket TPs from the planner; syncMultiBasketLegTakeProfits
-    // reconciles them. Flattening to tp[0] here caused wrong targets on layered baskets.
+  const isMulti = (manual.trade_style ?? 'single') === 'multi'
+  // Multi legs already carry per-bucket TPs; flattening to tp[0] here was wrong.
+  // Still stamp Override signal SL/TP from *this* fill when those settings are on.
+  const multiPredefinedSl = isMulti && resolvePredefinedSlPips(manual) != null
+  const multiPredefinedTp = isMulti && resolvePredefinedTpPips(manual) != null
+  if (isMulti && !multiPredefinedSl && !multiPredefinedTp) {
     return
   }
-  const isBuy = !String(parsed.action ?? '').toLowerCase().includes('sell')
+  const reverse = manual.reverse_signal === true
 
   for (const leg of filledLegs) {
     const entry = leg.entryPrice
     if (entry == null || !Number.isFinite(entry) || entry <= 0) continue
     if (!Number.isFinite(leg.ticket) || leg.ticket <= 0) continue
+    const isBuy = resolvePostFillIsBuy({
+      direction: leg.direction,
+      parsedAction: parsed.action,
+      reverse,
+    })
 
     let plannerParsed: ParsedSignal = { ...parsed }
     if (
-      signal.channel_id
+      !isMulti
+      && signal.channel_id
       && shouldMergeChannelParamsForEntry(plannerParsed)
       && !shouldPreferParsedStopsOnEntry(plannerParsed)
     ) {
@@ -148,7 +157,27 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
 
     let targetSl = leg.openSl
     let targetTp = leg.openTp
-    if (hasPartialTpSchedule && plannedBrokerTp != null && plannedBrokerTp > 0) {
+    if (isMulti) {
+      const derived = deriveManualStopsWithClamp({
+        parsed: plannerParsed,
+        manual,
+        channelKeywords,
+        resolvedSymbol: symbol,
+        ctx,
+        entryAnchor: entry,
+        isBuy,
+      })
+      if (multiPredefinedSl && derived.finalSl != null) targetSl = derived.roundPrice(derived.finalSl)
+      if (multiPredefinedTp && derived.finalTps.length) {
+        const existing = Number(leg.openTp)
+        const picked = Number.isFinite(existing) && existing > 0
+          ? derived.finalTps.reduce((best, tp) => (
+            Math.abs(tp - existing) < Math.abs(best - existing) ? tp : best
+          ), derived.finalTps[0]!)
+          : derived.finalTps[0]!
+        targetTp = derived.roundPrice(picked)
+      }
+    } else if (hasPartialTpSchedule && plannedBrokerTp != null && plannedBrokerTp > 0) {
       targetTp = plannedBrokerTp
     } else if (usesPredefinedStops(manual)) {
       const derived = deriveManualStopsWithClamp({
@@ -173,27 +202,35 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
 
     const stripped = stripInvalidStopsForSide({
       stoploss: Number(targetSl) || 0,
-      takeprofit: Number(targetTp) || 0,
+      takeprofit: (isMulti && !multiPredefinedTp) ? 0 : (Number(targetTp) || 0),
       referencePrice: entry,
       isBuy,
     })
     const newSl = stripped.stoploss > 0 ? stripped.stoploss : null
-    const newTp = stripped.takeprofit > 0 ? stripped.takeprofit : null
+    const newTp = (isMulti && !multiPredefinedTp)
+      ? leg.openTp
+      : (stripped.takeprofit > 0 ? stripped.takeprofit : null)
     const slChanged = newSl != null && newSl !== leg.openSl
-    const tpChanged = newTp != null && newTp !== leg.openTp
+    const tpChanged = newTp != null && newTp !== leg.openTp && (!isMulti || multiPredefinedTp)
     if (!slChanged && !tpChanged) continue
 
     try {
-      await api.orderModify(uuid, {
+      const modifyArgs: { ticket: number; stoploss?: number | null; takeprofit?: number | null } = {
         ticket: leg.ticket,
-        stoploss: newSl,
-        takeprofit: newTp,
-      })
+      }
+      if (slChanged) modifyArgs.stoploss = newSl
+      if (tpChanged) modifyArgs.takeprofit = newTp
+      await api.orderModify(uuid, modifyArgs)
       if (leg.tradeRowId) {
-        await args.supabase
-          .from('trades')
-          .update({ sl: newSl, tp: newTp })
-          .eq('id', leg.tradeRowId)
+        const patch: { sl?: number | null; tp?: number | null } = {}
+        if (slChanged) patch.sl = newSl
+        if (tpChanged) patch.tp = newTp
+        if (Object.keys(patch).length > 0) {
+          await args.supabase
+            .from('trades')
+            .update(patch)
+            .eq('id', leg.tradeRowId)
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

@@ -49,15 +49,18 @@ function displayFromCode(reasonCode: string, context: Record<string, unknown>): 
   const code = reasonCode.toUpperCase()
   const requestedSymbol = cleanSymbol(context.requestedSymbol ?? context.brokerSymbol)
   const instrument = displayInstrument(requestedSymbol)
-  if (code === 'SIGNAL_MISSING_REQUIRED_SL') {
+  if (code === 'SIGNAL_MISSING_REQUIRED_SL' || code === 'ENTRY_TP_WITHOUT_SL') {
     const withheld = context.withheldByProvider === true
+    const tpWithoutSl = code === 'ENTRY_TP_WITHOUT_SL'
     return {
       reasonCode: code,
-      title: 'Trade not copied - Stop Loss missing',
-      explanation: withheld
-        ? 'The signal did not include a usable Stop Loss price. The provider appears to have reserved the Stop Loss for premium/VIP subscribers.'
-        : 'The signal did not include a usable Stop Loss price required by the current copier configuration.',
-      recommendedAction: 'Check the original signal before copying this trade.',
+      title: 'SL not given — set predefined SL pips in broker configuration',
+      explanation: tpWithoutSl
+        ? 'This signal listed take-profit level(s) but no stop loss. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can place the trade.'
+        : withheld
+          ? 'The signal did not include a usable Stop Loss (often reserved for premium/VIP subscribers). Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can still place the trade.'
+          : 'The signal did not include a usable Stop Loss. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can still place the trade.',
+      recommendedAction: 'Open Account Configuration for this broker, turn on Override signal SL, and set Stop loss (pips from entry).',
       retryable: false,
       userActionRequired: true,
       safeContext: context,
@@ -67,8 +70,8 @@ function displayFromCode(reasonCode: string, context: Record<string, unknown>): 
     return {
       reasonCode: 'BROKER_SYMBOL_NOT_FOUND',
       title: 'Trade not copied - Broker symbol not found',
-      explanation: `We could not find the matching ${instrument} instrument on your broker account. Your broker may use a different symbol name.`,
-      recommendedAction: 'Check the instrument name in your broker terminal, then contact support if a custom symbol mapping is required.',
+      explanation: `We could not find ${instrument} or a supported equivalent on your broker account. Your broker may use a custom symbol name.`,
+      recommendedAction: 'Check the instrument name in your broker terminal, then add a symbol mapping or contact support.',
       retryable: false,
       userActionRequired: true,
       safeContext: context,
@@ -153,6 +156,8 @@ export function resolveTradeFailureDisplay(args: {
       requestedSymbol: embedded.safeContext?.requestedSymbol ?? suppliedContext.requestedSymbol ?? payload.requestedSymbol ?? payload.signal_symbol ?? payload.trade_symbol ?? payload.symbol,
       brokerSymbol: embedded.safeContext?.brokerSymbol ?? suppliedContext.brokerSymbol ?? payload.brokerSymbol ?? payload.symbol ?? payload.trade_symbol,
     })
+    const fromCode = displayFromCode(String(embedded.reasonCode), context)
+    if (fromCode) return fromCode
     return {
       reasonCode: embedded.reasonCode,
       title: embedded.title,

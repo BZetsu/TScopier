@@ -178,6 +178,7 @@ export const es: Translations = {
         noTrades: 'No se encontraron operaciones recientes.',
         ticket: 'Ticket',
         legs: 'Patas',
+        viewDetails: 'Ver detalles',
         statusExecuted: 'Ejecutada',
         statusFailed: 'Fallida',
         statusSkipped: 'Omitida',

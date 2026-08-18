@@ -180,6 +180,8 @@ export const channelWorkerSv: ChannelWorkerTranslations = {
       'den här kanalen är i single-slot-läge (Add to Existing Trades är av), så nya ingångar måste innehålla TP/SL-parametrar',
     entry_requires_imperative_or_labeled_stops:
       'meddelandet innehöll ingen entry-fras (t.ex. buy now, gold sell now) eller märkta SL/TP',
+    entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
+    signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
   },
   dispatchSkipped: 'Kopierade inte den här signalen ({reason}).',
   rangeRebalanceSkippedNamed: 'Hoppade över take-profit-ombalansering av {symbol} ({reason})',

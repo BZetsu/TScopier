@@ -3,8 +3,6 @@ import { looksLikeCasualNonTradeMessage } from './signalCommentaryGuard'
 import { messageHasImperativeEntryPhrase } from './signalImperativeEntry'
 import {
   ENTRY_REQUIRES_NOW_REASON,
-  ENTRY_TP_WITHOUT_SL_REASON,
-  entryHasTpWithoutSl,
   entryMissingSlTpRequiresNow,
   messageHasExplicitSlTpLabels,
   parsedHasSlOrTp,
@@ -53,10 +51,8 @@ export function evaluateParsedSignalExecutionEligibility(
     }
   }
 
-  // TP levels without a stop loss are never executable (signal-level; no account fallbacks).
-  if (entryHasTpWithoutSl(parsed)) {
-    return { eligible: false, skipReason: ENTRY_TP_WITHOUT_SL_REASON }
-  }
+  // TP-without-SL is an *account* decision (predefined/RR SL can supply the stop).
+  // Do not skip the signal here — entry prep still blocks accounts with no fallback.
 
   const imperative = messageHasImperativeEntryPhrase(raw, channelKeywords)
   const labeledStops = messageHasExplicitSlTpLabels(raw) && parsedHasSlOrTp(parsed)
