@@ -1358,8 +1358,40 @@ async function toolReportTrade(
   let tp: number | null = null;
   let lotSize: number | null = null;
 
-  const signalId = String(args.signal_id ?? "").trim();
+  const signalIdArg = String(args.signal_id ?? "").trim();
+  let signalId = signalIdArg;
   let signalOwned = false;
+
+  // Resolve a bare broker ticket to its signal so the confirm card and the
+  // stored report get the trade's symbol/direction/prices even when the model
+  // only passed a ticket (mirrors get_trade_detail).
+  if (!signalId && ticket) {
+    const [logsRes, tradesRes] = await Promise.all([
+      supabase
+        .from("trade_execution_logs")
+        .select("signal_id,response_payload")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(300),
+      supabase
+        .from("trades")
+        .select("signal_id,metaapi_order_id")
+        .eq("user_id", userId)
+        .eq("metaapi_order_id", ticket)
+        .limit(1),
+    ]);
+    const hit = (logsRes.data ?? []).find((l) => {
+      const p = l.response_payload && typeof l.response_payload === "object"
+        ? (l.response_payload as Record<string, unknown>)
+        : {};
+      return typeof p.ticket === "number" && String(p.ticket) === ticket;
+    });
+    const tradeHit = tradesRes.data?.[0];
+    if (hit || tradeHit) {
+      signalId = String(hit?.signal_id ?? tradeHit?.signal_id);
+    }
+  }
+
   if (signalId) {
     const { data: sig } = await supabase
       .from("signals")
@@ -1493,7 +1525,13 @@ async function toolReportTrade(
   });
   if (error) return { content: JSON.stringify({ error: error.message }) };
   return {
-    content: JSON.stringify({ ok: true, category, symbol, ticket }),
+    content: JSON.stringify({
+      ok: true,
+      category,
+      symbol,
+      ticket,
+      hint: "Report filed. Tell the user it's been submitted and that they can track its status (open/resolved) on the Reported Trades page under Help.",
+    }),
   };
 }
 
