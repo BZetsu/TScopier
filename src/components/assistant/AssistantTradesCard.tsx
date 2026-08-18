@@ -53,12 +53,24 @@ export type AssistantTradesCardCopy = {
   statusCancelled: string
   positionOpen: string
   positionClosed: string
+  reportStatusOpen: string
+  reportStatusResolved: string
 }
 
 type ParsedResult = {
   trades?: AssistantTradeRow[]
   trade?: AssistantTradeRow
   legs?: AssistantTradeRow[]
+  reports?: Array<{
+    symbol?: string | null
+    direction?: string | null
+    ticket?: string | null
+    broker?: string | null
+    category?: string | null
+    reason?: string | null
+    status?: string | null
+    time?: string | null
+  }>
   error?: string
 }
 
@@ -277,6 +289,46 @@ function TradeRow({
   )
 }
 
+function ReportRow({ report, copy }: { report: NonNullable<ParsedResult['reports']>[number]; copy: AssistantTradesCardCopy }) {
+  const resolved = (report.status ?? '').toLowerCase() === 'resolved'
+  return (
+    <li className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5 dark:border-neutral-800 dark:bg-neutral-900/70">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate font-semibold text-neutral-900 dark:text-neutral-50">
+            {report.symbol ?? copy.title}
+            {report.ticket ? (
+              <span className="font-mono text-teal-700 dark:text-teal-300"> #{report.ticket}</span>
+            ) : null}
+          </span>
+          {directionBadge(report.direction)}
+        </div>
+        <span
+          className={clsx(
+            'rounded-full px-2 py-0.5 text-[10px] font-semibold',
+            resolved
+              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
+          )}
+        >
+          {resolved ? copy.reportStatusResolved : copy.reportStatusOpen}
+        </span>
+      </div>
+      {report.reason ? (
+        <p className="mt-1.5 whitespace-pre-wrap break-words text-[11px] text-neutral-600 dark:text-neutral-300">
+          {report.reason}
+        </p>
+      ) : null}
+      {report.time && Number.isFinite(Date.parse(report.time)) ? (
+        <p className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+          {new Date(report.time).toLocaleString()}
+          {report.broker ? ` · ${report.broker}` : ''}
+        </p>
+      ) : null}
+    </li>
+  )
+}
+
 /** Renders trades/legs returned by the assistant's get_recent_trades / get_copier_logs / get_trade_detail tools. */
 export function AssistantTradesCard({
   tool,
@@ -300,23 +352,36 @@ export function AssistantTradesCard({
   }, [data])
 
   if (!data || data.error) return null
-  if (!trades.length) return null
+  if (!trades.length && !data.reports?.length) return null
 
   return (
     <div className="animate-assistant-msg-in ms-[2.375rem] space-y-2">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
         {copy.title}
       </p>
-      <ul className="space-y-2">
-        {trades.map(t => (
-          <TradeRow
-            key={t.signal_id ?? `${tool}-${t.symbol}-${t.time}`}
-            trade={t}
-            copy={copy}
-            onClick={t.signal_id && onTradeClick ? () => onTradeClick(t) : undefined}
-          />
-        ))}
-      </ul>
+      {trades.length ? (
+        <ul className="space-y-2">
+          {trades.map(t => (
+            <TradeRow
+              key={t.signal_id ?? `${tool}-${t.symbol}-${t.time}`}
+              trade={t}
+              copy={copy}
+              onClick={t.signal_id && onTradeClick ? () => onTradeClick(t) : undefined}
+            />
+          ))}
+        </ul>
+      ) : null}
+      {data.reports?.length ? (
+        <ul className="space-y-2">
+          {data.reports.map((r, i) => (
+            <ReportRow
+              key={r.ticket ?? `${r.symbol ?? ''}-${r.time ?? ''}-${i}`}
+              report={r}
+              copy={copy}
+            />
+          ))}
+        </ul>
+      ) : null}
     </div>
   )
 }

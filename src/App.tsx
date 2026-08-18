@@ -35,6 +35,9 @@ const CopierEnginePage = lazy(() =>
 const CopierLogsPage = lazy(() =>
   import('./pages/dashboard/CopierLogsPage').then(m => ({ default: m.CopierLogsPage })),
 )
+const ReportedTradesPage = lazy(() =>
+  import('./pages/dashboard/ReportedTradesPage').then(m => ({ default: m.ReportedTradesPage })),
+)
 const ManagementPage = lazy(() =>
   import('./pages/dashboard/ManagementPage').then(m => ({ default: m.ManagementPage })),
 )
@@ -150,6 +153,7 @@ export default function App() {
             <Route path="/backtest" element={<LazyPage><Backtest /></LazyPage>} />
             <Route path="/copier-templates" element={<Navigate to="/backtest" replace />} />
             <Route path="/copier-logs" element={<LazyPage><CopierLogsPage /></LazyPage>} />
+            <Route path="/reported-trades" element={<LazyPage><ReportedTradesPage /></LazyPage>} />
             <Route path="/activities" element={<LazyPage><ManagementPage /></LazyPage>} />
             <Route path="/management" element={<Navigate to="/activities" replace />} />
             <Route path="/manage-signals" element={<LazyPage><SignalHistoryPage /></LazyPage>} />

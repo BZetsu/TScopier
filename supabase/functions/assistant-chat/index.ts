@@ -62,6 +62,7 @@ type PendingConfirmation = {
   tool: string;
   args: Record<string, unknown>;
   summary: string;
+  details?: Array<{ label: string; value: string }>;
 };
 
 function bad(status: number, message: string) {
@@ -93,6 +94,7 @@ const NAV_ALLOWLIST = new Set([
   "/pricing",
   "/account-trades",
   "/copier-logs",
+  "/reported-trades",
   "/activities",
   "/manage-signals",
 ]);
@@ -351,7 +353,7 @@ const TOOL_DEFS = [
           path: {
             type: "string",
             description:
-              "One of: /dashboard /copier-engine /brokers /channels /backtest /billing /contact-support /pricing /account-trades /copier-logs /activities /manage-signals",
+              "One of: /dashboard /copier-engine /brokers /channels /backtest /billing /contact-support /pricing /account-trades /copier-logs /reported-trades /activities /manage-signals",
           },
         },
         required: ["path"],
@@ -430,6 +432,21 @@ const TOOL_DEFS = [
           confirmed: { type: "boolean" },
         },
         required: ["category", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_trade_reports",
+      description:
+        "List the trades the user has reported (status open/resolved, symbol, ticket, category, reason, time). Use when they ask about their reported trades / report status. The Reported Trades page (/reported-trades) also shows this.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max reports to return (default 10, max 20)" },
+        },
         additionalProperties: false,
       },
     },
@@ -1347,6 +1364,25 @@ async function toolReportTrade(
         const b = logs![0].broker_account_id;
         brokerLabel = b ? (labelById.get(b) ?? null) : null;
       }
+
+      // Fallback: the `trades` table is the authoritative source for the broker
+      // ticket (metaapi_order_id) even when execution-log rows lack one.
+      if (!ticket) {
+        const { data: live } = await supabase
+          .from("trades")
+          .select("metaapi_order_id,broker_account_id")
+          .eq("user_id", userId)
+          .eq("signal_id", signalId)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        if (live?.[0]?.metaapi_order_id) {
+          ticket = String(live[0].metaapi_order_id);
+        }
+        if (!brokerLabel && live?.[0]?.broker_account_id) {
+          const liveLabelById = await fetchBrokerLabels(supabase, [live[0].broker_account_id]);
+          brokerLabel = liveLabelById.get(live[0].broker_account_id) ?? null;
+        }
+      }
     }
   }
 
@@ -1369,6 +1405,18 @@ async function toolReportTrade(
   if (!confirmed) {
     const categoryLabel = category.replace(/_/g, " ");
     const summary = `Report ${symbol || "this trade"}${ticket ? ` #${ticket}` : ""} — ${categoryLabel}: ${reason.length > 90 ? `${reason.slice(0, 90)}…` : reason}`;
+    const details = [
+      { label: "Symbol", value: symbol || "—" },
+      { label: "Direction", value: direction || "—" },
+      { label: "Ticket", value: ticket ?? "—" },
+      { label: "Broker", value: brokerLabel ?? "—" },
+      { label: "Entry", value: entryPrice != null ? String(entryPrice) : "—" },
+      { label: "SL", value: sl != null ? String(sl) : "—" },
+      { label: "TP", value: tp != null ? String(tp) : "—" },
+      { label: "Lots", value: lotSize != null ? String(lotSize) : "—" },
+      { label: "Category", value: categoryLabel },
+      { label: "Your comment", value: reason.slice(0, 400) },
+    ];
     return {
       content: JSON.stringify({
         needs_confirmation: true,
@@ -1376,6 +1424,10 @@ async function toolReportTrade(
         direction,
         ticket,
         broker_label: brokerLabel,
+        entry_price: entryPrice,
+        sl,
+        tp,
+        lot_size: lotSize,
         category,
         reason: reason.slice(0, 400),
       }),
@@ -1383,6 +1435,7 @@ async function toolReportTrade(
         tool: "report_trade",
         args: { signal_id: signalId || undefined, symbol, ticket: ticket != null ? Number(ticket) : undefined, category, reason },
         summary,
+        details,
       },
     };
   }
@@ -1405,6 +1458,38 @@ async function toolReportTrade(
   if (error) return { content: JSON.stringify({ error: error.message }) };
   return {
     content: JSON.stringify({ ok: true, category, symbol, ticket }),
+  };
+}
+
+async function toolListTradeReports(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const limitRaw = Number(args.limit ?? 10);
+  const limit = Number.isFinite(limitRaw) ? Math.min(20, Math.max(1, Math.floor(limitRaw))) : 10;
+  const { data, error } = await supabase
+    .from("trade_reports")
+    .select("symbol,direction,ticket,broker_label,category,reason,status,created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) return { content: JSON.stringify({ error: error.message }) };
+  const reports = (data ?? []).map((r) => ({
+    symbol: r.symbol ?? null,
+    direction: r.direction ?? null,
+    ticket: r.ticket ?? null,
+    broker: r.broker_label ?? null,
+    category: r.category ?? null,
+    reason: r.reason ? String(r.reason).slice(0, 200) : null,
+    status: r.status ?? null,
+    time: r.created_at ?? null,
+  }));
+  return {
+    content: JSON.stringify({
+      reports,
+      hint: "This is the user's reported trades. Reply briefly and do NOT repeat the list in prose — the app renders it on the Reported Trades page. Offer /reported-trades to view status open/resolved, or report_trade to file a new one.",
+    }),
   };
 }
 
@@ -2143,6 +2228,8 @@ async function executeTool(
       return toolGetTradeDetail(supabase, userId, args);
     case "report_trade":
       return toolReportTrade(supabase, userId, args);
+    case "list_trade_reports":
+      return toolListTradeReports(supabase, userId, args);
     case "apply_preset":
       return toolApplyPreset(supabase, userId, args);
     case "save_preset":

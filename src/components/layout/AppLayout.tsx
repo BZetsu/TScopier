@@ -19,7 +19,7 @@ import { UserAvatar } from './UserAvatar'
 import { DashboardKeepAlive } from './DashboardKeepAlive'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { useSubscription } from '../../context/SubscriptionContext'
-import { useAssistant } from '../../context/AssistantContext'
+import { useAssistant } from '../../context/useAssistant'
 import { useHasOpenTrades } from '../../hooks/useHasOpenTrades'
 import { useHasHighImpactNewsToday } from '../../hooks/useHasHighImpactNewsToday'
 import { useNeedsWelcome } from '../../hooks/useNeedsWelcome'
@@ -121,6 +121,7 @@ export function AppLayout() {
           { to: '/backtest', label: t.nav.items.backtest },
           { to: '/activities', label: t.nav.items.management },
           { to: '/copier-logs', label: t.nav.items.copierLogs },
+          { to: '/reported-trades', label: t.nav.items.reportedTrades },
           { to: '/manage-signals', label: t.nav.items.signalHistory },
           { to: '/performance', label: t.nav.items.performance },
         ],
