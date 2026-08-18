@@ -53,6 +53,8 @@ export type SafeModifyOutcome = {
    *  ticket etc.). The modify is a no-op, but the caller should close the trade
    *  instead of recording a plain 'already synced' success. */
   positionGone?: boolean
+  /** True when the broker reply was a known no-op / already-applied outcome. */
+  benign?: boolean
 }
 
 export type SafeModifyOpts = {
@@ -108,6 +110,7 @@ export async function modifyLegSlTpWithFallback(
         appliedSl: hasSl ? stoploss : 0,
         appliedTp: hasTp ? takeprofit : 0,
         mode: 'combined',
+        benign: true,
         // Carry the original broker reply so callers can tell a real no-op from
         // a position that no longer exists (and close the trade).
         ...(positionGone ? { positionGone: true, error: msg } : {}),
@@ -126,12 +129,14 @@ export async function modifyLegSlTpWithFallback(
     let slResult: OrderModifyResultLike | undefined
     let positionGone = false
     let positionGoneMsg: string | undefined
+    let benign = false
     try {
       slResult = await api.orderModify(uuid, { ticket, stoploss })
       slApplied = true
     } catch (e) {
       const m2 = e instanceof Error ? e.message : String(e)
       if (isBenignOrderModifyError(m2)) {
+        benign = true
         slApplied = true
         if (isPositionGoneError(m2)) {
           positionGone = true
@@ -158,6 +163,7 @@ export async function modifyLegSlTpWithFallback(
       } catch (e) {
         const m3 = e instanceof Error ? e.message : String(e)
         if (isBenignOrderModifyError(m3)) {
+          benign = true
           tpApplied = true
           appliedTp = candidate
           if (isPositionGoneError(m3)) {
@@ -179,6 +185,7 @@ export async function modifyLegSlTpWithFallback(
       mode: 'split',
       result: slResult,
       error: slApplied ? positionGoneMsg : (slErr ?? msg),
+      ...(benign ? { benign: true } : {}),
       ...(positionGone ? { positionGone: true } : {}),
     }
   }

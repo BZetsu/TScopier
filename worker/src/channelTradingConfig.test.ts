@@ -3,11 +3,11 @@ import assert from 'node:assert/strict'
 import {
   buildDefaultChannelTradingConfig,
   channelConfigReadyForExecution,
-  channelManualSettingsComplete,
   normalizeChannelTradingConfigsMap,
   resolveChannelTradingConfig,
   withChannelTradingConfig,
 } from './channelTradingConfig'
+import { applySymbolMapping } from './tradeExecutor/helpers'
 
 test('resolveChannelTradingConfig falls back to broker-level settings when channel is not linked', () => {
   const broker = {
@@ -141,6 +141,32 @@ test('withChannelTradingConfig overlays broker row', () => {
   const effective = withChannelTradingConfig(broker, 'ch1')
   assert.equal(effective.manual_settings.fixed_lot, 0.11)
   assert.equal(effective.id, 'b1')
+})
+
+test('withChannelTradingConfig: channel symbol mapping beats account symbol mapping', () => {
+  const broker = {
+    id: 'b1',
+    copier_mode: 'manual' as const,
+    manual_settings: {
+      fixed_lot: 0.05,
+      trade_style: 'single',
+      symbol_mapping: { NAS100: 'US100' },
+    },
+    channel_trading_configs: {
+      ch1: {
+        manual_settings: {
+          fixed_lot: 0.11,
+          trade_style: 'single',
+          symbol_mapping: { NAS100: 'USTEC' },
+        },
+      },
+    },
+    signal_channel_ids: ['ch1'],
+  }
+  const effective = withChannelTradingConfig(broker, 'ch1')
+  const mapped = applySymbolMapping('NAS100', effective as never)
+  assert.equal(mapped.symbol, 'USTEC')
+  assert.equal(mapped.userDecorated, true)
 })
 
 test('buildDefaultChannelTradingConfig seeds manual defaults', () => {
