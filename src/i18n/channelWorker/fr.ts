@@ -180,6 +180,8 @@ export const channelWorkerFr: ChannelWorkerTranslations = {
       'ce canal est en mode position unique (Ajouter aux trades existants désactivé), les nouvelles entrées doivent inclure TP/SL',
     entry_requires_imperative_or_labeled_stops:
       'le message n\'incluait pas d\'ordre d\'entrée (ex. buy now, gold sell now) ni de SL/TP étiquetés',
+    entry_tp_without_sl: 'SL non fourni — définissez des pips SL prédéfinis dans la configuration du courtier',
+    signal_missing_required_sl: 'SL non fourni — définissez des pips SL prédéfinis dans la configuration du courtier',
   },
   dispatchSkipped: 'Signal non copié ({reason}).',
   rangeRebalanceSkippedNamed: 'Rééquilibrage du take profit {symbol} ignoré ({reason})',

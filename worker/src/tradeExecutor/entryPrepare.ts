@@ -264,6 +264,9 @@ export async function prepareEntryExecution(
     && (
       (signalEntryPriceStrictEnabled(manual) && parsedHasExplicitEntryAnchor(parsed))
       || signalEntryRangeStrictEnabled(manual)
+      || manual.reverse_signal === true
+      || manual.use_predefined_sl_pips === true
+      || manual.use_predefined_tp_pips === true
     )
 
   if (signal.pipeline_ts) {

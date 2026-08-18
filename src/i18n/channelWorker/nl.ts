@@ -180,6 +180,8 @@ export const channelWorkerNl: ChannelWorkerTranslations = {
       'dit kanaal staat in single-slot-modus (Add to Existing Trades staat uit), dus nieuwe entries moeten TP/SL-parameters bevatten',
     entry_requires_imperative_or_labeled_stops:
       'bericht bevatte geen entry-opdracht (bijv. buy now, gold sell now) of gelabelde SL/TP',
+    entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
+    signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
   },
   dispatchSkipped: 'Dit signaal is niet gekopieerd ({reason}).',
   rangeRebalanceSkippedNamed: 'Take-profit-herverdeling voor {symbol} overgeslagen ({reason})',

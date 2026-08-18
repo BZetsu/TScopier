@@ -19,6 +19,13 @@ import { resolveMultiTradeTargetUnits, multiTradeUnitsToLot } from './multiTrade
 import { resolveRangeDistancePips } from './signalEntryRange'
 import { resolvedParsedEntryZone } from './parsedEntry'
 import { normalizeAutoBeConfig, resolveAutoBeTpHitTriggerPrice } from '../autoManagement'
+import {
+  matchPredefinedTpPipsIndex,
+  predefinedSlPriceFromEntry,
+  predefinedTpPriceFromEntry,
+  resolvePredefinedSlPips,
+  resolvePredefinedTpPips,
+} from './manualStops'
 
 export interface PlanMultiManualOrdersArgs {
   parsed: ParsedSignal
@@ -204,6 +211,62 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
       }
     : null
 
+  const rangeDigits = Math.max(0, Math.min(8, Math.floor(ctx.digits ?? 5)))
+  const rangeTriggerMap =
+    rangeLegCount > 0 && entryAnchor != null && entryAnchor > 0
+      ? buildRangeLayerTriggerMap({
+          virtualPendings: Array.from({ length: rangeLegCount }, (_, i) => ({
+            stepIdx: i + 1,
+            stepPriceOffset,
+            isBuy,
+          })),
+          anchor: entryAnchor,
+          digits: rangeDigits,
+          rangeLayering: rangeLayeringMeta,
+          pip,
+        })
+      : new Map<number, number>()
+
+  const stoplossForRangeStep = (stepIdx: number): number | null => {
+    const slPips = resolvePredefinedSlPips(manual)
+    if (slPips != null && entryAnchor != null && entryAnchor > 0) {
+      const trigger = rangeLayerTriggerForStep({
+        stepIdx,
+        leg: { stepPriceOffset, isBuy },
+        anchor: entryAnchor,
+        digits: rangeDigits,
+        legCount: rangeLegCount,
+        rangeLayering: rangeLayeringMeta,
+        pip,
+        triggerMap: rangeTriggerMap,
+      })
+      const sl = predefinedSlPriceFromEntry({
+        entry: trigger,
+        isBuy,
+        pip,
+        slPips,
+        digits: rangeDigits,
+      })
+      if (sl != null) return sl
+    }
+    return finalSl
+  }
+
+  const triggerForRangeStep = (stepIdx: number): number | null => {
+    if (entryAnchor == null || entryAnchor <= 0) return null
+    const trigger = rangeLayerTriggerForStep({
+      stepIdx,
+      leg: { stepPriceOffset, isBuy },
+      anchor: entryAnchor,
+      digits: rangeDigits,
+      legCount: rangeLegCount,
+      rangeLayering: rangeLayeringMeta,
+      pip,
+      triggerMap: rangeTriggerMap,
+    })
+    return trigger > 0 ? trigger : null
+  }
+
   const tpForRangeIndex = (idx: number): number | null => {
     if (finalTps.length === 0) return null
     if (
@@ -221,17 +284,6 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
           openedAt: `imm${String(i).padStart(4, '0')}`,
         })
       }
-      const rangeTriggerMap = buildRangeLayerTriggerMap({
-        virtualPendings: Array.from({ length: rangeLegCount }, (_, i) => ({
-          stepIdx: i + 1,
-          stepPriceOffset,
-          isBuy,
-        })),
-        anchor: entryAnchor,
-        digits: Math.max(0, Math.min(8, Math.floor(ctx.digits ?? 5))),
-        rangeLayering: rangeLayeringMeta,
-        pip,
-      })
       for (let i = 0; i < rangeLegCount; i++) {
         const stepIdx = i + 1
         const entryPrice = rangeTriggerMap.get(stepIdx)
@@ -239,7 +291,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
             stepIdx,
             leg: { stepPriceOffset, isBuy },
             anchor: entryAnchor,
-            digits: Math.max(0, Math.min(8, Math.floor(ctx.digits ?? 5))),
+            digits: rangeDigits,
             legCount: rangeLegCount,
             rangeLayering: rangeLayeringMeta,
             pip,
@@ -265,6 +317,30 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     return finalTps[finalTps.length - 1] ?? null
   }
 
+  const takeprofitForRangeStep = (idx: number): number | null => {
+    const assigned = tpForRangeIndex(idx)
+    const tpPips = resolvePredefinedTpPips(manual)
+    const trigger = triggerForRangeStep(idx + 1)
+    if (tpPips != null && trigger != null && entryAnchor != null && entryAnchor > 0) {
+      const bucket = matchPredefinedTpPipsIndex({
+        existingTp: assigned,
+        entry: entryAnchor,
+        isBuy,
+        pip,
+        tpPips,
+      })
+      const tp = predefinedTpPriceFromEntry({
+        entry: trigger,
+        isBuy,
+        pip,
+        tpPips: tpPips[bucket] ?? tpPips[0]!,
+        digits: rangeDigits,
+      })
+      if (tp != null) return tp
+    }
+    return assigned
+  }
+
   // Teaser / no-TP signals: never burst-split into N *full-lot* clones.
   // - No range: one full-lot immediate (classic teaser).
   // - With range: one OrderSend per immediate leg at targetLeg size (matches UI
@@ -281,7 +357,7 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
           stepPriceOffset,
           isBuy,
           volume: targetLeg,
-          stoploss: finalSl,
+          stoploss: stoplossForRangeStep(i + 1),
           takeprofit: null,
           slippage: slippage ?? 20,
           comment: appendOrderCommentSuffix(commentPrefix, `:rg${i + 1}.tp${i + 1}`),
@@ -434,13 +510,13 @@ export function planMultiManualOrders(args: PlanMultiManualOrdersArgs): PlannerR
     // Unique stepIdx 1..N — never cycle/modulo (that caused duplicate broker limits).
     for (let i = 0; i < rangeLegCount; i++) {
       const stepIdx = i + 1
-      const tpPrice = tpForRangeIndex(i)
+      const tpPrice = takeprofitForRangeStep(i)
       virtualPendings.push({
         stepIdx,
         stepPriceOffset,
         isBuy,
         volume: targetLeg,
-        stoploss: finalSl,
+        stoploss: stoplossForRangeStep(stepIdx),
         takeprofit: tpPrice,
         slippage: slippage ?? 20,
         comment: appendOrderCommentSuffix(commentPrefix, `:rg${stepIdx}.tp${i + 1}`),

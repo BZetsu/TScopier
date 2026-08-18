@@ -43,23 +43,24 @@ function tradeFailureCopy(
       const withheld = safeContext?.withheldByProvider === true
       return {
         category: 'signal',
-        title: 'Trade not copied - Stop Loss missing',
+        title: 'SL not given — set predefined SL pips in broker configuration',
         explanation: withheld
-          ? 'The signal did not include a usable Stop Loss price. The provider appears to have reserved the Stop Loss for premium/VIP subscribers.'
-          : 'The signal did not include a usable Stop Loss price required by the current copier configuration.',
-        recommendedAction: 'Check the original signal before copying this trade.',
+          ? 'The signal did not include a usable Stop Loss (often reserved for premium/VIP subscribers). Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can still place the trade.'
+          : 'The signal did not include a usable Stop Loss. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can still place the trade.',
+        recommendedAction: 'Open Account Configuration for this broker, turn on Override signal SL, and set Stop loss (pips from entry).',
         retryable: false,
         userActionRequired: true,
       }
     }
     case ENTRY_TP_WITHOUT_SL:
+    case 'ENTRY_TP_WITHOUT_SL':
     case 'entry_tp_without_sl': {
       return {
         category: 'signal',
-        title: 'Trade not copied - Stop Loss required',
+        title: 'SL not given — set predefined SL pips in broker configuration',
         explanation:
-          'This signal listed take-profit level(s) but no stop loss. Trades with TP and without SL are not copied.',
-        recommendedAction: 'Wait for a signal that includes a stop loss, or enable predefined SL in your account settings.',
+          'This signal listed take-profit level(s) but no stop loss. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can place the trade.',
+        recommendedAction: 'Open Account Configuration for this broker, turn on Override signal SL, and set Stop loss (pips from entry).',
         retryable: false,
         userActionRequired: true,
       }
