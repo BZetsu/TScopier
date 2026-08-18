@@ -121,7 +121,6 @@ export function AppLayout() {
           { to: '/backtest', label: t.nav.items.backtest },
           { to: '/activities', label: t.nav.items.management },
           { to: '/copier-logs', label: t.nav.items.copierLogs },
-          { to: '/reported-trades', label: t.nav.items.reportedTrades },
           { to: '/manage-signals', label: t.nav.items.signalHistory },
           { to: '/performance', label: t.nav.items.performance },
         ],

@@ -50,12 +50,15 @@ export function useTradeReports(userId: string | undefined) {
         setReports((data ?? []) as TradeReportRow[])
         setError(null)
         hydratedUserRef.current = uid
+        setLoading(false)
       } catch (e) {
         if (userIdRef.current !== uid) return
         setError(e instanceof Error ? e.message : 'Failed to load trade reports')
+        hydratedUserRef.current = uid
+        setLoading(false)
       } finally {
         inflightRef.current = false
-        if (userIdRef.current && hydratedUserRef.current !== userIdRef.current) {
+        if (userIdRef.current !== uid) {
           void run()
         }
       }

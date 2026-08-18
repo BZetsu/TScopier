@@ -82,6 +82,42 @@ function parseArgs(raw: string): Record<string, unknown> {
   }
 }
 
+/**
+ * Post-call tool verification hook. Runs after EVERY executeTool call, before
+ * the result is fed back to the model or returned to the client. It parses the
+ * JSON result and strips data that must never reach the UI/model as a trade.
+ *
+ * Currently guards trade-listing tools (get_recent_trades / get_copier_logs /
+ * get_trade_detail) against "non-actionable" promo messages — those are channel
+ * marketing posts, not trades, and showing them as recent trades was a bug.
+ * Returns the sanitized ToolResult (unchanged if nothing to fix).
+ */
+function verifyToolResult(name: string, result: ToolResult): ToolResult {
+  if (!["get_recent_trades", "get_copier_logs", "get_trade_detail"].includes(name)) {
+    return result;
+  }
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(result.content) as Record<string, unknown>;
+  } catch {
+    return result;
+  }
+  if (typeof parsed !== "object" || parsed == null) return result;
+
+  const isNonActionable = (r: Record<string, unknown> | undefined | null): boolean =>
+    typeof r?.skip_reason === "string" &&
+    r.skip_reason.toLowerCase().includes("non-actionable");
+
+  if (Array.isArray(parsed.trades) && parsed.trades.some(r => isNonActionable(r as Record<string, unknown>))) {
+    const clean = (parsed.trades as Record<string, unknown>[]).filter(r => !isNonActionable(r));
+    return { ...result, content: JSON.stringify({ ...parsed, trades: clean }) };
+  }
+  if (parsed.trade && isNonActionable(parsed.trade as Record<string, unknown>)) {
+    return { ...result, content: JSON.stringify({ ...parsed, trade: undefined, legs: undefined }) };
+  }
+  return result;
+}
+
 const NAV_ALLOWLIST = new Set([
   "/dashboard",
   "/copier-engine",
@@ -1103,12 +1139,12 @@ async function toolGetRecentTrades(
 ): Promise<ToolResult> {
   const limitRaw = Number(args.limit ?? 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(20, Math.max(1, Math.floor(limitRaw))) : 10;
-  const { data, error } = await supabase
+const { data, error } = await supabase
     .from("signals")
     .select(SIGNAL_SELECT)
     .eq("user_id", userId)
     .is("parent_signal_id", null)
-    .or("skip_reason.is.null,skip_reason.neq.non_trade_message")
+    .or("skip_reason.is.null,and(skip_reason.neq.non_trade_message,skip_reason.not.ilike.%non-actionable%)")
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) return { content: JSON.stringify({ error: error.message }) };
@@ -1116,7 +1152,7 @@ async function toolGetRecentTrades(
   return {
     content: JSON.stringify({
       trades,
-      hint: "The app renders a card with these trades — reply in one or two short lines and do NOT repeat the list in prose. Offer get_trade_detail for a specific trade or open_trades to let the user view their live positions in the app. If the user asked about their LAST or MOST RECENT trade, answer with the most recent EXECUTED or FAILED trade (one with a symbol/ticket); skipped non-actionable promo messages are not trades — say so plainly if the newest signal is just a skip. IMPORTANT for status questions like 'is it still on' / 'is it open': each trade has a `positions` array from the broker (status open/closed/pending + ticket). Prefer `positions` for live status — if a trade has positions with status 'open', say it is still open and quote the ticket; if status 'closed', say it closed; if 'pending' (limit/stop order), say it has not filled yet. Only say 'no ticket' when BOTH tickets and positions are empty. If `positions_error` is present, positions are unavailable — do NOT claim there is no ticket.",
+      hint: "The app renders a card with these trades — reply in one or two short lines and do NOT repeat the list in prose. Offer get_trade_detail for a specific trade or open_trades to let the user view their live positions in the app. If the user asked about their LAST or MOST RECENT trade, answer with the most recent EXECUTED or FAILED trade (one with a symbol/ticket); skipped non-actionable promo messages are not trades — say so plainly if the newest signal is just a skip. IMPORTANT for status questions like 'is it still on' / 'is it open': each trade has a `positions` array from the broker (status open/closed/pending + ticket). Prefer `positions` for live status — if a trade has positions with status 'open', say it is still open and quote the ticket; if status 'closed', say it closed; if 'pending' (limit/stop order), it has not filled yet. Only say 'no ticket' when BOTH tickets and positions are empty. If `positions_error` is present, positions are unavailable — do NOT claim there is no ticket.",
     }),
   };
 }
@@ -1322,8 +1358,40 @@ async function toolReportTrade(
   let tp: number | null = null;
   let lotSize: number | null = null;
 
-  const signalId = String(args.signal_id ?? "").trim();
+  const signalIdArg = String(args.signal_id ?? "").trim();
+  let signalId = signalIdArg;
   let signalOwned = false;
+
+  // Resolve a bare broker ticket to its signal so the confirm card and the
+  // stored report get the trade's symbol/direction/prices even when the model
+  // only passed a ticket (mirrors get_trade_detail).
+  if (!signalId && ticket) {
+    const [logsRes, tradesRes] = await Promise.all([
+      supabase
+        .from("trade_execution_logs")
+        .select("signal_id,response_payload")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(300),
+      supabase
+        .from("trades")
+        .select("signal_id,metaapi_order_id")
+        .eq("user_id", userId)
+        .eq("metaapi_order_id", ticket)
+        .limit(1),
+    ]);
+    const hit = (logsRes.data ?? []).find((l) => {
+      const p = l.response_payload && typeof l.response_payload === "object"
+        ? (l.response_payload as Record<string, unknown>)
+        : {};
+      return typeof p.ticket === "number" && String(p.ticket) === ticket;
+    });
+    const tradeHit = tradesRes.data?.[0];
+    if (hit || tradeHit) {
+      signalId = String(hit?.signal_id ?? tradeHit?.signal_id);
+    }
+  }
+
   if (signalId) {
     const { data: sig } = await supabase
       .from("signals")
@@ -1457,7 +1525,13 @@ async function toolReportTrade(
   });
   if (error) return { content: JSON.stringify({ error: error.message }) };
   return {
-    content: JSON.stringify({ ok: true, category, symbol, ticket }),
+    content: JSON.stringify({
+      ok: true,
+      category,
+      symbol,
+      ticket,
+      hint: "Report filed. Tell the user it's been submitted and that they can track its status (open/resolved) on the Reported Trades page under Help.",
+    }),
   };
 }
 
@@ -2335,7 +2409,7 @@ Deno.serve(async (req: Request) => {
       return bad(400, "Tool cannot be executed directly");
     }
     const args = sanitizeToolArgs({ ...(execute.args ?? {}), confirmed: true });
-    const result = await executeTool(supabase, userId, tool, args);
+    const result = verifyToolResult(tool, await executeTool(supabase, userId, tool, args));
     let parsed: { ok?: boolean; error?: string } = {};
     try {
       parsed = JSON.parse(result.content) as { ok?: boolean; error?: string };
@@ -2480,7 +2554,7 @@ Deno.serve(async (req: Request) => {
       for (const call of toolCalls) {
         const name = call.function?.name ?? "";
         const args = sanitizeToolArgs(parseArgs(call.function?.arguments ?? "{}"));
-        const result = await executeTool(supabase, userId, name, args);
+        const result = verifyToolResult(name, await executeTool(supabase, userId, name, args));
         if (result.pendingClientAction) pendingClientActions.push(result.pendingClientAction);
         if (result.pendingConfirmation) pendingConfirmations.push(result.pendingConfirmation);
         toolResultsLog.push({ tool: name, result: result.content.slice(0, 4000) });
