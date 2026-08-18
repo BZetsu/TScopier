@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { History, ImagePlus, Loader2, Plus, RefreshCw, Send, Sparkles, Trash2, X } from 'lucide-react'
@@ -164,14 +164,6 @@ export function AssistantPanel() {
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [historyOpen])
-
-  const renderedToolResults = useMemo(
-    () =>
-      messages.flatMap(m =>
-        m.role === 'assistant' && m.tool_results?.length ? m.tool_results : [],
-      ),
-    [messages],
-  )
 
   if (!open) return null
 
@@ -755,23 +747,25 @@ export function AssistantPanel() {
           )}
 
           {messages.map((m, i) => (
-            <AssistantChatBubble
-              key={`${m.role}-${i}`}
-              message={m}
-              hidePlainCaption={
-                Boolean(m.images?.length) && m.content.trim() === a.imageOnlyCaption
-              }
-            />
-          ))}
-
-          {renderedToolResults.map((tr, i) => (
-            <AssistantTradesCard
-              key={`${tr.tool}-${i}`}
-              tool={tr.tool}
-              result={tr.result}
-              copy={a.tradesCard}
-              onTradeClick={handleTradeClick}
-            />
+            <Fragment key={`${m.role}-${i}`}>
+              <AssistantChatBubble
+                message={m}
+                hidePlainCaption={
+                  Boolean(m.images?.length) && m.content.trim() === a.imageOnlyCaption
+                }
+              />
+              {m.role === 'assistant' && m.tool_results?.length
+                ? m.tool_results.map((tr, j) => (
+                    <AssistantTradesCard
+                      key={`${tr.tool}-${j}`}
+                      tool={tr.tool}
+                      result={tr.result}
+                      copy={a.tradesCard}
+                      onTradeClick={handleTradeClick}
+                    />
+                  ))
+                : null}
+            </Fragment>
           ))}
 
           {showBrokerCard ? (
