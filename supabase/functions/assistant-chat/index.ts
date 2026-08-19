@@ -88,8 +88,12 @@ function parseArgs(raw: string): Record<string, unknown> {
  * JSON result and strips data that must never reach the UI/model as a trade.
  *
  * Currently guards trade-listing tools (get_recent_trades / get_copier_logs /
- * get_trade_detail) against "non-actionable" promo messages — those are channel
- * marketing posts, not trades, and showing them as recent trades was a bug.
+ * get_trade_detail) against rows that are NOT trades:
+ *   - "non-actionable" promo messages — channel marketing posts, not trades;
+ *   - management / parameter-follow-up skips (modification_no_open_trade,
+ *     mgmt_*, parameter_follow_up_*, basket_modify_*) — modification
+ *     instructions that found no open position/basket to act on. They are not
+ *     entries, so presenting one as the user's "latest trade" was misleading.
  * Returns the sanitized ToolResult (unchanged if nothing to fix).
  */
 function verifyToolResult(name: string, result: ToolResult): ToolResult {
@@ -104,16 +108,40 @@ function verifyToolResult(name: string, result: ToolResult): ToolResult {
   }
   if (typeof parsed !== "object" || parsed == null) return result;
 
-  const isNonActionable = (r: Record<string, unknown> | undefined | null): boolean =>
-    typeof r?.skip_reason === "string" &&
-    r.skip_reason.toLowerCase().includes("non-actionable");
+  // Rows the model must never present as a trade.
+  const isNotATrade = (r: Record<string, unknown> | undefined | null): boolean => {
+    if (typeof r?.skip_reason !== "string") return false;
+    const reason = r.skip_reason.toLowerCase();
+    if (reason.includes("non-actionable")) return true;
+    return (
+      reason === "modification_no_open_trade" ||
+      reason.startsWith("mgmt_") ||
+      reason.startsWith("parameter_follow_up_") ||
+      reason.startsWith("basket_modify_")
+    );
+  };
 
-  if (Array.isArray(parsed.trades) && parsed.trades.some(r => isNonActionable(r as Record<string, unknown>))) {
-    const clean = (parsed.trades as Record<string, unknown>[]).filter(r => !isNonActionable(r));
+  if (Array.isArray(parsed.trades) && parsed.trades.some(r => isNotATrade(r as Record<string, unknown>))) {
+    const clean = (parsed.trades as Record<string, unknown>[]).filter(r => !isNotATrade(r));
     return { ...result, content: JSON.stringify({ ...parsed, trades: clean }) };
   }
-  if (parsed.trade && isNonActionable(parsed.trade as Record<string, unknown>)) {
-    return { ...result, content: JSON.stringify({ ...parsed, trade: undefined, legs: undefined }) };
+  if (parsed.trade && isNotATrade(parsed.trade as Record<string, unknown>)) {
+    const reason = typeof (parsed.trade as Record<string, unknown>).skip_reason === "string"
+      ? String((parsed.trade as Record<string, unknown>).skip_reason)
+      : "unknown";
+    return {
+      ...result,
+      content: JSON.stringify({
+        ...parsed,
+        trade: undefined,
+        legs: undefined,
+        notice: {
+          hidden: true,
+          reason,
+          hint: "This signal is a management/parameter-follow-up instruction, not a trade, so its details are hidden. If the user asks why a modification or parameter update didn't apply, say there was no open position/basket to act on (or it could not be linked) and offer /copier-logs — do not present it as a trade or invent details.",
+        },
+      }),
+    };
   }
   return result;
 }
