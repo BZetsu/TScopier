@@ -83,6 +83,29 @@ function parseArgs(raw: string): Record<string, unknown> {
 }
 
 /**
+ * Does the newest user turn ask for LIVE / CURRENT / EXECUTED trades (their
+ * actual broker positions, or why they're in profit/loss) rather than the
+ * copier log feed? When true, the assistant steers get_copier_logs toward
+ * get_recent_trades and hides failed signals so a "symbol not found" row is
+ * never presented as the user's ongoing trade.
+ */
+function detectLiveTradesIntent(text: string): boolean {
+  const t = text.toLowerCase();
+  if (/\bcopier logs?\b|\bthe logs?\b|\bstill copying\b/.test(t)) return false;
+  // Instructional "how do I open a trade" is not a live-position query, but
+  // "show my open trades" is.
+  if (/\b(how|can i|do i|i want to|does the)\b.*\b(open (a )?trade|open trades)\b/i.test(t)) return false;
+  const tradeWords = /\b(trades?|positions?|orders?|profit|loss|losses|drawdown|pip|pips)\b/.test(t);
+  if (tradeWords) {
+    const liveWords = /\b(live|current|ongoing|executed|active|still|open)\b/.test(t);
+    if (liveWords) return true;
+  }
+  // "why am I in loss / down / negative / losing money" is a live-trades query
+  // even without an explicit trade word.
+  return /(why|am i|i'm|i am).*(in loss|in profit|down|negative|losing|in the red)/.test(t);
+}
+
+/**
  * Post-call tool verification hook. Runs after EVERY executeTool call, before
  * the result is fed back to the model or returned to the client. It parses the
  * JSON result and strips data that must never reach the UI/model as a trade.
@@ -94,9 +117,15 @@ function parseArgs(raw: string): Record<string, unknown> {
  *     mgmt_*, parameter_follow_up_*, basket_modify_*) — modification
  *     instructions that found no open position/basket to act on. They are not
  *     entries, so presenting one as the user's "latest trade" was misleading.
+ *
+ * When `liveIntent` is true (the user asked about live/current/executed trades),
+ * failed/error signals without an open position or ticket are also stripped, so
+ * a "symbol not found" row is never presented as the user's ongoing trade, and
+ * the hint is replaced with live-trade guidance.
+ *
  * Returns the sanitized ToolResult (unchanged if nothing to fix).
  */
-function verifyToolResult(name: string, result: ToolResult): ToolResult {
+function verifyToolResult(name: string, result: ToolResult, liveIntent = false): ToolResult {
   if (!["get_recent_trades", "get_copier_logs", "get_trade_detail"].includes(name)) {
     return result;
   }
@@ -121,14 +150,60 @@ function verifyToolResult(name: string, result: ToolResult): ToolResult {
     );
   };
 
-  if (Array.isArray(parsed.trades) && parsed.trades.some(r => isNotATrade(r as Record<string, unknown>))) {
-    const clean = (parsed.trades as Record<string, unknown>[]).filter(r => !isNotATrade(r));
-    return { ...result, content: JSON.stringify({ ...parsed, trades: clean }) };
+  // When the user wants live/current/executed trades, a failed or errored
+  // signal with no open position and no ticket is NOT their ongoing trade.
+  const isNotALiveTrade = (r: Record<string, unknown> | undefined | null): boolean => {
+    if (!liveIntent) return false;
+    if (typeof r?.status !== "string") return false;
+    const status = r.status.toLowerCase();
+    if (status !== "failed" && status !== "error") return false;
+    const positions = Array.isArray(r?.positions) ? (r.positions as Record<string, unknown>[]) : [];
+    if (positions.some((p) => p && p.status === "open")) return false;
+    const tickets = Array.isArray(r?.tickets) ? (r.tickets as unknown[]) : [];
+    if (tickets.some((tk) => tk != null && Number(tk) > 0)) return false;
+    return true;
+  };
+
+  const hidden = (r: Record<string, unknown> | undefined | null): boolean =>
+    isNotATrade(r) || isNotALiveTrade(r);
+
+  // Which predicate hid a row: "not_a_trade" (management/promo skip) or
+  // "not_live" (failed/error signal with no position). Used to pick the right
+  // notice hint and to know whether hiding actually happened.
+  const hiddenReason = (r: Record<string, unknown> | undefined | null): "not_a_trade" | "not_live" | null => {
+    if (isNotATrade(r)) return "not_a_trade";
+    if (isNotALiveTrade(r)) return "not_live";
+    return null;
+  };
+
+  // Live-trades hint: keep the position-status guidance (open/closed/pending,
+  // no-ticket, positions_error) that the plain get_recent_trades hint carries,
+  // and only mention hiding when rows were actually stripped.
+  const LIVE_TRADES_HINT =
+    "The user asked about their LIVE / current / executed trades (or why they are in profit/loss). Prefer rows with an open position or a broker ticket. IMPORTANT for status questions: each trade has a `positions` array from the broker (status open/closed/pending + ticket). Prefer `positions` for live status — if a trade has positions with status 'open', say it is still open and quote the ticket; if 'closed', say it closed; if 'pending' (limit/stop order), it has not filled yet. Only say 'no ticket' when BOTH tickets and positions are empty. If `positions_error` is present, positions are unavailable — do NOT claim there is no ticket. Failed signals (e.g. symbol not found, execution errors) are NOT the user's ongoing trade — do not present them as such. If nothing remains, say plainly there are no live/executed trades and offer get_copier_logs or /copier-logs to review failures.";
+
+  const NOT_A_TRADE_HINT =
+    "This signal is a management/parameter-follow-up instruction, not a trade, so its details are hidden. If the user asks why a modification or parameter update didn't apply, say there was no open position/basket to act on (or it could not be linked) and offer /copier-logs — do not present it as a trade or invent details.";
+
+  const NOT_LIVE_HINT =
+    "This signal did not trade — it was skipped or failed to execute (e.g. symbol not found). Do not present it as the user's ongoing trade. If the user asks why it didn't execute, explain the failure and offer /copier-logs or get_copier_logs to review it.";
+
+  if (Array.isArray(parsed.trades) && parsed.trades.some(r => hidden(r as Record<string, unknown>))) {
+    const clean = (parsed.trades as Record<string, unknown>[]).filter(r => !hidden(r));
+    const next: Record<string, unknown> = { ...parsed, trades: clean };
+    if (liveIntent) next.hint = LIVE_TRADES_HINT;
+    return { ...result, content: JSON.stringify(next) };
   }
-  if (parsed.trade && isNotATrade(parsed.trade as Record<string, unknown>)) {
-    const reason = typeof (parsed.trade as Record<string, unknown>).skip_reason === "string"
-      ? String((parsed.trade as Record<string, unknown>).skip_reason)
-      : "unknown";
+  if (liveIntent && Array.isArray(parsed.trades)) {
+    return { ...result, content: JSON.stringify({ ...parsed, hint: LIVE_TRADES_HINT }) };
+  }
+  if (parsed.trade && hidden(parsed.trade as Record<string, unknown>)) {
+    const row = parsed.trade as Record<string, unknown>;
+    const reason =
+      typeof row.skip_reason === "string"
+        ? String(row.skip_reason)
+        : String(row.status ?? "failed");
+    const noticeHint = hiddenReason(row) === "not_live" ? NOT_LIVE_HINT : NOT_A_TRADE_HINT;
     return {
       ...result,
       content: JSON.stringify({
@@ -138,7 +213,7 @@ function verifyToolResult(name: string, result: ToolResult): ToolResult {
         notice: {
           hidden: true,
           reason,
-          hint: "This signal is a management/parameter-follow-up instruction, not a trade, so its details are hidden. If the user asks why a modification or parameter update didn't apply, say there was no open position/basket to act on (or it could not be linked) and offer /copier-logs — do not present it as a trade or invent details.",
+          hint: noticeHint,
         },
       }),
     };
@@ -430,7 +505,7 @@ const TOOL_DEFS = [
     function: {
       name: "get_recent_trades",
       description:
-        "List the user's recent trades (signals that were executed, skipped, failed, or pending) with outcome, tickets, and any execution errors. Use BEFORE answering questions like 'what happened with my trades', 'show my recent trades', 'did my signal execute', or before reporting a trade. IMPORTANT when the user asks about THEIR LAST TRADE / MOST RECENT TRADE: they mean the most recent trade that actually EXECUTED or FAILED (has a symbol/ticket) — prefer a row with a symbol/ticket even if a newer signal was skipped or ignored; only if no executed/failed trade exists, report the newest signal and say it never traded.",
+        "List the user's recent trades (signals that were executed, skipped, failed, or pending) with outcome, tickets, and any execution errors. Use BEFORE answering questions like 'what happened with my trades', 'show my recent trades', 'did my signal execute', or before reporting a trade. IMPORTANT when the user asks about THEIR LAST TRADE / MOST RECENT TRADE / LIVE TRADE / ONGOING TRADE / CURRENT POSITION or why they are in profit or loss: they mean the most recent trade that actually EXECUTED or is currently OPEN at the broker — prefer a row with a symbol/ticket or an open position, even if a newer signal was skipped or failed; only if no executed/open trade exists, report the newest signal and say it never traded.",
       parameters: {
         type: "object",
         properties: {
@@ -462,7 +537,7 @@ const TOOL_DEFS = [
     function: {
       name: "get_copier_logs",
       description:
-        "List the user's recent signal copier log entries (executed / skipped / failed / pending / parsed / ignored) with timestamps, channel, symbol, skip reason, tickets, and errors. Optionally filter by status. Use for 'copier logs', 'recent activity', 'did my signal get copied'.",
+        "List the user's recent signal copier log entries (executed / skipped / failed / pending / parsed / ignored) with timestamps, channel, symbol, skip reason, tickets, and errors. Optionally filter by status. Use for 'copier logs', 'recent activity', 'did my signal get copied'. NOT for live/current/open trades — when the user asks about their ongoing or live trades or why they are in profit/loss, use get_recent_trades instead.",
       parameters: {
         type: "object",
         properties: {
@@ -1195,7 +1270,7 @@ const { data, error } = await supabase
   return {
     content: JSON.stringify({
       trades,
-      hint: "The app renders a card with these trades — reply in one or two short lines and do NOT repeat the list in prose. Offer get_trade_detail for a specific trade or open_trades to let the user view their live positions in the app. If the user asked about their LAST or MOST RECENT trade, answer with the most recent EXECUTED or FAILED trade (one with a symbol/ticket); skipped non-actionable promo messages are not trades — say so plainly if the newest signal is just a skip. IMPORTANT for status questions like 'is it still on' / 'is it open': each trade has a `positions` array from the broker (status open/closed/pending + ticket). Prefer `positions` for live status — if a trade has positions with status 'open', say it is still open and quote the ticket; if status 'closed', say it closed; if 'pending' (limit/stop order), it has not filled yet. Only say 'no ticket' when BOTH tickets and positions are empty. If `positions_error` is present, positions are unavailable — do NOT claim there is no ticket.",
+      hint: "The app renders a card with these trades — reply in one or two short lines and do NOT repeat the list in prose. Offer get_trade_detail for a specific trade or open_trades to let the user view their live positions in the app. If the user asked about their LAST or MOST RECENT trade, answer with the most recent EXECUTED trade (one with a symbol/ticket or an open position); failed signals (symbol not found, execution errors) are NOT the user's ongoing trade — if only failures exist, say the trade never executed and why, and do not claim there is a current position. IMPORTANT for status questions like 'is it still on' / 'is it open': each trade has a `positions` array from the broker (status open/closed/pending + ticket). Prefer `positions` for live status — if a trade has positions with status 'open', say it is still open and quote the ticket; if status 'closed', say it closed; if 'pending' (limit/stop order), it has not filled yet. Only say 'no ticket' when BOTH tickets and positions are empty. If `positions_error` is present, positions are unavailable — do NOT claim there is no ticket.",
     }),
   };
 }
@@ -2584,6 +2659,32 @@ Deno.serve(async (req: Request) => {
 
   if (messages.length < 2) return bad(400, "messages required");
 
+  // Live-trades intent: computed from the newest user turn. When the user asks
+  // about their live/current/executed trades, get_copier_logs is steered toward
+  // get_recent_trades and failed signals are hidden from trade answers.
+  // Recompute the newest user index AFTER the guard loop: spliced history
+  // messages shift indices, so the value captured earlier may be stale.
+  let liveIntentIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      liveIntentIndex = i;
+      break;
+    }
+  }
+  const newestUserText = (() => {
+    const newest = messages[liveIntentIndex];
+    if (!newest) return "";
+    if (typeof newest.content === "string") return newest.content;
+    if (Array.isArray(newest.content)) {
+      return newest.content
+        .filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join("\n");
+    }
+    return "";
+  })();
+  const liveIntent = detectLiveTradesIntent(newestUserText);
+
   const pendingClientActions: PendingClientAction[] = [];
   const pendingConfirmations: PendingConfirmation[] = [];
   const toolResultsLog: Array<{ tool: string; result: string }> = [];
@@ -2614,9 +2715,19 @@ Deno.serve(async (req: Request) => {
       });
 
       for (const call of toolCalls) {
-        const name = call.function?.name ?? "";
-        const args = sanitizeToolArgs(parseArgs(call.function?.arguments ?? "{}"));
-        const result = verifyToolResult(name, await executeTool(supabase, userId, name, args));
+        let name = call.function?.name ?? "";
+        const args = sanitizeToolArgs(parseArgs(call.function?.arguments ?? "{}")) as Record<string, unknown>;
+        // Steer the model toward recent/executed trades when the user asked for
+        // live/current/executed trades: copier logs include failed signals that
+        // are not the user's ongoing trade. get_copier_logs' `status` filter
+        // does not exist on get_recent_trades, so drop it rather than silently
+        // lose it.
+        if (liveIntent && name === "get_copier_logs") {
+          console.info(`[assistant] steered get_copier_logs -> get_recent_trades (live-trades intent)`);
+          name = "get_recent_trades";
+          delete args.status;
+        }
+        const result = verifyToolResult(name, await executeTool(supabase, userId, name, args), liveIntent);
         if (result.pendingClientAction) pendingClientActions.push(result.pendingClientAction);
         if (result.pendingConfirmation) pendingConfirmations.push(result.pendingConfirmation);
         toolResultsLog.push({ tool: name, result: result.content.slice(0, 4000) });
