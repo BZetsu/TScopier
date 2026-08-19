@@ -31,10 +31,18 @@
 - **Deploy state:** Migration applied + registered on **staging** (`axdcledcyhyvzrnfkwat`) on 2026-08-19 via `scripts/apply-migrations.py` (applied the SQL; its register step silently fails on the `statements text[]` literal — this is the known registration bug, see the 2026-08-18 migration-branch entry — so registration was done manually with `statements = ARRAY['-- 20260819120000_assistant_threads']`, HTTP 201). Verified table + RLS (`relrowsecurity=true`) + both triggers (`assistant_threads_cap`, `assistant_threads_timestamps`). Frontend not yet shipped (Netlify redeploy needed); prod after staging validation. Since DB writes come from the client via RLS, no edge-function deploy is needed.
 - **Follow-ups (optional):** ship the frontend to staging and validate: start a chat, close the tab, reopen — history persists; delete a thread and reload — stays deleted (offline-delete tombstone now persisted to sessionStorage).
 
+### 2026-08-19 — Telegram login codes not arriving (Migration)
+
+- **Symptom:** Connect Telegram advanced or 400'd; no code in Telegram. Pending row had a `phone_code_hash`. QR login works.
+- **Cause:** Not a missing UI transition. `auth.SendCode` from Railway (Desktop-spoofed GramJS) returns `delivery=app` with no SMS/call fallback. QR uses `exportLoginToken` and does not need an OTP. Aug 14 (`062c4600`) set `allowAppHash=false` and added the amber “no other delivery method” copy; that copy is removed.
+- **Fix so far:** Removed the amber banner. Restored `allowAppHash: true` in worker (needs **listener-migration** redeploy). Retry Send Code after 15s.
+- Scratchpad: `docs/scratchpad-telegram-send-code-2026-08-19.md`.
+
 ### 2026-08-19 — Telegram connect 401 on Migration branch
-- **Symptom:** `POST /functions/v1/telegram-auth` returned 401; function body never ran.
-- **Cause:** Migration uses the new API-key gateway, so Edge Functions need the `apikey` header. `callTelegramAuth` omitted it. After that, Edge `WORKER_INTERNAL_TOKEN` did not match `listener-migration`.
-- **Fix:** Send anon `apikey` on telegram-auth calls. Point Migration secret `WORKER_INTERNAL_TOKEN` at the same value as the Railway listener.
+
+- **Symptom:** `POST /functions/v1/telegram-auth` returned 401. User JWT was valid (ES256, Migration issuer).
+- **Cause:** Edge `WORKER_INTERNAL_TOKEN` did not match `listener-migration`. Function proxied `{"error":"Unauthorized"}`.
+- **Fix:** Set Migration secret `WORKER_INTERNAL_TOKEN` to the live listener token. Also send anon `apikey` on telegram-auth browser calls.
 
 ### 2026-08-19 — Local/CLI work targets Supabase branch Migration
 
