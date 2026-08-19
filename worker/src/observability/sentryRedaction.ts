@@ -56,7 +56,12 @@ export function redactStringForSentry(value: string): string {
     .replace(BEARER_RE, 'Bearer [REDACTED]')
     .replace(API_KEY_RE, '[REDACTED_KEY]')
     .replace(EMAIL_RE, '[REDACTED_EMAIL]')
-    .replace(PHONE_CANDIDATE_RE, redactPhones))
+    .replace(PHONE_CANDIDATE_RE, redactPhones)
+    // Redact bare `key=value` pairs where the key is sensitive (cookie, token,
+    // password, session, auth, etc.), e.g. "reject cookie=sid". Applied last so
+    // the more specific patterns above win. Guards against consuming a matched
+    // key prefix when multiple sensitive keys are adjacent.
+    .replace(/\b((?:[A-Za-z0-9_.-]*[-_])?(?:password|passwd|pwd|secret|token|bearer|cookie|set-cookie|authorization|auth[_-]?key|api[_-]?key|api[_-]?hash|session|session[_-]?string|phone|email|access[_-]?token|refresh[_-]?token|worker[_-]?internal[_-]?token|client[_-]?secret|private[_-]?key|x-api-key|openai[_-]?key|redis[_-]?token))\s*[=:]\s*[^\s,;]+/gi, '$1=[REDACTED]'))
 }
 
 function looksSerializedJson(value: string): boolean {
