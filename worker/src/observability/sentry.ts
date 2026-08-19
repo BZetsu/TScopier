@@ -476,12 +476,28 @@ export function captureWorkerFatalError(err: unknown, opts: CaptureOptions): boo
   return true
 }
 
+/** Print a visible, redacted fatal-error line to stdout before the silent exit,
+ * so deaths are never invisible in Railway logs even if Sentry ingest is down. */
+function logFatalToConsole(code: string, err: unknown): void {
+  const name = err instanceof Error ? err.name : typeof err
+  const message = typeof err === 'string'
+    ? err
+    : err instanceof Error ? (err.message || '') : String(err ?? '')
+  const safe = safeForSentry({ code, name, message })
+  const { code: c, name: n, message: m } = safe as { code?: string; name?: string; message?: string }
+  console.error(
+    `[worker-fatal] ${c ?? 'UNKNOWN'} ${n ?? 'Error'}: ${m ?? '[no message]'}`,
+  )
+}
+
 export function handleWorkerUncaughtException(err: Error): void {
   if (fatalCaptureInFlight) {
+    logFatalToConsole('UNCAUGHT_EXCEPTION', err)
     process.exit(1)
     return
   }
   fatalCaptureInFlight = true
+  logFatalToConsole('UNCAUGHT_EXCEPTION', err)
   captureWorkerFatalError(err, {
     subsystem: 'worker',
     operation: 'uncaught_exception',
@@ -495,6 +511,7 @@ export function handleWorkerUnhandledRejection(reason: unknown): void {
   if (fatalCaptureInFlight) return
   fatalCaptureInFlight = true
   const err = rejectionToError(reason)
+  logFatalToConsole('UNHANDLED_REJECTION', err)
   captureWorkerFatalError(err, {
     subsystem: 'worker',
     operation: 'unhandled_rejection',

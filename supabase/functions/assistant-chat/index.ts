@@ -1043,8 +1043,10 @@ function summarizeLogs(
     if (ticket != null) tickets.push(ticket);
     if (l.status === "failed" && l.error_message) errors.push(String(l.error_message));
     const skipDetail =
-      l.status === "skipped" && typeof reqPayload.skip_reason === "string"
-        ? String(reqPayload.skip_reason)
+      l.status === "skipped" &&
+      typeof reqPayload.skip_reason === "string" &&
+      reqPayload.skip_reason.trim()
+        ? String(reqPayload.skip_reason).trim()
         : null;
     if (skipDetail && !skipReasons.includes(skipDetail)) skipReasons.push(skipDetail);
     rows.push({
@@ -1092,7 +1094,8 @@ async function buildTradeSummaries(
       .from("trade_execution_logs")
       .select("signal_id,action,status,error_message,response_payload,request_payload,broker_account_id,created_at")
       .eq("user_id", userId)
-      .in("signal_id", allIds);
+      .in("signal_id", allIds)
+      .order("created_at", { ascending: true });
     for (const l of logs ?? []) {
       const sid = String(l.signal_id);
       if (!logsBySignal.has(sid)) logsBySignal.set(sid, []);
@@ -1276,7 +1279,8 @@ async function toolGetTradeDetail(
       .from("trade_execution_logs")
       .select("signal_id,action,status,error_message,response_payload,request_payload,broker_account_id,created_at")
       .eq("user_id", userId)
-      .in("signal_id", allIds),
+      .in("signal_id", allIds)
+      .order("created_at", { ascending: true }),
     supabase
       .from("signal_broker_dispatch_claims")
       .select("signal_id,broker_account_id,created_at")
@@ -1408,7 +1412,7 @@ async function toolReportTrade(
   if (signalId) {
     const { data: sig } = await supabase
       .from("signals")
-      .select("id,parsed_data,user_id,status,skip_reason")
+      .select("id,parsed_data,user_id,skip_reason")
       .eq("id", signalId)
       .eq("user_id", userId)
       .maybeSingle();
@@ -1422,7 +1426,7 @@ async function toolReportTrade(
       tp = fields.tp.length ? fields.tp[0] : null;
       lotSize = fields.lot_size;
 
-      skipReason = typeof sig.skip_reason === "string" ? String(sig.skip_reason).trim() : "";
+      skipReason = "";
 
       const { data: logs } = await supabase
         .from("trade_execution_logs")
@@ -1431,17 +1435,18 @@ async function toolReportTrade(
         .eq("user_id", userId)
         .order("created_at", { ascending: true })
         .limit(30);
-      if (!skipReason) {
-        for (const l of logs ?? []) {
-          if (l.status !== "skipped" || !l.request_payload) continue;
-          const rp = l.request_payload && typeof l.request_payload === "object"
-            ? (l.request_payload as Record<string, unknown>)
-            : {};
-          if (typeof rp.skip_reason === "string" && rp.skip_reason.trim()) {
-            skipReason = String(rp.skip_reason).trim();
-            break;
-          }
+      for (const l of logs ?? []) {
+        if (l.status !== "skipped" || !l.request_payload) continue;
+        const rp = l.request_payload && typeof l.request_payload === "object"
+          ? (l.request_payload as Record<string, unknown>)
+          : {};
+        if (typeof rp.skip_reason === "string" && rp.skip_reason.trim()) {
+          skipReason = String(rp.skip_reason).trim();
+          break;
         }
+      }
+      if (!skipReason && typeof sig.skip_reason === "string") {
+        skipReason = String(sig.skip_reason).trim();
       }
       const brokerIds = [...new Set((logs ?? []).map((l) => l.broker_account_id).filter((b): b is string => Boolean(b)))];
       const labelById = await fetchBrokerLabels(supabase, brokerIds);
