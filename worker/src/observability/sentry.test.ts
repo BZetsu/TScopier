@@ -627,6 +627,35 @@ test('unhandled rejection handler captures and bounded-flushes', async () => {
   }
 })
 
+test('fatal handlers print a visible, redacted log before exit', async () => {
+  setupMock({ SENTRY_ENABLED: 'false' } as NodeJS.ProcessEnv)
+  const originalExit = process.exit
+  ;(process as unknown as { exit: typeof process.exit }).exit = (() => undefined as never) as typeof process.exit
+  const originalError = console.error
+  const lines: string[] = []
+  console.error = (msg?: unknown) => { lines.push(String(msg)) }
+  try {
+    handleWorkerUncaughtException(new Error('fatal Bearer abcdefghijklmnopqrstuvwxyz'))
+    await new Promise(resolve => setImmediate(resolve))
+    await new Promise(resolve => setImmediate(resolve))
+    resetWorkerSentryForTests()
+    handleWorkerUnhandledRejection(new Error('reject cookie=sid'))
+    await new Promise(resolve => setImmediate(resolve))
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(lines.length, 2)
+    for (const line of lines) {
+      assert.match(line, /^\[worker-fatal\]/)
+      assert.ok(!line.includes('abcdefghijklmnopqrstuvwxyz'), `leaked Bearer token: ${line}`)
+      assert.ok(!line.includes('cookie=sid'), `leaked session cookie: ${line}`)
+    }
+  } finally {
+    console.error = originalError
+    ;(process as unknown as { exit: typeof process.exit }).exit = originalExit
+    removeWorkerProcessSentryHandlersForTests()
+    resetWorkerSentryForTests()
+  }
+})
+
 test('buildSafePipelineContext preserves correlation as context only', () => {
   const ctx = buildSafePipelineContext({
     user_id: 'user-abc',

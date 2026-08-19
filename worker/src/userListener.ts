@@ -203,6 +203,28 @@ const ENTITY_WARMUP_INTERVAL_MS = Math.max(
   60_000,
   Math.min(30 * 60_000, Number(process.env.TELEGRAM_ENTITY_WARMUP_INTERVAL_MS ?? 10 * 60_000)),
 )
+/**
+ * Cooldown between attempts to join/resolve a public channel that keeps
+ * failing to resolve. Prevents an unresolvable channel (dead username,
+ * renamed, private) from hammering contacts.ResolveUsername / GetDialogs
+ * on every poll and warmup cycle, which sustains Telegram flood-waits.
+ */
+const CHANNEL_RESOLVE_COOLDOWN_MS = (() => {
+  const raw = Number(process.env.TELEGRAM_CHANNEL_RESOLVE_COOLDOWN_MS ?? 10 * 60_000)
+  return Number.isFinite(raw) ? Math.max(60_000, Math.min(30 * 60_000, raw)) : 10 * 60_000
+})()
+
+/**
+ * Per-session backoff after a Telegram flood-wait / retry-exhaustion burst.
+ * Without it, the fast poll (every 3s) keeps issuing getMessages into a
+ * throttled session; each request sleeps inside GramJS (avg 28s) × 5 retries,
+ * piling up hundreds of concurrent pending requests + timers (observed: 500-725
+ * flood-waits/min sustained → OOM/silent kill of the listener on 2026-08-18).
+ */
+const POLL_FLOOD_BACKOFF_MS = (() => {
+  const raw = Number(process.env.TELEGRAM_POLL_FLOOD_BACKOFF_MS ?? 2 * 60_000)
+  return Number.isFinite(raw) ? Math.max(30_000, Math.min(10 * 60_000, raw)) : 2 * 60_000
+})()
 
 function catchUpOnStartEnabled(): boolean {
   const v = String(process.env.TELEGRAM_CATCHUP_ON_START ?? 'true').toLowerCase()
@@ -384,6 +406,10 @@ function safeTelegramErrorMessage(err: unknown): string {
 
 function normalizedTelegramErrorCode(err: unknown): string {
   const raw = safeTelegramErrorMessage(err).toUpperCase()
+  // GramJS rewrites Telegram's USERNAME_NOT_OCCUPIED into a plain
+  // Error('No user has "X" as username') (telegram/client/users.js).
+  // Map it back so unresolvable public channels can be auto-disabled.
+  if (/NO USER HAS .* AS USERNAME/.test(raw)) return 'USERNAME_NOT_OCCUPIED'
   const match = raw.match(/[A-Z][A-Z0-9_]{2,}/)
   return match?.[0] ?? raw
 }
@@ -394,6 +420,21 @@ function isConfirmedChannelInvalidError(err: unknown): boolean {
     || code.includes('USERNAME_INVALID')
     || code.includes('USERNAME_NOT_OCCUPIED')
     || code.includes('CHANNEL_PRIVATE')
+}
+
+/**
+ * True when an MTProto request failed because Telegram is throttling the
+ * session. GramJS retries internally (sleeping ~flood-wait seconds × 5) and
+ * finally throws `Request was unsuccessful N time(s)`; a FloodWaitError above
+ * floodSleepThreshold surfaces as `A wait of N seconds is required ...`.
+ * Used to back off polling instead of hammering a rate-limited session (the
+ * 2026-08-18 listener crash driver).
+ */
+function isFloodWaitOrRetryExhaustion(err: unknown): boolean {
+  const m = safeTelegramErrorMessage(err)
+  return m.includes('FLOOD_WAIT')
+    || /Request was unsuccessful \d+ time\(s\)/.test(m)
+    || /A wait of \d+ seconds is required/.test(m)
 }
 
 export class UserListener {
@@ -445,6 +486,14 @@ export class UserListener {
   private stopping = false
   private channelInvalidFailures = new Map<string, ChannelInvalidFailureState>()
   private autoDisabledChannelRows = new Set<string>()
+  /** Cooldown (ms epoch) until the next resolve/join attempt per channel row. */
+  private channelResolveCooldownUntil = new Map<string, { until: number; lastError?: Error }>()
+  /** When the next fast/safety poll may run again after a flood-wait burst (0 = no backoff). */
+  private pollBackoffUntil = 0
+  /** Flood-wait errors observed during the current poll cycle (used to clear backoff at cycle level). */
+  private floodErrorsThisCycle = 0
+  /** Last time a flood-wait backoff was logged — rate-limits the warning. */
+  private lastPollBackoffLogAt = 0
   private malformedRpcRecoveryCount = 0
   private lastMalformedRpcRecoveryAt = 0
   private onSignalParsed: ((row: SignalRow) => boolean) | null = null
@@ -588,6 +637,7 @@ export class UserListener {
   private removeChannelFromMonitoring(row: ChannelRow): void {
     this.autoDisabledChannelRows.add(row.id)
     this.fastPollRows = this.fastPollRows.filter(r => r.id !== row.id)
+    this.channelResolveCooldownUntil.delete(row.id)
     if (row.channel_id && isNumericTelegramChatId(String(row.channel_id))) {
       for (const v of toChannelIdVariants(String(row.channel_id))) this.monitoredChannels.delete(v)
     }
@@ -602,6 +652,7 @@ export class UserListener {
     if (!previous && !wasLocallyDisabled) return false
 
     this.channelInvalidFailures.delete(row.id)
+    this.channelResolveCooldownUntil.delete(row.id)
     const detail = {
       source,
       ...safeChannelIdentifier(row),
@@ -638,6 +689,64 @@ export class UserListener {
     const state = this.channelInvalidFailures.get(row.id)
     if (state) state.lastSuccessfulPollAt = now
     this.resetChannelInvalidFailure(row, source)
+  }
+
+  /** Arm a session-wide poll backoff after a flood-wait / retry-exhaustion burst. */
+  private noteFloodWaitBackoff(reason: string): void {
+    const now = Date.now()
+    this.floodErrorsThisCycle += 1
+    if (now < this.pollBackoffUntil) return
+    this.pollBackoffUntil = now + POLL_FLOOD_BACKOFF_MS
+    if (now - this.lastPollBackoffLogAt >= POLL_FLOOD_BACKOFF_MS) {
+      this.lastPollBackoffLogAt = now
+      console.warn(
+        `[userListener] flood-wait backoff user=${this.userId}`
+        + ` pausing polls for ${Math.round(POLL_FLOOD_BACKOFF_MS / 1000)}s`
+        + ` reason=${reason}`,
+      )
+    }
+    void persistListenerEvent(this.supabase, {
+      userId: this.userId,
+      eventType: 'poll_flood_backoff',
+      detail: { reason: reason.slice(0, 200), backoff_ms: POLL_FLOOD_BACKOFF_MS },
+    })
+  }
+
+  private setChannelResolveCooldown(rowId: string, err?: unknown): void {
+    this.channelResolveCooldownUntil.set(rowId, {
+      until: Date.now() + CHANNEL_RESOLVE_COOLDOWN_MS,
+      lastError: err instanceof Error ? err : undefined,
+    })
+  }
+
+  /**
+   * Throw the representative error captured when the resolve cooldown was armed
+   * (falls back to a plain message). During cooldown the caller skips all
+   * Telegram RPCs but still surfaces the original classification — so
+   * confirmed-invalid channels keep progressing toward auto-disable without
+   * hammering contacts.ResolveUsername / GetDialogs.
+   */
+  private throwChannelResolveCooldown(rowId: string): never {
+    const entry = this.channelResolveCooldownUntil.get(rowId)
+    const lastError = entry?.lastError
+    if (lastError) throw lastError
+    throw new Error(`channel resolve cooling down until ${entry?.until ?? 0}`)
+  }
+
+  /**
+   * End of a poll cycle: clear the backoff only if no flood-wait error was
+   * recorded anywhere since this cycle began (snapshot at cycle start). The
+   * counter is deliberately NOT reset here — it is monotonic per session and
+   * only zeroed on reconnect — so overlapping poll cycles (fast poll, safety
+   * poll, initial poll) can't race each other into clearing a backoff that one
+   * of them just armed. Each cycle compares against its own snapshot, so a
+   * clean cycle still clears an expired backoff, while any flood during any
+   * overlapping cycle keeps the backoff armed.
+   */
+  private endPollCycle(floodAtCycleStart: number): void {
+    if (this.floodErrorsThisCycle === floodAtCycleStart) {
+      this.pollBackoffUntil = 0
+    }
   }
 
   private async noteChannelInvalid(
@@ -883,6 +992,19 @@ export class UserListener {
   private clearDialogsCache() {
     this.dialogsCache = null
     this.dialogsCacheAt = 0
+  }
+
+  /**
+   * Clear per-channel resolve cooldowns + session poll backoff after a fresh
+   * connect/reconnect. The session and entity cache are reset, so a channel
+   * that was cooling down (possibly from a transient failure) must be allowed
+   * to attempt resolution again; a genuinely dead channel re-fails and re-arms
+   * the cooldown immediately.
+   */
+  private resetTelegramBackoffState() {
+    this.channelResolveCooldownUntil.clear()
+    this.pollBackoffUntil = 0
+    this.floodErrorsThisCycle = 0
   }
 
   private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'fastPollTimer' | 'sessionPersistTimer' | 'replyChainSweepTimer' | 'signalReconcileSweepTimer' | 'entityWarmupTimer' | 'heartbeatTimer') {
@@ -3492,6 +3614,7 @@ export class UserListener {
   /** Resolve + join every monitored channel so live NewMessage fires for all of them. */
   private async warmAllMonitoredChannelEntities(): Promise<void> {
     if (!this.isConnected) return
+    if (Date.now() < this.pollBackoffUntil) return
     const { data: rows } = await this.supabase
       .from('telegram_channels')
       .select('id, channel_id, channel_username')
@@ -3512,10 +3635,13 @@ export class UserListener {
     if (this.isChannelLocallyDisabled(row)) return
     const username = normalizeChannelUsername(row.channel_username)
     if (!username) return
+    const cooldownUntil = this.channelResolveCooldownUntil.get(row.id)?.until ?? 0
+    if (Date.now() < cooldownUntil) return
     try {
       const entity = await this.client.getInputEntity(username)
       await tgInvoke(this.client, new Api.channels.JoinChannel({ channel: entity }))
       this.resetChannelInvalidFailure(row, 'ensure_joined_public_channel')
+      this.channelResolveCooldownUntil.delete(row.id)
       incMetric('channel_join_ok')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -3525,12 +3651,15 @@ export class UserListener {
         || msg.includes('INVITE_HASH_EMPTY')
         || msg.includes('INVITE_HASH_EXPIRED')
       ) {
+        this.channelResolveCooldownUntil.delete(row.id)
         return
       }
       if (isConfirmedChannelInvalidError(err)) {
+        this.setChannelResolveCooldown(row.id, err)
         await this.noteChannelInvalid(row, 'ensure_joined_public_channel', err)
         return
       }
+      this.setChannelResolveCooldown(row.id, err)
       console.warn(
         `[userListener] ensureJoinedPublicChannel @${username} channel=${row.id}:`,
         msg.slice(0, 200),
@@ -3556,6 +3685,7 @@ export class UserListener {
 
   private async runCatchUp() {
     if (this.catchUpInFlight) return
+    if (Date.now() < this.pollBackoffUntil) return
     this.catchUpInFlight = true
     try {
       const { data: rows } = await this.supabase
@@ -3576,6 +3706,7 @@ export class UserListener {
 
   private async runRecentCatchUp(): Promise<void> {
     if (this.catchUpInFlight) return
+    if (Date.now() < this.pollBackoffUntil) return
     this.catchUpInFlight = true
     try {
       const { data: rows } = await this.supabase
@@ -3596,6 +3727,8 @@ export class UserListener {
 
   private async pollMonitoredChannelsForMessages(): Promise<void> {
     if (!this.isConnected) return
+    if (Date.now() < this.pollBackoffUntil) return
+    const floodAtCycleStart = this.floodErrorsThisCycle
     const { data: rows } = await this.supabase
       .from('telegram_channels')
       .select('id, channel_id, channel_username, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
@@ -3608,6 +3741,7 @@ export class UserListener {
         console.warn(`[userListener] poll failed channel=${row.id}:`, err),
       )
     })
+    this.endPollCycle(floodAtCycleStart)
   }
 
   /**
@@ -3635,6 +3769,10 @@ export class UserListener {
       }
       if (isConfirmedChannelInvalidError(err)) {
         await this.noteChannelInvalid(row, 'poll_peer_resolve', err)
+        return
+      }
+      if (isFloodWaitOrRetryExhaustion(err)) {
+        this.noteFloodWaitBackoff(safeTelegramErrorMessage(err))
         return
       }
       const msg = err instanceof Error ? err.message : String(err)
@@ -3670,6 +3808,10 @@ export class UserListener {
       }
       if (isConfirmedChannelInvalidError(err)) {
         await this.noteChannelInvalid(row, 'poll_getMessages', err)
+        return
+      }
+      if (isFloodWaitOrRetryExhaustion(err)) {
+        this.noteFloodWaitBackoff(safeTelegramErrorMessage(err))
         return
       }
       const msg = err instanceof Error ? err.message : String(err)
@@ -3812,10 +3954,25 @@ export class UserListener {
 
   private async resolveChannelPeer(row: ChannelRow): Promise<unknown> {
     const key = row.channel_username?.replace(/^@/, '') || row.channel_id
+    // If a recent resolve failed, skip BOTH the ResolveUsername RPC and the
+    // expensive dialog scan, and rethrow the captured representative error so
+    // confirmed-invalid channels keep progressing toward auto-disable without
+    // hammering Telegram every poll tick.
+    const cooldownUntil = this.channelResolveCooldownUntil.get(row.id)?.until ?? 0
+    if (Date.now() < cooldownUntil) {
+      this.throwChannelResolveCooldown(row.id)
+    }
     try {
-      return await this.client.getInputEntity(key)
-    } catch {
+      const peer = await this.client.getInputEntity(key)
+      this.channelResolveCooldownUntil.delete(row.id)
+      return peer
+    } catch (err) {
+      if (isConfirmedChannelInvalidError(err)) {
+        this.setChannelResolveCooldown(row.id, err)
+        throw err
+      }
       // Entity cache miss — warm from dialogs (common right after connect).
+      // Fall through to the dialog scan below.
     }
 
     const wantUser = (row.channel_username ?? '').replace(/^@/, '').toLowerCase()
@@ -3834,11 +3991,21 @@ export class UserListener {
           || idVariants.has(id)
           || [...idVariants].some(v => id === v || id.endsWith(v))
         if (matches) {
+          this.channelResolveCooldownUntil.delete(row.id)
           return await this.client.getInputEntity(entity)
         }
       }
-      return await this.client.getInputEntity(key)
+      const peer = await this.client.getInputEntity(key)
+      this.channelResolveCooldownUntil.delete(row.id)
+      return peer
     } catch (err) {
+      // Flood / retry-exhaustion errors are transient and handled by the
+      // session-wide poll backoff — do NOT cache them in the 10-min resolve
+      // cooldown, or a stale cached flood error would keep re-arming the
+      // session backoff (via throwChannelResolveCooldown) for the whole window.
+      if (!isFloodWaitOrRetryExhaustion(err)) {
+        this.setChannelResolveCooldown(row.id, err)
+      }
       rethrowIfSessionInvalid(err)
     }
   }
@@ -4308,6 +4475,7 @@ export class UserListener {
         this.connectionTrace('probe_start', { source: reason, cycleId, attempt: attempt + 1 })
         await tgInvoke(this.client, new Api.updates.GetState())
         this.isConnected = true
+        this.resetTelegramBackoffState()
         this.lastSuccessfulPollAt = Date.now()
         if (reason === 'malformed_rpc_result') {
           this.malformedRpcRecoveryCount = 0
@@ -4459,6 +4627,7 @@ export class UserListener {
    */
   private async runFastPoll(): Promise<void> {
     if (!this.isConnected || this.fastPollInFlight) return
+    if (Date.now() < this.pollBackoffUntil) return
     this.fastPollInFlight = true
     try {
       const now = Date.now()
@@ -4472,6 +4641,7 @@ export class UserListener {
         this.fastPollRowsAt = now
       }
 
+      const floodAtCycleStart = this.floodErrorsThisCycle
       const staleRows = this.fastPollRows.filter(row => {
         if (this.isChannelLocallyDisabled(row)) return false
         const liveDb = row.last_live_at ? new Date(row.last_live_at).getTime() : 0
@@ -4484,6 +4654,7 @@ export class UserListener {
           console.warn(`[userListener] fast poll failed channel=${row.id}:`, err),
         )
       })
+      this.endPollCycle(floodAtCycleStart)
     } finally {
       this.fastPollInFlight = false
     }
@@ -4519,6 +4690,7 @@ export class UserListener {
 
   private async warmEntityCache(): Promise<void> {
     if (!this.isConnected) return
+    if (Date.now() < this.pollBackoffUntil) return
     try {
       const dialogs = await this.client.getDialogs({ limit: DIALOG_MAX_SCAN })
       const channelCount = dialogs.filter(

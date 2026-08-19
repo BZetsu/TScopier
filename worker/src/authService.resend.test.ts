@@ -219,7 +219,7 @@ describe('AuthService resendCode', () => {
     assert.equal(pending.phoneCodeHash, 'hash-a')
   })
 
-  it('sendCode uses conservative server-side CodeSettings', async () => {
+  it('sendCode uses CodeSettings that allow Telegram-app delivery', async () => {
     const requests: unknown[] = []
     const service = new AuthService(
       fakeSupabase() as never,
@@ -244,12 +244,65 @@ describe('AuthService resendCode', () => {
 
     assert.equal(request.className, 'auth.SendCode')
     assert.equal(settings.allowFlashcall, false)
-    assert.equal(settings.currentNumber, false)
-    assert.equal(settings.allowAppHash, false)
+    assert.equal(settings.currentNumber, true)
+    assert.equal(settings.allowAppHash, true)
     assert.equal(settings.allowMissedCall, false)
     assert.equal(settings.allowFirebase, false)
     assert.equal(result.can_resend, false)
     assert.equal(result.resend_available_at, null)
+    await service.shutdown()
+  })
+
+  it('sendCode debounces a second click within 15s without calling Telegram again', async () => {
+    const requests: unknown[] = []
+    const service = new AuthService(
+      fakeSupabase() as never,
+      fakeSessionManager() as never,
+      {
+        buildClient: () => fakeClient() as never,
+        now: () => 100_000,
+        invoke: async (_client, request) => {
+          requests.push(request)
+          return {
+            phoneCodeHash: 'hash-a',
+            className: 'auth.SentCode',
+            type: { className: 'auth.SentCodeTypeApp', length: 5 },
+          } as never
+        },
+      },
+    )
+
+    await service.sendCode('user-1', '+15551234567')
+    await service.sendCode('user-1', '+15551234567')
+    assert.equal(requests.length, 1)
+    await service.shutdown()
+  })
+
+  it('sendCode requests a new Telegram code after the debounce window', async () => {
+    let now = 100_000
+    const requests: unknown[] = []
+    const service = new AuthService(
+      fakeSupabase() as never,
+      fakeSessionManager() as never,
+      {
+        buildClient: () => fakeClient() as never,
+        now: () => now,
+        invoke: async (_client, request) => {
+          requests.push(request)
+          return {
+            phoneCodeHash: `hash-${requests.length}`,
+            className: 'auth.SentCode',
+            type: { className: 'auth.SentCodeTypeApp', length: 5 },
+          } as never
+        },
+      },
+    )
+
+    await service.sendCode('user-1', '+15551234567')
+    now = 116_000
+    await service.sendCode('user-1', '+15551234567')
+    assert.equal(requests.length, 2)
+    await service.shutdown()
   })
 
   it('verifyCode uses the latest hash after resend replaces the old hash', async () => {

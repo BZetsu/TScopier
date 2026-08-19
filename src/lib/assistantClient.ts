@@ -96,24 +96,56 @@ export async function executeAssistantAction(params: {
 const HISTORY_PREFIX = 'tscopier.assistant.history.'
 const THREADS_PREFIX = 'tscopier.assistant.threads.'
 export const MAX_THREADS = 8
-const MAX_MESSAGES_PER_THREAD = 20
+export const MAX_MESSAGES_PER_THREAD = 20
+/** Upper bound for a stored message body / tool result so DB jsonb stays bounded. */
+const ASSISTANT_STORED_CONTENT_MAX = 20_000
+
+const DELETED_PREFIX = 'tscopier.assistant.deleted.'
+
+/**
+ * Load persisted deleted-thread ids for a user. Tombstones are kept in
+ * sessionStorage so an offline delete survives a reload (the DB row stays until
+ * connectivity returns, but it is not shown and the delete is re-issued).
+ */
+export function loadDeletedThreadIds(userId: string): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(DELETED_PREFIX + userId)
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(parsed.filter((x): x is string => typeof x === 'string'))
+  } catch {
+    return new Set()
+  }
+}
+
+/** Persist the tombstone set for a user. */
+export function saveDeletedThreadIds(userId: string, ids: Set<string>): void {
+  try {
+    sessionStorage.setItem(DELETED_PREFIX + userId, JSON.stringify([...ids]))
+  } catch {
+    // ignore quota / private mode
+  }
+}
 
 function sanitizeMessageContent(content: string): string {
   return redactTelegramPhones(content)
 }
 
-function normalizeStoredMessage(m: AssistantChatMessage): AssistantChatMessage | null {
+export function normalizeStoredMessage(m: AssistantChatMessage): AssistantChatMessage | null {
   if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') {
     return null
   }
-  const content = sanitizeMessageContent(m.content)
+  const content = sanitizeMessageContent(m.content).slice(0, ASSISTANT_STORED_CONTENT_MAX)
   const images =
     m.role === 'user' && Array.isArray(m.images)
       ? m.images.filter(isAssistantImageDataUrl).slice(0, 3)
       : undefined
   const tool_results =
     m.role === 'assistant' && Array.isArray(m.tool_results)
-      ? m.tool_results.filter(tr => tr && typeof tr.tool === 'string' && typeof tr.result === 'string')
+      ? m.tool_results
+          .filter(tr => tr && typeof tr.tool === 'string' && typeof tr.result === 'string')
+          .map(tr => ({ tool: tr.tool, result: tr.result.slice(0, ASSISTANT_STORED_CONTENT_MAX) }))
       : undefined
   const base: AssistantChatMessage = { role: m.role, content }
   if (images?.length) base.images = images
@@ -192,9 +224,24 @@ export type AssistantThreadsState = {
 }
 
 export function createAssistantThreadId(): string {
-  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const webCrypto = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined
+  if (webCrypto && typeof webCrypto.randomUUID === 'function') {
+    return webCrypto.randomUUID()
+  }
+  // RFC 4122 v4 UUID fallback for environments without crypto.randomUUID so the
+  // id is always a valid value for the DB uuid column.
+  if (webCrypto && typeof webCrypto.getRandomValues === 'function') {
+    const bytes = webCrypto.getRandomValues(new Uint8Array(16))
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = Array.from(bytes, (b: number) => b.toString(16).padStart(2, '0')).join('')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
 }
 
 export function assistantThreadTitle(messages: AssistantChatMessage[]): string {
@@ -261,30 +308,39 @@ export function loadAssistantThreads(userId: string): AssistantThreadsState {
 /** Best-effort budget for the per-user sessionStorage entry (safely under the ~5MB quota). */
 const THREADS_STORAGE_BUDGET = 4_000_000
 
+/**
+ * Compact a thread for storage or API writes: cap messages, keep images only on
+ * the newest user turn, and re-derive the title from the first user message.
+ */
+export function compactThreadForApi(t: AssistantThread, allowImages = true): AssistantThread {
+  const sliced = t.messages.slice(-MAX_MESSAGES_PER_THREAD)
+  let keptImages = false
+  const messages: AssistantChatMessage[] = []
+  for (let i = sliced.length - 1; i >= 0; i--) {
+    const m = sliced[i]
+    const base: AssistantChatMessage = {
+      role: m.role,
+      content: m.content.slice(0, ASSISTANT_STORED_CONTENT_MAX),
+    }
+    if (allowImages && m.role === 'user' && m.images?.length && !keptImages) {
+      base.images = m.images
+      keptImages = true
+    }
+    if (m.role === 'assistant' && m.tool_results?.length) {
+      base.tool_results = m.tool_results.map(tr => ({
+        tool: tr.tool,
+        result: tr.result.slice(0, ASSISTANT_STORED_CONTENT_MAX),
+      }))
+    }
+    messages.push(base)
+  }
+  return { ...t, title: assistantThreadTitle(sliced), messages: messages.reverse() }
+}
+
 function serializeThreads(state: AssistantThreadsState, allowImages: boolean): string {
   return JSON.stringify({
     threads: state.threads
-      .map(t => {
-        const sliced = t.messages.slice(-MAX_MESSAGES_PER_THREAD)
-        let keptImages = false
-        const messages: AssistantChatMessage[] = []
-        for (let i = sliced.length - 1; i >= 0; i--) {
-          const m = sliced[i]
-          const base: AssistantChatMessage = { role: m.role, content: m.content }
-          if (
-            allowImages &&
-            m.role === 'user' &&
-            m.images?.length &&
-            !keptImages
-          ) {
-            base.images = m.images
-            keptImages = true
-          }
-          if (m.role === 'assistant' && m.tool_results?.length) base.tool_results = m.tool_results
-          messages.push(base)
-        }
-        return { ...t, title: assistantThreadTitle(sliced), messages: messages.reverse() }
-      })
+      .map(t => compactThreadForApi(t, allowImages))
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, MAX_THREADS),
     activeThreadId: state.activeThreadId,

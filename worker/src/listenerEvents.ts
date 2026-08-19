@@ -29,6 +29,7 @@ export type ListenerEventType =
   | 'channel_invalid_detected'
   | 'channel_auto_disabled'
   | 'channel_reactivated'
+  | 'poll_flood_backoff'
 
 export async function persistListenerEvent(
   supabase: SupabaseClient,

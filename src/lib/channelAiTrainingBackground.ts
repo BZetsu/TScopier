@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { saveChannelTraining, trainChannelSignals } from './analyzeChannelProfile'
+import { callTelegramAuth } from './telegramAuthApi'
 
 export const CHANNEL_AI_TRAINING_LOOKBACK_DAYS = 30
 
@@ -32,26 +33,17 @@ async function backfillChannelSignalsForTraining(
   if (!token) throw new Error('Not signed in')
 
   const url = `${import.meta.env.VITE_SUPABASE_URL as string}/functions/v1/telegram-auth`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      action: 'backfill_channel_history',
-      channel_row_id: channelId,
-      days: lookbackDays,
-      for_training: true,
-    }),
-  })
-  const data = await res.json().catch(() => ({})) as {
+  const { ok, data } = await callTelegramAuth<{
     error?: unknown
     message?: unknown
     imported?: number
     messages?: string[]
-  }
-  if (!res.ok || data.error) {
+  }>(url, token, 'backfill_channel_history', {
+    channel_row_id: channelId,
+    days: lookbackDays,
+    for_training: true,
+  })
+  if (!ok || data.error) {
     const msg =
       typeof data.error === 'string'
         ? data.error
