@@ -2,6 +2,14 @@
 
 ## Changelog
 
+### 2026-08-19 — Range breakeven SL is per-leg, not one shared price
+
+- **Bug:** After Move SL on TP hit, a range basket (instant + layering) copied the tightest BE (e.g. 4504.10) onto every ticket.
+- **Cause:** `applyOpenLegStopLossToTargets` merged `mostProtectiveOpenLegSl` across the basket; v2 then preserved the already-unified `trades.sl`.
+- **Fix:** Keep each stamped BE SL. New fills after basket BE open at that fill + offset. v2 recomputes from `entry_price` + `auto_be_offset_pips`. Explicit Adjust still unifies.
+- Files: `rangeBasketTpSync.ts`, `v2ReconcileMonitor.ts`, `virtualPendingMonitor.ts`, `brokerPendingFillStops.ts`, `basketReconcileTargets.ts`, `autoManagement.ts`.
+- Scratchpad: `docs/scratchpad-range-per-leg-breakeven-2026-08-19.md`. Needs trade worker deploy.
+
 ### 2026-08-17 — Reverse + predefined SL/TP applied on the flipped side
 
 - **Bug:** Reverse flipped the ticket, but override SL/TP pips were still computed as a buy from the original signal/entry. Wrong-side prices were stripped, so the sell opened with no stops.

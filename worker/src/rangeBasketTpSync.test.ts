@@ -11,6 +11,7 @@ import {
   pickV2MergeDistributeTargets,
   applyOpenLegStopLossToTargets,
   resolveFiringLegStops,
+  resolvePerLegBreakevenSlForNewFill,
   resolveRangeBasketFinalTps,
   resolveRangeBasketLegCounts,
   resolveRangeTpRebalanceGate,
@@ -384,6 +385,65 @@ test('resolveFiringLegStops: latest effective SL overrides a stale leg SL', () =
   assert.equal(out.takeprofit, 4490, 'existing TP preserved, not repainted')
 })
 
+test('resolveFiringLegStops: after sibling BE uses per-leg fill+offset, not most-protective', () => {
+  const out = resolveFiringLegStops({
+    legStoploss: 4300,
+    legTakeprofit: 4530,
+    cweClosePrice: null,
+    effective: { stoploss: 4504.10, tpLevels: [4530, 4510] },
+    isBuy: true,
+    perLegBreakevenSl: 4498.10,
+    effectiveSource: 'channel_memory',
+  })
+  assert.equal(out.stoploss, 4498.10)
+  assert.equal(out.takeprofit, 4530)
+})
+
+test('resolveFiringLegStops: explicit adjust still uses effective SL over per-leg BE', () => {
+  const out = resolveFiringLegStops({
+    legStoploss: 4300,
+    legTakeprofit: 4530,
+    cweClosePrice: null,
+    effective: { stoploss: 4090, tpLevels: [4530] },
+    isBuy: true,
+    perLegBreakevenSl: 4498.10,
+    effectiveSource: 'basket_target',
+  })
+  assert.equal(out.stoploss, 4090)
+})
+
+test('resolvePerLegBreakevenSlForNewFill: buy fill + 1 pip after sibling BE', () => {
+  const sl = resolvePerLegBreakevenSlForNewFill({
+    familyTrades: [{
+      ...openLeg('a', 4504, '2026-01-01T00:00:00Z'),
+      sl: 4504.10,
+      auto_be_applied_at: '2026-08-19T00:00:00Z',
+      auto_be_offset_pips: 1,
+    }],
+    effectiveSource: 'channel_memory',
+    isBuy: true,
+    fillPrice: 4498,
+    symbol: 'XAUUSD',
+    manual: { breakeven_offset_pips: 1 },
+  })
+  assert.equal(sl, 4498.1)
+})
+
+test('resolvePerLegBreakevenSlForNewFill: null when Adjust is the latest instruction', () => {
+  const sl = resolvePerLegBreakevenSlForNewFill({
+    familyTrades: [{
+      ...openLeg('a', 4504, '2026-01-01T00:00:00Z'),
+      auto_be_applied_at: '2026-08-19T00:00:00Z',
+    }],
+    effectiveSource: 'mgmt_signal',
+    isBuy: true,
+    fillPrice: 4498,
+    symbol: 'XAUUSD',
+    manual: { breakeven_offset_pips: 1 },
+  })
+  assert.equal(sl, null)
+})
+
 test('resolveFiringLegStops: naked leg gets deepest TP (buy=max), keeps effective SL', () => {
   const out = resolveFiringLegStops({
     legStoploss: 0,
@@ -495,39 +555,117 @@ test('applyOpenLegStopLossToTargets: skipProtectiveMerge keeps the explicit reso
   assert.ok(out.every(t => t.stoploss === 4180))
 })
 
-test('applyOpenLegStopLossToTargets: propagates sell breakeven SL to legs still on anchor', () => {
+test('applyOpenLegStopLossToTargets: keeps each stamped BE SL, does not copy to siblings', () => {
   const legs = [
-    { ...openLeg('a', 4165.25, '2026-01-01T00:00:00Z'), sl: 4164.25, direction: 'sell' as const },
-    { ...openLeg('b', 4165.25, '2026-01-01T00:00:01Z'), sl: 4172.5, direction: 'sell' as const },
+    {
+      ...openLeg('a', 4504, '2026-01-01T00:00:00Z'),
+      sl: 4504.10,
+      auto_be_applied_at: '2026-08-19T00:00:00Z',
+      auto_be_offset_pips: 1,
+    },
+    {
+      ...openLeg('b', 4500, '2026-01-01T00:00:01Z'),
+      sl: 4500.10,
+      auto_be_applied_at: '2026-08-19T00:00:00Z',
+      auto_be_offset_pips: 1,
+    },
   ]
   const applied = applyOpenLegStopLossToTargets(
     legs,
     [
-      { stoploss: 4172.5, takeprofit: 4155 },
-      { stoploss: 4172.5, takeprofit: 4150 },
+      { stoploss: 4504.10, takeprofit: 4530 },
+      { stoploss: 4504.10, takeprofit: 4510 },
+    ],
+    true,
+  )
+  assert.equal(applied[0]!.stoploss, 4504.10)
+  assert.equal(applied[1]!.stoploss, 4500.10)
+})
+
+test('applyOpenLegStopLossToTargets: sell keeps each stamped BE SL', () => {
+  const legs = [
+    {
+      ...openLeg('a', 4165.25, '2026-01-01T00:00:00Z'),
+      sl: 4164.25,
+      direction: 'sell' as const,
+      auto_be_applied_at: '2026-08-19T00:00:00Z',
+      auto_be_offset_pips: 1,
+    },
+    {
+      ...openLeg('b', 4166, '2026-01-01T00:00:01Z'),
+      sl: 4165.90,
+      direction: 'sell' as const,
+      auto_be_applied_at: '2026-08-19T00:00:00Z',
+      auto_be_offset_pips: 1,
+    },
+  ]
+  const applied = applyOpenLegStopLossToTargets(
+    legs,
+    [
+      { stoploss: 4164.25, takeprofit: 4155 },
+      { stoploss: 4164.25, takeprofit: 4150 },
     ],
     false,
   )
   assert.equal(applied[0]!.stoploss, 4164.25)
-  assert.equal(applied[1]!.stoploss, 4164.25)
+  assert.equal(applied[1]!.stoploss, 4165.90)
 })
 
-test('buildRangeBasketTpTargets: sell rebalance copies breakeven SL from open legs', () => {
+test('buildRangeBasketTpTargets: range rebalance keeps per-leg BE SLs', () => {
   const legs = [
-    { ...openLeg('a', 4165.25, '2026-01-01T00:00:00Z'), sl: 4164.25, direction: 'sell' as const },
-    { ...openLeg('b', 4166, '2026-01-01T00:00:01Z'), sl: 4172.5, direction: 'sell' as const },
+    {
+      ...openLeg('a', 4504, '2026-01-01T00:00:00Z'),
+      sl: 4504.10,
+      auto_be_applied_at: '2026-08-19T00:00:00Z',
+      auto_be_offset_pips: 1,
+    },
+    {
+      ...openLeg('b', 4500, '2026-01-01T00:00:01Z'),
+      sl: 4500.10,
+      auto_be_applied_at: '2026-08-19T00:00:00Z',
+      auto_be_offset_pips: 1,
+    },
   ]
   const targets = buildRangeBasketTpTargets({
     familyTrades: legs,
     plan: null,
-    parsed: { sl: 4172.5, tp: [4155, 4150] },
+    parsed: { sl: 4504.10, tp: [4530, 4510] },
     tpLots: TP_LOTS,
-    direction: 'sell',
+    direction: 'buy',
     activePendingCount: 0,
     maxPendingStepIdx: 10,
     forceLayeringRebalance: true,
   })
-  assert.ok(targets.every(t => t.stoploss === 4164.25))
+  assert.equal(targets[0]!.stoploss, 4504.10)
+  assert.equal(targets[1]!.stoploss, 4500.10)
+})
+
+test('buildRangeBasketTpTargets: explicit Adjust still unifies SL', () => {
+  const legs = [
+    {
+      ...openLeg('a', 4504, '2026-01-01T00:00:00Z'),
+      sl: 4504.10,
+      auto_be_applied_at: '2026-08-19T00:00:00Z',
+    },
+    {
+      ...openLeg('b', 4500, '2026-01-01T00:00:01Z'),
+      sl: 4500.10,
+      auto_be_applied_at: '2026-08-19T00:00:00Z',
+    },
+  ]
+  const targets = buildRangeBasketTpTargets({
+    familyTrades: legs,
+    plan: null,
+    parsed: { sl: 4480, tp: [4530, 4510] },
+    tpLots: TP_LOTS,
+    direction: 'buy',
+    activePendingCount: 0,
+    maxPendingStepIdx: 10,
+    forceLayeringRebalance: true,
+    stoplossOverride: 4090,
+    explicitSl: true,
+  })
+  assert.ok(targets.every(t => t.stoploss === 4090))
 })
 
 test('pickV2MergeDistributeTargets: revision repaints, normal distribute preserves', () => {

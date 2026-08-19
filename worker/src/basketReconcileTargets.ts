@@ -7,6 +7,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PerLegStopTarget } from './multiTradeMerge'
 import {
+  isExplicitBasketSlSource,
   logEffectiveBasketStops,
   resolveEffectiveBasketStops,
   type EffectiveStopSource,
@@ -156,7 +157,7 @@ export async function resolveFreshBasketReconcileTargets(
       channelTpLevels,
       finalTpsOverride: signalTps.length ? signalTps : null,
       stoplossOverride: effective.stoploss > 0 ? effective.stoploss : null,
-      explicitSl: effective.source === 'mgmt_signal',
+      explicitSl: isExplicitBasketSlSource(effective.source),
     })
     const isBuy = args.direction === 'buy'
     let mapped = built.map(t => ({

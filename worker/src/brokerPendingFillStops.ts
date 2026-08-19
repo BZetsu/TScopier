@@ -11,8 +11,10 @@ import { resolveEffectiveBasketStops } from './basketEffectiveStops'
 import { modifyLegSlTpWithFallback } from './orderModifySafe'
 import {
   resolveFiringLegStops,
+  resolvePerLegBreakevenSlForNewFill,
   toRangeBasketParsedSlice,
 } from './rangeBasketTpSync'
+import { shouldStampAutoBeAppliedAt } from './autoManagement'
 import type { RangeBrokerPendingRow } from './rangeBrokerPendingHelpers'
 
 export type AssignNakedBrokerFillStopsArgs = {
@@ -46,6 +48,8 @@ export async function assignNakedBrokerFillStops(
 
   let stoploss = 0
   let takeprofit = 0
+  let perLegBreakevenSl: number | null = null
+  let beOffsetPips: number | undefined
   try {
     const { data: sigMeta } = await supabase
       .from('signals')
@@ -73,12 +77,26 @@ export async function assignNakedBrokerFillStops(
       familyTrades,
       brokerAccountId: leg.broker_account_id,
     })
+    const offsetFromSibling = familyTrades
+      .map(t => Number(t.auto_be_offset_pips))
+      .find(n => Number.isFinite(n) && n >= 0)
+    beOffsetPips = offsetFromSibling
+    perLegBreakevenSl = resolvePerLegBreakevenSlForNewFill({
+      familyTrades,
+      effectiveSource: effective.source,
+      isBuy: leg.is_buy,
+      fillPrice: entryPrice,
+      symbol: leg.symbol,
+      manual: offsetFromSibling != null ? { breakeven_offset_pips: offsetFromSibling } : {},
+    })
     const firing = resolveFiringLegStops({
       legStoploss: leg.stoploss,
       legTakeprofit: leg.takeprofit,
       cweClosePrice: leg.cwe_close_price,
       effective,
       isBuy: leg.is_buy,
+      perLegBreakevenSl,
+      effectiveSource: effective.source,
     })
     stoploss = firing.stoploss
     takeprofit = firing.takeprofit
@@ -124,9 +142,21 @@ export async function assignNakedBrokerFillStops(
     }
   }
 
-  const dbPatch: Record<string, number | null> = {}
+  const dbPatch: Record<string, number | string | null> = {}
   if (outcome.slApplied && outcome.appliedSl > 0) dbPatch.sl = outcome.appliedSl
   if (outcome.tpApplied && outcome.appliedTp > 0) dbPatch.tp = outcome.appliedTp
+  if (
+    perLegBreakevenSl != null
+    && shouldStampAutoBeAppliedAt({
+      appliedSl: outcome.appliedSl > 0 ? outcome.appliedSl : stoploss,
+      isBuy: Boolean(leg.is_buy),
+      entryPrice,
+      symbol: leg.symbol,
+      manual: beOffsetPips != null ? { breakeven_offset_pips: beOffsetPips } : {},
+    })
+  ) {
+    dbPatch.auto_be_applied_at = new Date().toISOString()
+  }
   if (Object.keys(dbPatch).length > 0) {
     await supabase.from('trades').update(dbPatch).eq('id', tradeRowId)
   }

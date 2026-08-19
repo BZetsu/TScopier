@@ -15,6 +15,18 @@ import { loadBasketSlTpTarget } from './basketTargetStore'
 
 export type EffectiveStopSource = 'basket_target' | 'mgmt_signal' | 'channel_memory' | 'anchor' | 'leg_consensus'
 
+/** Latest channel Adjust / basket-target instruction — unifies SL on every leg. */
+export function isExplicitBasketSlSource(source?: EffectiveStopSource | string | null): boolean {
+  return source === 'basket_target' || source === 'mgmt_signal'
+}
+
+/** True when any open leg was moved to breakeven (auto-BE or channel BE). */
+export function basketHasAutoBreakeven(
+  familyTrades: { auto_be_applied_at?: string | null }[] | undefined,
+): boolean {
+  return (familyTrades ?? []).some(t => Boolean(t.auto_be_applied_at))
+}
+
 export type EffectiveBasketStops = {
   stoploss: number
   tpLevels: number[]

@@ -11,11 +11,13 @@ import {
   loadChannelActiveTradeParamsForSymbol,
 } from './channelActiveTradeParams'
 import { hasTpTouchedLock } from './rangePendingFireGuard'
+import { breakevenStopLossForSymbol } from './autoManagement'
 import {
+  basketHasAutoBreakeven,
+  isExplicitBasketSlSource,
   logEffectiveBasketStops,
-  mergeWithProtectiveLegSl,
-  mostProtectiveOpenLegSl,
   resolveEffectiveBasketStops,
+  type EffectiveStopSource,
 } from './basketEffectiveStops'
 import type { ManualTpLot } from './manualPlanning/types'
 import {
@@ -253,10 +255,14 @@ export function buildRangeBasketTpTargets(args: {
   const phase = (forceLayeringRebalance || forceMessageRevisionRefresh) ? 'layering_rebalance' : detectedPhase
   const isBuy = direction === 'buy'
 
-  const openLegs = familyTrades.map(tr => ({
-    ...toEntryQualityLeg(tr),
-    stoploss: sl,
-  }))
+  const openLegs = familyTrades.map(tr => {
+    const ownSl = Number(tr.sl)
+    const keepOwn = explicitSl !== true && Number.isFinite(ownSl) && ownSl > 0
+    return {
+      ...toEntryQualityLeg(tr),
+      stoploss: keepOwn ? ownSl : sl,
+    }
+  })
 
   const targets = buildRangeBasketPerLegStopTargets({
     phase,
@@ -493,29 +499,41 @@ export async function hasClosedBasketLegs(
 }
 
 /**
- * Propagate the tightest SL already on open legs (e.g. breakeven) to every rebalance target.
- * New range layers otherwise inherit anchor SL and overwrite breakeven on sibling legs.
+ * Per-leg SL after auto/channel breakeven: each ticket keeps (or gets) its own
+ * entry-relative SL. Do not copy the tightest sibling BE onto the basket.
+ * Explicit Adjust (`skipProtectiveMerge`) still unifies one resolved SL.
  */
 export function applyOpenLegStopLossToTargets(
   familyTrades: BasketOpenLeg[],
   perLegTargets: PerLegStopTargetLike[],
-  isBuy: boolean,
+  _isBuy: boolean,
   opts?: { skipProtectiveMerge?: boolean },
 ): PerLegStopTargetLike[] {
-  // When the SL is an explicit latest channel adjustment, it must win as-is —
-  // do not re-tighten it to the most-protective/current leg SL.
   if (opts?.skipProtectiveMerge) return perLegTargets
-  const basketProtective = mostProtectiveOpenLegSl(familyTrades, isBuy)
+  const basketAtBe = basketHasAutoBreakeven(familyTrades)
+  const offset = familyTrades
+    .map(t => Number(t.auto_be_offset_pips))
+    .find(n => Number.isFinite(n) && n >= 0)
   return perLegTargets.map((t, i) => {
-    let sl = Number(t.stoploss) || 0
-    if (basketProtective != null && basketProtective > 0) {
-      sl = mergeWithProtectiveLegSl(sl, basketProtective, isBuy)
+    const leg = familyTrades[i]
+    const curSl = Number(leg?.sl)
+    const atBe = Boolean(leg?.auto_be_applied_at) && Number.isFinite(curSl) && curSl > 0
+    if (atBe) return { ...t, stoploss: curSl }
+    if (basketAtBe) {
+      const entry = Number(leg?.entry_price)
+      const symbol = leg?.symbol
+      if (Number.isFinite(entry) && entry > 0 && symbol) {
+        const ownBe = breakevenStopLossForSymbol({
+          isBuy: String(leg?.direction ?? '').toLowerCase() !== 'sell',
+          entryPrice: entry,
+          manual: offset != null ? { breakeven_offset_pips: offset } : {},
+          symbol,
+        })
+        if (Number.isFinite(ownBe) && ownBe > 0) return { ...t, stoploss: ownBe }
+      }
     }
-    const curSl = Number(familyTrades[i]?.sl)
-    if (Number.isFinite(curSl) && curSl > 0) {
-      sl = mergeWithProtectiveLegSl(sl, curSl, isBuy)
-    }
-    return { ...t, stoploss: sl }
+    if (Number.isFinite(curSl) && curSl > 0) return { ...t, stoploss: curSl }
+    return t
   })
 }
 
@@ -551,12 +569,39 @@ export function deepestFinalTp(finalTps: number[], isBuy: boolean): number {
 }
 
 /**
+ * When siblings are already at auto/channel BE and there is no newer Adjust,
+ * a new fill must open at its own entry + offset — not the tightest sibling SL.
+ */
+export function resolvePerLegBreakevenSlForNewFill(args: {
+  familyTrades: BasketOpenLeg[]
+  effectiveSource?: EffectiveStopSource | string | null
+  isBuy: boolean
+  fillPrice: number
+  symbol: string
+  manual: { breakeven_offset_pips?: number }
+  digits?: number
+}): number | null {
+  if (isExplicitBasketSlSource(args.effectiveSource)) return null
+  if (!basketHasAutoBreakeven(args.familyTrades)) return null
+  const fill = Number(args.fillPrice)
+  if (!Number.isFinite(fill) || fill <= 0) return null
+  const sl = breakevenStopLossForSymbol({
+    isBuy: args.isBuy,
+    entryPrice: fill,
+    manual: args.manual,
+    symbol: args.symbol,
+    digits: args.digits,
+  })
+  return Number.isFinite(sl) && sl > 0 ? sl : null
+}
+
+/**
  * SL/TP a newly-firing range layer should open with, using the basket's
  * resolved effective stops (latest Adjust signal / edit > channel memory >
- * anchor, already merged with the most-protective open-leg SL).
+ * anchor).
  *
- *  - SL: always the latest effective SL when available (this is the fix — new
- *    layers must not open with the stale anchor SL).
+ *  - SL: per-leg breakeven (own fill + offset) when the basket is already at
+ *    auto/channel BE; otherwise the latest effective SL; else the pending-leg SL.
  *  - TP: never repaint a leg that already carries a TP (it was distributed or
  *    deepest-backfilled); a naked leg gets the deepest/final TP. CWE legs ride
  *    with no TP (closed by cweCloseMonitor).
@@ -567,12 +612,21 @@ export function resolveFiringLegStops(args: {
   cweClosePrice: number | null | undefined
   effective: { stoploss: number; tpLevels: number[] }
   isBuy: boolean
+  /** Own fill + offset when the basket is already at breakeven. */
+  perLegBreakevenSl?: number | null
+  effectiveSource?: EffectiveStopSource | string | null
 }): { stoploss: number; takeprofit: number } {
   const curSl = Number(args.legStoploss)
   const effSl = Number(args.effective.stoploss)
-  const stoploss = Number.isFinite(effSl) && effSl > 0
-    ? effSl
-    : (Number.isFinite(curSl) && curSl > 0 ? curSl : 0)
+  const perLegBe = Number(args.perLegBreakevenSl)
+  const usePerLegBe = !isExplicitBasketSlSource(args.effectiveSource)
+    && Number.isFinite(perLegBe)
+    && perLegBe > 0
+  const stoploss = usePerLegBe
+    ? perLegBe
+    : (Number.isFinite(effSl) && effSl > 0
+      ? effSl
+      : (Number.isFinite(curSl) && curSl > 0 ? curSl : 0))
 
   if (args.cweClosePrice != null) {
     return { stoploss, takeprofit: 0 }
@@ -663,7 +717,7 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
 
   const { data: familyRows, error } = await args.supabase
     .from('trades')
-    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at,cwe_close_price')
+    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at,auto_be_offset_pips,cwe_close_price')
     .eq('broker_account_id', args.brokerAccountId)
     .eq('signal_id', args.signalId)
     .eq('status', 'open')
@@ -775,10 +829,10 @@ export async function syncRangeBasketTakeProfits(args: RangeBasketTpSyncArgs): P
     channelTpLevels,
     finalTpsOverride: finalTps,
     stoplossOverride: effective.stoploss > 0 ? effective.stoploss : null,
-    explicitSl: effective.source === 'mgmt_signal',
+    explicitSl: isExplicitBasketSlSource(effective.source),
   })
   if (!perLegTargets.length) return
-  const explicitMgmtSl = effective.source === 'mgmt_signal'
+  const explicitMgmtSl = isExplicitBasketSlSource(effective.source)
 
   const planImmediateLegCount = estimatePlanImmediateLegCount({
     openLegCount: familyTrades.length,
