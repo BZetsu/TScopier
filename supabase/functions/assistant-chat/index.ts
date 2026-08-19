@@ -88,8 +88,12 @@ function parseArgs(raw: string): Record<string, unknown> {
  * JSON result and strips data that must never reach the UI/model as a trade.
  *
  * Currently guards trade-listing tools (get_recent_trades / get_copier_logs /
- * get_trade_detail) against "non-actionable" promo messages — those are channel
- * marketing posts, not trades, and showing them as recent trades was a bug.
+ * get_trade_detail) against rows that are NOT trades:
+ *   - "non-actionable" promo messages — channel marketing posts, not trades;
+ *   - management / parameter-follow-up skips (modification_no_open_trade,
+ *     mgmt_*, parameter_follow_up_*, basket_modify_*) — modification
+ *     instructions that found no open position/basket to act on. They are not
+ *     entries, so presenting one as the user's "latest trade" was misleading.
  * Returns the sanitized ToolResult (unchanged if nothing to fix).
  */
 function verifyToolResult(name: string, result: ToolResult): ToolResult {
@@ -104,16 +108,40 @@ function verifyToolResult(name: string, result: ToolResult): ToolResult {
   }
   if (typeof parsed !== "object" || parsed == null) return result;
 
-  const isNonActionable = (r: Record<string, unknown> | undefined | null): boolean =>
-    typeof r?.skip_reason === "string" &&
-    r.skip_reason.toLowerCase().includes("non-actionable");
+  // Rows the model must never present as a trade.
+  const isNotATrade = (r: Record<string, unknown> | undefined | null): boolean => {
+    if (typeof r?.skip_reason !== "string") return false;
+    const reason = r.skip_reason.toLowerCase();
+    if (reason.includes("non-actionable")) return true;
+    return (
+      reason === "modification_no_open_trade" ||
+      reason.startsWith("mgmt_") ||
+      reason.startsWith("parameter_follow_up_") ||
+      reason.startsWith("basket_modify_")
+    );
+  };
 
-  if (Array.isArray(parsed.trades) && parsed.trades.some(r => isNonActionable(r as Record<string, unknown>))) {
-    const clean = (parsed.trades as Record<string, unknown>[]).filter(r => !isNonActionable(r));
+  if (Array.isArray(parsed.trades) && parsed.trades.some(r => isNotATrade(r as Record<string, unknown>))) {
+    const clean = (parsed.trades as Record<string, unknown>[]).filter(r => !isNotATrade(r));
     return { ...result, content: JSON.stringify({ ...parsed, trades: clean }) };
   }
-  if (parsed.trade && isNonActionable(parsed.trade as Record<string, unknown>)) {
-    return { ...result, content: JSON.stringify({ ...parsed, trade: undefined, legs: undefined }) };
+  if (parsed.trade && isNotATrade(parsed.trade as Record<string, unknown>)) {
+    const reason = typeof (parsed.trade as Record<string, unknown>).skip_reason === "string"
+      ? String((parsed.trade as Record<string, unknown>).skip_reason)
+      : "unknown";
+    return {
+      ...result,
+      content: JSON.stringify({
+        ...parsed,
+        trade: undefined,
+        legs: undefined,
+        notice: {
+          hidden: true,
+          reason,
+          hint: "This signal is a management/parameter-follow-up instruction, not a trade, so its details are hidden. If the user asks why a modification or parameter update didn't apply, say there was no open position/basket to act on (or it could not be linked) and offer /copier-logs — do not present it as a trade or invent details.",
+        },
+      }),
+    };
   }
   return result;
 }
@@ -1008,6 +1036,7 @@ type ExecLogRow = {
   status: string;
   error_message: string | null;
   response_payload: Record<string, unknown> | null;
+  request_payload: Record<string, unknown> | null;
   broker_account_id: string | null;
   created_at: string;
 };
@@ -1018,11 +1047,13 @@ function summarizeLogs(
 ) {
   const tickets: number[] = [];
   const errors: string[] = [];
+  const skipReasons: string[] = [];
   const rows: Array<{
     action: string;
     status: string;
     broker: string | null;
     ticket: number | null;
+    skip_detail: string | null;
     error_message: string | null;
     time: string;
   }> = [];
@@ -1030,22 +1061,33 @@ function summarizeLogs(
     const payload = l.response_payload && typeof l.response_payload === "object"
       ? (l.response_payload as Record<string, unknown>)
       : {};
+    const reqPayload = l.request_payload && typeof l.request_payload === "object"
+      ? (l.request_payload as Record<string, unknown>)
+      : {};
     const ticket =
       typeof payload.ticket === "number" && Number.isFinite(payload.ticket)
         ? payload.ticket
         : null;
     if (ticket != null) tickets.push(ticket);
     if (l.status === "failed" && l.error_message) errors.push(String(l.error_message));
+    const skipDetail =
+      l.status === "skipped" &&
+      typeof reqPayload.skip_reason === "string" &&
+      reqPayload.skip_reason.trim()
+        ? String(reqPayload.skip_reason).trim()
+        : null;
+    if (skipDetail && !skipReasons.includes(skipDetail)) skipReasons.push(skipDetail);
     rows.push({
       action: l.action,
       status: l.status,
       broker: l.broker_account_id ? (labelById.get(l.broker_account_id) ?? null) : null,
       ticket,
+      skip_detail: skipDetail,
       error_message: l.error_message,
       time: l.created_at,
     });
   }
-  return { tickets: [...new Set(tickets)], errors: [...new Set(errors)].slice(0, 5), rows };
+  return { tickets: [...new Set(tickets)], errors: [...new Set(errors)].slice(0, 5), skip_reasons: skipReasons, rows };
 }
 
 /**
@@ -1078,9 +1120,10 @@ async function buildTradeSummaries(
   if (allIds.length) {
     const { data: logs } = await supabase
       .from("trade_execution_logs")
-      .select("signal_id,action,status,error_message,response_payload,broker_account_id,created_at")
+      .select("signal_id,action,status,error_message,response_payload,request_payload,broker_account_id,created_at")
       .eq("user_id", userId)
-      .in("signal_id", allIds);
+      .in("signal_id", allIds)
+      .order("created_at", { ascending: true });
     for (const l of logs ?? []) {
       const sid = String(l.signal_id);
       if (!logsBySignal.has(sid)) logsBySignal.set(sid, []);
@@ -1100,7 +1143,7 @@ async function buildTradeSummaries(
   const summarize = (s: SignalRow, kids: SignalRow[]): Record<string, unknown> => {
     const fields = parsedTradeFields(s.parsed_data);
     const logs = [s, ...kids].flatMap((x) => logsBySignal.get(x.id) ?? []);
-    const { tickets, errors, rows } = summarizeLogs(logs, labelById);
+    const { tickets, errors, skip_reasons, rows } = summarizeLogs(logs, labelById);
     const liveRows = [s, ...kids].flatMap((x) => tradesBySignal.get(x.id) ?? []);
     const positions = summarizeLiveTrades(liveRows, labelById);
     const liveTicketNumbers = liveTickets(liveRows);
@@ -1116,7 +1159,7 @@ async function buildTradeSummaries(
       tp: fields.tp,
       lot_size: fields.lot_size,
       status: s.status,
-      skip_reason: s.skip_reason,
+      skip_reason: skip_reasons[0] ?? s.skip_reason ?? null,
       tickets: [...new Set([...tickets, ...liveTicketNumbers])],
       failure_count: errors.length,
       errors,
@@ -1262,9 +1305,10 @@ async function toolGetTradeDetail(
   const [logsRes, claimsRes] = await Promise.all([
     supabase
       .from("trade_execution_logs")
-      .select("signal_id,action,status,error_message,response_payload,broker_account_id,created_at")
+      .select("signal_id,action,status,error_message,response_payload,request_payload,broker_account_id,created_at")
       .eq("user_id", userId)
-      .in("signal_id", allIds),
+      .in("signal_id", allIds)
+      .order("created_at", { ascending: true }),
     supabase
       .from("signal_broker_dispatch_claims")
       .select("signal_id,broker_account_id,created_at")
@@ -1294,7 +1338,7 @@ async function toolGetTradeDetail(
 
   const summarize = (s: SignalRow): Record<string, unknown> => {
     const fields = parsedTradeFields(s.parsed_data);
-    const { tickets, errors, rows } = summarizeLogs(logsBySignal.get(s.id) ?? [], labelById);
+    const { tickets, errors, skip_reasons, rows } = summarizeLogs(logsBySignal.get(s.id) ?? [], labelById);
     const liveRows = tradesBySignal.get(s.id) ?? [];
     const positions = summarizeLiveTrades(liveRows, labelById);
     const liveTicketNumbers = liveTickets(liveRows);
@@ -1310,7 +1354,7 @@ async function toolGetTradeDetail(
       tp: fields.tp,
       lot_size: fields.lot_size,
       status: s.status,
-      skip_reason: s.skip_reason,
+      skip_reason: skip_reasons[0] ?? s.skip_reason ?? null,
       tickets: [...new Set([...tickets, ...liveTicketNumbers])],
       failure_count: errors.length,
       errors,
@@ -1357,6 +1401,7 @@ async function toolReportTrade(
   let sl: number | null = null;
   let tp: number | null = null;
   let lotSize: number | null = null;
+  let skipReason = "";
 
   const signalIdArg = String(args.signal_id ?? "").trim();
   let signalId = signalIdArg;
@@ -1395,7 +1440,7 @@ async function toolReportTrade(
   if (signalId) {
     const { data: sig } = await supabase
       .from("signals")
-      .select("id,parsed_data,user_id")
+      .select("id,parsed_data,user_id,skip_reason")
       .eq("id", signalId)
       .eq("user_id", userId)
       .maybeSingle();
@@ -1409,13 +1454,28 @@ async function toolReportTrade(
       tp = fields.tp.length ? fields.tp[0] : null;
       lotSize = fields.lot_size;
 
+      skipReason = "";
+
       const { data: logs } = await supabase
         .from("trade_execution_logs")
-        .select("response_payload,broker_account_id,status")
+        .select("response_payload,request_payload,broker_account_id,status")
         .eq("signal_id", signalId)
         .eq("user_id", userId)
         .order("created_at", { ascending: true })
         .limit(30);
+      for (const l of logs ?? []) {
+        if (l.status !== "skipped" || !l.request_payload) continue;
+        const rp = l.request_payload && typeof l.request_payload === "object"
+          ? (l.request_payload as Record<string, unknown>)
+          : {};
+        if (typeof rp.skip_reason === "string" && rp.skip_reason.trim()) {
+          skipReason = String(rp.skip_reason).trim();
+          break;
+        }
+      }
+      if (!skipReason && typeof sig.skip_reason === "string") {
+        skipReason = String(sig.skip_reason).trim();
+      }
       const brokerIds = [...new Set((logs ?? []).map((l) => l.broker_account_id).filter((b): b is string => Boolean(b)))];
       const labelById = await fetchBrokerLabels(supabase, brokerIds);
       const success = (logs ?? []).find((l) => {
@@ -1482,6 +1542,7 @@ async function toolReportTrade(
       { label: "SL", value: sl != null ? String(sl) : "—" },
       { label: "TP", value: tp != null ? String(tp) : "—" },
       { label: "Lots", value: lotSize != null ? String(lotSize) : "—" },
+      { label: "Skip reason", value: skipReason || "—" },
       { label: "Category", value: categoryLabel },
       { label: "Your comment", value: reason.slice(0, 400) },
     ];
@@ -1496,6 +1557,7 @@ async function toolReportTrade(
         sl,
         tp,
         lot_size: lotSize,
+        skip_reason: skipReason || null,
         category,
         reason: reason.slice(0, 400),
       }),
