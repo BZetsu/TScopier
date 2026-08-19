@@ -98,6 +98,7 @@ function makeListener(
   clientOverrides: Partial<{
     getInputEntity: (key: unknown) => Promise<unknown>
     getMessages: (peer: unknown, opts: unknown) => Promise<unknown[]>
+    getDialogs: () => Promise<unknown[]>
   }> = {},
   supabaseOpts: { updateError?: Error } = {},
 ) {
@@ -110,7 +111,7 @@ function makeListener(
     addEventHandler: () => {},
     removeEventHandler: () => {},
     getInputEntity: clientOverrides.getInputEntity ?? (async (key: unknown) => ({ key })),
-    getDialogs: async () => [],
+    getDialogs: clientOverrides.getDialogs ?? (async () => []),
     getMessages: clientOverrides.getMessages ?? (async () => []),
     session: { save: () => 'saved-session' },
   }
@@ -120,9 +121,14 @@ function makeListener(
     monitoredChannels: Set<string>
     channelInvalidFailures: Map<string, { consecutiveCount: number }>
     autoDisabledChannelRows: Set<string>
+    channelResolveCooldownUntil: Map<string, { until: number; lastError?: Error }>
+    pollBackoffUntil: number
     pollChannelNewMessages: (r: ChannelRow) => Promise<void>
     pollMonitoredChannelsForMessages: () => Promise<void>
+    runFastPoll: () => Promise<void>
     resetChannelInvalidFailure: (r: ChannelRow, source: string) => boolean
+    resolveChannelPeer: (r: ChannelRow) => Promise<unknown>
+    ensureJoinedPublicChannel: (r: ChannelRow) => Promise<void>
     runSignalTelegramReconcile: () => Promise<unknown>
   }
   anyListener.isConnected = true
@@ -185,7 +191,7 @@ describe('UserListener channel invalid auto-disable', () => {
 
     for (let i = 0; i < 6; i += 1) await anyListener.pollChannelNewMessages(channels[0]!)
 
-    assert.equal(calls, 10)
+    assert.equal(calls, 1)
   })
 
   it('reactivation clears local failure state', () => {
@@ -212,6 +218,99 @@ describe('UserListener channel invalid auto-disable', () => {
     assert.equal(anyListener.channelInvalidFailures.has('row-1'), false)
   })
 
+  it('arms a session-wide poll backoff on getMessages retry exhaustion', async () => {
+    const channels = [row('row-1')]
+    const { anyListener } = makeListener(channels, {
+      getMessages: async () => { throw new Error('Request was unsuccessful 5 time(s)') },
+    })
+
+    anyListener.pollBackoffUntil = 0
+    await anyListener.pollChannelNewMessages(channels[0]!)
+
+    assert.ok(anyListener.pollBackoffUntil > Date.now())
+  })
+
+  it('skips fast polls while in flood-wait backoff and resumes after', async () => {
+    const channels = [row('row-1')]
+    let polled = false
+    const { anyListener } = makeListener(channels, {
+      getMessages: async () => {
+        polled = true
+        return []
+      },
+    })
+
+    anyListener.pollBackoffUntil = Date.now() + 60_000
+    await anyListener.runFastPoll()
+
+    assert.equal(polled, false)
+
+    anyListener.pollBackoffUntil = 0
+    await anyListener.runFastPoll()
+
+    assert.equal(polled, true)
+  })
+
+  it('keeps backoff armed across a cycle that still saw flood errors', async () => {
+    const channels = [row('row-1'), row('row-2')]
+    const { anyListener } = makeListener(channels, {
+      getMessages: async (peer: unknown) => {
+        const key = String((peer as { key?: string } | null)?.key ?? '')
+        if (key.includes('row1')) throw new Error('Request was unsuccessful 5 time(s)')
+        return []
+      },
+    })
+
+    // row-1 floods and arms backoff; row-2 succeeds — cycle must NOT clear it.
+    await anyListener.pollChannelNewMessages(channels[0]!)
+    await anyListener.pollChannelNewMessages(channels[1]!)
+    await anyListener.runFastPoll()
+
+    assert.ok(anyListener.pollBackoffUntil > Date.now())
+  })
+
+  it('clears backoff when a full cycle completes with no flood errors', async () => {
+    const channels = [row('row-1')]
+    const { anyListener } = makeListener(channels, {
+      getMessages: async () => [],
+    })
+
+    // Backoff already expired; a clean cycle must keep it cleared.
+    anyListener.pollBackoffUntil = Date.now() - 1
+    await anyListener.runFastPoll()
+
+    assert.equal(anyListener.pollBackoffUntil, 0)
+  })
+
+  it('arms session backoff when channel peer resolution is throttled', async () => {
+    const channels = [row('row-1')]
+    const { anyListener } = makeListener(channels, {
+      getInputEntity: async () => { throw new Error('Request was unsuccessful 5 time(s)') },
+    })
+
+    anyListener.pollBackoffUntil = 0
+    await anyListener.pollChannelNewMessages(channels[0]!)
+
+    assert.ok(anyListener.pollBackoffUntil > Date.now())
+  })
+
+  it('does not cache flood errors in the resolve cooldown', async () => {
+    const channels = [row('row-1')]
+    const { anyListener } = makeListener(channels, {
+      getInputEntity: async () => { throw new Error('RPC_CALL_FAIL') },
+      getDialogs: async () => { throw new Error('Request was unsuccessful 5 time(s)') },
+    })
+
+    anyListener.pollBackoffUntil = 0
+    await anyListener.pollChannelNewMessages(channels[0]!).catch(() => {})
+
+    // Flood errors are transient (handled by the session backoff) — they must
+    // NOT be cached in the 10-min resolve cooldown, or a stale cached flood
+    // would keep re-arming the session backoff via throwChannelResolveCooldown.
+    assert.equal(anyListener.channelResolveCooldownUntil.has('row-1'), false)
+    assert.ok(anyListener.pollBackoffUntil > Date.now())
+  })
+
   it('treats stale public usernames as confirmed invalid failures', async () => {
     const channels = [row('row-1', { channel_username: 'renamed_old_channel' })]
     const { anyListener } = makeListener(channels, {
@@ -221,6 +320,85 @@ describe('UserListener channel invalid auto-disable', () => {
     await anyListener.pollChannelNewMessages(channels[0]!)
 
     assert.equal(anyListener.channelInvalidFailures.get('row-1')?.consecutiveCount, 1)
+  })
+
+  it('treats gramjs "No user has X as username" rewrite as confirmed invalid', async () => {
+    const channels = [row('row-1', { channel_username: 'renamed_old_channel' })]
+    const { anyListener } = makeListener(channels, {
+      getInputEntity: async () => { throw new Error('No user has "renamed_old_channel" as username') },
+    })
+
+    await anyListener.pollChannelNewMessages(channels[0]!)
+
+    assert.equal(anyListener.channelInvalidFailures.get('row-1')?.consecutiveCount, 1)
+  })
+
+  it('skips all resolve RPCs while a channel resolve is cooling down', async () => {
+    const channels = [row('row-1', { channel_username: 'renamed_old_channel' })]
+    let entityCalls = 0
+    let dialogCalls = 0
+    const { anyListener } = makeListener(channels, {
+      getInputEntity: async () => {
+        entityCalls += 1
+        throw new Error('No user has "renamed_old_channel" as username')
+      },
+      getDialogs: async () => {
+        dialogCalls += 1
+        return []
+      },
+    })
+
+    anyListener.channelResolveCooldownUntil.set('row-1', { until: Date.now() + 60_000 })
+
+    await anyListener.resolveChannelPeer(channels[0]!).catch(() => {})
+    await anyListener.pollChannelNewMessages(channels[0]!)
+
+    assert.equal(dialogCalls, 0)
+    assert.equal(entityCalls, 0)
+  })
+
+  it('backs off join attempts for a channel in resolve cooldown', async () => {
+    const channels = [row('row-1', { channel_username: 'renamed_old_channel' })]
+    let entityCalls = 0
+    const { anyListener } = makeListener(channels, {
+      getInputEntity: async () => {
+        entityCalls += 1
+        return { id: 'some-entity' }
+      },
+    })
+
+    anyListener.channelResolveCooldownUntil.set('row-1', { until: Date.now() + 60_000 })
+    await anyListener.ensureJoinedPublicChannel(channels[0]!)
+
+    assert.equal(entityCalls, 0)
+  })
+
+  it('clears resolve cooldown after a successful poll', async () => {
+    const channels = [row('row-1', { channel_username: 'renamed_old_channel' })]
+    let failFirst = true
+    const { anyListener } = makeListener(channels, {
+      getInputEntity: async () => {
+        if (failFirst) {
+          throw new Error('No user has "renamed_old_channel" as username')
+        }
+        return { key: 'resolved' }
+      },
+      getDialogs: async () => [],
+    })
+
+    await anyListener.pollChannelNewMessages(channels[0]!).catch(() => {})
+    assert.equal(anyListener.channelResolveCooldownUntil.has('row-1'), true)
+
+    // Within the cooldown window the stored confirmed-invalid error is
+    // rethrown — getInputEntity is never called — so the cooldown persists.
+    await anyListener.pollChannelNewMessages(channels[0]!).catch(() => {})
+    assert.equal(anyListener.channelResolveCooldownUntil.has('row-1'), true)
+
+    // After the window expires, a successful resolve clears the cooldown.
+    anyListener.channelResolveCooldownUntil.set('row-1', { until: Date.now() - 1 })
+    failFirst = false
+    await anyListener.pollChannelNewMessages(channels[0]!)
+    assert.equal(anyListener.channelResolveCooldownUntil.has('row-1'), false)
   })
 
   it('continues polling healthy channels while one channel is invalid', async () => {
@@ -267,7 +445,7 @@ describe('UserListener channel invalid auto-disable', () => {
 
     for (let i = 0; i < 6; i += 1) await anyListener.pollChannelNewMessages(channels[0]!)
 
-    assert.equal(calls, 10)
+    assert.equal(calls, 1)
     assert.equal(anyListener.autoDisabledChannelRows.has('row-1'), true)
   })
 
