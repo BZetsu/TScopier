@@ -2,42 +2,55 @@
 
 ## Changelog
 
-### 2026-08-18 — Assistant chat history dropdown (multi-thread conversations)
+### 2026-08-19 — Range breakeven SL is per-leg, not one shared price
 
-- **Change:** The assistant now keeps multiple named conversations per user. A history button in the panel header opens a dropdown listing past threads (title, message count, relative time) with "New chat" and per-thread delete; selecting a thread loads its messages. Threads carry stable ids (`crypto.randomUUID()`), created lazily on first message.
-- **Storage:** Replaced the single `tscopier.assistant.history.<userId>` blob with `tscopier.assistant.threads.<userId>` (`{threads:[{id,title,createdAt,updatedAt,messages}], activeThreadId}`), capped at `MAX_THREADS=8` × 20 messages, quota-safe (`THREADS_STORAGE_BUDGET` 4MB → retry without images → drop-oldest → empty fallback; returns success boolean). Legacy single-thread history auto-migrates into a thread; the legacy key is only removed when the threads write succeeds.
-- **Correctness:** `persistMessages` lazily creates a thread when none exists (fixes first-conversation-never-persisted) and returns the target thread id; `send()`/`onConfirm()` pin `ownerThreadId` so an in-flight LLM response lands in the originating thread even if the user switches mid-request; `getActiveThreadId()` gates side effects to the active thread. Cross-thread writes can no longer clobber another thread's messages.
-- **Files:** `src/lib/assistantClient.ts` (thread storage/migration/quota), `src/lib/assistantHistory.test.ts` (NEW, 9 node:test cases incl. migration + quota-failure paths), `src/context/AssistantContext.tsx` (provider; threads/activeThreadId refs), `src/context/useAssistant.ts` (NEW — hook + context split out to satisfy `react-refresh/only-export-components`), `src/components/assistant/AssistantPanel.tsx` (dropdown: `role=menu`/`menuitem`, keyboard Enter/Space, `aria-haspopup`/`aria-current`, focus-visible delete), i18n keys `historyTitle`/`newChat`/`historyEmpty`/`deleteChat` in types.ts + en/es/fr + chrome/{ar,ja,nl,pl,ru,sv}. 4 consumers re-pointed to `useAssistant` import.
-- **Verification:** `tsc -b` only pre-existing `supabase.ts` errors; eslint clean on the changed set (the earlier `react-refresh/only-export-components` on AssistantContext is now resolved by the hook split; remaining set-state-in-effect errors in AppLayout/TradeDetailModal/CopierLogDetailModal are pre-existing repo debt, confirmed via git stash); `npm test` 329 pass. Review round 1: code-tester PASS, code-review PASS_WITH_NOTES (MEDIUM first-conversation persistence, cross-thread race, quota all-or-nothing, dropdown a11y — all fixed); round 2: code-tester PASS, code-review PASS_WITH_NOTES with follow-ups applied (lossless functional persist, side-effect gating, ghost-empty-thread guard, title on create, `setMessages` removed from context value, legacy-retained-on-failed-write, +5 tests).
-- **Deploy state:** frontend only — committed to `dev`/`staging`/`main`, pushed to origin; needs Netlify build for both sites.
-- **Notion:** "Add chat history to the AI Assistant" task completed; dropdown tracked under the same task.
-- **Plain English:** You can now keep several separate assistant conversations and switch between them from a dropdown in the chat header — previous chats stay saved instead of being wiped by the next message.
+- **Bug:** After Move SL on TP hit, a range basket (instant + layering) copied the tightest BE (e.g. 4504.10) onto every ticket.
+- **Cause:** `applyOpenLegStopLossToTargets` merged `mostProtectiveOpenLegSl` across the basket; v2 then preserved the already-unified `trades.sl`.
+- **Fix:** Keep each stamped BE SL. New fills after basket BE open at that fill + offset. v2 recomputes from `entry_price` + `auto_be_offset_pips`. Explicit Adjust still unifies.
+- Files: `rangeBasketTpSync.ts`, `v2ReconcileMonitor.ts`, `virtualPendingMonitor.ts`, `brokerPendingFillStops.ts`, `basketReconcileTargets.ts`, `autoManagement.ts`.
+- Scratchpad: `docs/scratchpad-range-per-leg-breakeven-2026-08-19.md`. Needs trade worker deploy.
 
-### 2026-08-18 — Assistant trade card vanishing + report-trade UX (reported trades page, confirm details, ticket gap)
+### 2026-08-17 — Reverse + predefined SL/TP applied on the flipped side
 
-- **Symptom:** (a) A trade card the assistant rendered (e.g. `get_recent_trades`) disappeared as soon as the user sent the next message. (b) Trades reported via `report_trade` could be filed with an empty ticket even though the trade was live. (c) No way for users to see the status of trades they reported. (d) The report confirm card showed only a one-line summary, not the trade details.
-- **Root cause:** (a) `AssistantPanel` kept tool results in transient `useState` and `send()` called `setToolResults([])` on every send; tool results were never persisted with the messages. (b) `toolReportTrade` read tickets only from `trade_execution_logs.response_payload.ticket`; the worker also writes the ticket to `trades.metaapi_order_id`, so reports for trades without an `order_send` log row had no ticket.
-- **Fixes:** (a) Persist `tool_results` on assistant messages (`AssistantChatMessage.tool_results` in `src/lib/assistantClient.ts`); `normalizeStoredMessage`/`compactHistoryForStorage` preserve them, `messagesForAssistantApi` strips them so they never reach the LLM (edge also drops unknown fields server-side); `send()` and `onConfirm` attach them; cards render from messages via a `renderedToolResults` memo (transient state removed). (b) `toolReportTrade` falls back to `trades.metaapi_order_id` + broker label when the log has no ticket, scoped by `user_id` + `signal_id`. (c) New `/reported-trades` page (`ReportedTradesPage.tsx` + `useTradeReports.ts`) listing the user's reports with open/resolved badges, category, reason, ticket, prices, timestamps; nav/route/icon/search/referral-reserved-segment + assistant `NAV_ALLOWLIST` updated; new `list_trade_reports` edge tool (user-scoped, limit 1–20, reason truncated) renders rows in-chat via `AssistantTradesCard` ReportRow. (d) `report_trade` confirm now emits `details[]` (Symbol/Direction/Ticket/Broker/Entry/SL/TP/Lots/Category/comment); `PendingConfirmation.details` rendered as a `<dl>` grid on the confirm card. i18n across en/es/fr + chrome/{ar,ja,nl,pl,ru,sv} + trading/* + types.ts.
-- **Verification:** `deno check` on assistant-chat: only the 6 pre-existing errors. `npx tsc -b`: only the 2 pre-existing `supabase.ts` errors. eslint clean (2 `react-hooks/set-state-in-effect` disables in `useTradeReports` mirroring `useTradesData`/`PopularChannelsPage` precedent). `npm test`: 320 pass. Review subagents round 2: code-tester PASS; code-review PASS_WITH_NOTES — applied follow-ups (hydratedUserRef/userIdRef race guard; ReportRow time-parse guard + content keys).
-- **Deploy state:** edge `assistant-chat` deployed to staging (`axdcledcyhyvzrnfkwat`, 2026-08-18). Frontend committed to `dev`/`staging`/`main` and pushed to origin — needs Netlify build.
-- **Notion:** 5 tasks created (disappearing card, reported-trades page, ticket gap, confirm details, list_trade_reports tool), all "In progress", assigned James.
-- **Plain English:** Users' reported trades now actually stay visible in the assistant chat, get filed with the right ticket number, can be tracked on a new "Reported Trades" page, and the confirm step shows the full trade before you submit.
+- **Bug:** Reverse flipped the ticket, but override SL/TP pips were still computed as a buy from the original signal/entry. Wrong-side prices were stripped, so the sell opened with no stops.
+- **Fix:** Post-fill stamps from the ticket side. Planner uses the reversed live quote when predefined pips are on. Quote is prefetched for reverse/predefined. V2 desired-state seed skips reverse accounts.
+- Files: `postFillFollowUp.ts`, `postFillSide.ts`, `planManualOrders.ts`, `entryPrepare.ts`, `dispatch.ts`.
+- Scratchpad: `docs/scratchpad-reverse-signal-2026-08-17.md`. Needs trade worker deploy.
 
-### 2026-08-17 — Disabled Popular Channels page (temporary)
+### 2026-08-17 — Reverse Signal actually flips buy/sell
 
-- **Change:** The `/popular-channels` page is hidden for now. Nav item ("discover" section) and route commented out in `src/App.tsx` + `src/components/layout/AppLayout.tsx`; the route now redirects stale deep links to `/dashboard` (prevents authenticated users with saved links being bounced to `/signup` via the referral catch-all).
-- **Intentional leftovers for re-enable:** page file, i18n keys, nav icon (`appNavIcons.ts`), and the reserved referral segment `'popular-channels'` in `referralCapture.ts` (must stay reserved — otherwise the catch-all would store a bogus referral code).
-- **Verification:** `tsc -b` clean for changed files (only pre-existing `src/lib/supabase.ts` realtime-js debt remains); `subscriptionNavAccess.test.ts` 2/2 pass; eslint clean for the change. Code-review: PASS_WITH_NOTES (no CRITICAL/HIGH/MEDIUM).
-- **Deploy state:** frontend change only — needs Netlify redeploy. Re-enable = uncomment nav + route, drop the redirect.
+- **Bug:** Reverse was a no-op unless the signal had an entry price/zone **and** both predefined SL and TP were on. BUY NOW still opened a buy. The UI also silently refused the toggle without those settings.
+- **Fix:** Reverse always flips. Stops come from override pips on the reversed side (live quote if no entry), or mirrored signal SL/TP.
+- Files: `planManualOrders.ts`, `manualStops.ts`, `AccountConfigPage.tsx`.
+- Scratchpad: `docs/scratchpad-reverse-signal-2026-08-17.md`. Needs trade worker deploy.
 
-### 2026-08-17 — Registered all unregistered migrations (staging + prod)
+### 2026-08-17 — Override signal TP on multi / range legs
 
-- **Symptom:** `supabase migration list` showed dozens of local migrations as "local only" (not registered in `schema_migrations`) on both staging (`axdcledcyhyvzrnfkwat`) and prod (`sxkpcovbyaficvtkpsdo`); the tracker disagreed with what was actually applied, risking re-runs or skipped deploys.
-- **Root cause:** Migrations applied manually via the dashboard / SQL editor never insert a `supabase_migrations.schema_migrations` row (only `supabase db push` auto-registers). Registration ≠ applied; the tracker was just missing receipts.
-- **Verification:** Built read-only classifier (`/tmp/opencode/pdfinspect/verify_migrations.py`) that parses each migration file's created objects (tables/views/functions/indexes/columns/triggers/policies) and checks their existence in the live DB via Management API `database/query`. For `DO`-block/data-only migrations, verified `cron.job`, constraints, storage buckets, publications, and vault secrets directly.
-- **Result:** staging 20 unregistered (19 applied + 1 applied now), prod 65 (58 applied + 7 applied now: `mt_server_connect_locks`, `fxsocket_broker_accounts`, layering foundation + trigger + `layering_plans`, `trade_reports`, `trade_reports_signal_id`). Both envs now have **0 local-only** migrations.
-- **Found data issue:** `trades_idempotency_guard` (`20260805000000`) correctly refused to create the unique index on prod — 3 duplicate broker-ticket groups existed from signal `c723dc0f` (XAUUSD sell, Aug 10). Rows carried tickets not matching the broker's issue sequence (ticket backfill bug: planned layer row at 17:14:33 was later reconciled with a ticket belonging to a *different*, later order). Deleted the 3 phantom closed rows (`18dd580a`, `c57ac5d6`, `ea42493f`), re-ran the migration, registered it; both indexes now exist on prod.
-- **Follow-ups:** stray ad-hoc `schema_migrations` rows on prod (`20260805082647` etc.) remain as remote-only — harmless, optional cleanup.
+- **Wanted:** Predefined TP pips should work like predefined SL pips: N pips from *that* fill/trigger, not the first basket price.
+- **Fix:** Range virtuals and range fire compute TP from that leg’s trigger/fill. Multi post-fill restamps per-leg TP (keeps TP1/TP2 buckets).
+- Files: `manualStops.ts`, `planMultiManualOrders.ts`, `postFillFollowUp.ts`, `virtualPendingMonitor.ts`.
+- Scratchpad: `docs/scratchpad-multi-tp-override-2026-08-17.md`. Needs trade worker deploy.
+
+### 2026-08-17 — Missing-SL skip log tells user to set predefined SL pips
+
+- **Wanted:** Copier log for no-SL skips should not be a generic “Skipped” / `entry tp without sl`.
+- **Fix:** Title is “SL not given — set predefined SL pips in broker configuration”, with Account Configuration action copy. Worker now matches uppercased `ENTRY_TP_WITHOUT_SL`.
+- Files: `brokerTradeError.ts`, `tradeFailureDisplay.ts`, `copierSkipReasonLabels.ts`, channel-worker / copier-log i18n.
+
+### 2026-08-17 — Predefined SL/TP override signal stops (incl. TP-only / Premium)
+
+- **Wanted:** When Override signal SL (and TP) is on, execute using those pips even if the signal has no SL, SL: Premium, or stops on the wrong side.
+- **Bug:** Signal-level `entry_tp_without_sl` skipped the parse before account settings. Fallback also required a signal entry price.
+- **Fix:** Eligibility lets TP-only entries through; entry prep allows any missing/withheld SL when predefined SL pips are set. Planner already prefers override from fill/quote.
+- Files: `signalExecutionEligibility.ts`, `entryPrepareMissingSl.ts`, `signalEntryNowRequirement.ts`.
+- Scratchpad: `docs/scratchpad-predefined-stops-override-2026-08-17.md`. Needs trade worker deploy.
+
+### 2026-08-17 — Override signal SL on multi / range legs
+
+- **Bug:** Override signal SL (e.g. 80 pips) is not single-only in the UI, but multi skipped post-fill SL stamping and range legs reused one shared SL that often got dropped.
+- **Fix:** Post-fill applies predefined SL only on multi (TPs unchanged). Range virtuals and range fire compute SL from that leg’s trigger/fill.
+- Files: `postFillFollowUp.ts`, `planMultiManualOrders.ts`, `virtualPendingMonitor.ts`, `manualStops.ts`.
+- Scratchpad: `docs/scratchpad-multi-sl-override-2026-08-17.md`. Needs trade worker deploy.
 
 ### 2026-08-16 — Block TP-without-SL entries
 
