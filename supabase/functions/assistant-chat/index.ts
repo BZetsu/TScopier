@@ -62,6 +62,7 @@ type PendingConfirmation = {
   tool: string;
   args: Record<string, unknown>;
   summary: string;
+  details?: Array<{ label: string; value: string }>;
 };
 
 function bad(status: number, message: string) {
@@ -81,6 +82,42 @@ function parseArgs(raw: string): Record<string, unknown> {
   }
 }
 
+/**
+ * Post-call tool verification hook. Runs after EVERY executeTool call, before
+ * the result is fed back to the model or returned to the client. It parses the
+ * JSON result and strips data that must never reach the UI/model as a trade.
+ *
+ * Currently guards trade-listing tools (get_recent_trades / get_copier_logs /
+ * get_trade_detail) against "non-actionable" promo messages — those are channel
+ * marketing posts, not trades, and showing them as recent trades was a bug.
+ * Returns the sanitized ToolResult (unchanged if nothing to fix).
+ */
+function verifyToolResult(name: string, result: ToolResult): ToolResult {
+  if (!["get_recent_trades", "get_copier_logs", "get_trade_detail"].includes(name)) {
+    return result;
+  }
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(result.content) as Record<string, unknown>;
+  } catch {
+    return result;
+  }
+  if (typeof parsed !== "object" || parsed == null) return result;
+
+  const isNonActionable = (r: Record<string, unknown> | undefined | null): boolean =>
+    typeof r?.skip_reason === "string" &&
+    r.skip_reason.toLowerCase().includes("non-actionable");
+
+  if (Array.isArray(parsed.trades) && parsed.trades.some(r => isNonActionable(r as Record<string, unknown>))) {
+    const clean = (parsed.trades as Record<string, unknown>[]).filter(r => !isNonActionable(r));
+    return { ...result, content: JSON.stringify({ ...parsed, trades: clean }) };
+  }
+  if (parsed.trade && isNonActionable(parsed.trade as Record<string, unknown>)) {
+    return { ...result, content: JSON.stringify({ ...parsed, trade: undefined, legs: undefined }) };
+  }
+  return result;
+}
+
 const NAV_ALLOWLIST = new Set([
   "/dashboard",
   "/copier-engine",
@@ -93,6 +130,7 @@ const NAV_ALLOWLIST = new Set([
   "/pricing",
   "/account-trades",
   "/copier-logs",
+  "/reported-trades",
   "/activities",
   "/manage-signals",
 ]);
@@ -351,7 +389,7 @@ const TOOL_DEFS = [
           path: {
             type: "string",
             description:
-              "One of: /dashboard /copier-engine /brokers /channels /backtest /billing /contact-support /pricing /account-trades /copier-logs /activities /manage-signals",
+              "One of: /dashboard /copier-engine /brokers /channels /backtest /billing /contact-support /pricing /account-trades /copier-logs /reported-trades /activities /manage-signals",
           },
         },
         required: ["path"],
@@ -364,7 +402,7 @@ const TOOL_DEFS = [
     function: {
       name: "get_recent_trades",
       description:
-        "List the user's recent trades (signals that were executed, skipped, failed, or pending) with outcome, tickets, and any execution errors. Use BEFORE answering questions like 'what happened with my trades', 'show my recent trades', 'did my signal execute', or before reporting a trade.",
+        "List the user's recent trades (signals that were executed, skipped, failed, or pending) with outcome, tickets, and any execution errors. Use BEFORE answering questions like 'what happened with my trades', 'show my recent trades', 'did my signal execute', or before reporting a trade. IMPORTANT when the user asks about THEIR LAST TRADE / MOST RECENT TRADE: they mean the most recent trade that actually EXECUTED or FAILED (has a symbol/ticket) — prefer a row with a symbol/ticket even if a newer signal was skipped or ignored; only if no executed/failed trade exists, report the newest signal and say it never traded.",
       parameters: {
         type: "object",
         properties: {
@@ -415,12 +453,12 @@ const TOOL_DEFS = [
     function: {
       name: "report_trade",
       description:
-        "File a trade report for the user (stored in trade_reports for support review). First gather the trade via get_recent_trades / get_trade_detail, then call with signal_id (preferred — fills symbol/ticket from data) plus category and reason. The first call returns a Confirm card; the client re-executes with confirmed=true. Categories: wrong_entry, wrong_sl, wrong_tp, wrong_direction, wrong_lots, not_executed, other.",
+        "File a trade report for the user (stored in trade_reports for support review). Call with signal_id (preferred — fills symbol/ticket from data when available) plus category and reason. A report does NOT require a symbol or ticket: skipped / non-actionable / not-executed trades are reportable too — pass the signal_id and the report will be filed regardless. The first call returns a Confirm card; the client re-executes with confirmed=true. Categories: wrong_entry, wrong_sl, wrong_tp, wrong_direction, wrong_lots, not_executed, other.",
       parameters: {
         type: "object",
         properties: {
           signal_id: { type: "string", description: "Signal UUID of the trade to report (preferred)" },
-          symbol: { type: "string", description: "Symbol (required if no signal_id)" },
+          symbol: { type: "string", description: "Symbol (optional — filled from signal_id when available)" },
           ticket: { type: "number" },
           category: {
             type: "string",
@@ -437,9 +475,24 @@ const TOOL_DEFS = [
   {
     type: "function",
     function: {
+      name: "list_trade_reports",
+      description:
+        "List the trades the user has reported (status open/resolved, symbol, ticket, category, reason, time). Use when they ask about their reported trades / report status. The Reported Trades page (/reported-trades) also shows this.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max reports to return (default 10, max 20)" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "open_trades",
       description:
-        "Open the live trades page (/account-trades) so the user can see their open/closed broker positions. Use when they ask to see their trades or navigate to the trades page.",
+        "Open the live trades page (/account-trades) so the user can see their open/closed broker positions. Navigation-only — it does NOT return trade data. Use get_recent_trades or get_trade_detail to actually report a trade's status/ticket. Use when they ask to see their trades or navigate to the trades page.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -854,6 +907,86 @@ async function fetchBrokerLabels(
   return map;
 }
 
+const BROKER_TRADE_SELECT =
+  "signal_id,broker_account_id,metaapi_order_id,symbol,status,entry_price,sl,tp,lot_size,opened_at,closed_at,profit";
+
+type BrokerTradeRow = {
+  signal_id: unknown;
+  broker_account_id: string | null;
+  metaapi_order_id: string | null;
+  symbol: string | null;
+  status: string | null;
+  entry_price: number | null;
+  sl: number | null;
+  tp: number | null;
+  lot_size: number | null;
+  opened_at: string | null;
+  closed_at: string | null;
+  profit: number | null;
+};
+
+/**
+ * Fetch live broker positions for the given signal ids. The `trades` table is
+ * the authoritative source for the broker ticket (`metaapi_order_id`) and the
+ * live position status (`open`/`closed`) — execution-log rows may lack a
+ * ticket even when the trade is open at the broker.
+ */
+async function fetchLiveTrades(
+  supabase: SupabaseClient,
+  userId: string,
+  signalIds: string[],
+): Promise<{ map: Map<string, BrokerTradeRow[]>; error: string | null }> {
+  const map = new Map<string, BrokerTradeRow[]>();
+  const ids = [...new Set(signalIds)].filter(Boolean);
+  if (!ids.length) return { map, error: null };
+  const { data, error } = await supabase
+    .from("trades")
+    .select(BROKER_TRADE_SELECT)
+    .eq("user_id", userId)
+    .in("signal_id", ids);
+  if (error) return { map, error: error.message };
+  for (const t of data ?? []) {
+    const sid = String(t.signal_id);
+    if (!map.has(sid)) map.set(sid, []);
+    map.get(sid)!.push(t as BrokerTradeRow);
+  }
+  return { map, error: null };
+}
+
+function numOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** Model-facing snapshot of live broker positions for a signal. */
+function summarizeLiveTrades(
+  rows: BrokerTradeRow[],
+  labelById: Map<string, string>,
+): Array<Record<string, unknown>> {
+  return rows.map((t) => ({
+    status: t.status ?? null,
+    ticket: t.metaapi_order_id != null ? t.metaapi_order_id : null,
+    symbol: t.symbol ?? null,
+    broker: t.broker_account_id ? (labelById.get(t.broker_account_id) ?? null) : null,
+    entry_price: numOrNull(t.entry_price),
+    sl: numOrNull(t.sl),
+    tp: numOrNull(t.tp),
+    lot_size: numOrNull(t.lot_size),
+    opened_at: t.opened_at ?? null,
+    closed_at: t.closed_at ?? null,
+    profit: numOrNull(t.profit),
+  }));
+}
+
+function liveTickets(rows: BrokerTradeRow[]): string[] {
+  const out: string[] = [];
+  for (const t of rows) {
+    if (t.metaapi_order_id == null) continue;
+    const n = Number(t.metaapi_order_id);
+    if (Number.isFinite(n) && n > 0) out.push(String(n));
+  }
+  return [...new Set(out)];
+}
+
 function parsedTradeFields(parsed: Record<string, unknown> | null) {
   const p = parsed ?? {};
   const action = String(p.action ?? "");
@@ -955,12 +1088,22 @@ async function buildTradeSummaries(
       if (l.broker_account_id) brokerIds.add(String(l.broker_account_id));
     }
   }
+
+  const { map: tradesBySignal, error: liveError } = await fetchLiveTrades(supabase, userId, allIds);
+  for (const rows of tradesBySignal.values()) {
+    for (const t of rows) {
+      if (t.broker_account_id) brokerIds.add(String(t.broker_account_id));
+    }
+  }
   const labelById = await fetchBrokerLabels(supabase, [...brokerIds]);
 
   const summarize = (s: SignalRow, kids: SignalRow[]): Record<string, unknown> => {
     const fields = parsedTradeFields(s.parsed_data);
     const logs = [s, ...kids].flatMap((x) => logsBySignal.get(x.id) ?? []);
     const { tickets, errors, rows } = summarizeLogs(logs, labelById);
+    const liveRows = [s, ...kids].flatMap((x) => tradesBySignal.get(x.id) ?? []);
+    const positions = summarizeLiveTrades(liveRows, labelById);
+    const liveTicketNumbers = liveTickets(liveRows);
     return {
       signal_id: s.id,
       time: s.created_at,
@@ -974,11 +1117,13 @@ async function buildTradeSummaries(
       lot_size: fields.lot_size,
       status: s.status,
       skip_reason: s.skip_reason,
-      tickets,
+      tickets: [...new Set([...tickets, ...liveTicketNumbers])],
       failure_count: errors.length,
       errors,
       legs: kids.length,
       execution_logs: rows.slice(0, 10),
+      positions,
+      positions_error: liveError,
     };
   };
 
@@ -994,12 +1139,12 @@ async function toolGetRecentTrades(
 ): Promise<ToolResult> {
   const limitRaw = Number(args.limit ?? 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(20, Math.max(1, Math.floor(limitRaw))) : 10;
-  const { data, error } = await supabase
+const { data, error } = await supabase
     .from("signals")
     .select(SIGNAL_SELECT)
     .eq("user_id", userId)
     .is("parent_signal_id", null)
-    .or("skip_reason.is.null,skip_reason.neq.non_trade_message")
+    .or("skip_reason.is.null,and(skip_reason.neq.non_trade_message,skip_reason.not.ilike.%non-actionable%)")
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) return { content: JSON.stringify({ error: error.message }) };
@@ -1007,7 +1152,7 @@ async function toolGetRecentTrades(
   return {
     content: JSON.stringify({
       trades,
-      hint: "Explain each trade's outcome plainly (executed with tickets, skipped with reason, failed with errors). Offer get_trade_detail for a specific trade or open_trades to see live positions.",
+      hint: "The app renders a card with these trades — reply in one or two short lines and do NOT repeat the list in prose. Offer get_trade_detail for a specific trade or open_trades to let the user view their live positions in the app. If the user asked about their LAST or MOST RECENT trade, answer with the most recent EXECUTED or FAILED trade (one with a symbol/ticket); skipped non-actionable promo messages are not trades — say so plainly if the newest signal is just a skip. IMPORTANT for status questions like 'is it still on' / 'is it open': each trade has a `positions` array from the broker (status open/closed/pending + ticket). Prefer `positions` for live status — if a trade has positions with status 'open', say it is still open and quote the ticket; if status 'closed', say it closed; if 'pending' (limit/stop order), it has not filled yet. Only say 'no ticket' when BOTH tickets and positions are empty. If `positions_error` is present, positions are unavailable — do NOT claim there is no ticket.",
     }),
   };
 }
@@ -1037,7 +1182,7 @@ async function toolGetCopierLogs(
   return {
     content: JSON.stringify({
       trades,
-      hint: "This mirrors the /copier-logs page. Explain statuses; offer get_trade_detail for failures.",
+      hint: "This mirrors the /copier-logs page. The app renders a card with these rows — reply briefly and do NOT repeat the list in prose. Offer get_trade_detail for failures. Each row has a `positions` array (live broker state: status open/closed/pending + ticket) — use it for status questions like 'is it still on'. If `positions_error` is present, positions are unavailable — do NOT claim there is no ticket.",
     }),
   };
 }
@@ -1052,22 +1197,35 @@ async function toolGetTradeDetail(
   if (!signalId) {
     const ticket = args.ticket != null ? String(args.ticket) : "";
     if (ticket) {
-      const { data: logs } = await supabase
-        .from("trade_execution_logs")
-        .select("signal_id,response_payload")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(300);
-      const hit = (logs ?? []).find((l) => {
+      const [logsRes, tradesRes] = await Promise.all([
+        supabase
+          .from("trade_execution_logs")
+          .select("signal_id,response_payload")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(300),
+        supabase
+          .from("trades")
+          .select("signal_id,metaapi_order_id")
+          .eq("user_id", userId)
+          .eq("metaapi_order_id", ticket)
+          .limit(1),
+      ]);
+      const hit = (logsRes.data ?? []).find((l) => {
         const p = l.response_payload && typeof l.response_payload === "object"
           ? (l.response_payload as Record<string, unknown>)
           : {};
         return typeof p.ticket === "number" && String(p.ticket) === ticket;
       });
-      if (!hit) {
+      const tradeHit = tradesRes.data?.[0];
+      if (!hit && !tradeHit) {
+        const lookupError = logsRes.error ?? tradesRes.error;
+        if (lookupError) {
+          return { content: JSON.stringify({ error: `Lookup failed: ${lookupError.message}` }) };
+        }
         return { content: JSON.stringify({ error: "No trade found with that ticket." }) };
       }
-      signalId = String(hit.signal_id);
+      signalId = String(hit?.signal_id ?? tradeHit?.signal_id);
     }
   }
   if (!signalId) {
@@ -1113,6 +1271,8 @@ async function toolGetTradeDetail(
       .in("signal_id", allIds),
   ]);
 
+  const { map: tradesBySignal, error: liveError } = await fetchLiveTrades(supabase, userId, allIds);
+
   const brokerIds = new Set<string>();
   const logsBySignal = new Map<string, ExecLogRow[]>();
   for (const l of logsRes.data ?? []) {
@@ -1124,12 +1284,20 @@ async function toolGetTradeDetail(
   for (const c of claimsRes.data ?? []) {
     if (c.broker_account_id) brokerIds.add(String(c.broker_account_id));
   }
+  for (const rows of tradesBySignal.values()) {
+    for (const t of rows) {
+      if (t.broker_account_id) brokerIds.add(String(t.broker_account_id));
+    }
+  }
   const labelById = await fetchBrokerLabels(supabase, [...brokerIds]);
   const channelNames = await fetchChannelNames(supabase, [root.channel_id].filter((c): c is string => Boolean(c)));
 
   const summarize = (s: SignalRow): Record<string, unknown> => {
     const fields = parsedTradeFields(s.parsed_data);
     const { tickets, errors, rows } = summarizeLogs(logsBySignal.get(s.id) ?? [], labelById);
+    const liveRows = tradesBySignal.get(s.id) ?? [];
+    const positions = summarizeLiveTrades(liveRows, labelById);
+    const liveTicketNumbers = liveTickets(liveRows);
     return {
       signal_id: s.id,
       time: s.created_at,
@@ -1143,10 +1311,12 @@ async function toolGetTradeDetail(
       lot_size: fields.lot_size,
       status: s.status,
       skip_reason: s.skip_reason,
-      tickets,
+      tickets: [...new Set([...tickets, ...liveTicketNumbers])],
       failure_count: errors.length,
       errors,
       execution_logs: rows.slice(0, 15),
+      positions,
+      positions_error: liveError,
     };
   };
 
@@ -1158,7 +1328,7 @@ async function toolGetTradeDetail(
         broker: c.broker_account_id ? (labelById.get(String(c.broker_account_id)) ?? null) : null,
         time: c.created_at,
       })),
-      hint: "Explain the outcome per leg. If execution_logs have status failed, quote error_message and suggest report_trade or /copier-logs.",
+      hint: "Explain the outcome per leg. The `positions` array is the live broker state (status open/closed/pending + ticket) — use it to answer 'is it still on' / 'is it open'; 'pending' means a limit/stop order that has not filled yet. If `positions_error` is present, positions are unavailable — do NOT claim there is no ticket. If execution_logs have status failed, quote error_message and suggest report_trade or /copier-logs.",
     }),
   };
 }
@@ -1188,7 +1358,40 @@ async function toolReportTrade(
   let tp: number | null = null;
   let lotSize: number | null = null;
 
-  const signalId = String(args.signal_id ?? "").trim();
+  const signalIdArg = String(args.signal_id ?? "").trim();
+  let signalId = signalIdArg;
+  let signalOwned = false;
+
+  // Resolve a bare broker ticket to its signal so the confirm card and the
+  // stored report get the trade's symbol/direction/prices even when the model
+  // only passed a ticket (mirrors get_trade_detail).
+  if (!signalId && ticket) {
+    const [logsRes, tradesRes] = await Promise.all([
+      supabase
+        .from("trade_execution_logs")
+        .select("signal_id,response_payload")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(300),
+      supabase
+        .from("trades")
+        .select("signal_id,metaapi_order_id")
+        .eq("user_id", userId)
+        .eq("metaapi_order_id", ticket)
+        .limit(1),
+    ]);
+    const hit = (logsRes.data ?? []).find((l) => {
+      const p = l.response_payload && typeof l.response_payload === "object"
+        ? (l.response_payload as Record<string, unknown>)
+        : {};
+      return typeof p.ticket === "number" && String(p.ticket) === ticket;
+    });
+    const tradeHit = tradesRes.data?.[0];
+    if (hit || tradeHit) {
+      signalId = String(hit?.signal_id ?? tradeHit?.signal_id);
+    }
+  }
+
   if (signalId) {
     const { data: sig } = await supabase
       .from("signals")
@@ -1197,6 +1400,7 @@ async function toolReportTrade(
       .eq("user_id", userId)
       .maybeSingle();
     if (sig) {
+      signalOwned = true;
       const fields = parsedTradeFields(sig.parsed_data as Record<string, unknown> | null);
       symbol = symbol || fields.symbol || "";
       direction = fields.direction || direction;
@@ -1228,20 +1432,59 @@ async function toolReportTrade(
         const b = logs![0].broker_account_id;
         brokerLabel = b ? (labelById.get(b) ?? null) : null;
       }
+
+      // Fallback: the `trades` table is the authoritative source for the broker
+      // ticket (metaapi_order_id) even when execution-log rows lack one.
+      if (!ticket) {
+        const { data: live } = await supabase
+          .from("trades")
+          .select("metaapi_order_id,broker_account_id")
+          .eq("user_id", userId)
+          .eq("signal_id", signalId)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        if (live?.[0]?.metaapi_order_id) {
+          ticket = String(live[0].metaapi_order_id);
+        }
+        if (!brokerLabel && live?.[0]?.broker_account_id) {
+          const liveLabelById = await fetchBrokerLabels(supabase, [live[0].broker_account_id]);
+          brokerLabel = liveLabelById.get(live[0].broker_account_id) ?? null;
+        }
+      }
     }
   }
 
-  if (!symbol) {
+  if (signalId && !signalOwned) {
     return {
       content: JSON.stringify({
-        error: "symbol is required (and could not be resolved from signal_id). Call get_recent_trades first and pass the signal_id.",
+        error: "That trade was not found for this account. Use get_recent_trades to pick one of your trades.",
+      }),
+    };
+  }
+
+  if (!symbol && !ticket && !signalId) {
+    return {
+      content: JSON.stringify({
+        error: "Provide a signal_id (preferred), symbol, or ticket to identify the trade.",
       }),
     };
   }
 
   if (!confirmed) {
     const categoryLabel = category.replace(/_/g, " ");
-    const summary = `Report ${symbol}${ticket ? ` #${ticket}` : ""} — ${categoryLabel}: ${reason.length > 90 ? `${reason.slice(0, 90)}…` : reason}`;
+    const summary = `Report ${symbol || "this trade"}${ticket ? ` #${ticket}` : ""} — ${categoryLabel}: ${reason.length > 90 ? `${reason.slice(0, 90)}…` : reason}`;
+    const details = [
+      { label: "Symbol", value: symbol || "—" },
+      { label: "Direction", value: direction || "—" },
+      { label: "Ticket", value: ticket ?? "—" },
+      { label: "Broker", value: brokerLabel ?? "—" },
+      { label: "Entry", value: entryPrice != null ? String(entryPrice) : "—" },
+      { label: "SL", value: sl != null ? String(sl) : "—" },
+      { label: "TP", value: tp != null ? String(tp) : "—" },
+      { label: "Lots", value: lotSize != null ? String(lotSize) : "—" },
+      { label: "Category", value: categoryLabel },
+      { label: "Your comment", value: reason.slice(0, 400) },
+    ];
     return {
       content: JSON.stringify({
         needs_confirmation: true,
@@ -1249,6 +1492,10 @@ async function toolReportTrade(
         direction,
         ticket,
         broker_label: brokerLabel,
+        entry_price: entryPrice,
+        sl,
+        tp,
+        lot_size: lotSize,
         category,
         reason: reason.slice(0, 400),
       }),
@@ -1256,12 +1503,14 @@ async function toolReportTrade(
         tool: "report_trade",
         args: { signal_id: signalId || undefined, symbol, ticket: ticket != null ? Number(ticket) : undefined, category, reason },
         summary,
+        details,
       },
     };
   }
 
   const { error } = await supabase.from("trade_reports").insert({
     user_id: userId,
+    signal_id: signalOwned ? signalId : null,
     symbol,
     direction,
     ticket,
@@ -1276,7 +1525,45 @@ async function toolReportTrade(
   });
   if (error) return { content: JSON.stringify({ error: error.message }) };
   return {
-    content: JSON.stringify({ ok: true, category, symbol, ticket }),
+    content: JSON.stringify({
+      ok: true,
+      category,
+      symbol,
+      ticket,
+      hint: "Report filed. Tell the user it's been submitted and that they can track its status (open/resolved) on the Reported Trades page under Help.",
+    }),
+  };
+}
+
+async function toolListTradeReports(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const limitRaw = Number(args.limit ?? 10);
+  const limit = Number.isFinite(limitRaw) ? Math.min(20, Math.max(1, Math.floor(limitRaw))) : 10;
+  const { data, error } = await supabase
+    .from("trade_reports")
+    .select("symbol,direction,ticket,broker_label,category,reason,status,created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) return { content: JSON.stringify({ error: error.message }) };
+  const reports = (data ?? []).map((r) => ({
+    symbol: r.symbol ?? null,
+    direction: r.direction ?? null,
+    ticket: r.ticket ?? null,
+    broker: r.broker_label ?? null,
+    category: r.category ?? null,
+    reason: r.reason ? String(r.reason).slice(0, 200) : null,
+    status: r.status ?? null,
+    time: r.created_at ?? null,
+  }));
+  return {
+    content: JSON.stringify({
+      reports,
+      hint: "This is the user's reported trades. Reply briefly and do NOT repeat the list in prose — the app renders it on the Reported Trades page. Offer /reported-trades to view status open/resolved, or report_trade to file a new one.",
+    }),
   };
 }
 
@@ -1928,7 +2215,11 @@ function runClientActionTool(name: string, args: Record<string, unknown>): ToolR
         return { content: JSON.stringify({ error: `Path not allowed: ${raw}` }) };
       }
       return {
-        content: JSON.stringify({ queued: true, path }),
+        content: JSON.stringify({
+          queued: true,
+          path,
+          hint: `A client navigation to ${path} was scheduled on the frontend. This "queued" flag only means the navigation action is pending on the client — it does NOT mean the user's trades are queued.`,
+        }),
         pendingClientAction: {
           type: "navigate",
           summary: `Go to ${path}`,
@@ -1946,7 +2237,11 @@ function runClientActionTool(name: string, args: Record<string, unknown>): ToolR
       };
     case "open_backtest":
       return {
-        content: JSON.stringify({ queued: true, path: "/backtest" }),
+        content: JSON.stringify({
+          queued: true,
+          path: "/backtest",
+          hint: 'A client navigation to the Backtest page was scheduled. "queued" here only means the navigation action is pending on the client — it does NOT mean the user\'s trades are queued.',
+        }),
         pendingClientAction: {
           type: "navigate",
           summary: "Open Backtest",
@@ -1955,7 +2250,11 @@ function runClientActionTool(name: string, args: Record<string, unknown>): ToolR
       };
     case "open_trades":
       return {
-        content: JSON.stringify({ queued: true, path: "/account-trades" }),
+        content: JSON.stringify({
+          queued: true,
+          path: "/account-trades",
+          hint: 'A client navigation to the Trades page was scheduled. "queued" here only means the navigation action is pending on the client — it does NOT mean the user\'s trades are queued. Do not claim the user\'s trades are queued.',
+        }),
         pendingClientAction: {
           type: "navigate",
           summary: "Open Trades",
@@ -2003,6 +2302,8 @@ async function executeTool(
       return toolGetTradeDetail(supabase, userId, args);
     case "report_trade":
       return toolReportTrade(supabase, userId, args);
+    case "list_trade_reports":
+      return toolListTradeReports(supabase, userId, args);
     case "apply_preset":
       return toolApplyPreset(supabase, userId, args);
     case "save_preset":
@@ -2108,7 +2409,7 @@ Deno.serve(async (req: Request) => {
       return bad(400, "Tool cannot be executed directly");
     }
     const args = sanitizeToolArgs({ ...(execute.args ?? {}), confirmed: true });
-    const result = await executeTool(supabase, userId, tool, args);
+    const result = verifyToolResult(tool, await executeTool(supabase, userId, tool, args));
     let parsed: { ok?: boolean; error?: string } = {};
     try {
       parsed = JSON.parse(result.content) as { ok?: boolean; error?: string };
@@ -2253,7 +2554,7 @@ Deno.serve(async (req: Request) => {
       for (const call of toolCalls) {
         const name = call.function?.name ?? "";
         const args = sanitizeToolArgs(parseArgs(call.function?.arguments ?? "{}"));
-        const result = await executeTool(supabase, userId, name, args);
+        const result = verifyToolResult(name, await executeTool(supabase, userId, name, args));
         if (result.pendingClientAction) pendingClientActions.push(result.pendingClientAction);
         if (result.pendingConfirmation) pendingConfirmations.push(result.pendingConfirmation);
         toolResultsLog.push({ tool: name, result: result.content.slice(0, 4000) });

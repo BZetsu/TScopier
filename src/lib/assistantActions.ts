@@ -14,6 +14,7 @@ const NAV_ALLOWLIST = new Set([
   '/pricing',
   '/account-trades',
   '/copier-logs',
+  '/reported-trades',
   '/activities',
   '/manage-signals',
 ])

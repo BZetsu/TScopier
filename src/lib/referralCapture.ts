@@ -31,6 +31,7 @@ export const RESERVED_REFERRAL_PATH_SEGMENTS = new Set([
   'backtest',
   'copier-templates',
   'copier-logs',
+  'reported-trades',
   'activities',
   'management',
   'manage-signals',

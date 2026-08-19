@@ -1,17 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { ImagePlus, Loader2, RefreshCw, Send, Sparkles, X } from 'lucide-react'
-import { useAssistant } from '../../context/AssistantContext'
+import { History, ImagePlus, Loader2, Plus, RefreshCw, Send, Sparkles, Trash2, X } from 'lucide-react'
+import { useAssistant } from '../../context/useAssistant'
 import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
 import { useLiveChat } from '../../context/LiveChatContext'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import { useAuth } from '../../context/AuthContext'
 import { useLocale, useT } from '../../context/LocaleContext'
+import { supabase } from '../../lib/supabase'
+import type { Signal } from '../../types/database'
 import {
   executeAssistantAction,
   postAssistantChat,
+  type AssistantChatMessage,
   type PendingConfirmation,
 } from '../../lib/assistantClient'
 import {
@@ -32,6 +35,7 @@ import {
   redactTelegramPhones,
 } from '../../lib/telegramPhone'
 import { fxsocketBroker } from '../../lib/fxsocketBroker'
+import { formatRelative } from '../../lib/formatRelative'
 import {
   brokerConnectErrorLabelsFromI18n,
   userFacingBrokerConnectError,
@@ -39,16 +43,41 @@ import {
 import { AssistantChatBubble, AssistantTypingIndicator } from './AssistantChatBubble'
 import { AssistantTelegramLinkCard } from './AssistantTelegramLinkCard'
 import { AssistantBrokerConnectCard } from './AssistantBrokerConnectCard'
-import { AssistantTradesCard } from './AssistantTradesCard'
+import { AssistantTradesCard, type AssistantTradeRow } from './AssistantTradesCard'
+import { CopierLogDetailModal } from '../dashboard/CopierLogDetailModal'
 import { Button } from '../ui/Button'
 import clsx from 'clsx'
 import { ensureFreshAuthSession } from '../../lib/fxsocketBroker'
+
+type DetailStatusVariant = 'success' | 'warning' | 'error' | 'neutral' | 'primary'
+
+function detailStatusFor(
+  status: string,
+  copierLogs: ReturnType<typeof useT>['copierLogs'],
+): { variant: DetailStatusVariant; label: string } {
+  switch (status) {
+    case 'executed':
+      return { variant: 'success', label: copierLogs.statusExecuted }
+    case 'skipped':
+      return { variant: 'warning', label: copierLogs.statusSkipped }
+    case 'failed':
+    case 'error':
+      return { variant: 'error', label: copierLogs.statusFailed }
+    case 'pending':
+      return { variant: 'neutral', label: copierLogs.statusPending }
+    case 'parsed':
+    case 'dispatched':
+      return { variant: 'primary', label: copierLogs.statusParsed }
+    default:
+      return { variant: 'neutral', label: status }
+  }
+}
 
 export function AssistantPanel() {
   const t = useT()
   const { locale } = useLocale()
   const navigate = useNavigate()
-  const { session } = useAuth()
+  const { session, user } = useAuth()
   const { openAddTradingAccount, requestConfigureBroker } = useAddTradingAccount()
   const { openLiveChat } = useLiveChat()
   const { refreshProfile } = useUserProfile()
@@ -69,6 +98,12 @@ export function AssistantPanel() {
     setBrokerConnect,
     startBrokerConnectFlow,
     resetBrokerConnectFlow,
+    threads,
+    activeThreadId,
+    getActiveThreadId,
+    switchThread,
+    startNewThread,
+    deleteThread,
   } = useAssistant()
 
   const [draft, setDraft] = useState('')
@@ -77,10 +112,16 @@ export function AssistantPanel() {
   const [attaching, setAttaching] = useState(false)
   const [error, setError] = useState('')
   const [confirmBusy, setConfirmBusy] = useState<string | null>(null)
-  const [toolResults, setToolResults] = useState<Array<{ tool: string; result: string }>>([])
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [detailInfo, setDetailInfo] = useState<{
+    signal: Signal
+    channelName: string
+    symbol: string
+  } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const historyRef = useRef<HTMLDivElement>(null)
   const pendingCodeRef = useRef('')
 
   const a = t.nav.assistant
@@ -108,6 +149,22 @@ export function AssistantPanel() {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
   }, [open, messages, pendingConfirmations, sending, draftImages, telegramLink.stage, telegramLink.error, brokerConnect.active, brokerConnect.error])
 
+  useEffect(() => {
+    if (!historyOpen) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (!historyRef.current?.contains(e.target as Node)) setHistoryOpen(false)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setHistoryOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [historyOpen])
+
   if (!open) return null
 
   const appendAssistantLocal = (content: string) => {
@@ -126,10 +183,40 @@ export function AssistantPanel() {
     persistMessages([])
     setPendingConfirmations([])
     setPendingClientActions([])
-    setToolResults([])
+    setDetailInfo(null)
     resetTelegramLinkFlow()
     resetBrokerConnectFlow()
     setError('')
+  }
+
+  const handleCloseAssistant = () => {
+    setDetailInfo(null)
+    closeAssistant()
+  }
+
+  const handleTradeClick = async (trade: AssistantTradeRow) => {
+    if (!trade.signal_id || sending) return
+    setError('')
+    try {
+      const { data, error } = await supabase
+        .from('signals')
+        .select('*')
+        .eq('id', trade.signal_id)
+        .eq('user_id', user?.id)
+        .maybeSingle()
+      if (error) throw new Error(error.message)
+      if (!data) {
+        setError(a.tradesCard.noTrades)
+        return
+      }
+      setDetailInfo({
+        signal: data as Signal,
+        channelName: trade.channel ?? '—',
+        symbol: trade.symbol ?? '—',
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : a.errorFallback)
+    }
   }
 
   const applySideEffects = async (
@@ -387,7 +474,6 @@ export function AssistantPanel() {
     setDraft('')
     const images = draftImages
     setDraftImages([])
-    setToolResults([])
     const userContent = text ? redactTelegramPhones(text) : a.imageOnlyCaption
     const nextMessages = [
       ...messages,
@@ -397,16 +483,16 @@ export function AssistantPanel() {
         ...(images.length ? { images } : {}),
       },
     ]
-    persistMessages(nextMessages)
+    const ownerThreadId = persistMessages(nextMessages) ?? undefined
     setSending(true)
     try {
       const res = await postAssistantChat({ messages: nextMessages, locale })
-      persistMessages([
-        ...nextMessages,
-        { role: 'assistant', content: res.assistant_message || a.emptyReply },
-      ])
-      setToolResults(res.tool_results ?? [])
-      await applySideEffects(res.pending_client_actions, res.pending_confirmations)
+      const assistantMsg: AssistantChatMessage = { role: 'assistant', content: res.assistant_message || a.emptyReply }
+      if (res.tool_results?.length) assistantMsg.tool_results = res.tool_results
+      persistMessages(prev => [...prev, assistantMsg], ownerThreadId)
+      if (getActiveThreadId() === ownerThreadId) {
+        await applySideEffects(res.pending_client_actions, res.pending_confirmations)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : a.errorFallback)
     } finally {
@@ -418,20 +504,28 @@ export function AssistantPanel() {
     const key = `${item.tool}:${JSON.stringify(item.args)}`
     setConfirmBusy(key)
     setError('')
+    const ownerThreadId = activeThreadId ?? undefined
     try {
       const res = await executeAssistantAction({ tool: item.tool, args: item.args })
       setPendingConfirmations(prev => prev.filter(p => p !== item))
       if (res.error) {
         setError(res.error)
-        persistMessages(prev => [
-          ...prev,
-          { role: 'assistant', content: res.error || a.errorFallback },
-        ])
+        persistMessages(
+          prev => [
+            ...prev,
+            { role: 'assistant', content: res.error || a.errorFallback },
+          ],
+          ownerThreadId,
+        )
       } else {
-        persistMessages(prev => [
-          ...prev,
-          { role: 'assistant', content: res.assistant_message || a.actionDone },
-        ])
+        persistMessages(prev => {
+          const assistantMsg: AssistantChatMessage = {
+            role: 'assistant',
+            content: res.assistant_message || a.actionDone,
+          }
+          if (res.tool_results?.length) assistantMsg.tool_results = res.tool_results
+          return [...prev, assistantMsg]
+        }, ownerThreadId)
       }
       if (item.tool === 'set_copier_paused') {
         await refreshProfile()
@@ -498,7 +592,7 @@ export function AssistantPanel() {
         type="button"
         className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
         aria-label={a.close}
-        onClick={closeAssistant}
+        onClick={handleCloseAssistant}
       />
       <div
         className={clsx(
@@ -514,6 +608,95 @@ export function AssistantPanel() {
             <h2 className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100">{a.title}</h2>
             <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">{a.subtitle}</p>
           </div>
+          <div ref={historyRef} className="relative">
+            <button
+              type="button"
+              title={a.historyTitle}
+              aria-label={a.historyTitle}
+              aria-haspopup="menu"
+              aria-expanded={historyOpen}
+              onClick={() => setHistoryOpen(v => !v)}
+              className={clsx(
+                'rounded-lg p-2 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800',
+                historyOpen && 'bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100',
+              )}
+            >
+              <History className="h-4 w-4" />
+            </button>
+            {historyOpen && (
+              <div
+                role="menu"
+                aria-label={a.historyTitle}
+                className="absolute right-0 top-10 z-50 w-72 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-xl dark:border-neutral-800 dark:bg-neutral-950"
+              >
+                <div className="flex items-center justify-between border-b border-neutral-100 px-3 py-2 dark:border-neutral-800">
+                  <span className="text-xs font-semibold text-neutral-900 dark:text-neutral-100">
+                    {a.historyTitle}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      startNewThread()
+                      setHistoryOpen(false)
+                    }}
+                    className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-teal-700 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-950/50"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {a.newChat}
+                  </button>
+                </div>
+                <div className="max-h-64 overflow-y-auto py-1">
+                  {threads.length === 0 && (
+                    <p className="px-3 py-3 text-xs text-neutral-500 dark:text-neutral-400">{a.historyEmpty}</p>
+                  )}
+                  {threads.map(thread => (
+                    <div
+                      key={thread.id}
+                      role="menuitem"
+                      tabIndex={0}
+                      aria-current={thread.id === activeThreadId ? 'true' : undefined}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          switchThread(thread.id)
+                          setHistoryOpen(false)
+                        }
+                      }}
+                      className={clsx(
+                        'group flex cursor-pointer items-center gap-2 px-3 py-2 outline-none hover:bg-neutral-50 focus-visible:bg-neutral-50 dark:hover:bg-neutral-900 dark:focus-visible:bg-neutral-900',
+                        thread.id === activeThreadId && 'bg-teal-50/60 dark:bg-teal-950/30',
+                      )}
+                      onClick={() => {
+                        switchThread(thread.id)
+                        setHistoryOpen(false)
+                      }}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm text-neutral-800 dark:text-neutral-200">
+                          {thread.title || a.newChat}
+                        </p>
+                        <p className="text-xs text-neutral-400 dark:text-neutral-500">
+                          {thread.messages.length} · {formatRelative(thread.updatedAt)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        title={a.deleteChat}
+                        aria-label={a.deleteChat}
+                        onClick={e => {
+                          e.stopPropagation()
+                          deleteThread(thread.id)
+                        }}
+                        className="rounded-md p-1.5 text-neutral-400 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100 hover:bg-neutral-100 hover:text-red-500 dark:hover:bg-neutral-800 dark:hover:text-red-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
           <button
             type="button"
             title={a.clearConversation}
@@ -525,7 +708,7 @@ export function AssistantPanel() {
           </button>
           <button
             type="button"
-            onClick={closeAssistant}
+            onClick={handleCloseAssistant}
             className="rounded-lg p-2 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             aria-label={a.close}
           >
@@ -564,22 +747,25 @@ export function AssistantPanel() {
           )}
 
           {messages.map((m, i) => (
-            <AssistantChatBubble
-              key={`${m.role}-${i}`}
-              message={m}
-              hidePlainCaption={
-                Boolean(m.images?.length) && m.content.trim() === a.imageOnlyCaption
-              }
-            />
-          ))}
-
-          {toolResults.map((tr, i) => (
-            <AssistantTradesCard
-              key={`${tr.tool}-${i}`}
-              tool={tr.tool}
-              result={tr.result}
-              copy={a.tradesCard}
-            />
+            <Fragment key={`${m.role}-${i}`}>
+              <AssistantChatBubble
+                message={m}
+                hidePlainCaption={
+                  Boolean(m.images?.length) && m.content.trim() === a.imageOnlyCaption
+                }
+              />
+              {m.role === 'assistant' && m.tool_results?.length
+                ? m.tool_results.map((tr, j) => (
+                    <AssistantTradesCard
+                      key={`${tr.tool}-${j}`}
+                      tool={tr.tool}
+                      result={tr.result}
+                      copy={a.tradesCard}
+                      onTradeClick={handleTradeClick}
+                    />
+                  ))
+                : null}
+            </Fragment>
           ))}
 
           {showBrokerCard ? (
@@ -662,6 +848,20 @@ export function AssistantPanel() {
                 <p className="text-[13.5px] font-medium leading-relaxed text-amber-950 dark:text-amber-50">
                   {item.summary}
                 </p>
+                {item.details?.length ? (
+                  <dl className="mt-2.5 space-y-1 rounded-xl border border-amber-200/70 dark:border-amber-800/50 bg-white/70 dark:bg-neutral-900/40 px-3 py-2.5">
+                    {item.details.map(row => (
+                      <div key={row.label} className="flex justify-between gap-3 text-xs">
+                        <dt className="shrink-0 font-semibold text-amber-900/80 dark:text-amber-200/80">
+                          {row.label}
+                        </dt>
+                        <dd className="min-w-0 break-words text-right text-amber-950 dark:text-amber-50">
+                          {row.value}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : null}
                 <div className="mt-3 flex gap-2">
                   <Button
                     type="button"
@@ -772,6 +972,16 @@ export function AssistantPanel() {
           </div>
         </footer>
       </div>
+
+      {detailInfo ? (
+        <CopierLogDetailModal
+          signal={detailInfo.signal}
+          channelName={detailInfo.channelName}
+          symbol={detailInfo.symbol}
+          status={detailStatusFor(detailInfo.signal.status, t.copierLogs)}
+          onClose={() => setDetailInfo(null)}
+        />
+      ) : null}
     </div>,
     document.body,
   )

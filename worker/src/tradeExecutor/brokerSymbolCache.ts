@@ -6,7 +6,6 @@ import {
   normalizeSymbolParams,
   type SymbolParams,
 } from '../fxsocketClient'
-import type { ManualSettings } from '../manualPlanner'
 import { writeBrokerConnectionStatus } from '../brokerConnectionStatus'
 import { writeBrokerTerminalUnhealthy } from '../brokerTerminalHealth'
 import { applySymbolMapping, brokerSessionUuid, isMtUuid, parseSymbolToTradeList } from './helpers'
@@ -39,7 +38,101 @@ const SYMBOL_KEEPALIVE_CONCURRENCY = Math.max(
 )
 const symbolInventoryReadyHandled = new Set<string>()
 
-const SYMBOL_AUTO_MATCH_PROBES = ['EURUSD', 'XAUUSD', 'GBPUSD', 'BTCUSD'] as const
+const SYMBOL_AUTO_MATCH_PROBES = [
+  'EURUSD',
+  'XAUUSD',
+  'GBPUSD',
+  'BTCUSD',
+  'NAS100',
+  'US500',
+  'US30',
+  'GER40',
+  'UK100',
+  'JP225',
+] as const
+
+const BROKER_SYMBOL_SUFFIXES = [
+  '',
+  'M',
+  '.M',
+  'M.RAW',
+  '.RAW',
+  '.PRO',
+  '.R',
+  '_R',
+  '.I',
+  '_I',
+  '.C',
+  '_C',
+  '.S',
+  '_S',
+  '.X',
+  '_X',
+  '.A',
+  '_A',
+  '.CASH',
+  '_CASH',
+  '#',
+  '+',
+]
+const BROKER_SYMBOL_PREFIXES = ['', '#', '_', 'M']
+
+export const INDEX_ALIAS_FAMILIES = [
+  {
+    id: 'nasdaq100',
+    aliases: ['NAS100', 'US100', 'USTEC', 'NDX', 'NASDAQ100'],
+  },
+  {
+    id: 'sp500',
+    aliases: ['US500', 'SPX500', 'SP500', 'S&P500', 'SPX'],
+  },
+  {
+    id: 'dow30',
+    aliases: ['US30', 'DJ30', 'DJIA', 'DOW30', 'WS30'],
+  },
+  {
+    id: 'dax',
+    aliases: ['GER40', 'DE40', 'DAX40', 'GER30', 'DAX'],
+  },
+  {
+    id: 'ftse100',
+    aliases: ['UK100', 'FTSE100', 'FTSE'],
+  },
+  {
+    id: 'nikkei225',
+    aliases: ['JP225', 'JPN225', 'NIKKEI225', 'N225'],
+  },
+] as const
+
+function normalizeIndexAliasToken(symbol: string): string {
+  return symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+function indexAliasFamilyFor(symbol: string): typeof INDEX_ALIAS_FAMILIES[number] | null {
+  const normalized = normalizeIndexAliasToken(symbol)
+  return INDEX_ALIAS_FAMILIES.find(family =>
+    family.aliases.some(alias => normalizeIndexAliasToken(alias) === normalized),
+  ) ?? null
+}
+
+function exactInventorySymbol(inventory: SymbolListCacheEntry, symbolUpper: string): string | null {
+  if (!inventory.set.has(symbolUpper)) return null
+  return inventory.list.find(s => s.toUpperCase() === symbolUpper) ?? symbolUpper
+}
+
+function decoratedInventoryCandidates(inventory: SymbolListCacheEntry, symbolUpper: string): string[] {
+  const candidates: string[] = []
+  for (const p of BROKER_SYMBOL_PREFIXES) {
+    for (const s of BROKER_SYMBOL_SUFFIXES) {
+      const c = `${p}${symbolUpper}${s}`
+      if (c !== symbolUpper && inventory.set.has(c)) candidates.push(c)
+    }
+  }
+  candidates.sort((a, b) => a.length - b.length || a.localeCompare(b))
+  return candidates.map(candidate =>
+    inventory.list.find(s => s.toUpperCase() === candidate) ?? candidate,
+  )
+}
 
 /**
  * Map canonical metals (XAUUSD / GOLD) onto broker names like GOLD# (XM) when
@@ -97,6 +190,42 @@ export function resolveMetalAliasFromInventory(
   }
   candidates.sort((a, b) => score(a) - score(b) || a.length - b.length)
   return candidates[0] ?? null
+}
+
+export function resolveIndexAliasFromInventory(
+  inventory: SymbolListCacheEntry,
+  requested: string,
+): string | null {
+  const family = indexAliasFamilyFor(requested)
+  if (!family) return null
+
+  const matches = new Map<string, string>()
+  for (const alias of family.aliases) {
+    const aliasUpper = alias.toUpperCase()
+    const exact = exactInventorySymbol(inventory, aliasUpper)
+    if (exact) {
+      matches.set(normalizeIndexAliasToken(alias), exact)
+      continue
+    }
+
+    const decorated = decoratedInventoryCandidates(inventory, aliasUpper)
+    if (decorated.length === 1) {
+      matches.set(normalizeIndexAliasToken(alias), decorated[0]!)
+    } else if (decorated.length > 1) {
+      console.warn(
+        `[tradeExecutor] ambiguous decorated index alias family=${family.id} requested=${requested}`,
+      )
+      return null
+    }
+  }
+
+  if (matches.size === 1) return [...matches.values()][0]!
+  if (matches.size > 1) {
+    console.warn(
+      `[tradeExecutor] ambiguous index alias family=${family.id} requested=${requested}`,
+    )
+  }
+  return null
 }
 
 function findBrokerBySessionUuid(ctx: TradeExecutorContext, uuid: string): BrokerRow | undefined {
@@ -173,6 +302,7 @@ async function pingBrokerSessionInner(
 }
 
 export function prewarmSymbolsEnabled(ctx: TradeExecutorContext, ): boolean {
+    void ctx
     const v = String(process.env.EXECUTOR_PREWARM_SYMBOLS ?? 'true').toLowerCase()
     return v !== '0' && v !== 'false' && v !== 'no'
   }
@@ -206,7 +336,8 @@ export async function sessionHeartbeatTick(ctx: TradeExecutorContext): Promise<v
   }
 }
 
-export async function reconnectCachedBrokers(_ctx: TradeExecutorContext): Promise<void> {
+export async function reconnectCachedBrokers(ctx: TradeExecutorContext): Promise<void> {
+  void ctx
   /* FxSocket manages terminal lifecycle */
 }
 
@@ -541,22 +672,17 @@ export function resolveBrokerSymbolFromInventory(ctx: TradeExecutorContext,
       return exact ?? requested
     }
 
-    const SUFFIXES = ['', 'M', '.M', 'M.RAW', '.RAW', '.PRO', '.R', '_R', '.I', '_I', '.C', '_C', '.S', '_S', '.X', '_X', '#', '+']
-    const PREFIXES = ['', '#', '_']
-    const candidates: string[] = []
-    for (const p of PREFIXES) for (const s of SUFFIXES) {
-      const c = `${p}${target}${s}`
-      if (c !== target && inventory.set.has(c)) candidates.push(c)
-    }
+    const candidates = decoratedInventoryCandidates(inventory, target)
     if (candidates.length) {
-      candidates.sort((a, b) => a.length - b.length)
       const winner = candidates[0]
-      const exact = inventory.list.find(s => s.toUpperCase() === winner)
-      return exact ?? winner!
+      return winner!
     }
 
     const metal = resolveMetalAliasFromInventory(inventory, target)
     if (metal) return metal
+
+    const indexAlias = resolveIndexAliasFromInventory(inventory, target)
+    if (indexAlias) return indexAlias
 
     const contains = inventory.list.filter(s => s.toUpperCase().includes(target))
     if (contains.length === 1) return contains[0]!

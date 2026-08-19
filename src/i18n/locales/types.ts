@@ -38,6 +38,7 @@ export interface NavTranslations {
     backtest: string
     copierLogs: string
     signalHistory: string
+    reportedTrades: string
     marketNews: string
     economicCalendar: string
     performance: string
@@ -108,6 +109,10 @@ export interface NavTranslations {
     ariaLabel: string
     close: string
     clearConversation: string
+    historyTitle: string
+    newChat: string
+    historyEmpty: string
+    deleteChat: string
     placeholder: string
     send: string
     thinking: string
@@ -153,6 +158,7 @@ export interface NavTranslations {
       noTrades: string
       ticket: string
       legs: string
+      viewDetails: string
       statusExecuted: string
       statusFailed: string
       statusSkipped: string
@@ -162,6 +168,10 @@ export interface NavTranslations {
       statusIgnored: string
       statusError: string
       statusCancelled: string
+      positionOpen: string
+      positionClosed: string
+      reportStatusOpen: string
+      reportStatusResolved: string
     }
     broker: {
       title: string
@@ -810,6 +820,11 @@ export interface TradesTranslations {
   reportSubmit: string
   reportSuccess: string
   reportError: string
+  reportsTitle: string
+  reportsSubtitle: string
+  reportsEmpty: string
+  reportsStatusOpen: string
+  reportsStatusResolved: string
   brokerErrorTitle: string
   brokerErrorIntro: string
   viewCopierLogs: string

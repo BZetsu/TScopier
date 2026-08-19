@@ -11,7 +11,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useT } from '../../context/LocaleContext'
-import { useAssistant } from '../../context/AssistantContext'
+import { useAssistant } from '../../context/useAssistant'
 import { supabase } from '../../lib/supabase'
 import type { MtTrade } from '../../lib/fxsocketBroker'
 import {

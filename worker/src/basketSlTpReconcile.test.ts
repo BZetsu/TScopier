@@ -265,3 +265,144 @@ describe('runBasketLegModifies wrong-side guard', () => {
     assert.equal(skipped?.request_payload?.skip_reason, 'wrong_side_sl')
   })
 })
+
+describe('runBasketLegModifies modify outcome observability counters', () => {
+  const familyLeg = (ticket = 9001): BasketOpenLeg => ({
+    id: `trade-${ticket}`,
+    signal_id: 'sig-mod',
+    metaapi_order_id: String(ticket),
+    opened_at: new Date().toISOString(),
+    lot_size: 0.05,
+    sl: 4370,
+    tp: 4400,
+    entry_price: 4390,
+    direction: 'buy',
+    symbol: 'XAUUSD',
+  })
+
+  const supabase = () => ({
+    from: () => ({
+      insert: async () => ({ error: null }),
+      update: () => ({ eq: async () => ({ error: null }) }),
+    }),
+  })
+
+  async function runOne(
+    api: { orderModify: (uuid: string, args: { ticket: number; stoploss?: number; takeprofit?: number }) => Promise<unknown> },
+    opts?: { openedTickets?: Set<number> },
+  ) {
+    const leg = familyLeg()
+    return runBasketLegModifies({
+      supabase: supabase() as never,
+      api: {
+        quote: async () => ({ bid: 4390, ask: 4391, symbol: 'XAUUSD' }),
+        ...api,
+      } as never,
+      uuid: 'broker-uuid',
+      symbol: 'XAUUSD',
+      direction: 'buy',
+      baseLot: 0.05,
+      params: { point: 0.01, stopsLevel: 0, freezeLevel: 0, minLot: 0.01, lotStep: 0.01, contractSize: null, digits: 2 },
+      signalId: 'sig-mod',
+      userId: 'user-1',
+      brokerAccountId: 'broker-1',
+      familyTrades: [leg],
+      perLegTargets: [{ stoploss: 4376, takeprofit: 4410 }],
+      signalTps: [4410, 4420],
+      nImmCwe: 0,
+      overrideTp: null,
+      strictEntryPrefetch: { bid: 4390, ask: 4391 },
+      openedTickets: opts?.openedTickets ?? new Set([9001]),
+      internalRebalance: true,
+    })
+  }
+
+  it('treats already-applied/no-change modify replies as benign success', async () => {
+    const { summary, legErrors } = await runOne({
+      orderModify: async () => {
+        throw new Error('No changes')
+      },
+    })
+
+    assert.equal(summary.modified, 1)
+    assert.equal(summary.failed, 0)
+    assert.equal(summary.benignModify, 1)
+    assert.equal(summary.positionGone, 0)
+    assert.equal(legErrors.length, 0)
+  })
+
+  it('treats unknown-ticket/already-closed modify replies as benign position-gone outcomes', async () => {
+    const { summary, legErrors } = await runOne({
+      orderModify: async () => {
+        throw new Error('OrderModify: unknown ticket')
+      },
+    })
+
+    assert.equal(summary.modified, 1)
+    assert.equal(summary.failed, 0)
+    assert.equal(summary.benignModify, 1)
+    assert.equal(summary.positionGone, 1)
+    assert.equal(legErrors.length, 0)
+  })
+
+  it('keeps empty broker snapshots as skipped-not-on-broker rather than final failures', async () => {
+    let modifyCalled = false
+    const { summary, legErrors } = await runOne({
+      orderModify: async () => {
+        modifyCalled = true
+        throw new Error('should not modify when snapshot is empty')
+      },
+    }, { openedTickets: new Set() })
+
+    assert.equal(modifyCalled, false)
+    assert.equal(summary.modified, 0)
+    assert.equal(summary.failed, 0)
+    assert.equal(summary.skippedNotOnBroker, 1)
+    assert.equal(summary.positionGone, 1)
+    assert.equal(legErrors[0]!.skip_reason, 'skipped_not_on_broker')
+  })
+
+  it('counts broker timeout during modify as a hard failed leg', async () => {
+    const { summary, legErrors } = await runOne({
+      orderModify: async () => {
+        throw new Error('TradingHelper.OrderModify timed out')
+      },
+    })
+
+    assert.equal(summary.modified, 0)
+    assert.equal(summary.failed, 1)
+    assert.equal(summary.benignModify, 0)
+    assert.equal(summary.positionGone, 0)
+    assert.match(legErrors[0]!.error, /timed out/)
+  })
+
+  it('keeps invalid-stops split fallback as success when SL/TP fallback lands', async () => {
+    const calls: Array<{ stoploss?: number; takeprofit?: number }> = []
+    const { summary, legErrors } = await runOne({
+      orderModify: async (_uuid, args) => {
+        calls.push(args)
+        if (args.stoploss != null && args.takeprofit != null) throw new Error('Invalid stops')
+        return { stopLoss: args.stoploss ?? null, takeProfit: args.takeprofit ?? null }
+      },
+    })
+
+    assert.equal(summary.modified, 1)
+    assert.equal(summary.failed, 0)
+    assert.equal(legErrors.length, 0)
+    assert.equal(calls.length, 3, 'combined + SL-only + TP-only')
+  })
+
+  it('does not treat MT4 4108 invalid request as benign for modify semantics', async () => {
+    const { summary, legErrors } = await runOne({
+      orderModify: async () => {
+        throw new Error('MT4 error 4108: Invalid request')
+      },
+    })
+
+    assert.equal(summary.modified, 0)
+    assert.equal(summary.failed, 1)
+    assert.equal(summary.benignModify, 0)
+    assert.equal(summary.positionGone, 0)
+    assert.match(legErrors[0]!.error, /4108/)
+  })
+})
