@@ -2,10 +2,13 @@ import assert from 'node:assert/strict'
 import { describe, it, beforeEach } from 'node:test'
 import {
   assistantThreadTitle,
+  compactThreadForApi,
   createAssistantThreadId,
   loadAssistantThreads,
+  loadDeletedThreadIds,
   saveAssistantHistory,
   saveAssistantThreads,
+  saveDeletedThreadIds,
   type AssistantThread,
 } from './assistantClient'
 
@@ -141,5 +144,75 @@ describe('assistant thread history', () => {
     const ok = saveAssistantThreads('u-quota', { threads, activeThreadId: 't7' })
     storage.storage.setItem = orig
     assert.equal(ok, false)
+  })
+})
+
+describe('compactThreadForApi', () => {
+  it('caps messages at 20 and derives the title from the first user message', () => {
+    const messages = Array.from({ length: 25 }, (_, i) => ({
+      role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: `m${i}`,
+    }))
+    const compacted = compactThreadForApi(makeThread({ title: '', messages }))
+    assert.equal(compacted.messages.length, 20)
+    assert.equal(compacted.messages[0].content, 'm5')
+    assert.equal(compacted.title, 'm6')
+  })
+
+  it('keeps images only on the newest user turn', () => {
+    const thread = makeThread({
+      messages: [
+        { role: 'user', content: 'first', images: ['data:image/png;base64,AAA'] },
+        { role: 'assistant', content: 'ok' },
+        { role: 'user', content: 'second', images: ['data:image/png;base64,BBB'] },
+      ],
+    })
+    const compacted = compactThreadForApi(thread)
+    const withImages = compacted.messages.filter(m => m.images?.length)
+    assert.equal(withImages.length, 1)
+    assert.equal(withImages[0].content, 'second')
+  })
+
+  it('drops images when allowImages is false', () => {
+    const thread = makeThread({
+      messages: [{ role: 'user', content: 'hi', images: ['data:image/png;base64,AAA'] }],
+    })
+    const compacted = compactThreadForApi(thread, false)
+    assert.equal(compacted.messages[0].images, undefined)
+  })
+
+  it('preserves tool results on assistant turns', () => {
+    const thread = makeThread({
+      messages: [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'done', tool_results: [{ tool: 'get_trades', result: '[]' }] },
+      ],
+    })
+    const compacted = compactThreadForApi(thread)
+    assert.equal(compacted.messages[1].tool_results?.[0].tool, 'get_trades')
+  })
+})
+
+describe('deleted thread tombstones', () => {
+  it('round-trips a set of deleted ids', () => {
+    const ids = new Set(['a', 'b', 'c'])
+    saveDeletedThreadIds('u-del', ids)
+    const loaded = loadDeletedThreadIds('u-del')
+    assert.deepEqual([...loaded].sort(), ['a', 'b', 'c'])
+  })
+
+  it('drops non-string entries on load', () => {
+    storage.storage.setItem('tscopier.assistant.deleted.u-del', JSON.stringify(['a', 42, null, 'b']))
+    const loaded = loadDeletedThreadIds('u-del')
+    assert.deepEqual([...loaded].sort(), ['a', 'b'])
+  })
+
+  it('returns an empty set when nothing is stored', () => {
+    assert.deepEqual([...loadDeletedThreadIds('u-none')], [])
+  })
+
+  it('returns an empty set on corrupt data', () => {
+    storage.storage.setItem('tscopier.assistant.deleted.u-del', 'not-json')
+    assert.deepEqual([...loadDeletedThreadIds('u-del')], [])
   })
 })
