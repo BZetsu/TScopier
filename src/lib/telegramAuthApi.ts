@@ -10,6 +10,7 @@ export type TelegramAuthAction =
   | 'list_channels'
   | 'reconnect_telegram'
   | 'disconnect_telegram'
+  | 'backfill_channel_history'
 
 export type QrPollStatus = 'waiting' | 'requires_password' | 'success' | 'error'
 
@@ -51,6 +52,7 @@ export async function callTelegramAuth<T>(
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ action, ...body }),

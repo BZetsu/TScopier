@@ -2,6 +2,19 @@
 
 ## Changelog
 
+### 2026-08-19 — Telegram connect 401 on Migration branch
+
+- **Symptom:** `POST /functions/v1/telegram-auth` returned 401; function body never ran.
+- **Cause:** Migration uses the new API-key gateway, so Edge Functions need the `apikey` header. `callTelegramAuth` omitted it. After that, Edge `WORKER_INTERNAL_TOKEN` did not match `listener-migration`.
+- **Fix:** Send anon `apikey` on telegram-auth calls. Point Migration secret `WORKER_INTERNAL_TOKEN` at the same value as the Railway listener.
+
+### 2026-08-19 — Local/CLI work targets Supabase branch Migration
+
+- **Intent:** Schema and Edge Function changes stay on preview branch `Migration` (`supmsgcubipmmowrzoub`), not production `sxkpcovbyaficvtkpsdo`.
+- **CLI:** `supabase link --project-ref supmsgcubipmmowrzoub` (was linked to production).
+- **Rule:** `.cursor/rules/supabase-migration-branch.mdc` alwaysApply. Do not merge the branch unless asked.
+- Local `.env` / `worker/.env` were already pointed at this branch.
+
 ### 2026-08-19 — Range breakeven SL is per-leg, not one shared price
 
 - **Bug:** After Move SL on TP hit, a range basket (instant + layering) copied the tightest BE (e.g. 4504.10) onto every ticket.
