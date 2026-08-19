@@ -3,7 +3,7 @@ import { Loader2, X } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
 import { useT } from '../../context/LocaleContext'
-import { useAssistant } from '../../context/AssistantContext'
+import { useAssistant } from '../../context/useAssistant'
 import { en } from '../../i18n/locales/en'
 import {
   fetchCopierLogExecutionDetails,

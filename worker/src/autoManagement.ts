@@ -315,6 +315,27 @@ export function isSlAtOrBeyondBreakeven(
   return currentSl <= beSl + tol
 }
 
+/** True when a placed SL is already this fill's own breakeven (safe to stamp auto_be_applied_at). */
+export function shouldStampAutoBeAppliedAt(args: {
+  appliedSl: number | null | undefined
+  isBuy: boolean
+  entryPrice: number
+  symbol: string
+  manual: { breakeven_offset_pips?: number }
+}): boolean {
+  const applied = Number(args.appliedSl)
+  if (!Number.isFinite(applied) || applied <= 0) return false
+  const entry = Number(args.entryPrice)
+  if (!Number.isFinite(entry) || entry <= 0) return false
+  const beSl = breakevenStopLossForSymbol({
+    isBuy: args.isBuy,
+    entryPrice: entry,
+    manual: args.manual,
+    symbol: args.symbol,
+  })
+  return isSlAtOrBeyondBreakeven(args.isBuy, applied, beSl, signalPipPrice(args.symbol))
+}
+
 /** Clamp breakeven SL/TP to broker min distance from the live quote. */
 export function clampBreakevenModifyStops(args: {
   isBuy: boolean

@@ -8,7 +8,7 @@ import {
   SymbolParams,
 } from './fxsocketClient'
 import { apiForFxsocketAccount, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
-import { autoManagementTradeSnapshot, resolveAutoBeTpHitTriggerPriceFromManual } from './autoManagement'
+import { autoManagementTradeSnapshot, breakevenStopLossForSymbol, resolveAutoBeTpHitTriggerPriceFromManual, shouldStampAutoBeAppliedAt } from './autoManagement'
 import { signalPipPrice } from './signalPip'
 import { tryApplyBasketFollowUpToNewFill, symbolsCompatibleForBasket } from './basketModFollowUp'
 import { loadOpenBasketLegs, upsertBasketReconcileJob } from './basketSlTpReconcile'
@@ -18,7 +18,7 @@ import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { markRangeLegFired } from './rangePendingLadderSync'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
 import { resolvePredefinedSlForEntry, resolvePredefinedTpForEntry } from './manualPlanning/manualStops'
-import { resolveFiringLegStops, syncRangeBasketTakeProfits, toRangeBasketParsedSlice } from './rangeBasketTpSync'
+import { resolveFiringLegStops, resolvePerLegBreakevenSlForNewFill, syncRangeBasketTakeProfits, toRangeBasketParsedSlice } from './rangeBasketTpSync'
 import {
   hasWorkOnShard,
   monitorActiveIntervalMs,
@@ -1020,9 +1020,10 @@ export class VirtualPendingMonitor {
     // A new layer must fire with the LATEST SL/TP, not the stale anchor value.
     // resolveEffectiveBasketStops is the same source of truth the rebalance and
     // reconcile paths use: latest Adjust signal (incl. entry edits) > channel
-    // memory > anchor, merged with the most-protective open-leg SL. Reading the
-    // anchor's current parsed_data means message edits are honored too.
+    // memory > anchor. When siblings are already at breakeven, this fill uses
+    // its own entry + offset instead of the tightest sibling SL.
     let channelIdForTrade: string | null = null
+    let openNewFillAtOwnBreakeven = false
     try {
       const { data: sigMeta } = await this.supabase
         .from('signals')
@@ -1051,12 +1052,26 @@ export class VirtualPendingMonitor {
         familyTrades,
         brokerAccountId: leg.broker_account_id,
       })
+      const manualForBe = normalizeManualSettingsForExecution(
+        await this.loadManualSettingsForLeg(leg.broker_account_id, channelIdForTrade),
+      )
+      const perLegBreakevenSl = resolvePerLegBreakevenSlForNewFill({
+        familyTrades,
+        effectiveSource: effective.source,
+        isBuy: leg.is_buy,
+        fillPrice: Number(leg.trigger_price) || 0,
+        symbol: leg.symbol,
+        manual: manualForBe,
+      })
+      openNewFillAtOwnBreakeven = perLegBreakevenSl != null
       const firing = resolveFiringLegStops({
         legStoploss: leg.stoploss,
         legTakeprofit: leg.takeprofit,
         cweClosePrice: leg.cwe_close_price,
         effective,
         isBuy: leg.is_buy,
+        perLegBreakevenSl,
+        effectiveSource: effective.source,
       })
       if (firing.stoploss > 0) leg.stoploss = firing.stoploss
       if (leg.cwe_close_price == null && firing.takeprofit > 0) leg.takeprofit = firing.takeprofit
@@ -1150,6 +1165,16 @@ export class VirtualPendingMonitor {
     if (predefinedSlFromFire != null) {
       args.stoploss = predefinedSlFromFire
     }
+    if (openNewFillAtOwnBreakeven) {
+      const ownBe = breakevenStopLossForSymbol({
+        isBuy: leg.is_buy,
+        entryPrice: Number(refPrice) || 0,
+        manual,
+        symbol: leg.symbol,
+        digits: params?.digits,
+      })
+      if (Number.isFinite(ownBe) && ownBe > 0) args.stoploss = ownBe
+    }
     const predefinedTpFromFire = leg.cwe_close_price != null
       ? null
       : resolvePredefinedTpForEntry({
@@ -1240,8 +1265,20 @@ export class VirtualPendingMonitor {
             matchEntry: Number(leg.trigger_price) > 0 ? Number(leg.trigger_price) : null,
           })
         : null
-      const desiredSl = predefinedSlFromFill
-        ?? (Number(args.stoploss) > 0 ? Number(args.stoploss) : null)
+      const desiredSl = (() => {
+        if (openNewFillAtOwnBreakeven && entryPx != null) {
+          const ownBe = breakevenStopLossForSymbol({
+            isBuy: leg.is_buy,
+            entryPrice: Number(entryPx),
+            manual,
+            symbol: leg.symbol,
+            digits: params?.digits,
+          })
+          if (Number.isFinite(ownBe) && ownBe > 0) return ownBe
+        }
+        return predefinedSlFromFill
+          ?? (Number(args.stoploss) > 0 ? Number(args.stoploss) : null)
+      })()
       const desiredTp = predefinedTpFromFill
         ?? (Number(args.takeprofit) > 0 ? Number(args.takeprofit) : null)
       const brokerSl = Number(result.stopLoss) > 0 ? Number(result.stopLoss) : null
@@ -1263,6 +1300,18 @@ export class VirtualPendingMonitor {
           })
           : null,
       })
+      if (
+        openNewFillAtOwnBreakeven
+        && shouldStampAutoBeAppliedAt({
+          appliedSl: persistSl ?? desiredSl,
+          isBuy: Boolean(leg.is_buy),
+          entryPrice: Number(entryPx),
+          symbol: leg.symbol,
+          manual,
+        })
+      ) {
+        autoBeCols.auto_be_applied_at = new Date().toISOString()
+      }
       const { data: insTrade, error: insErr } = await this.supabase.from('trades').insert({
         user_id: leg.user_id,
         signal_id: leg.signal_id,

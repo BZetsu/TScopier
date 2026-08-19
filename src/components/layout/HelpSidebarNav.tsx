@@ -2,13 +2,15 @@ import { ExternalLink } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import clsx from 'clsx'
 import { useT } from '../../context/LocaleContext'
-import { APP_HELP_ICONS, getAppRouteIcon } from '../../lib/appNavIcons'
+import { APP_HELP_ICONS, getAppRouteIcon, APP_ROUTE_ICONS } from '../../lib/appNavIcons'
 import { HELP_LINKS } from '../../lib/helpLinks'
 
 type HelpSidebarNavProps = {
   collapsed: boolean
   onNavigate?: () => void
 }
+
+const ReportedTradesIcon = APP_ROUTE_ICONS['/reported-trades']
 
 export function HelpSidebarNav({ collapsed, onNavigate }: HelpSidebarNavProps) {
   const t = useT()
@@ -45,6 +47,16 @@ export function HelpSidebarNav({ collapsed, onNavigate }: HelpSidebarNavProps) {
         >
           <ContactSupportIcon className="h-4 w-4 shrink-0" aria-hidden />
           <span className={clsx(collapsed && 'lg:hidden')}>{hm.liveChat}</span>
+        </NavLink>
+
+        <NavLink
+          to="/reported-trades"
+          title={t.nav.items.reportedTrades}
+          onClick={onNavigate}
+          className={({ isActive }) => itemClass(isActive)}
+        >
+          <ReportedTradesIcon className="h-4 w-4 shrink-0" aria-hidden />
+          <span className={clsx(collapsed && 'lg:hidden')}>{t.nav.items.reportedTrades}</span>
         </NavLink>
 
         <a

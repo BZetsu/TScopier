@@ -42,6 +42,7 @@ import { isMtBridgeGlitchMessage } from '../../brokerConnectError'
 import { MtOperation } from '../../fxsocketClient'
 import { buildPerLegStopTargets, mergePlanImmediateOrders, type MergeModifySummary } from '../../multiTradeMerge'
 import {
+  isExplicitBasketSlSource,
   logEffectiveBasketStops,
   resolveEffectiveBasketStops,
 } from '../../basketEffectiveStops'
@@ -268,7 +269,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         if (resolvedStops.tpLevels.length) {
           effectiveParsed = { ...effectiveParsed, tp: resolvedStops.tpLevels }
         }
-        effectiveSlIsExplicitMgmt = resolvedStops.source === 'mgmt_signal'
+        effectiveSlIsExplicitMgmt = isExplicitBasketSlSource(resolvedStops.source)
       }
     }
     if (!effectiveSlIsExplicitMgmt && logAction === 'merge_routed_modify_only') {

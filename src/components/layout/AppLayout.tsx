@@ -19,7 +19,7 @@ import { UserAvatar } from './UserAvatar'
 import { DashboardKeepAlive } from './DashboardKeepAlive'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { useSubscription } from '../../context/SubscriptionContext'
-import { useAssistant } from '../../context/AssistantContext'
+import { useAssistant } from '../../context/useAssistant'
 import { useHasOpenTrades } from '../../hooks/useHasOpenTrades'
 import { useHasHighImpactNewsToday } from '../../hooks/useHasHighImpactNewsToday'
 import { useNeedsWelcome } from '../../hooks/useNeedsWelcome'
@@ -125,12 +125,13 @@ export function AppLayout() {
           { to: '/performance', label: t.nav.items.performance },
         ],
       },
-      {
-        label: t.nav.sections.discover,
-        items: [
-          { to: '/popular-channels', label: t.nav.items.popularChannels },
-        ],
-      },
+      // Popular channels disabled for now.
+      // {
+      //   label: t.nav.sections.discover,
+      //   items: [
+      //     { to: '/popular-channels', label: t.nav.items.popularChannels },
+      //   ],
+      // },
       {
         label: t.nav.sections.tradingTools,
         items: [
