@@ -93,6 +93,11 @@ export interface Database {
         Insert: Omit<PayoutBatchRow, 'id' | 'created_at' | 'updated_at'> & { id?: string; created_at?: string; updated_at?: string }
         Update: Partial<Omit<PayoutBatchRow, 'id' | 'created_at'>>
       }
+      assistant_threads: {
+        Row: AssistantThreadRow
+        Insert: Omit<AssistantThreadRow, 'id' | 'created_at'> & { id?: string; created_at?: string }
+        Update: Partial<Omit<AssistantThreadRow, 'id' | 'user_id' | 'created_at'>>
+      }
     }
   }
 }
@@ -716,6 +721,15 @@ export interface MtServer {
   platform: 'MT4' | 'MT5' | 'ANY'
   broker_label: string | null
   is_active: boolean
+}
+
+export type AssistantThreadRow = {
+  id: string
+  user_id: string
+  title: string
+  messages: Json[]
+  created_at: string
+  updated_at: string
 }
 
 export type ParsedSignal = {
