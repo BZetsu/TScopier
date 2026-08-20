@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Loader2, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -22,6 +22,7 @@ import {
   filterTradeActivitiesByTab,
   TRADE_ACTIVITY_FETCH_LIMIT,
   TRADE_EXECUTION_LOG_SELECT,
+  tradeActivityLogsFingerprint,
   type TradeActivityFilter,
   type TradeActivityLogRow,
 } from '../../lib/tradeActivities'
@@ -33,6 +34,7 @@ type ChannelNameRow = { id: string; display_name: string; channel_username?: str
 
 export function ManagementPage() {
   const { user } = useAuth()
+  const userId = user?.id
   const t = useT()
   const [filter, setFilter] = useState<TradeActivityFilter>('all')
   const [page, setPage] = useState(1)
@@ -43,6 +45,9 @@ export function ManagementPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [retryingLogIds, setRetryingLogIds] = useState<Set<string>>(() => new Set())
   const [retryAllBusy, setRetryAllBusy] = useState(false)
+  const loadGenRef = useRef(0)
+  const fingerprintRef = useRef('')
+  const channelsLoadedRef = useRef(false)
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message)
@@ -50,32 +55,54 @@ export function ManagementPage() {
   }, [])
 
   const loadActivities = useCallback(async (opts?: { background?: boolean }) => {
-    if (!user) return
+    if (!userId) {
+      setRawLogs([])
+      setLoading(false)
+      return
+    }
     const background = opts?.background === true
+    const gen = ++loadGenRef.current
     if (!background) setLoading(true)
+
+    const needChannels = !channelsLoadedRef.current
     const [channelsRes, logsRes] = await Promise.all([
-      supabase
-        .from('telegram_channels')
-        .select('id,display_name,channel_username')
-        .eq('user_id', user.id),
+      needChannels
+        ? supabase
+          .from('telegram_channels')
+          .select('id,display_name,channel_username')
+          .eq('user_id', userId)
+        : Promise.resolve({ data: null, error: null }),
       supabase
         .from('trade_execution_logs')
         .select(TRADE_EXECUTION_LOG_SELECT)
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .limit(TRADE_ACTIVITY_FETCH_LIMIT),
     ])
+    if (gen !== loadGenRef.current) return
 
-    setChannelDisplayNames(buildChannelDisplayNames((channelsRes.data ?? []) as ChannelNameRow[]))
-    setRawLogs((logsRes.data ?? []) as TradeActivityLogRow[])
-    if (!background) setLoading(false)
-  }, [user])
+    if (needChannels && channelsRes.data) {
+      channelsLoadedRef.current = true
+      setChannelDisplayNames(buildChannelDisplayNames((channelsRes.data ?? []) as ChannelNameRow[]))
+    }
+
+    const next = (logsRes.data ?? []) as TradeActivityLogRow[]
+    const fingerprint = tradeActivityLogsFingerprint(next)
+    if (fingerprint !== fingerprintRef.current) {
+      fingerprintRef.current = fingerprint
+      setRawLogs(next)
+    }
+    setLoading(false)
+  }, [userId])
 
   useEffect(() => {
+    loadGenRef.current += 1
+    fingerprintRef.current = ''
+    channelsLoadedRef.current = false
     void loadActivities()
   }, [loadActivities])
 
-  useTradeActivitiesRealtime(user?.id, () => { void loadActivities({ background: true }) })
+  useTradeActivitiesRealtime(userId, () => { void loadActivities({ background: true }) })
 
   useEffect(() => {
     setPage(1)

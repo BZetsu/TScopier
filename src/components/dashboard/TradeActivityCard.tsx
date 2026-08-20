@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import clsx from 'clsx'
 import { Loader2, RefreshCw } from 'lucide-react'
 import { useT } from '../../context/LocaleContext'
@@ -22,7 +23,7 @@ function statusLabel(
   return labels.failed
 }
 
-export function TradeActivityCard({
+export const TradeActivityCard = memo(function TradeActivityCard({
   activity,
   variant = 'compact',
   isRetrying = false,
@@ -103,7 +104,7 @@ export function TradeActivityCard({
       </div>
     </article>
   )
-}
+})
 
 export function TradeActivityCardSkeleton({ className }: { className?: string }) {
   return (
