@@ -322,6 +322,45 @@ test('filterChannelWorkerDisplayLogs: hides duplicate merge summary and internal
   )
 })
 
+test('filterChannelWorkerDisplayLogs: keeps one auto_be per signal/broker within 30s', () => {
+  const rows = filterChannelWorkerDisplayLogs([
+    {
+      id: 'be-new',
+      created_at: '2026-06-12T15:08:45.000Z',
+      action: 'auto_be',
+      status: 'failed',
+      signal_id: 'sig-1',
+      broker_account_id: 'broker-1',
+      request_payload: { parent_signal_id: 'sig-1' },
+      response_payload: null,
+      error_message: 'not connected',
+    },
+    {
+      id: 'be-old',
+      created_at: '2026-06-12T15:08:44.600Z',
+      action: 'auto_be',
+      status: 'failed',
+      signal_id: 'sig-1',
+      broker_account_id: 'broker-1',
+      request_payload: { parent_signal_id: 'sig-1' },
+      response_payload: null,
+      error_message: 'not connected',
+    },
+    {
+      id: 'be-other',
+      created_at: '2026-06-12T15:08:44.000Z',
+      action: 'auto_be',
+      status: 'failed',
+      signal_id: 'sig-2',
+      broker_account_id: 'broker-1',
+      request_payload: { parent_signal_id: 'sig-2' },
+      response_payload: null,
+      error_message: 'not connected',
+    },
+  ])
+  assert.deepEqual(rows.map(r => r.id), ['be-new', 'be-other'])
+})
+
 test('channelWorkerLogMessage: close worse entries success', () => {
   const message = channelWorkerLogMessage(
     {
