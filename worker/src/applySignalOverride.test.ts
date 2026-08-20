@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { applySignalOverride } from './applySignalOverride'
+import { applySignalOverride, clearOverrideAutoBeStamps } from './applySignalOverride'
 
 function chainQuery<T>(data: T, error: { message: string } | null = null) {
   const result = Promise.resolve({ data, error, count: Array.isArray(data) ? data.length : null })
@@ -153,5 +153,26 @@ describe('applySignalOverride dry-run', () => {
       dryRun: true,
     })
     assert.equal(result.applied_legs, 0)
+  })
+
+  test('clearOverrideAutoBeStamps nulls auto_be_applied_at on open legs', async () => {
+    const updates: Array<{ patch: unknown; ids: unknown }> = []
+    const supabase = {
+      from(table: string) {
+        if (table !== 'trades') throw new Error(`unexpected table ${table}`)
+        return {
+          update(patch: unknown) {
+            return {
+              in(_col: string, ids: unknown) {
+                updates.push({ patch, ids })
+                return Promise.resolve({ data: null, error: null })
+              },
+            }
+          },
+        }
+      },
+    }
+    await clearOverrideAutoBeStamps(supabase as never, ['t1', 't2'])
+    assert.deepEqual(updates, [{ patch: { auto_be_applied_at: null }, ids: ['t1', 't2'] }])
   })
 })

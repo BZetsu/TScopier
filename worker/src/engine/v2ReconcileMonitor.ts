@@ -123,7 +123,8 @@ export function buildDesiredLegTargets(args: {
   const baseSl = args.effectiveSl != null && args.effectiveSl > 0 ? args.effectiveSl : null
   const explicitBasketInstruction = isExplicitBasketSlSource(args.effectiveSource)
   const explicitAdjustRevision =
-    args.effectiveSource === 'basket_target' && args.basketTargetSource === 'adjust'
+    (args.effectiveSource === 'basket_target' && args.basketTargetSource === 'adjust')
+    || args.effectiveSource === 'user_override'
   const basketAtAutoBe = basketHasAutoBreakeven(args.legs)
   const siblingOffset = args.legs
     .map(l => Number(l.auto_be_offset_pips))

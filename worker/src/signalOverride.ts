@@ -34,6 +34,31 @@ function emptyParsed(): ParsedSignal {
   }
 }
 
+export function userOverrideHasStopLevels(
+  override: SignalUserOverride | null | undefined,
+): boolean {
+  if (!override) return false
+  if (override.sl != null && override.sl > 0) return true
+  return Array.isArray(override.tp) && override.tp.some(t => Number(t) > 0)
+}
+
+/**
+ * True while a Manage Signals override still owns SL/TP.
+ * A later Telegram Adjust/BE (`laterInstructionAt` after `updated_at`) takes over.
+ */
+export function userOverrideInForce(
+  override: SignalUserOverride | null | undefined,
+  laterInstructionAt?: string | null,
+): boolean {
+  if (!userOverrideHasStopLevels(override)) return false
+  if (!laterInstructionAt) return true
+  const laterAt = Date.parse(laterInstructionAt)
+  if (!Number.isFinite(laterAt)) return true
+  const overrideAt = override?.updated_at ? Date.parse(override.updated_at) : NaN
+  if (!Number.isFinite(overrideAt)) return false
+  return laterAt <= overrideAt
+}
+
 export function parseUserOverride(raw: unknown): SignalUserOverride | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const row = raw as Record<string, unknown>

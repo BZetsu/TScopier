@@ -191,6 +191,21 @@ describe('buildDesiredLegTargets', () => {
     assert.ok(t.every(x => x.stoploss === 4090), 'explicit Adjust applies to every leg (latest instruction wins)')
   })
 
+  it('lets a Manage Signals override (user_override) replace per-leg breakeven on all legs', () => {
+    const t = buildDesiredLegTargets({
+      legs: [
+        leg({ id: 'l1', metaapi_order_id: '100', sl: 4078, auto_be_applied_at: '2026-06-24T11:00:00Z' }),
+        leg({ id: 'l2', metaapi_order_id: '101', sl: 4072, auto_be_applied_at: '2026-06-24T11:00:00Z' }),
+      ],
+      snapshot: [open(100, { stopLoss: 4078 }), open(101, { stopLoss: 4072 })],
+      effectiveSl: 4090,
+      effectiveTpLevels: [4089],
+      isBuy: true,
+      effectiveSource: 'user_override',
+    })
+    assert.ok(t.every(x => x.stoploss === 4090), 'Manage Signals SL applies to every leg')
+  })
+
   it('skips legs not present at the broker (left for closedTickets)', () => {
     const t = buildDesiredLegTargets({
       legs: [leg({ metaapi_order_id: '100' }), leg({ id: 'l2', metaapi_order_id: '999' })],

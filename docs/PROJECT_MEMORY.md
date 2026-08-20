@@ -2,6 +2,14 @@
 
 ## Changelog
 
+### 2026-08-20 — Manage Signals SL/TP is supreme over original signal and auto-BE
+
+- **Symptom:** Changing SL/TP on Manage Signals often failed to stick. After a while the basket reverted to the signal’s original SL, or to auto-management Move-SL / breakeven.
+- **Cause:** `resolveEffectiveBasketStops` never read `signals.user_override`. Auto-BE recency discarded the Manage Signals basket target; v1 reconcile did not treat `basket_target` as explicit, so protective merge kept BE; auto-BE kept firing because stamps were not cleared.
+- **Fix:** User override is first-class authority. Auto-BE cannot overwrite it. Later Telegram Adjust/BE still wins if newer than `user_override.updated_at`. `applySignalOverride` clears `auto_be_applied_at`. v1 reconcile uses `isExplicitBasketSlSource` (includes `user_override` and `basket_target`).
+- **Files:** `basketEffectiveStops.ts`, `applySignalOverride.ts`, `autoManagementMonitor.ts`, `basketSlTpReconcileMonitor.ts`, `v2ReconcileMonitor.ts`.
+- **Deploy:** Trade worker (override apply, auto-BE, reconcile). No SQL.
+
 ### 2026-08-19 — Assistant stops answering a failed signal as the user's live/ongoing trade
 
 - **Symptom (plain English):** Asked "show my current trade and why am I in loss" / "my live trades" / "my ongoing trade", the assistant answered with a signal that had **failed** to execute (`symbol not found: STPRNG`) and called it the user's trade, even though nothing was ever sent to the broker. It kept reaching for the copier-logs tool instead of the live-trades data, so the user never saw their actual executed positions.
