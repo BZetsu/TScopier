@@ -7,7 +7,9 @@ import {
   resolveEffectiveStoplossPriority,
   unanimousLegSl,
   isSlMoreProtective,
+  isExplicitBasketSlSource,
 } from './basketEffectiveStops'
+import { userOverrideInForce } from './signalOverride'
 import type { BasketOpenLeg } from './basketSlTpReconcile'
 
 function mockSupabase(dataByTable: Record<string, unknown[]>) {
@@ -84,6 +86,19 @@ describe('resolveEffectiveStoplossPriority', () => {
     })
     assert.equal(r.stoploss, 4242)
     assert.equal(r.source, 'leg_consensus')
+  })
+
+  it('prefers Manage Signals override over basket target, mgmt, and anchor', () => {
+    const r = resolveEffectiveStoplossPriority({
+      anchorSl: 4245,
+      mgmtSl: 4242,
+      channelSl: 4240,
+      legConsensus: null,
+      basketTargetSl: 4100,
+      userOverrideSl: 4120,
+    })
+    assert.equal(r.stoploss, 4120)
+    assert.equal(r.source, 'user_override')
   })
 })
 
@@ -329,5 +344,155 @@ describe('resolveEffectiveBasketStops per-basket target store', () => {
     })
     assert.equal(eff.source, 'mgmt_signal', 'absent target -> existing resolver behavior')
     assert.equal(eff.stoploss, 4155)
+  })
+})
+
+describe('userOverrideInForce', () => {
+  it('is true when override has SL and no later telegram instruction', () => {
+    assert.equal(
+      userOverrideInForce({ sl: 4120, updated_at: '2026-06-17T12:00:00Z' }, null),
+      true,
+    )
+  })
+
+  it('is false when a later telegram instruction is newer than the override', () => {
+    assert.equal(
+      userOverrideInForce(
+        { sl: 4120, updated_at: '2026-06-17T12:00:00Z' },
+        '2026-06-17T13:00:00Z',
+      ),
+      false,
+    )
+  })
+
+  it('blocks auto-BE whenever the override still has stop levels', () => {
+    assert.equal(userOverrideInForce({ sl: 4120, updated_at: '2026-06-17T12:00:00Z' }), true)
+    assert.equal(userOverrideInForce({ tp: [4280] }), true)
+    assert.equal(userOverrideInForce(null), false)
+  })
+})
+
+describe('isExplicitBasketSlSource', () => {
+  it('treats Manage Signals and basket_target as explicit', () => {
+    assert.equal(isExplicitBasketSlSource('user_override'), true)
+    assert.equal(isExplicitBasketSlSource('basket_target'), true)
+    assert.equal(isExplicitBasketSlSource('mgmt_signal'), true)
+    assert.equal(isExplicitBasketSlSource('anchor'), false)
+    assert.equal(isExplicitBasketSlSource('channel_memory'), false)
+  })
+})
+
+describe('resolveEffectiveBasketStops Manage Signals override', () => {
+  it('keeps the override SL over the original signal SL', async () => {
+    const supabase = mockSupabase({
+      signals: [],
+      channel_active_trade_params: [],
+    })
+    const eff = await resolveEffectiveBasketStops({
+      supabase: supabase as never,
+      userId: 'u',
+      channelId: 'c',
+      anchorSignalId: 'sig',
+      symbol: 'XAUUSD',
+      basketCreatedAt: '2026-06-17T11:00:00Z',
+      anchorParsed: { sl: 4100, tp: [4265] },
+      familyTrades: [leg(4100), leg(4100)],
+      userOverride: { sl: 4120, tp: [4280], updated_at: '2026-06-17T12:00:00Z' },
+    })
+    assert.equal(eff.source, 'user_override')
+    assert.equal(eff.stoploss, 4120)
+    assert.deepEqual(eff.tpLevels, [4280])
+  })
+
+  it('keeps the override SL when auto-BE stamped later (does not revert to BE)', async () => {
+    const supabase = mockSupabase({
+      signals: [],
+      channel_active_trade_params: [],
+      basket_sl_tp_targets: [
+        { stoploss: 4120, tp_levels: [4280], source: 'adjust', updated_at: '2026-06-17T12:00:00Z' },
+      ],
+    })
+    const beLeg = (sl: number) => ({ ...leg(sl), auto_be_applied_at: '2026-06-17T13:00:00Z' })
+    const eff = await resolveEffectiveBasketStops({
+      supabase: supabase as never,
+      userId: 'u',
+      channelId: 'c',
+      anchorSignalId: 'sig',
+      symbol: 'XAUUSD',
+      basketCreatedAt: '2026-06-17T11:00:00Z',
+      anchorParsed: { sl: 4100, tp: [4265] },
+      familyTrades: [beLeg(4150), beLeg(4150)],
+      brokerAccountId: 'broker-1',
+      userOverride: { sl: 4120, tp: [4280], updated_at: '2026-06-17T12:00:00Z' },
+    })
+    assert.equal(eff.source, 'user_override')
+    assert.equal(eff.stoploss, 4120, 'Manage Signals SL wins over later auto-BE')
+  })
+
+  it('prefers the override over a stale source=entry basket target', async () => {
+    const supabase = mockSupabase({
+      signals: [],
+      channel_active_trade_params: [],
+      basket_sl_tp_targets: [
+        { stoploss: 4100, tp_levels: [4265], source: 'entry', updated_at: '2026-06-17T11:00:00Z' },
+      ],
+    })
+    const eff = await resolveEffectiveBasketStops({
+      supabase: supabase as never,
+      userId: 'u',
+      channelId: 'c',
+      anchorSignalId: 'sig',
+      symbol: 'XAUUSD',
+      basketCreatedAt: '2026-06-17T11:00:00Z',
+      anchorParsed: { sl: 4100, tp: [4265] },
+      familyTrades: [leg(4100)],
+      brokerAccountId: 'broker-1',
+      userOverride: { sl: 4120, updated_at: '2026-06-17T12:00:00Z' },
+    })
+    assert.equal(eff.source, 'user_override')
+    assert.equal(eff.stoploss, 4120)
+  })
+
+  it('lets a later Telegram Adjust win over the Manage Signals override', async () => {
+    const supabase = mockSupabase({
+      signals: [
+        { id: 'mod-2', parsed_data: { action: 'modify', sl: 4090, symbol: null }, created_at: '2026-06-17T14:00:00Z' },
+      ],
+      channel_active_trade_params: [],
+    })
+    const eff = await resolveEffectiveBasketStops({
+      supabase: supabase as never,
+      userId: 'u',
+      channelId: 'c',
+      anchorSignalId: 'sig',
+      symbol: 'XAUUSD',
+      basketCreatedAt: '2026-06-17T11:00:00Z',
+      anchorParsed: { sl: 4100, tp: [4265] },
+      familyTrades: [leg(4120), leg(4120)],
+      userOverride: { sl: 4120, updated_at: '2026-06-17T12:00:00Z' },
+    })
+    assert.equal(eff.source, 'mgmt_signal')
+    assert.equal(eff.stoploss, 4090)
+  })
+
+  it('loads user_override from the signals row when not passed in', async () => {
+    const supabase = mockSupabase({
+      signals: [
+        { id: 'sig', user_override: { sl: 4120, tp: [4280], updated_at: '2026-06-17T12:00:00Z' } },
+      ],
+      channel_active_trade_params: [],
+    })
+    const eff = await resolveEffectiveBasketStops({
+      supabase: supabase as never,
+      userId: 'u',
+      channelId: 'c',
+      anchorSignalId: 'sig',
+      symbol: 'XAUUSD',
+      basketCreatedAt: '2026-06-17T11:00:00Z',
+      anchorParsed: { sl: 4100, tp: [4265] },
+      familyTrades: [leg(4100)],
+    })
+    assert.equal(eff.source, 'user_override')
+    assert.equal(eff.stoploss, 4120)
   })
 })

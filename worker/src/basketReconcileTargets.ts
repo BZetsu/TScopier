@@ -12,6 +12,7 @@ import {
   resolveEffectiveBasketStops,
   type EffectiveStopSource,
 } from './basketEffectiveStops'
+import { parseUserOverride } from './signalOverride'
 import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistribution'
 import type { ManualTpLot } from './manualPlanning/types'
 import { stopsAlreadyMatchDb } from './orderModifyBenign'
@@ -73,7 +74,7 @@ export async function resolveFreshBasketReconcileTargets(
 
   const { data: anchorSig } = await supabase
     .from('signals')
-    .select('parsed_data, created_at, channel_id')
+    .select('parsed_data, created_at, channel_id, user_override')
     .eq('id', args.anchorSignalId)
     .maybeSingle()
 
@@ -100,6 +101,9 @@ export async function resolveFreshBasketReconcileTargets(
     anchorParsed,
     familyTrades: args.familyTrades,
     brokerAccountId: args.brokerAccountId,
+    userOverride: parseUserOverride(
+      (anchorSig as { user_override?: unknown } | null)?.user_override,
+    ),
   })
   logEffectiveBasketStops('[basketReconcileTargets]', args.anchorSignalId, effective)
 
