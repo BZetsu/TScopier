@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { joinOrigin, withQuery } from './site'
+import { isAppHost, joinOrigin, withQuery } from './site'
 
 describe('withQuery', () => {
   it('keeps an absolute app URL absolute when adding a query param', () => {
@@ -36,5 +36,21 @@ describe('joinOrigin', () => {
     expect(joinOrigin('https://app.tscopier.ai', '/login')).toBe(
       'https://app.tscopier.ai/login',
     )
+  })
+})
+
+describe('isAppHost', () => {
+  it('treats the migration subdomain as the product app', () => {
+    expect(isAppHost('migration.tscopier.ai')).toBe(true)
+  })
+
+  it('keeps staging and app subdomains as the product app', () => {
+    expect(isAppHost('app.tscopier.ai')).toBe(true)
+    expect(isAppHost('staging.tscopier.ai')).toBe(true)
+  })
+
+  it('treats the marketing apex as the marketing site', () => {
+    expect(isAppHost('tscopier.ai')).toBe(false)
+    expect(isAppHost('www.tscopier.ai')).toBe(false)
   })
 })

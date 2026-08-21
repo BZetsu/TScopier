@@ -69,6 +69,15 @@ import {
 } from './types'
 import { captureBusinessIssue } from '../observability/businessEvents'
 import { captureDeferredBusinessFailure } from '../observability/deferredBusinessEvents'
+import {
+  safeBuildManagementBreakevenAggregateDiagnostic,
+  safeBuildManagementBreakevenFailureDiagnostic,
+  safeFormatBreakevenReconcileLastError,
+  safeManagementBreakevenAggregatePayload,
+  safeManagementBreakevenFailurePayload,
+  type ManagementBreakevenAggregateDiagnostic,
+  type ManagementBreakevenFailureDiagnostic,
+} from '../managementBreakevenDiagnostics'
 
 function mgmtCloseOpts(liveMgmtFast: boolean) {
   return { maxAttempts: 2, slippageEscalation: 50, liveFast: liveMgmtFast }
@@ -952,6 +961,8 @@ export async function applyManagement(
     const breakevenAppliedTradeIds = new Set<string>()
     const breakevenSlByTradeId = new Map<string, number>()
     const breakevenFailedSymbolKeys = new Set<string>()
+    const breakevenFailureDiagnosticsByTradeId = new Map<string, ManagementBreakevenFailureDiagnostic>()
+    let breakevenAggregateDiagnostic: ManagementBreakevenAggregateDiagnostic | null = null
     let breakevenNeedsRetry = false
     // Breakeven: one OpenedOrders snapshot per broker session + pre-assigned
     // distinct tickets per leg, so legs run in parallel race-free (no shared
@@ -1361,6 +1372,7 @@ export async function applyManagement(
         })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        let breakevenFailureDiagnostic: ManagementBreakevenFailureDiagnostic | null = null
         // Broker confirmed the referenced position is gone (TP/SL hit, closed or
         // replaced): nothing left to modify. Treat as benign and close the DB row
         // so the sweep / reconcile fallback stop targeting a dead ticket. Mirrors
@@ -1426,6 +1438,10 @@ export async function applyManagement(
             breakevenAppliedTradeIds.add(trade.id)
           } else {
             breakevenFailedSymbolKeys.add(normBasketSymbolKey(trade.symbol))
+            breakevenFailureDiagnostic = safeBuildManagementBreakevenFailureDiagnostic(msg)
+            if (breakevenFailureDiagnostic) {
+              breakevenFailureDiagnosticsByTradeId.set(trade.id, breakevenFailureDiagnostic)
+            }
           }
         }
         await ctx.supabase.from('trade_execution_logs').insert({
@@ -1443,6 +1459,7 @@ export async function applyManagement(
             already_synced: benign || undefined,
             position_gone: positionGone || undefined,
             ticket_reconciled_from: ticketReconciledFrom ?? undefined,
+            ...safeManagementBreakevenFailurePayload(breakevenFailureDiagnostic),
           },
           error_message: benign ? null : msg,
         })
@@ -1460,6 +1477,14 @@ export async function applyManagement(
       })
       if (!failed.length) return
       breakevenNeedsRetry = true
+      breakevenAggregateDiagnostic = safeBuildManagementBreakevenAggregateDiagnostic({
+        successCount: breakevenAppliedTradeIds.size,
+        failedCount: failed.length,
+        eligibleCount: eligibleTrades.length,
+        diagnostics: failed
+          .map(t => breakevenFailureDiagnosticsByTradeId.get(t.id))
+          .filter((d): d is ManagementBreakevenFailureDiagnostic => Boolean(d)),
+      })
 
       const groups = new Map<string, MgmtTradeRow[]>()
       for (const t of failed) {
@@ -1496,7 +1521,7 @@ export async function applyManagement(
           virtualPendingsSnapshot: null,
           nImmCwe: 0,
           overrideTp: null,
-          lastError: `Breakeven partial: ${failed.length} leg(s) did not verify at breakeven`,
+          lastError: safeFormatBreakevenReconcileLastError(failed.length, breakevenAggregateDiagnostic),
         })
       }
       console.warn(
@@ -1917,6 +1942,13 @@ export async function applyManagement(
         },
       })
     } else if (breakevenNeedsRetry) {
+      const aggregate = breakevenAggregateDiagnostic ?? safeBuildManagementBreakevenAggregateDiagnostic({
+        successCount: breakevenAppliedTradeIds.size,
+        failedCount: Math.max(0, eligibleTrades.length - breakevenAppliedTradeIds.size),
+        eligibleCount: eligibleTrades.length,
+        diagnostics: [...breakevenFailureDiagnosticsByTradeId.values()],
+      })
+      const failedCount = aggregate?.failed_count ?? Math.max(0, eligibleTrades.length - breakevenAppliedTradeIds.size)
       console.warn(
         `[tradeExecutor] mgmt breakeven partial — leaving signal parsed for reconcile signal=${signal.id}`,
       )
@@ -1934,10 +1966,14 @@ export async function applyManagement(
           telegram_message_id: signal.telegram_message_id,
           operation: 'breakeven',
           extra: {
+            ...safeManagementBreakevenAggregatePayload(aggregate),
             total_targeted_trades: rows.length,
+            eligible_trade_count: eligibleTrades.length,
             successful_count: breakevenAppliedTradeIds.size,
+            failed_count: failedCount,
             failed_symbol_count: breakevenFailedSymbolKeys.size,
             partial_failure: breakevenAppliedTradeIds.size > 0,
+            reconcile_queued: true,
             user_visible_state_may_be_stale: true,
           },
         },

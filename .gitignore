@@ -25,6 +25,7 @@ supabase/.temp/
 
 # Local-only agent files (personal config + investigation scratchpads)
 AGENTS.md
+opencode.json
 docs/scratchpads/
 docs/scratchpad-*.md
 
