@@ -528,6 +528,10 @@ const CHANNEL_WORKER_HIDDEN_LOG_ACTIONS = new Set([
   'news_pre_close',
 ])
 
+export function isChannelWorkerHiddenLogAction(action: string): boolean {
+  return CHANNEL_WORKER_HIDDEN_LOG_ACTIONS.has(action.trim().toLowerCase())
+}
+
 function isEntryOpenLogAction(logAction: string): boolean {
   return logAction === 'order_send'
     || logAction === 'virtual_pending_fired'
@@ -551,6 +555,7 @@ export type ChannelWorkerDisplayLogRow = ChannelWorkerLogRow & {
 export function filterChannelWorkerDisplayLogs<T extends ChannelWorkerDisplayLogRow>(rows: T[]): T[] {
   const sorted = [...rows].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
   const recentMergeOk = new Map<string, number>()
+  const recentAutoBe = new Map<string, number>()
 
   return sorted.filter(row => {
     const action = row.action.toLowerCase()
@@ -567,6 +572,19 @@ export function filterChannelWorkerDisplayLogs<T extends ChannelWorkerDisplayLog
       const lastMs = recentMergeOk.get(key)
       if (lastMs != null && Math.abs(rowMs - lastMs) <= 30_000) return false
       recentMergeOk.set(key, rowMs)
+    }
+
+    if (action === 'auto_be') {
+      const payload = row.request_payload ?? {}
+      const anchor = String(payload.parent_signal_id ?? payload.signal_id ?? row.signal_id ?? '')
+      const broker = String(row.broker_account_id ?? '')
+      const rowMs = Date.parse(row.created_at)
+      if (anchor && Number.isFinite(rowMs)) {
+        const key = `${anchor}|${broker}|${row.status.toLowerCase()}`
+        const lastMs = recentAutoBe.get(key)
+        if (lastMs != null && Math.abs(rowMs - lastMs) <= 30_000) return false
+        recentAutoBe.set(key, rowMs)
+      }
     }
     return true
   })

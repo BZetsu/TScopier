@@ -26,6 +26,18 @@ import type { ManualTpLot } from './manualPlanning/types'
 import { isBenignOrderModifyError, stopsAlreadyMatchDb } from './orderModifyBenign'
 import { mgmtBasketConcurrency, parallelMap } from './parallelPool'
 import { effectiveParsedFromSignalRow, parseUserOverride } from './signalOverride'
+
+/** Drop auto-BE stamps so later monitors cannot revert a Manage Signals override. */
+export async function clearOverrideAutoBeStamps(
+  supabase: SupabaseClient,
+  tradeIds: string[],
+): Promise<void> {
+  if (!tradeIds.length) return
+  await supabase
+    .from('trades')
+    .update({ auto_be_applied_at: null })
+    .in('id', tradeIds)
+}
 import { reapplyChannelParamsToPendingLegs } from './channelActiveTradeParams'
 import { brokerHasLinkedSession, brokerSessionUuid } from './tradeExecutor/helpers'
 import { loadOpenTradesForSignalAcrossBrokers } from './managementScope'
@@ -164,6 +176,14 @@ export async function applySignalOverride(
   }
   if (!rows.length) {
     return { applied_legs: 0, skipped_legs: 0, failed_legs: 0, brokers_missing: brokersMissing }
+  }
+
+  if (!dryRun) {
+    try {
+      await clearOverrideAutoBeStamps(supabase, rows.map(r => r.id))
+    } catch (e) {
+      errors.push(`clear_auto_be: ${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 
   if (!dryRun && !hasFxsocketConfigured()) {

@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { findPreNewsCloseTriggers } from './newsTrading/blackout'
 import { getCalendarEventsCached } from './newsTrading/calendarProvider'
 import { isNewsTradingEnabled, type ScheduleFilterSettings } from './newsTrading/settings'
+import { isPositionGoneCloseError } from './orderModifyBenign'
 import { hasFxsocketConfigured } from './fxsocketClient'
 import { apiForFxsocketAccount, brokerSessionId, loadPlatformByFxsocketId } from './mtApiByAccount'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
@@ -30,6 +31,25 @@ interface OpenTradeRow {
 }
 
 const TICK_MS = 60_000
+
+/**
+ * Reconcile a trade the broker reports as already gone (e.g. "unknown ticket")
+ * so the news monitor stops re-selecting it on later news events. The broker
+ * reply means the desired flat outcome already happened. Returns true only when
+ * the row was still open and this call actually marked it closed.
+ */
+export async function reconcileGoneNewsTrade(
+  supabase: SupabaseClient,
+  tradeId: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('trades')
+    .update({ status: 'closed', closed_at: new Date().toISOString() })
+    .eq('id', tradeId)
+    .eq('status', 'open')
+    .select('id')
+  return !error && Array.isArray(data) && data.length > 0
+}
 
 export class NewsTradingMonitor {
   private timer: NodeJS.Timeout | null = null
@@ -172,7 +192,17 @@ export class NewsTradingMonitor {
             closed += 1
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
-            console.warn(`[newsTradingMonitor] close failed trade=${t.id} broker=${broker.id}: ${msg}`)
+            // Broker no longer knows the ticket (already closed by TP/SL/manual).
+            // That is the desired flat outcome — reconcile the DB row so the
+            // monitor stops re-selecting it and re-firing on every news event.
+            if (isPositionGoneCloseError(msg)) {
+              console.log(
+                `[newsTradingMonitor] position already gone signal=${t.signal_id ?? 'n/a'} trade=${t.id} ticket=${ticket}: ${msg}`,
+              )
+              if (await reconcileGoneNewsTrade(this.supabase, t.id)) closed += 1
+            } else {
+              console.warn(`[newsTradingMonitor] close failed trade=${t.id} broker=${broker.id}: ${msg}`)
+            }
           }
         }
 

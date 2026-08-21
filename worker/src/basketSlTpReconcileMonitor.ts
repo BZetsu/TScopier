@@ -27,6 +27,7 @@ import { normalizeSymbolParams } from './fxsocketClient'
 import { isUserCopierPausedCached } from './copierPause'
 import { brokerSessionUuid } from './tradeExecutor/helpers'
 import { isV2 } from './engine/executionMode'
+import { isExplicitBasketSlSource } from './basketEffectiveStops'
 
 const ACTIVE_MS = monitorActiveIntervalMs('BASKET_RECONCILE_TICK_MS', 5_000)
 const IDLE_MS = monitorIdleIntervalMs('BASKET_RECONCILE_IDLE_MS', 15_000)
@@ -321,11 +322,12 @@ export class BasketSlTpReconcileMonitor {
       internalRebalance: manual.range_trading === true,
       effectiveStoploss: effectiveStoploss > 0 ? effectiveStoploss : undefined,
       orderCommentsEnabled: manual.order_comments_enabled !== false,
-      // Explicit latest channel adjustment must apply even if it loosens; also
-      // when this job was enqueued from a mgmt signal (source != anchor).
+      // Explicit latest instruction (Manage Signals, basket target, or channel
+      // Adjust) must apply even if it loosens; also when this job was enqueued
+      // from a mgmt signal (source != anchor).
       explicitChannelTargets:
         row.source_signal_id !== row.anchor_signal_id
-        || effectiveSlSource === 'mgmt_signal',
+        || isExplicitBasketSlSource(effectiveSlSource),
     })
 
     const mergeFailed = basketLegModifyMergeFailed(summary)
