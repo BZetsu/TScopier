@@ -226,6 +226,24 @@ const POLL_FLOOD_BACKOFF_MS = (() => {
   return Number.isFinite(raw) ? Math.max(30_000, Math.min(10 * 60_000, raw)) : 2 * 60_000
 })()
 
+/**
+ * Ceiling for the adaptive flood-wait backoff. The pause grows on repeated
+ * flood bursts (start at POLL_FLOOD_BACKOFF_MS, double each time) up to this cap
+ * so a heavily-throttled session backs off for longer instead of re-flooding.
+ */
+const MAX_POLL_FLOOD_BACKOFF_MS = 10 * 60_000
+
+/**
+ * Consecutive flood-free poll cycles required before a flood-wait backoff is
+ * lifted and the adaptive window resets to base. Keeps the pause from being
+ * cleared on a single quiet check, so a session only resumes after a sustained
+ * calm stretch (does NOT affect normal polling, where no backoff is armed).
+ */
+const POLL_FLOOD_CLEAN_CYCLES = (() => {
+  const raw = Number(process.env.TELEGRAM_POLL_FLOOD_CLEAN_CYCLES ?? 3)
+  return Number.isFinite(raw) ? Math.max(1, Math.min(10, Math.floor(raw))) : 3
+})()
+
 function catchUpOnStartEnabled(): boolean {
   const v = String(process.env.TELEGRAM_CATCHUP_ON_START ?? 'true').toLowerCase()
   return v !== '0' && v !== 'false' && v !== 'no'
@@ -492,6 +510,10 @@ export class UserListener {
   private pollBackoffUntil = 0
   /** Flood-wait errors observed during the current poll cycle (used to clear backoff at cycle level). */
   private floodErrorsThisCycle = 0
+  /** Current adaptive flood-wait pause length; grows on repeated bursts, resets to base after sustained calm. */
+  private floodBackoffMs = POLL_FLOOD_BACKOFF_MS
+  /** Consecutive flood-free poll cycles — the backoff is cleared only after POLL_FLOOD_CLEAN_CYCLES of them. */
+  private consecutiveCleanCycles = 0
   /** Last time a flood-wait backoff was logged — rate-limits the warning. */
   private lastPollBackoffLogAt = 0
   private malformedRpcRecoveryCount = 0
@@ -695,20 +717,29 @@ export class UserListener {
   private noteFloodWaitBackoff(reason: string): void {
     const now = Date.now()
     this.floodErrorsThisCycle += 1
+    this.consecutiveCleanCycles = 0
+    // A new flood arriving after a previous pause has already expired means the
+    // throttling is recurring — escalate the next pause (start at base, double
+    // up to the cap). `pollBackoffUntil === 0` means no pause was ever armed, so
+    // the very first flood starts at base without escalating. A flood while
+    // already paused does not re-arm or escalate.
+    if (this.pollBackoffUntil > 0 && now >= this.pollBackoffUntil && this.floodBackoffMs < MAX_POLL_FLOOD_BACKOFF_MS) {
+      this.floodBackoffMs = Math.min(this.floodBackoffMs * 2, MAX_POLL_FLOOD_BACKOFF_MS)
+    }
     if (now < this.pollBackoffUntil) return
-    this.pollBackoffUntil = now + POLL_FLOOD_BACKOFF_MS
-    if (now - this.lastPollBackoffLogAt >= POLL_FLOOD_BACKOFF_MS) {
+    this.pollBackoffUntil = now + this.floodBackoffMs
+    if (now - this.lastPollBackoffLogAt >= this.floodBackoffMs) {
       this.lastPollBackoffLogAt = now
       console.warn(
         `[userListener] flood-wait backoff user=${this.userId}`
-        + ` pausing polls for ${Math.round(POLL_FLOOD_BACKOFF_MS / 1000)}s`
+        + ` pausing polls for ${Math.round(this.floodBackoffMs / 1000)}s`
         + ` reason=${reason}`,
       )
     }
     void persistListenerEvent(this.supabase, {
       userId: this.userId,
       eventType: 'poll_flood_backoff',
-      detail: { reason: reason.slice(0, 200), backoff_ms: POLL_FLOOD_BACKOFF_MS },
+      detail: { reason: reason.slice(0, 200), backoff_ms: this.floodBackoffMs },
     })
   }
 
@@ -745,7 +776,20 @@ export class UserListener {
    */
   private endPollCycle(floodAtCycleStart: number): void {
     if (this.floodErrorsThisCycle === floodAtCycleStart) {
-      this.pollBackoffUntil = 0
+      // Clean cycle. Only lift the backoff (and reset the adaptive window to
+      // base) after several consecutive flood-free cycles, so a session resumes
+      // only after sustained calm. When no backoff is armed this is a no-op,
+      // so normal polling is unaffected.
+      if (this.pollBackoffUntil > 0) {
+        this.consecutiveCleanCycles += 1
+        if (this.consecutiveCleanCycles >= POLL_FLOOD_CLEAN_CYCLES) {
+          this.pollBackoffUntil = 0
+          this.floodBackoffMs = POLL_FLOOD_BACKOFF_MS
+          this.consecutiveCleanCycles = 0
+        }
+      }
+    } else {
+      this.consecutiveCleanCycles = 0
     }
   }
 
@@ -1005,6 +1049,8 @@ export class UserListener {
     this.channelResolveCooldownUntil.clear()
     this.pollBackoffUntil = 0
     this.floodErrorsThisCycle = 0
+    this.floodBackoffMs = POLL_FLOOD_BACKOFF_MS
+    this.consecutiveCleanCycles = 0
   }
 
   private stopTimer(field: 'watchdogTimer' | 'safetyPollTimer' | 'fastPollTimer' | 'sessionPersistTimer' | 'replyChainSweepTimer' | 'signalReconcileSweepTimer' | 'entityWarmupTimer' | 'heartbeatTimer') {

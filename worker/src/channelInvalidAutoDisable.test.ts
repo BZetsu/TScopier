@@ -123,6 +123,8 @@ function makeListener(
     autoDisabledChannelRows: Set<string>
     channelResolveCooldownUntil: Map<string, { until: number; lastError?: Error }>
     pollBackoffUntil: number
+    floodBackoffMs: number
+    consecutiveCleanCycles: number
     pollChannelNewMessages: (r: ChannelRow) => Promise<void>
     pollMonitoredChannelsForMessages: () => Promise<void>
     runFastPoll: () => Promise<void>
@@ -269,17 +271,58 @@ describe('UserListener channel invalid auto-disable', () => {
     assert.ok(anyListener.pollBackoffUntil > Date.now())
   })
 
-  it('clears backoff when a full cycle completes with no flood errors', async () => {
+  it('keeps backoff armed after a single clean cycle (requires consecutive calm)', async () => {
     const channels = [row('row-1')]
     const { anyListener } = makeListener(channels, {
       getMessages: async () => [],
     })
 
-    // Backoff already expired; a clean cycle must keep it cleared.
+    // Expired-but-armed backoff; one clean cycle must NOT clear it yet.
     anyListener.pollBackoffUntil = Date.now() - 1
     await anyListener.runFastPoll()
 
+    assert.ok(anyListener.pollBackoffUntil > 0, 'backoff not cleared after one clean cycle')
+    assert.equal(anyListener.consecutiveCleanCycles, 1)
+  })
+
+  it('clears backoff only after several consecutive flood-free cycles', async () => {
+    const channels = [row('row-1')]
+    const { anyListener } = makeListener(channels, {
+      getMessages: async () => [],
+    })
+
+    anyListener.pollBackoffUntil = Date.now() - 1
+    anyListener.floodBackoffMs = 4 * 60_000
+
+    for (let i = 0; i < 3; i += 1) await anyListener.runFastPoll()
+
     assert.equal(anyListener.pollBackoffUntil, 0)
+    // The adaptive window resets to base after sustained calm.
+    assert.equal(anyListener.floodBackoffMs, 2 * 60_000)
+  })
+
+  it('escalates the backoff window when a flood recurs after the pause expires', async () => {
+    const channels = [row('row-1')]
+    const { anyListener } = makeListener(channels, {
+      getMessages: async () => { throw new Error('Request was unsuccessful 5 time(s)') },
+    })
+
+    // First flood arms base backoff.
+    await anyListener.pollChannelNewMessages(channels[0]!)
+    const first = anyListener.floodBackoffMs
+    assert.equal(first, 2 * 60_000)
+    assert.ok(anyListener.pollBackoffUntil > Date.now())
+
+    // Let the pause expire, then a new flood escalates to double.
+    anyListener.pollBackoffUntil = Date.now() - 1
+    await anyListener.pollChannelNewMessages(channels[0]!)
+    assert.equal(anyListener.floodBackoffMs, 4 * 60_000)
+    assert.ok(anyListener.pollBackoffUntil > Date.now())
+
+    // A flood while still paused does NOT escalate.
+    anyListener.floodBackoffMs = first
+    await anyListener.pollChannelNewMessages(channels[0]!)
+    assert.equal(anyListener.floodBackoffMs, first)
   })
 
   it('arms session backoff when channel peer resolution is throttled', async () => {
