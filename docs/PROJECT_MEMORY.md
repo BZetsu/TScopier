@@ -2,6 +2,20 @@
 
 ## Changelog
 
+### 2026-08-21 — Telegram listener handles "slow down" (flood wait) more patiently
+
+- **What was happening (plain English):** Telegram limits how fast an account can read messages. When the limit is hit it says "slow down, try again in X seconds" — we call this a *flood wait*. Our Telegram listener (which reads channels for trading signals) paused for a fixed 2 minutes when this happened, but came back at full speed after just one quiet check. So Telegram throttled it again, and it looped: stop, go, stop, go. That's what we saw in production (flood waits roughly 28 per second) and it is tied to the listener timeout / crash problem.
+- **What we changed:** The listener now handles flood waits more patiently, without slowing down normal operation:
+  1. **The pause can grow.** It starts at 2 minutes and doubles each time a flood wait comes back right after a pause ends (2, 4, 8, up to 10 minutes max). The more Telegram keeps complaining, the longer we wait.
+  2. **It only resumes after real calm.** It needs three quiet checks in a row (three full passes with no flood wait) before returning to full speed — not a single quiet moment. Any flood wait resets the count.
+  3. **It resets to normal after calm.** Once those three quiet checks pass, the pause returns to the normal 2 minutes.
+  4. **It starts fresh on reconnect.** When the Telegram connection re-establishes, all backoff state is cleared.
+- **What did NOT change:** Normal performance is untouched — when there is no flood wait, nothing is paused or slowed, and the listener reads at its usual pace. Trade parsing and execution are completely unaffected; this only controls how fast the listener talks to Telegram.
+- **Files:** `worker/src/userListener.ts` (backoff logic) and `worker/src/channelInvalidAutoDisable.test.ts` (tests).
+- **Verification:** 22/22 tests pass; `npm --prefix worker run build` clean. Code review: PASS (with two minor suggestions — see the technical note below).
+- **Technical note:** the pause length lives in `floodBackoffMs` and grows only when a flood recurs after a prior pause has expired (`pollBackoffUntil > 0 && now >= pollBackoffUntil`), so the first flood stays at base and a flood while already paused neither re-arms nor escalates. The pause clears only after `POLL_FLOOD_CLEAN_CYCLES` (default 3) consecutive flood-free cycles. Minor review follow-ups: make the test expectations use the module's env-derived constants, and make the 10-minute cap configurable.
+- **Deploy state:** To be committed and pushed to `dev`/`staging` (worker deploys from the staging branch).
+
 ### 2026-08-21 — NewsTradingMonitor re-fires pre-news closes on dead basket tickets ("unknown ticket")
 
 - **Symptom (plain English):** Admin showed a stream of **Broker · Unknown ticket · Major** events for Imran Uddin on a basket of XAUUSD+ trades (#1757684700–4744) at 23:00 on Aug 20 and 05:30 on Aug 21, and earlier the same class for Ramandeep (#1398054). A "news close" service tried to close those trades every time an economic news event came up, but the broker said "unknown ticket" (the positions were already closed) and it never updated our records — so it retried on every event. 89 failed rows for one signal alone over Aug 12–18.
