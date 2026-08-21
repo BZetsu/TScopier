@@ -105,6 +105,7 @@ import {
   primeCopierPauseCache,
 } from '../copierPause'
 import { captureDeferredBusinessFailure } from '../observability/deferredBusinessEvents'
+import { safeBuildMgmtSweepExhaustionPayload } from '../managementBreakevenDiagnostics'
 
 export type { SignalRow } from './types'
 
@@ -745,11 +746,48 @@ export class TradeExecutor {
   /** Finalize a management signal the sweep gave up on (stays 'parsed' forever otherwise). */
   private async finalizeStuckMgmtSignal(signalId: string): Promise<void> {
     try {
+      let userId: string | null = null
+      let sourceLogs: Array<{ request_payload?: unknown }> = []
+      try {
+        const { data: signalRow } = await this.supabase
+          .from('signals')
+          .select('user_id')
+          .eq('id', signalId)
+          .maybeSingle()
+        userId = typeof signalRow?.user_id === 'string' ? signalRow.user_id : null
+
+        const { data: logs } = await this.supabase
+          .from('trade_execution_logs')
+          .select('request_payload')
+          .eq('signal_id', signalId)
+          .in('action', ['mgmt_breakeven', 'mgmt_partial_breakeven'])
+          .eq('status', 'failed')
+          .order('created_at', { ascending: false })
+          .limit(20)
+        sourceLogs = Array.isArray(logs) ? logs as Array<{ request_payload?: unknown }> : []
+      } catch {
+        // Diagnostic lookup is best-effort; sweep finalization must still proceed.
+      }
+      const exhaustionPayload = safeBuildMgmtSweepExhaustionPayload({ sourceLogs })
       await this.supabase
         .from('signals')
         .update({ status: 'executed', skip_reason: 'mgmt_sweep_max_redispatch' })
         .eq('id', signalId)
         .eq('status', 'parsed')
+      if (userId) {
+        try {
+          await this.supabase.from('trade_execution_logs').insert({
+            user_id: userId,
+            signal_id: signalId,
+            broker_account_id: null,
+            action: 'mgmt_sweep_max_redispatch',
+            status: 'skipped',
+            request_payload: exhaustionPayload as unknown as Record<string, unknown>,
+          })
+        } catch {
+          console.warn('[tradeExecutor] management breakeven sweep diagnostic insert skipped')
+        }
+      }
     } catch {
       // best-effort
     }
