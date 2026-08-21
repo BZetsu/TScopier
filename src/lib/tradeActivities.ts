@@ -2,6 +2,7 @@ import type { ManagementTranslations } from '../i18n/locales/types'
 import {
   channelWorkerLogMessage,
   filterChannelWorkerDisplayLogs,
+  isChannelWorkerHiddenLogAction,
   resolveChannelNameFromLog,
   resolveInstrumentSymbol,
   type ChannelWorkerLogRow,
@@ -243,5 +244,21 @@ export const TRADE_EXECUTION_LOG_SELECT = `
   error_message,
   signal_id,
   broker_account_id,
-  signals ( channel_id, raw_message, parsed_data, status, skip_reason )
+  signals ( channel_id, parsed_data, status, skip_reason )
 `
+
+/** Skip a full Activities refetch for internal ticks that never render. */
+export function shouldRefreshActivitiesOnRealtimePayload(
+  payload: { action?: unknown } | null | undefined,
+): boolean {
+  const action = String(payload?.action ?? '').trim()
+  if (!action) return true
+  return !isChannelWorkerHiddenLogAction(action)
+}
+
+export function tradeActivityLogsFingerprint(
+  rows: Array<{ id: string }>,
+): string {
+  if (!rows.length) return '0'
+  return `${rows.length}:${rows[0]?.id ?? ''}:${rows[rows.length - 1]?.id ?? ''}`
+}

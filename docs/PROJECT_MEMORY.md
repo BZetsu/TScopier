@@ -11,6 +11,26 @@
 - **Deploy state:** Implemented + tested, **not yet deployed**. Ship to staging (Railway staging branch) first, validate, then main. The 5 stale `status='open'` rows for Imran's basket will only reconcile on the next news event after deploy.
 - **Follow-ups:** (1) reporting layer still writes one `order_close_audit / failed` row per gone close via the `fxsocketClient` audit — consider classifying gone-ticket closes as benign to keep the failure feed clean (do NOT swallow the throw in `fxsocketClient.orderClose`); (2) regression tests cover the helper + classifier but not the `tick()` catch-branch wiring (deferred — needs mocking calendar/blackout/fxsocket deps); (3) optional hardening: record the gone-position reason on the trade row and/or a cheap OpenedOrders snapshot before committing closed (mirror `openTradeReconcile`); (4) pre-existing: the success-path close update lacks the `.eq('status','open')` guard.
 
+### 2026-08-19 — Telegram login codes not arriving (Migration)
+
+- **Symptom:** Connect Telegram advanced or 400'd; no code in Telegram. Pending row had a `phone_code_hash`. QR login works.
+- **Cause:** Not a missing UI transition. `auth.SendCode` from Railway (Desktop-spoofed GramJS) returns `delivery=app` with no SMS/call fallback. QR uses `exportLoginToken` and does not need an OTP. Aug 14 (`062c4600`) set `allowAppHash=false` and added the amber “no other delivery method” copy; that copy is removed.
+- **Fix so far:** Removed the amber banner. Restored `allowAppHash: true` in worker (needs **listener-migration** redeploy). Retry Send Code after 15s.
+- Scratchpad: `docs/scratchpad-telegram-send-code-2026-08-19.md`.
+
+### 2026-08-19 — Telegram connect 401 on Migration branch
+
+- **Symptom:** `POST /functions/v1/telegram-auth` returned 401. User JWT was valid (ES256, Migration issuer).
+- **Cause:** Edge `WORKER_INTERNAL_TOKEN` did not match `listener-migration`. Function proxied `{"error":"Unauthorized"}`.
+- **Fix:** Set Migration secret `WORKER_INTERNAL_TOKEN` to the live listener token. Also send anon `apikey` on telegram-auth browser calls.
+
+### 2026-08-19 — Local/CLI work targets Supabase branch Migration
+
+- **Intent:** Schema and Edge Function changes stay on preview branch `Migration` (`supmsgcubipmmowrzoub`), not production `sxkpcovbyaficvtkpsdo`.
+- **CLI:** `supabase link --project-ref supmsgcubipmmowrzoub` (was linked to production).
+- **Rule:** `.cursor/rules/supabase-migration-branch.mdc` alwaysApply. Do not merge the branch unless asked.
+- Local `.env` / `worker/.env` were already pointed at this branch.
+
 ### 2026-08-19 — Assistant stops answering a failed signal as the user's live/ongoing trade
 
 - **Symptom (plain English):** Asked "show my current trade and why am I in loss" / "my live trades" / "my ongoing trade", the assistant answered with a signal that had **failed** to execute (`symbol not found: STPRNG`) and called it the user's trade, even though nothing was ever sent to the broker. It kept reaching for the copier-logs tool instead of the live-trades data, so the user never saw their actual executed positions.

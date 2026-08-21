@@ -115,6 +115,67 @@ describe('buildDesiredLegTargets', () => {
     assert.equal(byTicket.get(101), 4072, 'leg 2 keeps its own breakeven, not collapsed to 4078')
   })
 
+  it('restores per-leg BE from entry+offset when trades.sl was collapsed to one price', () => {
+    const t = buildDesiredLegTargets({
+      legs: [
+        leg({
+          id: 'l1',
+          metaapi_order_id: '100',
+          entry_price: 4504,
+          sl: 4504.10,
+          auto_be_applied_at: '2026-08-19T00:00:00Z',
+          auto_be_offset_pips: 1,
+        }),
+        leg({
+          id: 'l2',
+          metaapi_order_id: '101',
+          entry_price: 4500,
+          sl: 4504.10,
+          auto_be_applied_at: '2026-08-19T00:00:00Z',
+          auto_be_offset_pips: 1,
+        }),
+      ],
+      snapshot: [open(100, { openPrice: 4504, stopLoss: 4504.10 }), open(101, { openPrice: 4500, stopLoss: 4504.10 })],
+      effectiveSl: 4504.10,
+      effectiveTpLevels: [4530],
+      isBuy: true,
+      effectiveSource: 'channel_memory',
+    })
+    const byTicket = new Map(t.map(x => [x.ticket, x.stoploss]))
+    assert.equal(byTicket.get(100), 4504.1)
+    assert.equal(byTicket.get(101), 4500.1, 'collapsed 4504.10 restored to this fill + 1 pip')
+  })
+
+  it('does not paint most-protective BE onto an unstamped sibling', () => {
+    const t = buildDesiredLegTargets({
+      legs: [
+        leg({
+          id: 'l1',
+          metaapi_order_id: '100',
+          entry_price: 4504,
+          sl: 4504.10,
+          auto_be_applied_at: '2026-08-19T00:00:00Z',
+          auto_be_offset_pips: 1,
+        }),
+        leg({
+          id: 'l2',
+          metaapi_order_id: '101',
+          entry_price: 4500,
+          sl: 4300,
+          auto_be_applied_at: null,
+        }),
+      ],
+      snapshot: [open(100, { openPrice: 4504, stopLoss: 4504.10 }), open(101, { openPrice: 4500, stopLoss: 4300 })],
+      effectiveSl: 4504.10,
+      effectiveTpLevels: [4530],
+      isBuy: true,
+      effectiveSource: 'anchor',
+    })
+    const byTicket = new Map(t.map(x => [x.ticket, x.stoploss]))
+    assert.equal(byTicket.get(100), 4504.1)
+    assert.notEqual(byTicket.get(101), 4504.1, 'unstamped sibling must not inherit 4504.10')
+  })
+
   it('lets an explicit newer instruction (basket_target) override per-leg breakeven on all legs', () => {
     const t = buildDesiredLegTargets({
       legs: [
@@ -128,6 +189,21 @@ describe('buildDesiredLegTargets', () => {
       effectiveSource: 'basket_target',
     })
     assert.ok(t.every(x => x.stoploss === 4090), 'explicit Adjust applies to every leg (latest instruction wins)')
+  })
+
+  it('lets a Manage Signals override (user_override) replace per-leg breakeven on all legs', () => {
+    const t = buildDesiredLegTargets({
+      legs: [
+        leg({ id: 'l1', metaapi_order_id: '100', sl: 4078, auto_be_applied_at: '2026-06-24T11:00:00Z' }),
+        leg({ id: 'l2', metaapi_order_id: '101', sl: 4072, auto_be_applied_at: '2026-06-24T11:00:00Z' }),
+      ],
+      snapshot: [open(100, { stopLoss: 4078 }), open(101, { stopLoss: 4072 })],
+      effectiveSl: 4090,
+      effectiveTpLevels: [4089],
+      isBuy: true,
+      effectiveSource: 'user_override',
+    })
+    assert.ok(t.every(x => x.stoploss === 4090), 'Manage Signals SL applies to every leg')
   })
 
   it('skips legs not present at the broker (left for closedTickets)', () => {

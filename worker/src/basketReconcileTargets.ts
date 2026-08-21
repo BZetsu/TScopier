@@ -7,10 +7,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PerLegStopTarget } from './multiTradeMerge'
 import {
+  isExplicitBasketSlSource,
   logEffectiveBasketStops,
   resolveEffectiveBasketStops,
   type EffectiveStopSource,
 } from './basketEffectiveStops'
+import { parseUserOverride } from './signalOverride'
 import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistribution'
 import type { ManualTpLot } from './manualPlanning/types'
 import { stopsAlreadyMatchDb } from './orderModifyBenign'
@@ -72,7 +74,7 @@ export async function resolveFreshBasketReconcileTargets(
 
   const { data: anchorSig } = await supabase
     .from('signals')
-    .select('parsed_data, created_at, channel_id')
+    .select('parsed_data, created_at, channel_id, user_override')
     .eq('id', args.anchorSignalId)
     .maybeSingle()
 
@@ -99,6 +101,9 @@ export async function resolveFreshBasketReconcileTargets(
     anchorParsed,
     familyTrades: args.familyTrades,
     brokerAccountId: args.brokerAccountId,
+    userOverride: parseUserOverride(
+      (anchorSig as { user_override?: unknown } | null)?.user_override,
+    ),
   })
   logEffectiveBasketStops('[basketReconcileTargets]', args.anchorSignalId, effective)
 
@@ -156,7 +161,7 @@ export async function resolveFreshBasketReconcileTargets(
       channelTpLevels,
       finalTpsOverride: signalTps.length ? signalTps : null,
       stoplossOverride: effective.stoploss > 0 ? effective.stoploss : null,
-      explicitSl: effective.source === 'mgmt_signal',
+      explicitSl: isExplicitBasketSlSource(effective.source),
     })
     const isBuy = args.direction === 'buy'
     let mapped = built.map(t => ({

@@ -39,6 +39,8 @@ export type BasketOpenLeg = {
   symbol: string
   /** Set by autoManagementMonitor when the leg was moved to breakeven. */
   auto_be_applied_at?: string | null
+  /** Offset used when this leg was moved to breakeven (pips beyond entry). */
+  auto_be_offset_pips?: number | null
   /** Close-worse-entries threshold — broker TP must stay 0 (CWE monitor closes). */
   cwe_close_price?: number | null
 }
@@ -1085,7 +1087,7 @@ export async function loadOpenBasketLegs(
 ): Promise<BasketOpenLeg[]> {
   const { data, error } = await supabase
     .from('trades')
-    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at')
+    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at,auto_be_offset_pips')
     .eq('broker_account_id', brokerAccountId)
     .eq('signal_id', anchorSignalId)
     .eq('status', 'open')

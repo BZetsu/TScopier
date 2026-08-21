@@ -8,6 +8,7 @@ import { Badge } from '../../../components/ui/Badge'
 import { Alert } from '../../../components/ui/Alert'
 import { prepareChannelSubscriptionUpsert } from '../../../lib/signalChannelRegistry'
 import { upsertTelegramChannels } from '../../../lib/telegramChannelApi'
+import { callTelegramAuth } from '../../../lib/telegramAuthApi'
 import { interpolate } from '../../../i18n/interpolate'
 import { useT } from '../../../context/LocaleContext'
 import { Radio, Check } from 'lucide-react'
@@ -46,16 +47,13 @@ export function ChannelSelectStep({ onDone }: Props) {
     const fetchChannels = async () => {
       setLoading(true)
       try {
-        const res = await fetch(EDGE_FN, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${session?.access_token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ action: 'list_channels' }),
-        })
-        const data = await res.json()
-        if (!res.ok || data.error) {
+        const { ok, data } = await callTelegramAuth<{ channels?: TgChannel[] }>(
+          EDGE_FN,
+          session?.access_token,
+          'list_channels',
+          {},
+        )
+        if (!ok || data.error) {
           setError(data.error || 'Failed to load channels')
           return
         }

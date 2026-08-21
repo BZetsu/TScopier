@@ -28,6 +28,7 @@ import {
   type MonitorLoopHandle,
 } from './monitorIdleGate'
 import { isUserCopierPausedCached } from './copierPause'
+import { parseUserOverride, userOverrideHasStopLevels } from './signalOverride'
 
 interface AutoBeTradeRow {
   id: string
@@ -158,6 +159,10 @@ export class AutoManagementMonitor {
     }
     if (!rows.length) return
 
+    const overrideBySignal = await this.loadUserOverridesBySignal(
+      [...new Set(rows.map(r => r.signal_id).filter((id): id is string => Boolean(id)))],
+    )
+
     const tradeIds = rows.map(r => r.id)
     const partialByTrade = await this.loadPartialLegs(tradeIds)
 
@@ -207,6 +212,9 @@ export class AutoManagementMonitor {
       }
 
       for (const trade of group) {
+        if (userOverrideHasStopLevels(overrideBySignal.get(trade.signal_id ?? ''))) {
+          continue
+        }
         const partials = partialByTrade.get(trade.id) ?? []
         const broker = brokerById.get(trade.broker_account_id ?? '')
         const manual = (broker?.manual_settings ?? {}) as { half_close_percent?: number }
@@ -229,6 +237,27 @@ export class AutoManagementMonitor {
       this.quietTicks = 0
       console.log(`[autoManagementMonitor] heartbeat rows=${rows.length} groups=${groups.size} (no BE updates this cycle)`)
     }
+  }
+
+  private async loadUserOverridesBySignal(
+    signalIds: string[],
+  ): Promise<Map<string, ReturnType<typeof parseUserOverride>>> {
+    const out = new Map<string, ReturnType<typeof parseUserOverride>>()
+    if (!signalIds.length) return out
+    const { data, error } = await this.supabase
+      .from('signals')
+      .select('id,user_override')
+      .in('id', signalIds)
+    if (error) {
+      console.warn(`[autoManagementMonitor] user_override select failed: ${error.message}`)
+      return out
+    }
+    for (const row of data ?? []) {
+      const id = String((row as { id?: string }).id ?? '')
+      if (!id) continue
+      out.set(id, parseUserOverride((row as { user_override?: unknown }).user_override))
+    }
+    return out
   }
 
   private async loadPartialLegs(tradeIds: string[]): Promise<Map<string, PartialLegRow[]>> {

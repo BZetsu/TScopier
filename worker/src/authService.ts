@@ -72,6 +72,8 @@ const PENDING_PASSWORD_TTL_MS = 20 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 60 * 1000
 /** DB row outlives Telegram code validity slightly so retries still recover across replicas. */
 const PENDING_DB_TTL_MS = 12 * 60 * 1000
+/** Ignore a second Send Code click this soon; after this, request a new Telegram code. */
+const SEND_CODE_DEBOUNCE_MS = 15 * 1000
 /** Longer DB TTL while waiting for Two-Step Verification password. */
 const PENDING_DB_PASSWORD_TTL_MS = 20 * 60 * 1000
 const QR_FIRST_TOKEN_WAIT_MS = 15_000
@@ -198,6 +200,7 @@ type PhoneAuthSessionEnvelope = {
   resendAvailableAt?: number | null
   canResend?: boolean
   codeLength?: number | null
+  createdAt?: number
 }
 
 function parsePhoneAuthSessionEnvelope(raw: string): { sessionString: string; meta: Partial<PhoneAuthSessionEnvelope> } {
@@ -222,6 +225,7 @@ function serializePhoneAuthSession(sessionString: string, pending: PhonePending)
     resendAvailableAt: pending.resendAvailableAt ?? null,
     canResend: Boolean(pending.canResend),
     codeLength: pending.codeLength ?? null,
+    createdAt: pending.createdAt,
   }
   return JSON.stringify(envelope)
 }
@@ -409,7 +413,7 @@ export class AuthService {
       resendAvailableAt: meta.resendAvailableAt ?? null,
       canResend: Boolean(meta.canResend || (meta.nextDelivery && meta.timeoutSeconds && meta.resendAvailableAt)),
       codeLength: meta.codeLength ?? null,
-      createdAt: Date.now(),
+      createdAt: typeof meta.createdAt === 'number' && meta.createdAt > 0 ? meta.createdAt : 0,
       awaitingPassword,
     }
   }
@@ -486,7 +490,7 @@ export class AuthService {
     if (pending) {
       pending.awaitingPassword = true
       // Refresh in-memory age so cleanup does not expire mid-password entry.
-      pending.createdAt = Date.now()
+      pending.createdAt = this.now()
     }
   }
 
@@ -710,15 +714,24 @@ export class AuthService {
       if (existingPending.awaitingPassword) {
         throw new Error('Telegram Two-Step Verification password is already required for this login.')
       }
-      const status = pendingCodeStatus(existingPending, this.now())
-      logAuthEvent('send_code_existing_pending', {
+      const ageMs = this.now() - existingPending.createdAt
+      if (existingPending.createdAt > 0 && ageMs >= 0 && ageMs < SEND_CODE_DEBOUNCE_MS) {
+        const status = pendingCodeStatus(existingPending, this.now())
+        logAuthEvent('send_code_existing_pending', {
+          userId,
+          correlationId,
+          delivery: status.delivery,
+          nextDelivery: status.next_delivery,
+          resendWaitSeconds: status.resend_wait_seconds,
+          pendingAgeMs: ageMs,
+        })
+        return status
+      }
+      logAuthEvent('send_code_retry_fresh', {
         userId,
         correlationId,
-        delivery: status.delivery,
-        nextDelivery: status.next_delivery,
-        resendWaitSeconds: status.resend_wait_seconds,
+        pendingAgeMs: existingPending.createdAt > 0 ? ageMs : null,
       })
-      return status
     }
 
     this.authInFlight.add(userId)
@@ -767,8 +780,8 @@ export class AuthService {
             apiHash: API_HASH,
             settings: new Api.CodeSettings({
               allowFlashcall: false,
-              currentNumber: false,
-              allowAppHash: false,
+              currentNumber: true,
+              allowAppHash: true,
               allowMissedCall: false,
               allowFirebase: false,
             }),
@@ -799,7 +812,7 @@ export class AuthService {
           resendAvailableAt: status.resendAvailableAt,
           canResend: status.canResend,
           codeLength: status.code_length ?? null,
-          createdAt: Date.now(),
+          createdAt: this.now(),
         }
         this.pending.set(userId, pending)
         await this.persistPhonePendingRow(userId, pending)
@@ -896,7 +909,7 @@ export class AuthService {
       pending.resendAvailableAt = status.resendAvailableAt
       pending.canResend = status.canResend
       pending.codeLength = status.code_length ?? null
-      pending.createdAt = Date.now()
+      pending.createdAt = this.now()
       await this.persistPhonePendingRow(userId, pending)
 
       logAuthEvent('resend_code_api_ok', {

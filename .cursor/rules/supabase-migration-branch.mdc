@@ -1,0 +1,28 @@
+---
+description: Apply all Supabase schema and Edge Function changes to the Migration branch, never production.
+alwaysApply: true
+---
+
+# Supabase target: Migration branch only
+
+Until the user explicitly says otherwise, every database migration, SQL apply, and Edge Function deploy goes to the **Migration** preview branch — not production, not staging.
+
+| | |
+|---|---|
+| Branch name | `Migration` |
+| Project ref | `supmsgcubipmmowrzoub` |
+| API URL | `https://supmsgcubipmmowrzoub.supabase.co` |
+| Parent (do not touch) | production `sxkpcovbyaficvtkpsdo` |
+| Staging (do not touch) | `axdcledcyhyvzrnfkwat` |
+
+## Must
+
+- Pass `project_id: "supmsgcubipmmowrzoub"` to MCP `apply_migration`, `execute_sql`, `deploy_edge_function`, and related tools.
+- Use `supabase ... --project-ref supmsgcubipmmowrzoub` for CLI.
+- Keep local `.env` / `worker/.env` pointed at this ref.
+
+## Must not
+
+- Do not apply migrations or deploy functions to `sxkpcovbyaficvtkpsdo` (production) or `axdcledcyhyvzrnfkwat` (staging).
+- Do not call `merge_branch` on Migration unless the user explicitly asks to promote it.
+- Do not relink the CLI back to production without asking.

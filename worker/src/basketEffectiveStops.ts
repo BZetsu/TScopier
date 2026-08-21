@@ -12,8 +12,31 @@ import { mgmtSignalMatchesBasketSymbol } from './basketModFollowUp'
 import type { BasketOpenLeg } from './basketSlTpReconcile'
 import { coercePositiveTpLevels, type RangeBasketParsedSlice } from './rangeBasketTpSync'
 import { loadBasketSlTpTarget } from './basketTargetStore'
+import {
+  parseUserOverride,
+  userOverrideInForce,
+  type SignalUserOverride,
+} from './signalOverride'
 
-export type EffectiveStopSource = 'basket_target' | 'mgmt_signal' | 'channel_memory' | 'anchor' | 'leg_consensus'
+export type EffectiveStopSource =
+  | 'user_override'
+  | 'basket_target'
+  | 'mgmt_signal'
+  | 'channel_memory'
+  | 'anchor'
+  | 'leg_consensus'
+
+/** Latest explicit instruction — unifies SL on every leg, including Manage Signals. */
+export function isExplicitBasketSlSource(source?: EffectiveStopSource | string | null): boolean {
+  return source === 'user_override' || source === 'basket_target' || source === 'mgmt_signal'
+}
+
+/** True when any open leg was moved to breakeven (auto-BE or channel BE). */
+export function basketHasAutoBreakeven(
+  familyTrades: { auto_be_applied_at?: string | null }[] | undefined,
+): boolean {
+  return (familyTrades ?? []).some(t => Boolean(t.auto_be_applied_at))
+}
 
 export type EffectiveBasketStops = {
   stoploss: number
@@ -105,7 +128,12 @@ export function resolveEffectiveStoplossPriority(args: {
   legConsensus: number | null
   /** Authoritative per-basket target (latest recorded instruction) — wins over all. */
   basketTargetSl?: number | null
+  /** Manage Signals override — wins over original signal, basket entry seed, and auto-BE. */
+  userOverrideSl?: number | null
 }): { stoploss: number; source: EffectiveStopSource } {
+  const override = args.userOverrideSl != null && args.userOverrideSl > 0 ? args.userOverrideSl : null
+  if (override != null) return { stoploss: override, source: 'user_override' }
+
   const target = args.basketTargetSl != null && args.basketTargetSl > 0 ? args.basketTargetSl : null
   if (target != null) return { stoploss: target, source: 'basket_target' }
 
@@ -132,7 +160,14 @@ export async function findLatestMgmtSlAdjustment(
     basketCreatedAt: string
     symbol: string
   },
-): Promise<{ sl: number; signalId: string; tpLevels: number[]; createdAt: string | null; latestActionIsBreakeven: boolean } | null> {
+): Promise<{
+  sl: number
+  signalId: string
+  tpLevels: number[]
+  createdAt: string | null
+  latestActionIsBreakeven: boolean
+  newestCreatedAt: string | null
+} | null> {
   const { data: candidates, error } = await supabase
     .from('signals')
     .select('id, parsed_data, created_at')
@@ -153,6 +188,7 @@ export async function findLatestMgmtSlAdjustment(
   // so we must track it explicitly: an older "Adjust SL" must NOT override a
   // newer breakeven (that would revert the basket off breakeven).
   let newestMgmtAction: string | null = null
+  let newestMgmtCreatedAt: string | null = null
   let priceAdjust: { sl: number; signalId: string; tpLevels: number[]; createdAt: string | null } | null = null
   for (const row of candidates ?? []) {
     const parsed = row.parsed_data as ParsedMgmtRow | null
@@ -160,7 +196,11 @@ export async function findLatestMgmtSlAdjustment(
     const action = String(parsed.action).toLowerCase()
     if (!MGMT_SL_ACTIONS.has(action)) continue
     if (!mgmtSignalMatchesBasketSymbol(parsed, args.symbol)) continue
-    if (newestMgmtAction == null) newestMgmtAction = action
+    const rowCreatedAt = (row as { created_at?: string }).created_at ?? null
+    if (newestMgmtAction == null) {
+      newestMgmtAction = action
+      newestMgmtCreatedAt = rowCreatedAt
+    }
     if (priceAdjust == null && action === 'modify') {
       const sl = sanitizeLevel(parsed.sl)
       if (sl > 0) {
@@ -168,18 +208,31 @@ export async function findLatestMgmtSlAdjustment(
           sl,
           signalId: String(row.id),
           tpLevels: coercePositiveTpLevels(parsed.tp),
-          createdAt: (row as { created_at?: string }).created_at ?? null,
+          createdAt: rowCreatedAt,
         }
       }
     }
     if (newestMgmtAction != null && priceAdjust != null) break
   }
 
-  if (!priceAdjust) return null
+  const latestActionIsBreakeven =
+    newestMgmtAction === 'breakeven' || newestMgmtAction === 'partial_breakeven'
+
+  if (!priceAdjust) {
+    if (newestMgmtAction == null) return null
+    return {
+      sl: 0,
+      signalId: '',
+      tpLevels: [],
+      createdAt: newestMgmtCreatedAt,
+      newestCreatedAt: newestMgmtCreatedAt,
+      latestActionIsBreakeven,
+    }
+  }
   return {
     ...priceAdjust,
-    latestActionIsBreakeven:
-      newestMgmtAction === 'breakeven' || newestMgmtAction === 'partial_breakeven',
+    newestCreatedAt: newestMgmtCreatedAt,
+    latestActionIsBreakeven,
   }
 }
 
@@ -215,6 +268,25 @@ export type ResolveEffectiveBasketStopsArgs = {
   familyTrades?: BasketOpenLeg[]
   /** Enables the authoritative per-basket target store lookup. */
   brokerAccountId?: string | null
+  /**
+   * Manage Signals override. When provided (including `null`), skips the
+   * signals.user_override load. Production callers omit this so the resolver
+   * always reads the live jsonb even if `anchorParsed` is the raw signal.
+   */
+  userOverride?: SignalUserOverride | null
+}
+
+async function loadAnchorUserOverride(
+  supabase: SupabaseClient,
+  anchorSignalId: string,
+): Promise<SignalUserOverride | null> {
+  const { data, error } = await supabase
+    .from('signals')
+    .select('user_override')
+    .eq('id', anchorSignalId)
+    .maybeSingle()
+  if (error || !data) return null
+  return parseUserOverride((data as { user_override?: unknown }).user_override)
 }
 
 export async function resolveEffectiveBasketStops(
@@ -228,14 +300,30 @@ export async function resolveEffectiveBasketStops(
   // signal/channel memory/basket-target write — it only stamps
   // trades.auto_be_applied_at. Treat it as a first-class management action for
   // recency so a stale channel instruction cannot revert it after a TP hit.
+  // Manage Signals overrides are an exception: they stay in force until a
+  // later Telegram Adjust/BE, even if auto-BE stamped afterwards.
   const autoBeAt = latestAutoBreakevenAt(args.familyTrades)
+
+  const override = args.userOverride !== undefined
+    ? args.userOverride
+    : await loadAnchorUserOverride(args.supabase, args.anchorSignalId)
+
+  let mgmt: Awaited<ReturnType<typeof findLatestMgmtSlAdjustment>> = null
+  if (args.channelId && args.basketCreatedAt) {
+    mgmt = await findLatestMgmtSlAdjustment(args.supabase, {
+      userId: args.userId,
+      channelId: args.channelId,
+      basketCreatedAt: args.basketCreatedAt,
+      symbol: args.symbol,
+    })
+  }
+  const overrideActive = userOverrideInForce(override, mgmt?.newestCreatedAt ?? null)
 
   // Authoritative per-basket target ("evolving signal"): the latest recorded
   // channel-wide instruction (entry seed / adjust / breakeven). When present it
-  // wins for SL and TP and removes the recency heuristics below — UNLESS an
-  // auto-breakeven happened after it was written, in which case the (per-leg)
-  // auto-BE is newer and the protective merge must preserve it. Absent (older
-  // baskets) -> fall back to mgmt-signal scan + channel memory + anchor.
+  // wins for SL and TP — UNLESS a Manage Signals override is still in force
+  // (including over a stale source=entry seed) or an auto-breakeven happened
+  // after it was written (and no user override is in force).
   let basketTargetSl: number | null = null
   let tpFromTarget = false
   let basketTargetSource: string | undefined
@@ -246,48 +334,61 @@ export async function resolveEffectiveBasketStops(
       basketTargetSource = target.source
       basketTargetInstructionAt = target.instructionAt
       const targetAt = target.instructionAt ?? target.updatedAt
-      const autoBeNewerThanTarget = autoBeAt != null
+      const autoBeNewerThanTarget = !overrideActive
+        && autoBeAt != null
         && targetAt != null
         && Date.parse(autoBeAt) > Date.parse(targetAt)
-      if (!autoBeNewerThanTarget && target.stoploss != null && target.stoploss > 0) {
+      const staleEntryVsOverride = overrideActive && target.source === 'entry'
+      if (
+        !autoBeNewerThanTarget
+        && !staleEntryVsOverride
+        && target.stoploss != null
+        && target.stoploss > 0
+      ) {
         basketTargetSl = target.stoploss
       }
-      if (target.tpLevels.length > 0) {
+      if (target.tpLevels.length > 0 && !overrideActive) {
+        tpLevels = target.tpLevels
+        tpFromTarget = true
+      } else if (target.tpLevels.length > 0 && !(override?.tp && override.tp.length > 0)) {
         tpLevels = target.tpLevels
         tpFromTarget = true
       }
     }
   }
 
+  let userOverrideSl: number | null = null
+  if (overrideActive) {
+    const ovSl = override?.sl != null ? sanitizeLevel(override.sl) : 0
+    if (ovSl > 0) userOverrideSl = ovSl
+    if (override?.tp && override.tp.length > 0) {
+      tpLevels = coercePositiveTpLevels(override.tp)
+      tpFromTarget = true
+    }
+  }
+
   let mgmtSl: number | null = null
   let sourceSignalId: string | undefined
-  if (args.channelId && args.basketCreatedAt) {
-    const mgmt = await findLatestMgmtSlAdjustment(args.supabase, {
-      userId: args.userId,
-      channelId: args.channelId,
-      basketCreatedAt: args.basketCreatedAt,
-      symbol: args.symbol,
-    })
-    if (mgmt) {
-      // The latest management instruction wins. A breakeven that happened AFTER
-      // the last "Adjust SL" — whether a channel breakeven signal OR an auto-BE
-      // on the legs — must not be overridden by that stale adjust. TP authority
-      // still follows the latest Adjust (unless the basket target already set it).
-      if (mgmt.tpLevels.length && !tpFromTarget) tpLevels = mgmt.tpLevels
-      const autoBeNewerThanAdjust = autoBeAt != null
-        && mgmt.createdAt != null
-        && Date.parse(autoBeAt) > Date.parse(mgmt.createdAt)
-      const breakevenIsLatest = mgmt.latestActionIsBreakeven || autoBeNewerThanAdjust
-      if (!breakevenIsLatest) {
-        mgmtSl = mgmt.sl
-        sourceSignalId = mgmt.signalId
-      }
+  if (mgmt && !overrideActive) {
+    // The latest management instruction wins. A breakeven that happened AFTER
+    // the last "Adjust SL" — whether a channel breakeven signal OR an auto-BE
+    // on the legs — must not be overridden by that stale adjust. TP authority
+    // still follows the latest Adjust (unless the basket target already set it).
+    if (mgmt.tpLevels.length && !tpFromTarget) tpLevels = mgmt.tpLevels
+    const autoBeNewerThanAdjust = autoBeAt != null
+      && mgmt.createdAt != null
+      && Date.parse(mgmt.createdAt) < Date.parse(autoBeAt)
+      && Date.parse(mgmt.createdAt) > 0
+    const breakevenIsLatest = mgmt.latestActionIsBreakeven || autoBeNewerThanAdjust
+    if (!breakevenIsLatest && mgmt.sl > 0) {
+      mgmtSl = mgmt.sl
+      sourceSignalId = mgmt.signalId || undefined
     }
   }
 
   let channelSl: number | null = null
   let channelParams: ChannelActiveTradeParams | null = null
-  if (args.channelId) {
+  if (args.channelId && !overrideActive) {
     channelParams = await loadChannelActiveTradeParamsForSymbol(
       args.supabase,
       args.userId,
@@ -311,15 +412,14 @@ export async function resolveEffectiveBasketStops(
     channelSl: channelSl && channelSl > 0 ? channelSl : null,
     legConsensus,
     basketTargetSl,
+    userOverrideSl,
   })
 
-  // The authoritative basket target and an explicit recent channel adjustment
-  // are the user's latest instruction and must win for the whole basket and new
-  // layers — even when they LOOSEN the stop. Merging with the most-protective
-  // open-leg SL here would silently keep a tighter/older leg SL and revert the
-  // adjustment. Auto-breakeven re-tightens individual legs separately.
+  // The authoritative basket target, Manage Signals override, and an explicit
+  // recent channel adjustment are the user's latest instruction and must win
+  // for the whole basket — even when they LOOSEN the stop.
   const protectiveLegSl = mostProtectiveOpenLegSl(args.familyTrades, isBuy)
-  const stoploss = (source === 'basket_target' || source === 'mgmt_signal')
+  const stoploss = isExplicitBasketSlSource(source)
     ? prioritySl
     : mergeWithProtectiveLegSl(prioritySl, protectiveLegSl, isBuy)
 

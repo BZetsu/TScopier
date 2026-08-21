@@ -5,6 +5,25 @@ Changelog entries authored / owned by Martins, kept separate from the main `PROJ
 
 ## Changelog
 
+### 2026-08-20 — Manage Signals SL/TP is supreme over original signal and auto-BE
+
+- **Symptom:** Changing SL/TP on Manage Signals often failed to stick. After a while the basket reverted to the signal’s original SL, or to auto-management Move-SL / breakeven.
+- **Cause:** `resolveEffectiveBasketStops` never read `signals.user_override`. Auto-BE recency discarded the Manage Signals basket target; v1 reconcile did not treat `basket_target` as explicit, so protective merge kept BE; auto-BE kept firing because stamps were not cleared.
+- **Fix:** User override is first-class authority. Auto-BE cannot overwrite it. Later Telegram Adjust/BE still wins if newer than `user_override.updated_at`. `applySignalOverride` clears `auto_be_applied_at`. v1 reconcile uses `isExplicitBasketSlSource` (includes `user_override` and `basket_target`).
+- **Files:** `basketEffectiveStops.ts`, `applySignalOverride.ts`, `autoManagementMonitor.ts`, `basketSlTpReconcileMonitor.ts`, `v2ReconcileMonitor.ts`.
+- **Deploy:** Trade worker (override apply, auto-BE, reconcile). No SQL.
+
+### 2026-08-19 — Range breakeven SL is per-leg, not one shared price
+
+- **Bug:** After Move SL on TP hit, a range basket (instant + layering) copied the tightest BE (e.g. 4504.10) onto every ticket.
+- **Cause:** `applyOpenLegStopLossToTargets` merged `mostProtectiveOpenLegSl` across the basket; v2 then preserved the already-unified `trades.sl`.
+- **Fix:** Keep each stamped BE SL. New fills after basket BE open at that fill + offset. v2 recomputes from `entry_price` + `auto_be_offset_pips`. Explicit Adjust still unifies.
+- Files: `rangeBasketTpSync.ts`, `v2ReconcileMonitor.ts`, `virtualPendingMonitor.ts`, `brokerPendingFillStops.ts`, `basketReconcileTargets.ts`, `autoManagement.ts`.
+- Scratchpad: `docs/scratchpad-range-per-leg-breakeven-2026-08-19.md`. Needs trade worker deploy.
+
+### 2026-08-17 — Reverse + predefined SL/TP applied on the flipped side
+
+
 ### 2026-08-17 — Reverse + predefined SL/TP applied on the flipped side
 
 - **Bug:** Reverse flipped the ticket, but override SL/TP pips were still computed as a buy from the original signal/entry. Wrong-side prices were stripped, so the sell opened with no stops.

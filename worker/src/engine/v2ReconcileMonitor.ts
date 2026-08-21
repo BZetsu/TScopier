@@ -28,7 +28,13 @@ import {
 } from './reconciler'
 import { type BasketOpenLeg, closeStaleOpenTrades, loadOpenBasketLegs } from '../basketSlTpReconcile'
 import { stripInvalidStopsForSide } from '../channelActiveTradeParams'
-import { resolveEffectiveBasketStops, type EffectiveStopSource } from '../basketEffectiveStops'
+import {
+  basketHasAutoBreakeven,
+  isExplicitBasketSlSource,
+  resolveEffectiveBasketStops,
+  type EffectiveStopSource,
+} from '../basketEffectiveStops'
+import { breakevenStopLossForSymbol } from '../autoManagement'
 import { brokerSessionUuid } from '../tradeExecutor/helpers'
 import { hasFxsocketConfigured } from '../fxsocketClient'
 import { purgeRangePendingLegsForBaskets } from '../rangePendingLegDelete'
@@ -70,13 +76,12 @@ export function closestLadderTp(tp: number, levels: number[]): number | null {
  * Pure: compute the per-leg SL/TP the basket SHOULD have right now, given the
  * basket-level effective SL/TP (resolved upstream by v1's resolveEffectiveBasketStops,
  * which already merges target store + channel memory + latest mgmt instruction).
- *  - SL: the effective basket SL applied to every leg, EXCEPT a leg with its own
- *    breakeven SL (auto-breakeven OR manual channel breakeven, both stamp
- *    auto_be_applied_at). Such a leg keeps its OWN entry-relative SL so a multi-entry
- *    basket is never collapsed onto one shared breakeven SL — UNLESS the effective SL
- *    comes from an explicit, newer instruction (basket_target / mgmt_signal), which
- *    resolveEffectiveBasketStops only surfaces when it is newer than the breakeven;
- *    then the latest instruction wins for the whole basket.
+ *  - SL: the effective basket SL applied to every leg, EXCEPT a leg in a basket
+ *    that is at breakeven (auto-breakeven OR manual channel breakeven, both stamp
+ *    auto_be_applied_at). Those legs keep an entry-relative SL so a multi-entry
+ *    range basket is never collapsed onto one shared breakeven SL — UNLESS the
+ *    effective SL comes from an explicit, newer instruction (basket_target /
+ *    mgmt_signal); then the latest instruction wins for the whole basket.
  *  - TP: the DB leg's TP is the basket's INTENDED per-leg target (set by the
  *    distributed plan, a management modify, or the merge apply) and is authoritative
  *    over the live broker snapshot. Preferring it (a) stops a reconcile tick that
@@ -87,6 +92,21 @@ export function closestLadderTp(tp: number, levels: number[]): number | null {
  *    TP (only for a leg that is genuinely naked everywhere). A hit TP closes its leg,
  *    so an open leg's intended TP is never a taken target.
  */
+function perLegEntryBreakevenSl(leg: BasketOpenLeg, isBuy: boolean): number | null {
+  const entry = Number(leg.entry_price)
+  if (!Number.isFinite(entry) || entry <= 0) return null
+  const offsetRaw = leg.auto_be_offset_pips
+  const offset = offsetRaw == null ? null : Number(offsetRaw)
+  if (offset == null || !Number.isFinite(offset) || offset < 0) return null
+  const sl = breakevenStopLossForSymbol({
+    isBuy,
+    entryPrice: entry,
+    manual: { breakeven_offset_pips: offset },
+    symbol: leg.symbol,
+  })
+  return Number.isFinite(sl) && sl > 0 ? sl : null
+}
+
 export function buildDesiredLegTargets(args: {
   legs: BasketOpenLeg[]
   snapshot: FxOpenOrder[]
@@ -101,10 +121,14 @@ export function buildDesiredLegTargets(args: {
   const byTicket = new Map<number, FxOpenOrder>()
   for (const o of args.snapshot) byTicket.set(o.ticket, o)
   const baseSl = args.effectiveSl != null && args.effectiveSl > 0 ? args.effectiveSl : null
-  const explicitBasketInstruction =
-    args.effectiveSource === 'basket_target' || args.effectiveSource === 'mgmt_signal'
+  const explicitBasketInstruction = isExplicitBasketSlSource(args.effectiveSource)
   const explicitAdjustRevision =
-    args.effectiveSource === 'basket_target' && args.basketTargetSource === 'adjust'
+    (args.effectiveSource === 'basket_target' && args.basketTargetSource === 'adjust')
+    || args.effectiveSource === 'user_override'
+  const basketAtAutoBe = basketHasAutoBreakeven(args.legs)
+  const siblingOffset = args.legs
+    .map(l => Number(l.auto_be_offset_pips))
+    .find(n => Number.isFinite(n) && n >= 0)
 
   const out: DesiredLegTarget[] = []
   for (const leg of args.legs) {
@@ -114,11 +138,18 @@ export function buildDesiredLegTargets(args: {
     if (!o) continue // not at broker -> reconciler closedTickets handles it
 
     let sl = baseSl
-    // A leg at breakeven (per-leg, entry-relative) keeps EXACTLY its own SL — never
-    // merged up to a basket-level / most-protective SL, which would force every leg
-    // onto the deepest leg's breakeven. An explicit newer instruction overrides it.
+    const computedBe = perLegEntryBreakevenSl(
+      siblingOffset != null && leg.auto_be_offset_pips == null
+        ? { ...leg, auto_be_offset_pips: siblingOffset }
+        : leg,
+      args.isBuy,
+    )
     const beSl = leg.auto_be_applied_at && leg.sl != null && leg.sl > 0 ? leg.sl : null
-    if (beSl != null) {
+    if (!explicitBasketInstruction && (beSl != null || basketAtAutoBe)) {
+      // Entry-relative BE wins over the basket most-protective SL. Recompute from
+      // fill + offset when possible so a previously unified 4504.10 is restored.
+      sl = computedBe ?? beSl ?? (leg.sl != null && leg.sl > 0 ? leg.sl : null)
+    } else if (beSl != null) {
       sl = explicitBasketInstruction ? (baseSl ?? beSl) : beSl
     }
 

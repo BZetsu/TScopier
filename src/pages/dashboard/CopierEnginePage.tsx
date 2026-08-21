@@ -389,12 +389,11 @@ export function CopierEnginePage() {
           await new Promise(r => setTimeout(r, 1500 * attempt))
         }
         try {
-          const res = await fetch(EDGE_FN, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'list_channels' }),
-          })
-          const data = await res.json().catch(() => ({}))
+          const { status: resStatus, data } = await callTelegramAuth<{
+            channels?: TgChannelListItem[]
+            code?: string
+          }>(EDGE_FN, session?.access_token, 'list_channels', {})
+          const res = { status: resStatus, ok: resStatus >= 200 && resStatus < 300 }
           if (data.code === 'TELEGRAM_SESSION_INVALID') {
             await handleTelegramSessionInvalid()
             return
@@ -810,20 +809,15 @@ export function CopierEnginePage() {
     try {
       const phone = normalizeTelegramPhoneInput(tgPhone)
       const code = normalizeTelegramCodeInput(tgCode)
-      const res = await fetch(EDGE_FN, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session?.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'verify_code',
-          phone,
-          code,
-          password: tgStage === 'twoFa' ? tgPassword : undefined,
-        }),
+      const { status: resStatus, data } = await callTelegramAuth<{
+        requires_password?: boolean
+        channels?: TgChannelListItem[]
+      }>(EDGE_FN, session?.access_token, 'verify_code', {
+        phone,
+        code,
+        password: tgStage === 'twoFa' ? tgPassword : undefined,
       })
-      const data = await res.json().catch(() => ({}))
+      const res = { ok: resStatus >= 200 && resStatus < 300 }
       if (data.requires_password) {
         setTgPhone(phone)
         setTgCode(code)
