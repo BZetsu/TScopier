@@ -236,6 +236,8 @@ export interface CommonTranslations {
   noResults: string
   show: string
   results: string
+  brokerFeedDegraded: string
+  brokerFeedDegradedHint: string
   cookieConsent: {
     message: string
     policyLink: string
@@ -455,6 +457,10 @@ export interface SignalHistoryPageTranslations {
   saving: string
   originalSignal: string
   overrideSignal: string
+  channelMessageLabel: string
+  brokerAccountLabel: string
+  accountsHolding: string
+  closeOneAccount: string
   applySuccess: string
   applyBrokerSummary: string
   applyPartialBrokers: string
@@ -475,6 +481,8 @@ export interface SignalHistoryPageTranslations {
   closeSuccess: string
   closePartial: string
   closeFailed: string
+  closeMarketClosed: string
+  applyMarketClosed: string
   closeNoOpenTrades: string
   closeNotConnected: string
   closeRetry: string
@@ -715,6 +723,24 @@ export interface AccountConfigBrokerListTranslations {
   reconnectFailed: string
   reconnectPasswordTitle: string
   reconnectPasswordBody: string
+  reconnectMigrationTitle: string
+  reconnectMigrationBody: string
+  reconnectMigrationPasswordTitle: string
+  reconnectMigrationPasswordBody: string
+  reconnectMigrationBack: string
+  reconnectManyAccountsHint: string
+  remindLater: string
+  deleteAccountLink: string
+  deleteConfirmTitle: string
+  deleteConfirmBody: string
+  deleteConfirmNote: string
+  deleteConfirmCta: string
+  reconnectConnectingTitle: string
+  reconnectConnectingBody: string
+  reconnectSuccessTitle: string
+  reconnectSuccessBody: string
+  reconnectSuccessNext: string
+  reconnectSuccessDone: string
   reconnectPasswordLabel: string
   reconnectPasswordHint: string
   reconnectPasswordPlaceholder: string
@@ -867,6 +893,20 @@ export interface TradesTranslations {
   brokerErrorTitle: string
   brokerErrorIntro: string
   viewCopierLogs: string
+  closeReason: string
+  reasonNewsPreClose: string
+  reasonSignalClose: string
+  reasonSignalRevision: string
+  reasonOppositeSignal: string
+  reasonPartialTp: string
+  reasonAutoManagement: string
+  reasonCloseWorseEntries: string
+  reasonCopyLimitFlatten: string
+  reasonUserForceClose: string
+  reasonPositionGone: string
+  reasonStopLoss: string
+  reasonTakeProfit: string
+  reasonUnknown: string
   cancel: string
 }
 

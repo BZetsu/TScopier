@@ -9,7 +9,7 @@ import {
   type ChannelKeywords,
   type ManualSettings
 } from '../../manualPlanner'
-import { hasFxsocketConfigured, MtOperation } from '../../fxsocketClient'
+import { MtOperation } from '../../fxsocketClient'
 import {
   legacyMergeLinkingEnabled,
   filterSignalIdsByChannel,
@@ -32,7 +32,7 @@ import {
 } from '../types'
 import { reconcileGhostBasketLegs, loadMergeSignalForLinking, resolveBasketMergeLinkContext } from './helpers'
 import { applyBasketSlTpRefresh } from './slTpRefresh'
-
+import { writeExecutionLog } from '../../observability/executionLog'
 export function revisionRefreshSafeSkipOutcome(): MergeOutcome {
   return { handled: true, success: false }
 }
@@ -83,18 +83,90 @@ function storedIntentHasMarketNow(parsed: ParsedSignal): boolean {
   return storedIntent(parsed)?.flags?.market_now === true
 }
 
-export function isUnlinkedCompleteEntryMerge(parsed: ParsedSignal, link: BasketMergeLinkContext): boolean {
-  if (!parsedSignalHasExplicitStops(parsed)) return false
+export function isUnlinkedCompleteEntryMerge(
+  parsed: ParsedSignal,
+  link: BasketMergeLinkContext,
+  options: { anchorIsCompleteEntry?: boolean } = {},
+): boolean {
   if (
     !parsedHasExplicitEntryAnchor(parsed)
     && !storedIntentHasExplicitEntryAnchor(parsed)
     && !rawInstructionHasExplicitEntryAnchor(parsed.raw_instruction)
   ) return false
+  // Reply / thread / parent / same-message-edit links are explicit follow-ups and
+  // may always refresh the basket.
+  if (
+    link.replyOk
+    || link.threadLinksAnchor
+    || link.parentLinksAnchor
+    || link.sameSignalRefresh
+  ) return false
+  // If the basket's anchor was itself a complete entry, a later entry-shaped
+  // message is an independent order and must not be folded into it. This holds
+  // regardless of market-now wording: "instant execution" describes how an order
+  // fills, not whether it completes an earlier signal.
+  if (options.anchorIsCompleteEntry === true) return true
+  // Teaser completion: the only remaining way to merge an entry-shaped message into
+  // a price-less anchor is by supplying stops with market-now wording. A message
+  // that carries an entry price but no stops supplies nothing, so it is treated as
+  // an independent order even against a teaser anchor.
+  if (!parsedSignalHasExplicitStops(parsed)) return true
   if (messageHasMarketNowIntent(String(parsed.raw_instruction ?? '')) || storedIntentHasMarketNow(parsed)) return false
-  return !link.replyOk
-    && !link.threadLinksAnchor
-    && !link.parentLinksAnchor
-    && !link.sameSignalRefresh
+  return true
+}
+
+/**
+ * Whether an anchor signal's parsed data describes a complete entry (it carried an
+ * explicit entry price and/or stops) rather than a price-less "teaser". Returns
+ * undefined when the shape is not a recognised entry (missing data, or a
+ * non-buy/sell action), so callers can decide the default.
+ */
+export function anchorParsedIsCompleteEntry(
+  parsed: (ParsedSignal & { action?: unknown }) | null | undefined,
+): boolean | undefined {
+  if (!parsed || typeof parsed !== 'object') return undefined
+  const action = String((parsed as { action?: unknown }).action ?? '').toLowerCase()
+  if (action !== 'buy' && action !== 'sell') return undefined
+  return parsedHasExplicitEntryAnchor(parsed)
+    || storedIntentHasExplicitEntryAnchor(parsed)
+    || parsedSignalHasExplicitStops(parsed)
+}
+
+/**
+ * Loads the anchor signal and reports whether it was a complete entry. When the
+ * anchor cannot be read the result is treated as a complete entry (block the merge
+ * and open a new trade), which matches the documented default: open a new trade
+ * unless the anchor is proven to be a teaser. The failure is logged so it is not
+ * silent.
+ */
+async function loadAnchorIsCompleteEntry(
+  ctx: TradeExecutorContext,
+  signal: SignalRow,
+  anchorSignalId: string,
+): Promise<boolean> {
+  try {
+    const { data, error } = await ctx.supabase
+      .from('signals')
+      .select('parsed_data')
+      .eq('id', anchorSignalId)
+      .eq('user_id', signal.user_id)
+      .maybeSingle()
+    if (error) {
+      console.warn(
+        `[tradeExecutor] anchor completeness read failed; treating anchor as complete`
+        + ` signal=${signal.id} anchor=${anchorSignalId} err=${error.message}`,
+      )
+      return true
+    }
+    const parsed = (data as { parsed_data?: Record<string, unknown> | null } | null)?.parsed_data
+    return anchorParsedIsCompleteEntry(parsed as ParsedSignal | null | undefined) ?? true
+  } catch (err) {
+    console.warn(
+      `[tradeExecutor] anchor completeness read threw; treating anchor as complete`
+      + ` signal=${signal.id} anchor=${anchorSignalId} err=${(err as Error)?.message ?? String(err)}`,
+    )
+    return true
+  }
 }
 
 export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorContext, args: {
@@ -118,7 +190,6 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
     const sameSignalRefresh = args.sameSignalRefresh === true
     const manual = (broker.manual_settings ?? {}) as ManualSettings
     const revisionSafeSkip = (): MergeOutcome => revisionRefreshSafeSkipOutcome()
-    if (!hasFxsocketConfigured()) return sameSignalRefresh ? revisionSafeSkip() : { handled: false }
     if (parsedHasReEnterIntent(parsed)) return sameSignalRefresh ? revisionSafeSkip() : { handled: false }
     if (!shouldRouteAsBasketParameterRefresh(parsed) && args.sameSignalRefresh !== true) {
       return { handled: false }
@@ -131,7 +202,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       signal.channel_id,
       parsed,
     )) {
-      void ctx.supabase.from('trade_execution_logs').insert({
+      void writeExecutionLog(ctx.supabase, {
         user_id: signal.user_id,
         signal_id: signal.id,
         broker_account_id: broker.id,
@@ -142,7 +213,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
           channel_id: signal.channel_id,
           symbol,
         } as unknown as Record<string, unknown>,
-      }).then(() => undefined, () => undefined)
+      })
       return { handled: true, success: false }
     }
 
@@ -177,7 +248,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       // Fire-and-forget: this is a diagnostic-only log on the live-entry hot
       // path; awaiting it adds ~50–150 ms to send_plan_ms for no functional
       // benefit. Errors are tolerated silently (best-effort).
-      void ctx.supabase.from('trade_execution_logs').insert({
+      void writeExecutionLog(ctx.supabase, {
         user_id: signal.user_id,
         signal_id: signal.id,
         broker_account_id: broker.id,
@@ -189,7 +260,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
           direction,
           channel_id: signal.channel_id,
         } as unknown as Record<string, unknown>,
-      }).then(() => undefined, () => undefined)
+      })
       return revisionRefreshWithoutOpenBasketOutcome(sameSignalRefresh)
     }
 
@@ -214,7 +285,13 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       newestTradeOpenedAt: anchor.newestOpenedAt,
       parsed,
     })
-    const unlinkedCompleteEntryMerge = isUnlinkedCompleteEntryMerge(parsed, link)
+    const explicitlyLinked =
+      link.replyOk || link.threadLinksAnchor || link.parentLinksAnchor || link.sameSignalRefresh
+    const unlinkedCompleteEntryMerge = isUnlinkedCompleteEntryMerge(parsed, link, {
+      anchorIsCompleteEntry: explicitlyLinked
+        ? undefined
+        : await loadAnchorIsCompleteEntry(ctx, signal, anchor.anchorSignalId),
+    })
     if (!sameSignalRefresh && unlinkedCompleteEntryMerge) {
       console.warn(
         `[tradeExecutor] modify-only merge skipped for unlinked complete entry signal=${signal.id}`
@@ -239,7 +316,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       || (link.implicitBundleWithinTightWindow && link.implicitSameChannelBundle && parsedSignalHasExplicitStops(parsed))
     if (!sameSignalRevision && !revisionBypassLinking) {
       if (!link.replyOk && !link.threadLinksAnchor && !link.parentLinksAnchor && !allowUnlinkedRefresh) {
-        void ctx.supabase.from('trade_execution_logs').insert({
+        void writeExecutionLog(ctx.supabase, {
           user_id: signal.user_id,
           signal_id: signal.id,
           broker_account_id: broker.id,
@@ -253,11 +330,11 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
             anchor_signal_id: anchor.anchorSignalId,
             dt_ms: link.dtMs,
           } as unknown as Record<string, unknown>,
-        }).then(() => undefined, () => undefined)
+        })
         return { handled: false }
       }
       if (!link.isLinked) {
-        void ctx.supabase.from('trade_execution_logs').insert({
+        void writeExecutionLog(ctx.supabase, {
           user_id: signal.user_id,
           signal_id: signal.id,
           broker_account_id: broker.id,
@@ -271,7 +348,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
             anchor_signal_id: anchor.anchorSignalId,
             dt_ms: link.dtMs,
           } as unknown as Record<string, unknown>,
-        }).then(() => undefined, () => undefined)
+        })
         return { handled: false }
       }
     }
@@ -296,24 +373,20 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       `[tradeExecutor] merge_anchor_selected signal=${signal.id} broker=${broker.id}`
       + ` anchor=${anchor.anchorSignalId} symbol=${symbol} direction=${direction}`,
     )
-
-    try {
-      await ctx.supabase.from('trade_execution_logs').insert({
-        user_id: signal.user_id,
-        signal_id: signal.id,
-        broker_account_id: broker.id,
-        action: 'merge_anchor_selected',
-        status: 'success',
-        request_payload: {
-          anchor_signal_id: anchor.anchorSignalId,
-          symbol,
-          direction,
-          channel_id: signal.channel_id,
-          newest_opened_at: anchor.newestOpenedAt,
-        } as unknown as Record<string, unknown>,
-      })
-    } catch { /* best-effort */ }
-
+    await writeExecutionLog(ctx.supabase, {
+      user_id: signal.user_id,
+      signal_id: signal.id,
+      broker_account_id: broker.id,
+      action: 'merge_anchor_selected',
+      status: 'success',
+      request_payload: {
+        anchor_signal_id: anchor.anchorSignalId,
+        symbol,
+        direction,
+        channel_id: signal.channel_id,
+        newest_opened_at: anchor.newestOpenedAt,
+      } as unknown as Record<string, unknown>,
+    })
     const ghostCheck = await reconcileGhostBasketLegs(ctx, {
       signal,
       broker,
@@ -377,10 +450,10 @@ export async function tryMergeSignalIntoExistingOpenTrade(ctx: TradeExecutorCont
       signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid,
       strictEntryPrefetch, commentPrefix,
     } = args
-    if (!hasFxsocketConfigured()) return { handled: false }
     const api = ctx.apiFor(broker)
     if (!api) return { handled: false }
     if (parsedHasReEnterIntent(parsed)) return { handled: false }
+    if (parsed.provider_order_type === 'new') return { handled: false }
     const manual = (broker.manual_settings ?? {}) as ManualSettings
     if (manual.add_new_trades_to_existing !== true) return { handled: false }
     if (signalEntryPriceStrictEnabled(manual) && !parsedHasExplicitEntryAnchor(parsed)) {
@@ -445,7 +518,13 @@ export async function tryMergeSignalIntoExistingOpenTrade(ctx: TradeExecutorCont
       newestTradeOpenedAt: newest.opened_at,
       parsed,
     })
-    const unlinkedCompleteEntryMerge = isUnlinkedCompleteEntryMerge(parsed, link)
+    const explicitlyLinked =
+      link.replyOk || link.threadLinksAnchor || link.parentLinksAnchor || link.sameSignalRefresh
+    const unlinkedCompleteEntryMerge = isUnlinkedCompleteEntryMerge(parsed, link, {
+      anchorIsCompleteEntry: explicitlyLinked
+        ? undefined
+        : await loadAnchorIsCompleteEntry(ctx, signal, anchorSignalId),
+    })
     if (unlinkedCompleteEntryMerge) {
       console.warn(
         `[tradeExecutor] merge skipped for unlinked complete entry signal=${signal.id}`
@@ -515,11 +594,11 @@ export async function tryTeaserCompletionMerge(ctx: TradeExecutorContext, args: 
       strictEntryPrefetch, commentPrefix,
     } = args
     const manual = (broker.manual_settings ?? {}) as ManualSettings
-    if (!hasFxsocketConfigured()) return { handled: false }
     if (!parsedSignalHasExplicitStops(parsed)) return { handled: false }
     if (!messageHasMarketNowIntent(String(parsed.raw_instruction ?? ''))) return { handled: false }
     if (shouldRouteAsBasketParameterRefresh(parsed)) return { handled: false }
     if (parsedHasReEnterIntent(parsed)) return { handled: false }
+    if (parsed.provider_order_type === 'new') return { handled: false }
 
     const a = String(parsed.action ?? '').toLowerCase()
     if (a !== 'buy' && a !== 'sell') return { handled: false }

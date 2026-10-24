@@ -1,10 +1,13 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  BROKER_REJECTED_STOPS,
   BROKER_SYMBOL_NOT_FOUND,
+  BROKER_SYMBOL_TRADE_DISABLED,
   SIGNAL_MISSING_REQUIRED_SL,
   formatFxHttpFailureMessage,
   humanizeOrderSendError,
+  isMarketClosedMessage,
   isStopLossWithheldByProvider,
   parseFxErrorEnvelope,
   tradeFailureReasonFromBrokerMessage,
@@ -134,6 +137,65 @@ describe('tradeFailureReasonFromBrokerMessage', () => {
     )
   })
 
+  it('maps a rejected stop loss to a user-facing reason', () => {
+    const reason = tradeFailureReasonFromBrokerMessage(
+      'Invalid stops',
+      { requestedSymbol: 'XAUUSD' },
+    )
+    assert.equal(reason?.reasonCode, BROKER_REJECTED_STOPS)
+    assert.equal(reason?.category, 'broker')
+    assert.equal(reason?.userActionRequired, true)
+    assert.match(reason?.explanation ?? '', /did not open the position without a stop/i)
+  })
+
+  it('does not confuse a stop rejection with a bad symbol or request', () => {
+    assert.equal(
+      tradeFailureReasonFromBrokerMessage('Invalid stops')?.reasonCode,
+      BROKER_REJECTED_STOPS,
+    )
+    assert.notEqual(
+      tradeFailureReasonFromBrokerMessage('Invalid stops')?.reasonCode,
+      'INVALID_REQUEST',
+    )
+  })
+
+  it('reports trading-disabled as disabled, not as a missing symbol', () => {
+    assert.equal(
+      tradeFailureReasonFromBrokerMessage(
+        'Trading is disabled for symbol XAUUSD.crp (:1387714)',
+        { requestedSymbol: 'XAUUSD', brokerSymbol: 'XAUUSD.crp', operation: 'Buy' },
+      )?.reasonCode,
+      BROKER_SYMBOL_TRADE_DISABLED,
+    )
+    assert.equal(
+      tradeFailureReasonFromBrokerMessage('Symbol disabled')?.reasonCode,
+      BROKER_SYMBOL_TRADE_DISABLED,
+    )
+    assert.equal(
+      tradeFailureReasonFromBrokerMessage('Symbol is disabled')?.reasonCode,
+      BROKER_SYMBOL_TRADE_DISABLED,
+    )
+    assert.equal(
+      tradeFailureReasonFromBrokerMessage('Symbol not found: XAUUSD (:1387714)')?.reasonCode,
+      BROKER_SYMBOL_NOT_FOUND,
+    )
+    // Long-only still allows one direction, so it must not claim all trading is blocked.
+    assert.notEqual(
+      tradeFailureReasonFromBrokerMessage('Trade mode is LongOnly')?.reasonCode,
+      BROKER_SYMBOL_TRADE_DISABLED,
+    )
+  })
+
+  it('does not rewrite a disabled reply as symbol-not-found on the HTTP path', () => {
+    const msg = formatFxHttpFailureMessage({
+      status: 400,
+      body: { message: 'Trading is disabled for symbol XAUUSD.crp', error: 'mrpc' },
+      requestBody: { symbol: 'XAUUSD.crp' },
+    })
+    assert.match(msg, /trading is disabled/i)
+    assert.doesNotMatch(msg, /symbol not found/i)
+  })
+
   it('maps "Invalid request" to INVALID_REQUEST', () => {
     assert.equal(
       tradeFailureReasonFromBrokerMessage('Invalid request')?.reasonCode,
@@ -158,10 +220,56 @@ describe('humanizeOrderSendError', () => {
     assert.equal(humanizeOrderSendError('SymbolSelect failed', 'gold#'), 'Symbol not found: GOLD#')
   })
 
+  it('explains a broker stop rejection in plain words', () => {
+    const msg = humanizeOrderSendError('Invalid stops', 'XAUUSD')
+    assert.match(msg, /rejected the stop loss for XAUUSD/i)
+    assert.match(msg, /too close to the current price/i)
+  })
+
   it('maps "Invalid request" to a descriptive message', () => {
     assert.equal(
       humanizeOrderSendError('Invalid request'),
       'Broker rejected order: invalid request. Check symbol availability and order parameters.',
     )
+  })
+})
+
+describe('isMarketClosedMessage', () => {
+  it('recognises the broker wording for a shut market', () => {
+    assert.equal(isMarketClosedMessage('Market is closed'), true)
+    assert.equal(isMarketClosedMessage('Markets are closed'), true)
+    assert.equal(isMarketClosedMessage('off quotes'), true)
+    // "trade disabled" deliberately NOT treated as market-closed: it also fires
+    // for a symbol restriction or a read-only account.
+    assert.equal(isMarketClosedMessage('trade disabled'), false)
+    assert.equal(isMarketClosedMessage('MARKET_CLOSED'), true)
+  })
+
+  it('leaves ordinary failures alone', () => {
+    assert.equal(isMarketClosedMessage('unknown ticket'), false)
+    assert.equal(isMarketClosedMessage('invalid volume'), false)
+    assert.equal(isMarketClosedMessage(''), false)
+    assert.equal(isMarketClosedMessage(null), false)
+  })
+})
+describe('missing stop-loss copy', () => {
+  it('says the stop could not be read when the message stated one', () => {
+    const reason = tradeFailureReasonFromCode('ENTRY_TP_WITHOUT_SL', {
+      stopStatedButUnreadable: true,
+    })
+    assert.equal(reason?.title, 'We could not read the stop loss in this signal')
+    assert.match(reason?.explanation ?? '', /could not read its price/)
+    assert.match(reason?.explanation ?? '', /Override signal SL/)
+  })
+  it('keeps the no-stop wording when the signal simply had none', () => {
+    const reason = tradeFailureReasonFromCode('ENTRY_TP_WITHOUT_SL', {})
+    assert.equal(reason?.title, 'SL not given — set predefined SL pips in broker configuration')
+    assert.match(reason?.explanation ?? '', /listed take-profit level\(s\) but no stop loss/)
+  })
+  it('applies the honest wording to the single-slot missing-SL reason too', () => {
+    const reason = tradeFailureReasonFromCode(SIGNAL_MISSING_REQUIRED_SL, {
+      stopStatedButUnreadable: true,
+    })
+    assert.equal(reason?.title, 'We could not read the stop loss in this signal')
   })
 })

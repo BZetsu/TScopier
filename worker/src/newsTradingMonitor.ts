@@ -1,13 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { TRADE_CLOSE_REASON } from './tradeCloseReasons'
+import { applyCloseUpdate } from './tradeCloseUpdate'
 import { findPreNewsCloseTriggers } from './newsTrading/blackout'
 import { getCalendarEventsCached } from './newsTrading/calendarProvider'
 import { isNewsTradingEnabled, type ScheduleFilterSettings } from './newsTrading/settings'
-import { isPositionGoneCloseError } from './orderModifyBenign'
-import { hasFxsocketConfigured } from './fxsocketClient'
-import { apiForFxsocketAccount, brokerSessionId, loadPlatformByFxsocketId } from './mtApiByAccount'
+import { closeWithVerification } from './managementClose'
+import { resolveCurrentLivePosition } from './livePositionIdentity'
+import { brokerRuntimeForAccount, loadBrokerApiByAccountId } from './mtApiByAccount'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { isUserCopierPausedCached } from './copierPause'
-
+import { writeExecutionLog } from './observability/executionLog'
 interface BrokerRow {
   id: string
   user_id: string
@@ -26,29 +28,25 @@ interface OpenTradeRow {
   user_id: string
   broker_account_id: string | null
   metaapi_order_id: string | null
+  broker_position_ticket?: string | null
   symbol: string
   signal_id: string | null
+  direction: string
+  lot_size: number | null
+  entry_price: number | null
 }
 
 const TICK_MS = 60_000
 
 /**
- * Reconcile a trade the broker reports as already gone (e.g. "unknown ticket")
- * so the news monitor stops re-selecting it on later news events. The broker
- * reply means the desired flat outcome already happened. Returns true only when
- * the row was still open and this call actually marked it closed.
+ * A broker "unknown ticket" response is identity uncertainty, not proof that
+ * the position is closed. Keep this legacy helper fail-closed for callers.
  */
 export async function reconcileGoneNewsTrade(
-  supabase: SupabaseClient,
-  tradeId: string,
+  _supabase: SupabaseClient,
+  _tradeId: string,
 ): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('trades')
-    .update({ status: 'closed', closed_at: new Date().toISOString() })
-    .eq('id', tradeId)
-    .eq('status', 'open')
-    .select('id')
-  return !error && Array.isArray(data) && data.length > 0
+  return false
 }
 
 export class NewsTradingMonitor {
@@ -61,10 +59,6 @@ export class NewsTradingMonitor {
 
   start() {
     if (this.timer) return
-    if (!hasFxsocketConfigured()) {
-      console.warn('[newsTradingMonitor] MT API not configured — monitor disabled')
-      return
-    }
     this.timer = setInterval(() => {
       if (this.ticking) return
       this.ticking = true
@@ -92,7 +86,6 @@ export class NewsTradingMonitor {
       .from('broker_accounts')
       .select('id,user_id,fxsocket_account_id,metaapi_account_id,platform,manual_settings,channel_trading_configs,copier_mode,ai_settings,is_active')
       .eq('is_active', true)
-      .not('fxsocket_account_id', 'is', null)
     if (error) {
       console.error('[newsTradingMonitor] broker select failed:', error.message)
       return
@@ -101,9 +94,9 @@ export class NewsTradingMonitor {
     const brokers = (data ?? []) as BrokerRow[]
     if (!brokers.length) return
 
-    const platformByUuid = await loadPlatformByFxsocketId(
+    const runtimeByBroker = await loadBrokerApiByAccountId(
       this.supabase,
-      brokers.map(b => brokerSessionId(b)),
+      brokers.map(b => b.id),
     )
 
     const now = new Date()
@@ -112,14 +105,13 @@ export class NewsTradingMonitor {
     for (const broker of brokers) {
       if (isUserCopierPausedCached(broker.user_id)) continue
 
-      const uuid = brokerSessionId(broker)
-      if (!uuid) continue
-      const api = apiForFxsocketAccount(platformByUuid, uuid)
-      if (!api) continue
+      const runtime = brokerRuntimeForAccount(runtimeByBroker, broker.id)
+      if (!runtime) continue
+      const { api, sessionId: uuid } = runtime
 
       const { data: trades, error: tradeErr } = await this.supabase
         .from('trades')
-        .select('id,user_id,broker_account_id,metaapi_order_id,symbol,signal_id')
+        .select('id,user_id,broker_account_id,metaapi_order_id,broker_position_ticket,symbol,signal_id,direction,lot_size,entry_price')
         .eq('broker_account_id', broker.id)
         .eq('status', 'open')
       if (tradeErr) {
@@ -181,28 +173,39 @@ export class NewsTradingMonitor {
 
         let closed = 0
         for (const t of toClose) {
-          const ticket = Number(t.metaapi_order_id)
+          const ticket = Number(t.broker_position_ticket ?? t.metaapi_order_id)
           if (!Number.isFinite(ticket) || ticket <= 0) continue
           try {
-            await api.orderClose(uuid, { ticket })
-            await this.supabase
-              .from('trades')
-              .update({ status: 'closed', closed_at: new Date().toISOString() })
-              .eq('id', t.id)
+            const identity = await resolveCurrentLivePosition({
+              supabase: this.supabase,
+              api,
+              sessionId: uuid,
+              trade: t,
+            })
+            if (identity.status !== 'resolved') {
+              console.warn(`[newsTradingMonitor] canonical position unresolved trade=${t.id}: ${identity.reason}`)
+              continue
+            }
+            const result = await closeWithVerification(api, uuid, identity.ticket, {
+              maxAttempts: 2,
+              liveFast: process.env.LIVE_FAST_CLOSE === 'true',
+            })
+            if (!result.confirmed) {
+              console.warn(`[newsTradingMonitor] close ambiguous trade=${t.id}: ${result.reason ?? 'unconfirmed'}`)
+              continue
+            }
+            await applyCloseUpdate(
+              {
+                status: 'closed',
+                closed_at: new Date().toISOString(),
+                close_reason: TRADE_CLOSE_REASON.NEWS_PRE_CLOSE,
+              },
+              patch => this.supabase.from('trades').update(patch).eq('id', t.id),
+            )
             closed += 1
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
-            // Broker no longer knows the ticket (already closed by TP/SL/manual).
-            // That is the desired flat outcome — reconcile the DB row so the
-            // monitor stops re-selecting it and re-firing on every news event.
-            if (isPositionGoneCloseError(msg)) {
-              console.log(
-                `[newsTradingMonitor] position already gone signal=${t.signal_id ?? 'n/a'} trade=${t.id} ticket=${ticket}: ${msg}`,
-              )
-              if (await reconcileGoneNewsTrade(this.supabase, t.id)) closed += 1
-            } else {
-              console.warn(`[newsTradingMonitor] close failed trade=${t.id} broker=${broker.id}: ${msg}`)
-            }
+            console.warn(`[newsTradingMonitor] close failed trade=${t.id} broker=${broker.id}: ${msg}`)
           }
         }
 
@@ -210,22 +213,18 @@ export class NewsTradingMonitor {
           console.log(
             `[newsTradingMonitor] pre-news close broker=${broker.id} event=${event.event} closed=${closed}`,
           )
-          try {
-            await this.supabase.from('trade_execution_logs').insert({
-              user_id: broker.user_id,
-              broker_account_id: broker.id,
-              action: 'news_pre_close',
-              status: 'success',
-              request_payload: {
-                event_id: event.id,
-                event: event.event,
-                currency: event.currency,
-                closed_trades: closed,
-              } as unknown as Record<string, unknown>,
-            })
-          } catch {
-            // best-effort
-          }
+          await writeExecutionLog(this.supabase, {
+            user_id: broker.user_id,
+            broker_account_id: broker.id,
+            action: 'news_pre_close',
+            status: 'success',
+            request_payload: {
+              event_id: event.id,
+              event: event.event,
+              currency: event.currency,
+              closed_trades: closed,
+            } as unknown as Record<string, unknown>,
+          })
         }
         this.closedForEvent.set(dedupeKey, now.getTime())
       }

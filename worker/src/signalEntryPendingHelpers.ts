@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FxsocketBrokerClient } from './fxsocketClient'
-
+import { writeExecutionLog } from './observability/executionLog'
 export type SignalEntryPendingRow = {
   id: string
   signal_id: string
@@ -76,6 +76,24 @@ export function isLikelyMarketPositionRow(o: Record<string, unknown>): boolean {
   if (op === 'buy' || op === 'sell') return true
   const t = rawNumericOrderKind(o)
   if (t === 0 || t === 1) return true
+  // MTAPI bridge rows carry the side as a word (`orderType: "Buy"`,
+  // `dealType: "DealBuy"`, MT4 `type: "Sell"`) and the execution state as
+  // `state` — never `operation`, never a numeric kind. Before this branch they
+  // were not recognised as positions at all: open-trade reconcile filtered
+  // them out, saw no live positions and concluded every tracked trade was
+  // gone. That is the false-close of 2026-10-04 05:47, and it repeated on
+  // every tick after the provider-neutral merge until this fix.
+  // Resting orders are already excluded above by `isPendingEntryRow`
+  // (`orderType: "BuyStop"` / `state: "Placed"`), so only filled or open
+  // positions reach this check.
+  const state = String(o.state ?? o.State ?? '').toLowerCase()
+  if (state === 'filled' || state === 'open_normal') return true
+  const side = [o.orderType, o.OrderType, o.dealType, o.DealType, o.type, o.Type]
+    .map(value => String(value ?? '').trim().toLowerCase())
+    .filter(Boolean)
+  if (side.some(word => word === 'buy' || word === 'sell' || word === 'dealbuy' || word === 'dealsell')) {
+    return true
+  }
   return false
 }
 
@@ -212,19 +230,14 @@ export async function cancelSignalEntryRowAtBroker(
       .eq('id', row.trade_id)
       .eq('status', 'pending')
   }
-
-  try {
-    await supabase.from('trade_execution_logs').insert({
-      user_id: row.user_id,
-      signal_id: row.signal_id,
-      broker_account_id: row.broker_account_id,
-      action: 'signal_entry_pending_cancelled',
-      status: 'success',
-      request_payload: { row_id: row.id, ticket, reason } as unknown as Record<string, unknown>,
-    })
-  } catch {
-    /* best-effort */
-  }
+  await writeExecutionLog(supabase, {
+    user_id: row.user_id,
+    signal_id: row.signal_id,
+    broker_account_id: row.broker_account_id,
+    action: 'signal_entry_pending_cancelled',
+    status: 'success',
+    request_payload: { row_id: row.id, ticket, reason } as unknown as Record<string, unknown>,
+  })
   return { ok: true }
 }
 
@@ -281,22 +294,17 @@ export async function markSignalEntryFilled(
       console.warn(`[signalEntryPendingHelpers] partial_tp_legs insert failed row=${row.id}: ${pErr.message}`)
     }
   }
-
-  try {
-    await supabase.from('trade_execution_logs').insert({
-      user_id: row.user_id,
-      signal_id: row.signal_id,
-      broker_account_id: row.broker_account_id,
-      action: 'signal_entry_pending_filled',
-      status: 'success',
-      request_payload: { row_id: row.id, ticket: row.broker_ticket, fill_price: px } as unknown as Record<
-        string,
-        unknown
-      >,
-    })
-  } catch {
-    /* best-effort */
-  }
+  await writeExecutionLog(supabase, {
+    user_id: row.user_id,
+    signal_id: row.signal_id,
+    broker_account_id: row.broker_account_id,
+    action: 'signal_entry_pending_filled',
+    status: 'success',
+    request_payload: { row_id: row.id, ticket: row.broker_ticket, fill_price: px } as unknown as Record<
+      string,
+      unknown
+    >,
+  })
 }
 
 export async function markSignalEntryGoneFromBroker(
@@ -323,17 +331,12 @@ export async function markSignalEntryGoneFromBroker(
       .eq('id', row.trade_id)
       .eq('status', 'pending')
   }
-
-  try {
-    await supabase.from('trade_execution_logs').insert({
-      user_id: row.user_id,
-      signal_id: row.signal_id,
-      broker_account_id: row.broker_account_id,
-      action: 'signal_entry_pending_sync',
-      status: 'info',
-      request_payload: { row_id: row.id, ticket: row.broker_ticket, note } as unknown as Record<string, unknown>,
-    })
-  } catch {
-    /* best-effort */
-  }
+  await writeExecutionLog(supabase, {
+    user_id: row.user_id,
+    signal_id: row.signal_id,
+    broker_account_id: row.broker_account_id,
+    action: 'signal_entry_pending_sync',
+    status: 'info',
+    request_payload: { row_id: row.id, ticket: row.broker_ticket, note } as unknown as Record<string, unknown>,
+  })
 }

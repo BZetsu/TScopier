@@ -20,6 +20,7 @@ export const COPIER_SKIP_REASON_LABELS: Record<string, string> = {
   ai_review_price_passed: 'Price moved outside the review entry range',
   invalid_stops: 'Broker rejected stop levels',
   entry_not_opened: 'No position opened',
+  broker_symbol_trade_disabled: 'Trading disabled by your broker',
   entry_zone_far_from_market: 'Entry too far from market',
   broker_session_not_connected: 'Broker not connected',
   broker_bridge_unavailable: 'Broker bridge unavailable',
@@ -62,6 +63,8 @@ export const COPIER_SKIP_REASON_DETAILS: Record<string, string> = {
     'The broker rejected the SL/TP on this order. This often happens when price moved before the order filled, or stops were on the wrong side of market. Check that SL/TP still make sense at the fill price.',
   entry_not_opened:
     'The copier processed this signal but the broker did not open a position. This can happen when entry filters block the trade or the broker rejects the order.',
+  broker_symbol_trade_disabled:
+    'Your broker is not accepting new orders for this symbol or account. The instrument exists, but trading is switched off. Ask the broker to enable it, or set a symbol mapping to an enabled symbol.',
   entry_zone_far_from_market:
     'The signal entry zone was too far from the current market price based on your pip tolerance settings.',
   broker_session_not_connected:
@@ -97,7 +100,7 @@ export const COPIER_SKIP_REASON_DETAILS: Record<string, string> = {
   explicit_stops_required_when_add_to_existing_off:
     'This channel uses single-slot mode (Add to Existing Trades off). New entries must include labeled SL and TP in the message.',
   entry_tp_without_sl:
-    'The signal had take-profit(s) but no stop loss. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can place the trade.',
+    'The copier could not use a stop loss for this trade: the signal listed take profit(s) but the stop loss was missing or could not be read. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can place the trade.',
   signal_missing_required_sl:
     'The signal did not include a usable stop loss. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can still place the trade.',
   basket_modify_failed:

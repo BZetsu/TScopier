@@ -1,55 +1,18 @@
 import { purgeRangePendingLegsForBaskets } from '../rangePendingLegDelete'
 import { channelMatchesBrokerSignal } from '../brokerChannelFilter'
-import { hasFxsocketConfigured, type FxsocketBrokerClient } from '../fxsocketClient'
+import { closeWithVerification } from '../managementClose'
+import { resolveCurrentLivePosition } from '../livePositionIdentity'
 import { brokerHasLinkedSession, brokerSessionUuid } from './helpers'
 import type { TradeExecutorContext } from './context'
 import type { BrokerRow, SignalRow } from './types'
-
-interface CloseVerificationResult {
-  confirmed: boolean
-  reason?: string
-}
-
-async function closeWithVerification(
-  api: FxsocketBrokerClient,
-  uuid: string,
-  ticket: number,
-): Promise<CloseVerificationResult> {
-  const maxAttempts = 2
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const slippage = 20 + (attempt - 1) * 50
-    const result = await api.orderClose(uuid, { ticket, slippage })
-    if (result.state && /^(rejected|cancelled|expired)/i.test(result.state)) {
-      if (attempt >= maxAttempts) {
-        return { confirmed: false, reason: `orderClose state=${result.state}` }
-      }
-      await new Promise(r => setTimeout(r, 300))
-      continue
-    }
-    await new Promise(r => setTimeout(r, 400))
-    try {
-      const openOrders = await api.openedOrders(uuid)
-      for (const raw of openOrders ?? []) {
-        if (!raw || typeof raw !== 'object') continue
-        const o = raw as Record<string, unknown>
-        const t = Number(o.ticket ?? o.Ticket ?? o.orderId ?? o.OrderID ?? 0)
-        if (t === ticket) return { confirmed: false, reason: 'ticket_still_open' }
-      }
-    } catch {
-      return { confirmed: true }
-    }
-    return { confirmed: true }
-  }
-  return { confirmed: false, reason: 'max_attempts' }
-}
-
+import { TRADE_CLOSE_REASON } from '../tradeCloseReasons'
+import { applyCloseUpdate } from '../tradeCloseUpdate'
+import { writeExecutionLog } from '../observability/executionLog'
 export async function closeBasketForRevisionDirectionFlip(
   ctx: TradeExecutorContext,
   row: SignalRow,
   brokers: BrokerRow[],
 ): Promise<{ closed: number; failed: number }> {
-  if (!hasFxsocketConfigured()) return { closed: 0, failed: 0 }
-
   let closed = 0
   let failed = 0
   const purgeScopes: Array<{ signalId: string; brokerAccountId: string }> = []
@@ -63,7 +26,7 @@ export async function closeBasketForRevisionDirectionFlip(
 
     const { data: openTrades, error } = await ctx.supabase
       .from('trades')
-      .select('id,metaapi_order_id,symbol,signal_id')
+      .select('id,metaapi_order_id,broker_position_ticket,symbol,signal_id,direction,lot_size,entry_price')
       .eq('user_id', row.user_id)
       .eq('broker_account_id', broker.id)
       .eq('signal_id', row.id)
@@ -74,19 +37,30 @@ export async function closeBasketForRevisionDirectionFlip(
     for (const trade of openTrades as Array<{
       id: string
       metaapi_order_id: string | null
+      broker_position_ticket?: string | null
       symbol: string
       signal_id: string
+      direction: string
+      lot_size: number
+      entry_price: number | null
     }>) {
-      const ticket = Number(trade.metaapi_order_id)
+      const ticket = Number(trade.broker_position_ticket ?? trade.metaapi_order_id)
       if (!Number.isFinite(ticket) || ticket <= 0) {
         failed += 1
         continue
       }
       try {
-        const result = await closeWithVerification(api, uuid, ticket)
+        const resolution = await resolveCurrentLivePosition({
+          supabase: ctx.supabase,
+          api,
+          sessionId: uuid,
+          trade,
+        })
+        if (resolution.status !== 'resolved') throw new Error(`close reconciliation required: ${resolution.reason}`)
+        const result = await closeWithVerification(api, uuid, resolution.ticket)
         if (!result.confirmed) {
           failed += 1
-          await ctx.supabase.from('trade_execution_logs').insert({
+          await writeExecutionLog(ctx.supabase, {
             user_id: row.user_id,
             signal_id: row.id,
             broker_account_id: broker.id,
@@ -101,13 +75,17 @@ export async function closeBasketForRevisionDirectionFlip(
           })
           continue
         }
-        await ctx.supabase
-          .from('trades')
-          .update({ status: 'closed', closed_at: new Date().toISOString() })
-          .eq('id', trade.id)
+        await applyCloseUpdate(
+          {
+            status: 'closed',
+            closed_at: new Date().toISOString(),
+            close_reason: TRADE_CLOSE_REASON.SIGNAL_REVISION,
+          },
+          patch => ctx.supabase.from('trades').update(patch).eq('id', trade.id),
+        )
         closed += 1
         purgeScopes.push({ signalId: trade.signal_id, brokerAccountId: broker.id })
-        await ctx.supabase.from('trade_execution_logs').insert({
+        await writeExecutionLog(ctx.supabase, {
           user_id: row.user_id,
           signal_id: row.id,
           broker_account_id: broker.id,
@@ -122,7 +100,7 @@ export async function closeBasketForRevisionDirectionFlip(
       } catch (err) {
         failed += 1
         const msg = err instanceof Error ? err.message : String(err)
-        await ctx.supabase.from('trade_execution_logs').insert({
+        await writeExecutionLog(ctx.supabase, {
           user_id: row.user_id,
           signal_id: row.id,
           broker_account_id: broker.id,

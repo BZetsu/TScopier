@@ -13,15 +13,16 @@ import {
 } from './basketSlTpReconcile'
 import { upsertBasketSlTpTarget } from './basketTargetStore'
 import {
-  hasFxsocketConfigured,
   mtPlatformFrom,
   normalizeSymbolParams,
 } from './fxsocketClient'
 import { apiForBrokerAccount } from './providerResolver'
+import { authorityFromBrokerRow } from './brokerWriteAuthority'
 import {
   buildEntryQualityTakeProfitMap,
   type EntryQualityLeg,
 } from './manualPlanning/tpBucketDistribution'
+import { bundleTpOrderMap, isBundleBasket } from './manualPlanning/tpBundleIdentity'
 import type { ManualTpLot } from './manualPlanning/types'
 import { isBenignOrderModifyError, stopsAlreadyMatchDb } from './orderModifyBenign'
 import { mgmtBasketConcurrency, parallelMap } from './parallelPool'
@@ -41,7 +42,7 @@ export async function clearOverrideAutoBeStamps(
 import { reapplyChannelParamsToPendingLegs } from './channelActiveTradeParams'
 import { brokerHasLinkedSession, brokerSessionUuid } from './tradeExecutor/helpers'
 import { loadOpenTradesForSignalAcrossBrokers } from './managementScope'
-
+import { writeExecutionLog } from './observability/executionLog'
 export type BrokerOverrideOutcome = {
   broker_id: string
   applied: number
@@ -78,6 +79,10 @@ type BrokerRow = {
   id: string
   provider?: string | null
   label?: string | null
+  mtapi_session_id?: string | null
+  writer_epoch?: number | null
+  provider_transition_state?: 'stable' | 'transition' | null
+  provider_transition_target?: 'fxsocket' | 'mtapi' | null
   platform?: string | null
   fxsocket_account_id?: string | null
   metaapi_account_id?: string | null
@@ -187,14 +192,10 @@ export async function applySignalOverride(
     }
   }
 
-  if (!dryRun && !hasFxsocketConfigured()) {
-    throw new Error('FXSOCKET_API_KEY not set — cannot call broker')
-  }
-
   const brokerIds = [...new Set(rows.map(r => r.broker_account_id))]
   const { data: brokers } = await supabase
     .from('broker_accounts')
-    .select('id,label,platform,provider,mtapi_session_id,fxsocket_account_id,metaapi_account_id,manual_settings')
+    .select('id,label,platform,provider,mtapi_session_id,fxsocket_account_id,metaapi_account_id,manual_settings,writer_epoch,provider_transition_state,provider_transition_target')
     .in('id', brokerIds)
   const brokerById = new Map((brokers ?? []).map(b => [b.id, b as BrokerRow]))
 
@@ -216,7 +217,7 @@ export async function applySignalOverride(
       return { outcome: { broker_id: brokerId, applied: 0, skipped: legCount, failed: 0 }, errors: localErrors }
     }
 
-    const client = apiForBrokerAccount(broker.provider, uuid)
+    const client = apiForBrokerAccount(broker.provider, uuid, authorityFromBrokerRow(broker))
     if (!client && !dryRun) {
       localErrors.push(`broker ${brokerId}: fxsocket client unavailable`)
       return { outcome: { broker_id: brokerId, applied: 0, skipped: legCount, failed: 0 }, errors: localErrors }
@@ -231,7 +232,14 @@ export async function applySignalOverride(
     const isBuy = String(legs[0]?.direction ?? '').toLowerCase() === 'buy'
     const tpLots = broker.manual_settings?.tp_lots ?? null
     const tpMap = targetTps.length > 0
-      ? buildEntryQualityTakeProfitMap({
+      ? isBundleBasket(broker.manual_settings)
+        // Bundled multi basket: user override re-maps levels 1:1 by TP order.
+        ? bundleTpOrderMap({
+            legs: legs.map(tr => ({ id: tr.id, tp: tr.tp })),
+            ladder: targetTps,
+            isBuy,
+          })
+        : buildEntryQualityTakeProfitMap({
           legs: legs.map(tr => ({
             id: tr.id,
             entryPrice: Number(tr.entry_price ?? 0),
@@ -359,7 +367,7 @@ export async function applySignalOverride(
           await supabase.from('trades').update(dbPatch).eq('id', tr.id)
         }
         try {
-          await supabase.from('trade_execution_logs').insert({
+          await writeExecutionLog(supabase, {
             user_id: args.userId,
             signal_id: args.signalId,
             broker_account_id: brokerId,
@@ -385,23 +393,19 @@ export async function applySignalOverride(
         }
         failed++
         localErrors.push(`leg ${tr.id}: ${msg}`)
-        try {
-          await supabase.from('trade_execution_logs').insert({
-            user_id: args.userId,
-            signal_id: args.signalId,
-            broker_account_id: brokerId,
-            action: 'user_signal_override',
-            status: 'failed',
-            error_message: msg,
-            request_payload: {
-              ticket,
-              trade_id: tr.id,
-              leg_index: i + 1,
-            } as unknown as Record<string, unknown>,
-          })
-        } catch {
-          // best-effort log
-        }
+        await writeExecutionLog(supabase, {
+          user_id: args.userId,
+          signal_id: args.signalId,
+          broker_account_id: brokerId,
+          action: 'user_signal_override',
+          status: 'failed',
+          error_message: msg,
+          request_payload: {
+            ticket,
+            trade_id: tr.id,
+            leg_index: i + 1,
+          } as unknown as Record<string, unknown>,
+        })
       }
     }
 

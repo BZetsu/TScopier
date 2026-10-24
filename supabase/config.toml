@@ -83,3 +83,15 @@ verify_jwt = true
 
 [functions.manual-broker-override-email]
 verify_jwt = true
+
+[functions.provider-transition]
+verify_jwt = false
+
+[functions.alert-evaluator]
+verify_jwt = false
+
+[functions.systems-health-assistant]
+verify_jwt = true
+
+[functions.billing-backfill]
+verify_jwt = false

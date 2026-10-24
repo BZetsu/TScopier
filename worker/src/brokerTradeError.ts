@@ -5,6 +5,20 @@
 
 export type TradeFailureCategory = 'signal' | 'broker' | 'account' | 'risk' | 'system'
 
+/**
+ * True when the broker refused the stops themselves — "Invalid stops",
+ * "Invalid S/L", "stops too close", or the MTAPI retcode name `INVALID_STOPS`.
+ * Shared by the failure reason, the user-facing message and the send paths so
+ * they never disagree about what happened.
+ */
+export function isInvalidStopsMessage(message: string | null | undefined): boolean {
+  const lower = String(message ?? '').toLowerCase()
+  return /invalid[\s_/-]*(?:stops?|s\/l|t\/p|sl|tp)\b/.test(lower)
+    || /wrong\s+stops?\b/.test(lower)
+    || /stops?\s+too\s+close/.test(lower)
+}
+
+
 export type TradeFailureReason = {
   reasonCode: string
   category: TradeFailureCategory
@@ -19,6 +33,20 @@ export type TradeFailureReason = {
 export const SIGNAL_MISSING_REQUIRED_SL = 'SIGNAL_MISSING_REQUIRED_SL'
 export const ENTRY_TP_WITHOUT_SL = 'entry_tp_without_sl'
 export const BROKER_SYMBOL_NOT_FOUND = 'BROKER_SYMBOL_NOT_FOUND'
+export const BROKER_SYMBOL_TRADE_DISABLED = 'BROKER_SYMBOL_TRADE_DISABLED'
+/** Broker refused the stop loss itself (too close to price, or outside the symbol's limits). */
+export const BROKER_REJECTED_STOPS = 'BROKER_REJECTED_STOPS'
+
+/**
+ * True when the broker is refusing new orders because trading is disabled.
+ * Long-only and short-only are deliberately excluded: they still allow orders
+ * in one direction, so calling them "trading disabled" would be wrong.
+ */
+export function isTradingDisabledMessage(message: string | null | undefined): boolean {
+  const lower = String(message ?? '').toLowerCase()
+  return /trading\s+(?:is\s+)?disabled|trade\s+(?:is\s+)?disabled|symbol\s+(?:is\s+)?(?:trading\s+)?disabled/.test(lower)
+    || /(?:trade\s*mode|trademode)[^\n]{0,40}close\s*only/.test(lower)
+}
 
 function cleanSymbol(value: unknown): string | undefined {
   const s = typeof value === 'string' ? value.trim().toUpperCase() : ''
@@ -38,33 +66,49 @@ function tradeFailureCopy(
 ): Omit<TradeFailureReason, 'reasonCode' | 'safeContext'> | null {
   const requestedSymbol = cleanSymbol(safeContext?.requestedSymbol)
   const instrument = displayInstrument(requestedSymbol)
+  // The message stated a stop but its price could not be read — say that, rather than
+  // claiming the signal had no stop loss.
+  const stopStatedButUnreadable = safeContext?.stopStatedButUnreadable === true
   switch (reasonCode) {
-    case SIGNAL_MISSING_REQUIRED_SL: {
-      const withheld = safeContext?.withheldByProvider === true
+    case SIGNAL_MISSING_REQUIRED_SL:
       return {
         category: 'signal',
-        title: 'SL not given — set predefined SL pips in broker configuration',
-        explanation: withheld
-          ? 'The signal did not include a usable Stop Loss (often reserved for premium/VIP subscribers). Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can still place the trade.'
-          : 'The signal did not include a usable Stop Loss. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can still place the trade.',
+        title: stopStatedButUnreadable
+          ? 'We could not read the stop loss in this signal'
+          : 'SL not given — set predefined SL pips in broker configuration',
+        explanation: stopStatedButUnreadable
+          ? 'This signal stated a stop loss, but the copier could not read its price, so the trade was not opened. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can place the trade.'
+          : safeContext?.withheldByProvider === true
+            ? 'The signal did not include a usable Stop Loss (often reserved for premium/VIP subscribers). Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can still place the trade.'
+            : 'The signal did not include a usable Stop Loss. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can still place the trade.',
         recommendedAction: 'Open Account Configuration for this broker, turn on Override signal SL, and set Stop loss (pips from entry).',
         retryable: false,
         userActionRequired: true,
       }
-    }
     case ENTRY_TP_WITHOUT_SL:
     case 'ENTRY_TP_WITHOUT_SL':
-    case 'entry_tp_without_sl': {
+    case 'entry_tp_without_sl':
       return {
         category: 'signal',
-        title: 'SL not given — set predefined SL pips in broker configuration',
-        explanation:
-          'This signal listed take-profit level(s) but no stop loss. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can place the trade.',
+        title: stopStatedButUnreadable
+          ? 'We could not read the stop loss in this signal'
+          : 'SL not given — set predefined SL pips in broker configuration',
+        explanation: stopStatedButUnreadable
+          ? 'This signal stated a stop loss, but the copier could not read its price, so the trade was not opened. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can place the trade.'
+          : 'This signal listed take-profit level(s) but no stop loss. Enable Override signal SL and set Stop loss (pips from entry) in Account Configuration so the copier can place the trade.',
         recommendedAction: 'Open Account Configuration for this broker, turn on Override signal SL, and set Stop loss (pips from entry).',
         retryable: false,
         userActionRequired: true,
       }
-    }
+    case BROKER_REJECTED_STOPS:
+      return {
+        category: 'broker',
+        title: 'Broker rejected the stop loss — trade not opened',
+        explanation: `The broker refused the stop loss for ${instrument} because it is too close to the current price or outside the distance the symbol allows. We did not open the position without a stop, so nothing is running unprotected.`,
+        recommendedAction: 'Widen the stop: enable Override signal SL and set a larger Stop loss (pips from entry) in Account Configuration for this broker.',
+        retryable: true,
+        userActionRequired: true,
+      }
     case BROKER_SYMBOL_NOT_FOUND:
     case 'SYMBOL_UNSUPPORTED':
       return {
@@ -75,6 +119,22 @@ function tradeFailureCopy(
         retryable: false,
         userActionRequired: true,
       }
+    case BROKER_SYMBOL_TRADE_DISABLED: {
+      const brokerSymbol = cleanSymbol(safeContext?.brokerSymbol) ?? requestedSymbol
+      const shown = displayInstrument(brokerSymbol)
+      const operation = String(safeContext?.operation ?? '').toLowerCase()
+      const management = /close|modify|breakeven|trailing|partial/.test(operation)
+      return {
+        category: 'broker',
+        title: management
+          ? 'Broker refused this action - trading disabled'
+          : 'Trade not copied - trading disabled by your broker',
+        explanation: `Your broker is not accepting new orders for ${shown}. This is a trading restriction on the symbol or the account, not a missing instrument.`,
+        recommendedAction: 'Ask your broker to enable trading for this symbol or account, or set a symbol mapping to an enabled symbol in Account Configuration.',
+        retryable: false,
+        userActionRequired: true,
+      }
+    }
     case 'INSUFFICIENT_MARGIN':
       return {
         category: 'account',
@@ -172,9 +232,17 @@ export function tradeFailureReasonFromBrokerMessage(
   safeContext?: Record<string, unknown>,
 ): TradeFailureReason | null {
   const lower = String(message ?? '').toLowerCase()
+  // "Trading is disabled for symbol X" and "Symbol disabled" are not a missing
+  // symbol: the instrument exists but the broker is not accepting new orders.
+  if (isTradingDisabledMessage(lower)) {
+    return tradeFailureReasonFromCode(BROKER_SYMBOL_TRADE_DISABLED, safeContext)
+  }
+  if (isInvalidStopsMessage(lower)) {
+    return tradeFailureReasonFromCode(BROKER_REJECTED_STOPS, safeContext)
+  }
   if (
     /symbolselect/.test(lower)
-    || (/symbol|instrument/.test(lower) && /not found|unknown|disabled|unsupported|invalid|select\s*failed/.test(lower))
+    || (/symbol|instrument/.test(lower) && /not found|unknown|unsupported|invalid|select\s*failed/.test(lower))
   ) {
     return tradeFailureReasonFromCode(BROKER_SYMBOL_NOT_FOUND, safeContext)
   }
@@ -207,6 +275,19 @@ export function isStopLossWithheldByProvider(message: string | null | undefined)
   if (!text) return false
   return /\b(?:sl|s\/l|stop\s*loss|stoploss|risk)\b.{0,40}\b(?:premium|vip|subscriber|subscribe|members?|paid|private)\b/i.test(text)
     || /\b(?:premium|vip|subscriber|subscribe|members?|paid|private)\b.{0,40}\b(?:sl|s\/l|stop\s*loss|stoploss|risk)\b/i.test(text)
+}
+
+/**
+ * True when a broker message says the market is closed or not tradable right
+ * now — used to tell the customer that clearly instead of a generic failure
+ * (gold/silver/forex are shut at weekends; crypto never is, which is why a
+ * mixed basket closes half and refuses the other half).
+ */
+export function isMarketClosedMessage(message: string | null | undefined): boolean {
+  // "trade disabled" is deliberately NOT matched: on MT4/MT5 it also fires when
+  // trading is disabled for a symbol or on a read-only account, and telling the
+  // customer "the market is closed" for that would be wrong.
+  return /market.*closed|markets?\s+are\s+closed|off quotes/i.test(String(message ?? ''))
 }
 
 export function parseFxErrorEnvelope(body: unknown): { message: string; code?: string } {
@@ -264,8 +345,8 @@ function isSymbolSelectFailure(message: string, code?: string): boolean {
   const m = message.toLowerCase()
   const c = String(code ?? '').toLowerCase()
   return /symbolselect\s*failed/i.test(m)
-    || /symbol\s+(?:not\s+found|select\s+failed|unavailable|unknown|disabled)/i.test(m)
-    || (c === 'mrpc' && /symbol/i.test(m))
+    || /symbol\s+(?:not\s+found|select\s+failed|unavailable|unknown)/i.test(m)
+    || (c === 'mrpc' && /symbol\s*(?:not\s+found|select\s+failed|unavailable|unknown)/i.test(m))
 }
 
 /**
@@ -313,6 +394,11 @@ export function humanizeOrderSendError(message: string, symbol?: string | null):
     return sym
       ? `Broker rejected the order for ${sym}. Check symbol mapping and try again.`
       : 'Broker rejected this order. Check symbol mapping and connection, then try again.'
+  }
+  if (isInvalidStopsMessage(m)) {
+    return sym
+      ? `Broker rejected the stop loss for ${sym} (too close to the current price or not allowed by the symbol)`
+      : 'Broker rejected the stop loss (too close to the current price or not allowed by the symbol)'
   }
   if (/^invalid\s+request$/i.test(m)) {
     return 'Broker rejected order: invalid request. Check symbol availability and order parameters.'

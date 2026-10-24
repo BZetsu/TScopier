@@ -122,6 +122,7 @@ export interface UserProfileRow {
   referred_by_user_id: string | null
   notification_sound_enabled: boolean
   copier_paused: boolean
+  copier_pause_reason: string | null
   created_at: string
   updated_at: string
 }
@@ -399,6 +400,12 @@ export interface BrokerAccount {
   fxsocket_status?: FxsocketConnectionStatus | null
   /** Provider routing: 'fxsocket' (default) or 'mtapi'. */
   provider?: 'fxsocket' | 'mtapi' | null
+  /** Monotonic broker-writer fence used to reject stale worker jobs. */
+  writer_epoch?: number
+  /** Mutations are allowed only while stable. */
+  provider_transition_state?: 'stable' | 'transition'
+  /** Internal cutover target; null while stable. */
+  provider_transition_target?: 'fxsocket' | 'mtapi' | null
   /** MTAPI session ID (when provider='mtapi'). Not exposed to client. */
   mtapi_session_id?: string | null
   /** MTAPI connection status (when provider='mtapi'). */
@@ -640,6 +647,7 @@ export interface Trade {
   status: string
   opened_at: string
   closed_at: string | null
+  close_reason?: string | null
   profit: number | null
   close_price?: number | null
   created_at: string

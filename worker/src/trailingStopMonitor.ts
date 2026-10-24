@@ -1,4 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { TRADE_CLOSE_REASON } from './tradeCloseReasons'
+import { applyCloseUpdate } from './tradeCloseUpdate'
 import { signalPipPrice } from './signalPip'
 import {
   computeTrailingStopUpdate,
@@ -6,12 +8,15 @@ import {
   type TrailingStopConfig,
 } from './trailingStop'
 import {
-  hasFxsocketConfigured,
   normalizeSymbolParams,
   type FxsocketBrokerClient,
   type SymbolParams,
 } from './fxsocketClient'
-import { apiForFxsocketAccount, brokerSessionId, loadPlatformByFxsocketId, type PlatformByFxsocketId } from './mtApiByAccount'
+import {
+  brokerRuntimeForAccount,
+  loadBrokerApiByAccountId,
+  type BrokerApiByAccountId,
+} from './mtApiByAccount'
 import { isBenignOrderModifyError } from './orderModifyBenign'
 import {
   applyShardToQuery,
@@ -22,13 +27,14 @@ import {
   type MonitorLoopHandle,
 } from './monitorIdleGate'
 import { isUserCopierPausedCached } from './copierPause'
-
+import { writeExecutionLog } from './observability/executionLog'
 interface TrailTradeRow {
   id: string
   user_id: string
   signal_id: string | null
   broker_account_id: string | null
   metaapi_order_id: string | null
+  broker_position_ticket?: string | null
   symbol: string
   direction: string
   entry_price: number | null
@@ -39,13 +45,6 @@ interface TrailTradeRow {
   trail_start_pips: number | null
   trail_step_pips: number | null
   trail_distance_pips: number | null
-}
-
-interface BrokerRow {
-  id: string
-  fxsocket_account_id: string | null
-  metaapi_account_id: string | null
-  platform: string
 }
 
 const ACTIVE_MS = monitorActiveIntervalMs('TRAILING_STOP_TICK_MS', 400)
@@ -61,7 +60,7 @@ type SymbolCacheEntry = {
 
 export class TrailingStopMonitor {
   private loop: MonitorLoopHandle | null = null
-  private platformByUuid: PlatformByFxsocketId = new Map()
+  private runtimeByBroker: BrokerApiByAccountId = new Map()
   private ticking = false
   private firstTickLogged = false
   private quietTicks = 0
@@ -71,10 +70,6 @@ export class TrailingStopMonitor {
 
   start() {
     if (this.loop) return
-    if (!hasFxsocketConfigured()) {
-      console.warn('[trailingStopMonitor] MT4API_BASIC_USER/PASSWORD missing — trailing stop monitor disabled')
-      return
-    }
     this.loop = startMonitorLoop({
       name: 'trailingStopMonitor',
       supabase: this.supabase,
@@ -108,14 +103,12 @@ export class TrailingStopMonitor {
   }
 
   private async tick(): Promise<void> {
-    if (!hasFxsocketConfigured()) return
-
     const tradesQ = await applyShardToQuery(
       this.supabase,
       this.supabase
         .from('trades')
         .select(
-          'id,user_id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,entry_price,sl,tp,'
+          'id,user_id,signal_id,broker_account_id,metaapi_order_id,broker_position_ticket,symbol,direction,entry_price,sl,tp,'
           + 'trail_peak_price,trail_last_sl,trail_start_pips,trail_step_pips,trail_distance_pips',
         )
         .eq('status', 'open')
@@ -137,26 +130,13 @@ export class TrailingStopMonitor {
     if (!rows.length) return
 
     const brokerIds = [...new Set(rows.map(r => r.broker_account_id).filter(Boolean))] as string[]
-    const { data: brokers, error: brokerErr } = await this.supabase
-      .from('broker_accounts')
-      .select('id,fxsocket_account_id,metaapi_account_id,platform')
-      .in('id', brokerIds)
-    if (brokerErr) {
-      console.error('[trailingStopMonitor] broker lookup failed:', brokerErr.message)
-      return
-    }
-    const brokerById = new Map((brokers ?? []).map(b => [b.id, b as BrokerRow]))
-    this.platformByUuid = await loadPlatformByFxsocketId(
-      this.supabase,
-      (brokers ?? []).map(b => brokerSessionId(b as BrokerRow)),
-    )
+    this.runtimeByBroker = await loadBrokerApiByAccountId(this.supabase, brokerIds)
 
     const groups = new Map<string, TrailTradeRow[]>()
     for (const row of rows) {
-      const b = brokerById.get(row.broker_account_id ?? '')
-      const sessionId = b ? brokerSessionId(b) : ''
-      if (!sessionId) continue
-      const key = `${sessionId}:${row.symbol.toUpperCase()}`
+      const brokerId = String(row.broker_account_id ?? '')
+      if (!this.runtimeByBroker.has(brokerId)) continue
+      const key = `${brokerId}|${row.symbol.toUpperCase()}`
       const list = groups.get(key) ?? []
       list.push(row)
       groups.set(key, list)
@@ -165,12 +145,14 @@ export class TrailingStopMonitor {
     let modifiedTotal = 0
     let modifyErrTotal = 0
     for (const [key, group] of groups) {
-      const uuid = key.split(':')[0]!
+      const brokerId = key.split('|')[0]!
       const symbol = group[0]?.symbol ?? ''
+      const runtime = brokerRuntimeForAccount(this.runtimeByBroker, brokerId)
+      if (!runtime) continue
+      const uuid = runtime.sessionId
+      const api = runtime.api
       let bid = NaN
       let ask = NaN
-      const api = apiForFxsocketAccount(this.platformByUuid, uuid)
-      if (!api) continue
       try {
         const q = await api.quote(uuid, symbol)
         bid = q.bid
@@ -206,7 +188,7 @@ export class TrailingStopMonitor {
     bid: number,
     ask: number,
   ): Promise<boolean | null> {
-    const ticketNum = Number(trade.metaapi_order_id)
+    const ticketNum = Number(trade.broker_position_ticket ?? trade.metaapi_order_id)
     if (!Number.isFinite(ticketNum) || ticketNum <= 0) {
       await this.clearTrailWatch(trade.id)
       return null
@@ -218,7 +200,7 @@ export class TrailingStopMonitor {
       return null
     }
 
-    const symEntry = await this.getSymbolCache(uuid, trade.symbol)
+    const symEntry = await this.getSymbolCache(uuid, trade.symbol, api)
     if (!symEntry) return null
 
     const signalPip = signalPipPrice(trade.symbol)
@@ -262,7 +244,7 @@ export class TrailingStopMonitor {
         })
         .eq('id', trade.id)
         .eq('status', 'open')
-      await this.supabase.from('trade_execution_logs').insert({
+      await writeExecutionLog(this.supabase, {
         user_id: trade.user_id,
         signal_id: trade.signal_id,
         broker_account_id: trade.broker_account_id,
@@ -286,14 +268,19 @@ export class TrailingStopMonitor {
       const benign = /not\s+found|already\s+closed|invalid\s+ticket|no\s+such\s+order|unknown\s+ticket/i.test(msg)
         || isBenignOrderModifyError(msg)
       if (benign) {
-        await this.supabase
-          .from('trades')
-          .update({ status: 'closed', closed_at: new Date().toISOString(), trail_peak_price: null })
-          .eq('id', trade.id)
+        await applyCloseUpdate(
+          {
+            status: 'closed',
+            closed_at: new Date().toISOString(),
+            close_reason: TRADE_CLOSE_REASON.POSITION_GONE,
+            trail_peak_price: null,
+          },
+          patch => this.supabase.from('trades').update(patch).eq('id', trade.id),
+        )
         return null
       }
       console.warn(`[trailingStopMonitor] OrderModify failed trade=${trade.id} ticket=${ticketNum}: ${msg}`)
-      await this.supabase.from('trade_execution_logs').insert({
+      await writeExecutionLog(this.supabase, {
         user_id: trade.user_id,
         signal_id: trade.signal_id,
         broker_account_id: trade.broker_account_id,
@@ -310,12 +297,10 @@ export class TrailingStopMonitor {
     await this.supabase.from('trades').update({ trail_peak_price: null }).eq('id', tradeId)
   }
 
-  private async getSymbolCache(uuid: string, symbol: string): Promise<SymbolCacheEntry | null> {
+  private async getSymbolCache(uuid: string, symbol: string, api: FxsocketBrokerClient): Promise<SymbolCacheEntry | null> {
     const key = `${uuid}:${symbol.toUpperCase()}`
     const cached = this.symbolCache.get(key)
     if (cached && Date.now() - cached.loadedAt < SYMBOL_CACHE_TTL_MS) return cached
-    const api = apiForFxsocketAccount(this.platformByUuid, uuid)
-    if (!api) return null
     try {
       const p: SymbolParams = await api.symbolParams(uuid, symbol)
       const n = normalizeSymbolParams(p)

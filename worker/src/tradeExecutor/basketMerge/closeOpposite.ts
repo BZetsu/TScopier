@@ -1,6 +1,5 @@
 import { isOppositeSignalCloseBlocked, isPendingCancelBlocked, normalizeChannelMessageFiltersMap } from '../../channelMessageFilters'
 import { type ManualSettings } from '../../manualPlanner'
-import { hasFxsocketConfigured } from '../../fxsocketClient'
 import { type TradeExecutorContext } from '../context'
 import {
   type BrokerRow,
@@ -9,15 +8,18 @@ import {
   type SignalRow
 } from '../types'
 import { brokerSessionUuid } from '../helpers'
+import { closeWithVerification } from '../../managementClose'
+import { resolveCurrentLivePosition } from '../../livePositionIdentity'
 import { cancelRangePendingLegsForScopes } from './pendingCancel'
-
+import { TRADE_CLOSE_REASON } from '../../tradeCloseReasons'
+import { applyCloseUpdate } from '../../tradeCloseUpdate'
+import { writeExecutionLog } from '../../observability/executionLog'
 export async function closeOppositeDirectionTrades(ctx: TradeExecutorContext, 
     signal: SignalRow,
     parsed: ParsedSignal,
     broker: BrokerRow,
     symbol: string,
   ): Promise<void> {
-    if (!hasFxsocketConfigured()) return
     const manual = (broker.manual_settings ?? {}) as ManualSettings
     if (manual.close_on_opposite_signal !== true) return
     if (isOppositeSignalCloseBlocked(
@@ -33,7 +35,7 @@ export async function closeOppositeDirectionTrades(ctx: TradeExecutorContext,
     if (!api) return
     const { data: opposites } = await ctx.supabase
       .from('trades')
-      .select('id,signal_id,broker_account_id,metaapi_order_id,symbol,direction,lot_size')
+      .select('id,signal_id,broker_account_id,metaapi_order_id,broker_position_ticket,symbol,direction,lot_size,entry_price')
       .eq('broker_account_id', broker.id)
       .eq('symbol', symbol)
       .eq('status', 'open')
@@ -43,17 +45,29 @@ export async function closeOppositeDirectionTrades(ctx: TradeExecutorContext,
 
     const scopes: RangePendingCancelScope[] = []
     for (const t of rows) {
-      const ticket = Number(t.metaapi_order_id)
+      const ticket = Number(t.broker_position_ticket ?? t.metaapi_order_id)
       if (!Number.isFinite(ticket) || ticket <= 0) continue
       try {
-        await api.orderClose(uuid, { ticket })
-        await ctx.supabase
-          .from('trades')
-          .update({ status: 'closed', closed_at: new Date().toISOString() })
-          .eq('id', t.id)
+        const resolution = await resolveCurrentLivePosition({
+          supabase: ctx.supabase,
+          api,
+          sessionId: uuid,
+          trade: t,
+        })
+        if (resolution.status !== 'resolved') throw new Error(`close reconciliation required: ${resolution.reason}`)
+        const close = await closeWithVerification(api, uuid, resolution.ticket, { liveFast: true })
+        if (!close.confirmed) throw new Error(close.reason ?? 'close reconciliation required')
+        await applyCloseUpdate(
+          {
+            status: 'closed',
+            closed_at: new Date().toISOString(),
+            close_reason: TRADE_CLOSE_REASON.OPPOSITE_SIGNAL,
+          },
+          patch => ctx.supabase.from('trades').update(patch).eq('id', t.id),
+        )
         scopes.push({ signalId: t.signal_id, brokerAccountId: broker.id, symbol })
         try {
-          await ctx.supabase.from('trade_execution_logs').insert({
+          await writeExecutionLog(ctx.supabase, {
             user_id: signal.user_id,
             signal_id: signal.id,
             broker_account_id: broker.id,
@@ -75,19 +89,15 @@ export async function closeOppositeDirectionTrades(ctx: TradeExecutorContext,
         console.warn(
           `[tradeExecutor] opposite_signal_close failed trade=${t.id} ticket=${ticket} broker=${broker.id}: ${msg}`,
         )
-        try {
-          await ctx.supabase.from('trade_execution_logs').insert({
-            user_id: signal.user_id,
-            signal_id: signal.id,
-            broker_account_id: broker.id,
-            action: 'opposite_signal_close',
-            status: 'failed',
-            request_payload: { closed_trade_id: t.id, ticket, symbol } as unknown as Record<string, unknown>,
-            error_message: msg,
-          })
-        } catch {
-          // best-effort
-        }
+        await writeExecutionLog(ctx.supabase, {
+          user_id: signal.user_id,
+          signal_id: signal.id,
+          broker_account_id: broker.id,
+          action: 'opposite_signal_close',
+          status: 'failed',
+          request_payload: { closed_trade_id: t.id, ticket, symbol } as unknown as Record<string, unknown>,
+          error_message: msg,
+        })
       }
     }
     if (scopes.length && !isPendingCancelBlocked(

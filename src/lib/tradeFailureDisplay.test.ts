@@ -33,6 +33,17 @@ describe('resolveTradeFailureDisplay', () => {
     assert.match(display?.explanation ?? '', /take-profit/)
   })
 
+  it('maps trading-disabled to a non-retryable message', () => {
+    const display = resolveTradeFailureDisplay({
+      reasonCode: 'BROKER_SYMBOL_TRADE_DISABLED',
+      safeContext: { requestedSymbol: 'XAUUSD', brokerSymbol: 'XAUUSD.crp' },
+    })
+    assert.equal(display?.reasonCode, 'BROKER_SYMBOL_TRADE_DISABLED')
+    assert.match(display?.title ?? '', /trading disabled/i)
+    assert.match(display?.explanation ?? '', /does not allow new orders/i)
+    assert.equal(display?.retryable, false)
+  })
+
   it('maps broker symbol failures and legacy SYMBOL_UNSUPPORTED to one code', () => {
     const fromCanonical = resolveTradeFailureDisplay({
       reasonCode: 'BROKER_SYMBOL_NOT_FOUND',
@@ -73,5 +84,15 @@ describe('buildTradeFailureAssistantPrompt', () => {
     assert.match(prompt, /Do not override the reason code/)
     assert.match(prompt, /XAUUSD/)
     assert.doesNotMatch(prompt, /secret|rawSignalText|brokerPassword|GOLD BUY/)
+  })
+
+  it('tells the user the stop could not be read when the message stated one', () => {
+    const display = resolveTradeFailureDisplay({
+      reasonCode: 'entry_tp_without_sl',
+      safeContext: { stopStatedButUnreadable: true },
+    })
+    assert.equal(display?.title, 'We could not read the stop loss in this signal')
+    assert.match(display?.explanation ?? '', /could not read its price/)
+    assert.equal(display?.safeContext.stopStatedButUnreadable, true)
   })
 })

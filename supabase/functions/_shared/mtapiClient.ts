@@ -6,10 +6,19 @@
  * Session id is passed as `?id=` (same protocol as the worker bridge).
  */
 
+import { redactBridgeSecrets } from "./mtapiRedaction.ts"
+
 export class MtapiApiError extends Error {
   constructor(message: string, readonly status: number, readonly code?: string) {
-    super(message)
+    // Single choke point: the `mtapi-broker` handler returns this message to
+    // the caller, so without redaction the MT4 bridge's echoed credentials
+    // would land in the customer's browser.
+    super(redactBridgeSecrets(message))
     this.name = "MtapiApiError"
+    // `code` is redacted as well because `errorDetails` promotes a bare-string
+    // `error` body field into it, and `mtapiFailureSummary()` forwards an
+    // unmatched code verbatim into `broker_accounts.connection_error`.
+    if (this.code != null) this.code = redactBridgeSecrets(this.code)
   }
 }
 
@@ -328,6 +337,77 @@ export class MtapiClient {
       throw new MtapiApiError("AccountSummary returned an invalid response", 502, "INVALID_RESPONSE")
     }
     return row
+  }
+
+  async symbols(sessionId: string, platform?: string | null): Promise<string[]> {
+    const raw = await this.request("Symbols", {}, sessionId, platform)
+    if (Array.isArray(raw)) {
+      return raw.map((value) => {
+        if (typeof value === "string") return value
+        const row = object(value)
+        return String(row.symbol ?? row.Symbol ?? "")
+      }).filter(Boolean)
+    }
+    const row = object(raw)
+    if (Object.keys(row).length === 0) return []
+    return Object.keys(row)
+  }
+
+  /** Raw integer contract; interpretation belongs to the explicitly verified adapter policy. */
+  async serverTimezone(sessionId: string, platform?: string | null): Promise<unknown> {
+    return await this.request("ServerTimezone", {}, sessionId, platform)
+  }
+
+  async accountDetails(
+    sessionId: string,
+    platform?: string | null,
+  ): Promise<Record<string, unknown>> {
+    const row = object(await this.request("AccountDetails", {}, sessionId, platform))
+    if (Object.keys(row).length === 0) {
+      throw new MtapiApiError("AccountDetails returned an invalid response", 502, "INVALID_RESPONSE")
+    }
+    return row
+  }
+
+  async priceHistory(
+    sessionId: string,
+    args: {
+      symbol: string
+      from: string
+      to: string
+      timeFrame: number
+      timeoutSeconds?: number
+    },
+    platform: string | null = "MT5",
+  ): Promise<unknown[]> {
+    const raw = await this.request("PriceHistory", {
+      symbol: args.symbol,
+      from: args.from,
+      to: args.to,
+      timeFrame: args.timeFrame,
+      timeoutSeconds: args.timeoutSeconds ?? 30,
+    }, sessionId, platform, Math.max(45_000, ((args.timeoutSeconds ?? 30) + 10) * 1000))
+    if (!Array.isArray(raw)) {
+      throw new MtapiApiError("PriceHistory returned an invalid response", 502, "INVALID_RESPONSE")
+    }
+    return raw
+  }
+
+  async quoteHistory(
+    sessionId: string,
+    args: { symbol: string; timeframe: string; from: string; count: number },
+    platform: string | null = "MT4",
+  ): Promise<unknown[]> {
+    const raw = await this.request("QuoteHistory", {
+      symbol: args.symbol,
+      timeframe: args.timeframe,
+      from: args.from,
+      count: args.count,
+    }, sessionId, platform, 90_000)
+    if (!Array.isArray(raw)) {
+      throw new MtapiApiError("QuoteHistory returned an invalid response", 502, "INVALID_RESPONSE")
+    }
+    return raw
   }
 
   /** Market bid/ask for one symbol. Same shape as FxSocket getQuote. */
