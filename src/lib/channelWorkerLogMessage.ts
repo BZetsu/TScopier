@@ -624,6 +624,7 @@ export function channelWorkerLogMessage(
   const skipReason = resolveLogSkipReason(row)
   if (isNonTradeSkipReason(skipReason)) return null
   if (isSilencedChannelWorkerSkipReason(skipReason)) return null
+  if (isInternalRebalancePayload(row.request_payload ?? {})) return null
   const logAction = row.action.toLowerCase()
   const signalAction = signalActionFromLog(row)
   if (CHANNEL_WORKER_HIDDEN_LOG_ACTIONS.has(logAction)) return null
