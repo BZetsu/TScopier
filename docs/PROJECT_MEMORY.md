@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### 2026-11-14 — Fix unused isInternalRebalancePayload (Netlify tsc)
+
+- **Context:** Netlify `tsc -b` failed: `isInternalRebalancePayload` declared but never read.
+- **Plain English:** Internal range-rebalance trade logs stay hidden in Copier Process; the unused check is wired in so the build passes.
+- **Fix (files):** [`channelWorkerLogMessage.ts`](src/lib/channelWorkerLogMessage.ts) — early `return null` when `request_payload.internal_rebalance` is true.
+- **Tests/verification:** `tsc -b`; `tsx --test src/lib/channelWorkerLogMessage.test.ts`.
+- **Deploy state:** Frontend; Netlify rebuild needed.
+- **Follow-ups:** None.
+
 ### 2026-11-14 — Configure modal header title → “Trading”
 
 - **Context:** Modal chrome still said “Configure Trading” while the body already has Configure channel on broker.
