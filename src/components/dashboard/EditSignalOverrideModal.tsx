@@ -137,16 +137,18 @@ function parseDraft(draft: OverrideDraft): { sl: number | null; tp_levels: numbe
   return { sl, tp_levels }
 }
 
+type CloseCopy = {
+  closeNoOpenTrades: string
+  closeNotConnected: string
+  closeRetry: string
+  closeFailed: string
+  closeMarketClosed: string
+  closeSignalGone: string
+}
+
 /** Map a close result that did nothing to a specific message (stays on the confirm view). */
 function closeResultError(
-  sh: {
-    closeNoOpenTrades: string
-    closeNotConnected: string
-    closeRetry: string
-    closeFailed: string
-    closeMarketClosed: string
-    closeSignalGone: string
-  },
+  sh: CloseCopy,
   res: { reason?: string },
 ): string {
   switch (res.reason) {
@@ -159,6 +161,23 @@ function closeResultError(
     case 'missing_ids': return sh.closeRetry
     default: return sh.closeFailed
   }
+}
+
+/** Map thrown API errors to safe, user-facing copy (never raw worker/HTML bodies). */
+function closeThrownError(sh: CloseCopy, err: unknown): string {
+  const msg = err instanceof Error ? err.message : ''
+  if (msg === 'Signal not found') return sh.closeSignalGone
+  if (msg === 'Not signed in') return msg
+  if (
+    msg === 'Broker has no active provider session'
+    || msg === 'Broker account is not connected.'
+  ) {
+    return sh.closeNotConnected
+  }
+  // Edge previously rejected cTrader/crypto here; keep a clear connected-path
+  // message if an old deploy is still serving the mtapi/fxsocket-only gate.
+  if (msg === 'Broker provider is invalid') return sh.closeNotConnected
+  return sh.closeRetry
 }
 
 type EditSignalOverrideModalProps = EditSignalOverrideSnapshot & {
@@ -334,8 +353,7 @@ export function EditSignalOverrideModal({
       onClosed({ closed: settled, failed: res.failed, virtualDeleted })
       await loadAccounts()
     } catch (e) {
-      const msg = e instanceof Error ? e.message : ''
-      setCloseError(msg === 'Signal not found' ? sh.closeSignalGone : sh.closeRetry)
+      setCloseError(closeThrownError(sh, e))
     } finally {
       closeInFlightRef.current = false
       setClosingAccountId(null)
@@ -393,14 +411,7 @@ export function EditSignalOverrideModal({
       // Whitelist: only surface messages the UI itself authored. Worker 500
       // text, PostgREST/HTML bodies and deploy-hint strings are internal —
       // show the generic retry line instead.
-      const msg = e instanceof Error ? e.message : ''
-      setCloseError(
-        msg === 'Signal not found'
-          ? sh.closeSignalGone
-          : msg === 'Not signed in'
-            ? msg
-            : sh.closeRetry,
-      )
+      setCloseError(closeThrownError(sh, e))
     } finally {
       closeInFlightRef.current = false
       setClosingTrade(false)

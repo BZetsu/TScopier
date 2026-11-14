@@ -7,6 +7,32 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 }
 
+const SUPPORTED_PROVIDERS = new Set([
+  "fxsocket",
+  "mtapi",
+  "ctrader",
+  "binance",
+  "bybit",
+  "kucoin",
+  "dxtrade",
+  "tradelocker",
+  "matchtrader",
+])
+
+type BrokerSessionRow = {
+  provider?: string | null
+  mtapi_session_id?: string | null
+  fxsocket_account_id?: string | null
+  metaapi_account_id?: string | null
+  ctrader_account_id?: string | null
+  binance_account_id?: string | null
+  bybit_account_id?: string | null
+  kucoin_account_id?: string | null
+  dxtrade_account_id?: string | null
+  tradelocker_account_id?: string | null
+  matchtrader_account_id?: string | null
+}
+
 function bad(status: number, msg: string) {
   return Response.json({ error: msg }, { status, headers: corsHeaders })
 }
@@ -14,6 +40,25 @@ function bad(status: number, msg: string) {
 function normalizeChannelIds(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
   return raw.map(id => String(id ?? "").trim()).filter(Boolean)
+}
+
+/** Mirror worker `brokerSessionId` — reject accounts with no live provider session. */
+function providerSessionId(broker: BrokerSessionRow): string {
+  const provider = String(broker.provider ?? "fxsocket").trim() || "fxsocket"
+  const pick = (value: unknown) => {
+    const id = String(value ?? "").trim()
+    return id && !id.includes("|") ? id : ""
+  }
+  if (provider === "mtapi") return pick(broker.mtapi_session_id)
+  if (provider === "ctrader") return pick(broker.ctrader_account_id)
+  if (provider === "binance") return pick(broker.binance_account_id)
+  if (provider === "bybit") return pick(broker.bybit_account_id)
+  if (provider === "kucoin") return pick(broker.kucoin_account_id)
+  if (provider === "dxtrade") return pick(broker.dxtrade_account_id)
+  if (provider === "tradelocker") return pick(broker.tradelocker_account_id)
+  if (provider === "matchtrader") return pick(broker.matchtrader_account_id)
+  if (provider !== "fxsocket") return ""
+  return pick(broker.fxsocket_account_id) || pick(broker.metaapi_account_id)
 }
 
 async function callWorkerForceClose(args: {
@@ -105,7 +150,9 @@ Deno.serve(async (req: Request) => {
 
     const { data: broker, error: brokerErr } = await supabase
       .from("broker_accounts")
-      .select("id,provider,mtapi_session_id,fxsocket_account_id,metaapi_account_id,provider_transition_state,signal_channel_ids")
+      .select(
+        "id,provider,mtapi_session_id,fxsocket_account_id,metaapi_account_id,ctrader_account_id,binance_account_id,bybit_account_id,kucoin_account_id,dxtrade_account_id,tradelocker_account_id,matchtrader_account_id,provider_transition_state,signal_channel_ids",
+      )
       .eq("id", brokerAccountId)
       .eq("user_id", userId)
       .maybeSingle()
@@ -114,17 +161,16 @@ Deno.serve(async (req: Request) => {
       return bad(500, "Force close failed")
     }
     if (!broker) return bad(404, "Broker account not found")
-    const provider = String(broker.provider ?? "fxsocket").trim()
-    if (provider !== "fxsocket" && provider !== "mtapi") {
+    const provider = String(broker.provider ?? "fxsocket").trim() || "fxsocket"
+    if (!SUPPORTED_PROVIDERS.has(provider)) {
       return bad(400, "Broker provider is invalid")
     }
     if (String(broker.provider_transition_state ?? "stable") !== "stable") {
       return bad(409, "Broker provider transition is in progress")
     }
-    const sessionId = provider === "mtapi"
-      ? String(broker.mtapi_session_id ?? "").trim()
-      : String(broker.fxsocket_account_id ?? broker.metaapi_account_id ?? "").trim()
-    if (!sessionId) return bad(400, "Broker has no active provider session")
+    if (!providerSessionId(broker as BrokerSessionRow)) {
+      return bad(400, "Broker has no active provider session")
+    }
 
     const channelId = body.channel_id?.trim() || null
     if (channelId) {

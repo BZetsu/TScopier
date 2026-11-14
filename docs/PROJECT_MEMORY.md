@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-14 — Close trade: “trade service did not answer” on Fusion cTrader
+
+- **Context:** Martins Migration — Close this trade / Close this account on signal `a58de3cb…` (“BTC sell now”) showed *The trade service did not answer* while Demo was Closed and Fusion Markets stayed Open (ticket `49652216`).
+- **Plain English:** The close button was not timing out. Fusion Markets is a **cTrader** account. The close API only allowed MetaTrader providers (MTAPI/FxSocket), so it rejected Fusion with HTTP 400. The UI hid that as a generic “try again.” Demo (MT5) had already closed earlier; Fusion never got a real close attempt through that path.
+- **Root cause (technical):** (1) Edge `force-close-trades` broker-scope gate: `provider !== fxsocket && !== mtapi` → `400 Broker provider is invalid` (edge logs 17:31:50Z). (2) Worker `forceCloseSignalById` / broker-scope selects omitted `ctrader_account_id` (and other non-MT session columns), so even signal-scope close could not resolve a cTrader session and counted the leg as failed/unreachable.
+- **Fix (files):** [`supabase/functions/force-close-trades/index.ts`](supabase/functions/force-close-trades/index.ts) — allow ctrader/binance/bybit/kucoin/dxtrade/tradelocker/matchtrader; provider-aware session check. [`worker/src/forceCloseSignalTrades.ts`](worker/src/forceCloseSignalTrades.ts) — select all provider session ids. [`EditSignalOverrideModal.tsx`](src/components/dashboard/EditSignalOverrideModal.tsx) — map provider/session 400s to `closeNotConnected` instead of `closeRetry`.
+- **Tests/verification:** Edge redeployed Migration `force-close-trades` **v39** and Production **v31** (same sha). Confirm Fusion still open until **trade-migration** / prod trade worker redeploy picks up the select fix, then retry Close this account / Yes close trade.
+- **Deploy state:** Edge Migration ✅ v39; Production ✅ v31. Worker + frontend still need deploy for full close + clearer copy.
+- **Follow-ups:** Redeploy `trade-migration` (and frontend). Confirm edge `TRADE_WORKER_URL` points at `https://trade-migration.up.railway.app` (not listener-only).
+
 ### 2026-11-14 — False “Closed on broker” for live BuyLimit (Copier log)
 
 - **Context:** Copier Process showed BTCUSD Closed / “Closed on broker” while the Fusion Markets BuyLimit was still live (Martins Migration, ticket `49652208`, trade `1f08c89e…`, ~14:46 UTC).
