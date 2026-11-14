@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-14 — “Close all trades now” skipped Demo (live snapshot miss)
+
+- **Context:** FOREX KING BACKUP “Close all trades now” (`mgmt_close` signal `70c91aea…`, basket `c2b506fb…` “BTC sell now”). UI: *Did not close your open trade (position not in live snapshot…)*. Fusion Markets closed (ticket `49652718`); Demo left **20 open** BTCUSDm sells.
+- **Plain English:** Close-all worked on Fusion. On Demo it never sent a broker close — it looked at a live-positions list, could not match each stored ticket, and stopped with “awaiting reconciliation” instead of closing. The positions stayed open.
+- **Root cause (technical):** `managementExecutor` required `resolveCurrentLivePosition` success before `OrderClose`. Absent/ambiguous snapshot (`stored ticket has no live position match`) threw `PositionAbsentFromLiveError` → `mgmt_close` **skipped** (no `orderClose`). Early OpenedOrders warm also `.catch(() => [])` and `prepareMgmtLiveOrderSnapshots` skipped re-fetch when a non-empty map already held `[]`.
+- **Fix (files):** [`managementExecutor.ts`](worker/src/tradeExecutor/managementExecutor.ts) — full close proceeds with stored ticket when identity resolve fails; refresh empty OpenedOrders snapshots before close.
+- **Tests/verification:** Unit path review; needs **trade-migration** (and prod trade) worker redeploy, then re-send close-all or use UI Close this trade on Demo basket.
+- **Deploy state:** Code local only — worker redeploy required.
+- **Follow-ups:** Redeploy worker; optional: settle DB when close confirms unknown-ticket after absent snapshot.
+
 ### 2026-11-14 — Close trade: “trade service did not answer” on Fusion cTrader
 
 - **Context:** Martins Migration — Close this trade / Close this account on signal `a58de3cb…` (“BTC sell now”) showed *The trade service did not answer* while Demo was Closed and Fusion Markets stayed Open (ticket `49652216`).
