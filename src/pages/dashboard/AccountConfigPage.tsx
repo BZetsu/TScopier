@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useState, useMemo, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet, Link2,
-  ChevronLeft, ChevronRight, Search, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
+  ChevronLeft, ChevronRight, ChevronDown, Search, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
   Infinity as InfinityIcon, Coins, X, MessageSquareText, FileUp, FileDown, Clock,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -669,15 +669,18 @@ function normalizeManualSettings(
   }
 }
 
-function PlatformIcon({ platform }: { platform: string }) {
+function PlatformIcon({ platform, className }: { platform: string; className?: string }) {
   const [failed, setFailed] = useState(false)
   const iconPath = platformIconSrc(platform)
-  if (!iconPath || failed) return <Server className="w-4 h-4 text-green-400" />
+  if (!iconPath || failed) {
+    return <Server className={clsx('shrink-0 text-green-400', className ?? 'h-4 w-4')} />
+  }
   return (
     <img
       src={iconPath}
-      alt={`${platform} icon`}
-      className="w-8 h-8 object-contain"
+      alt=""
+      aria-hidden
+      className={clsx('shrink-0 object-contain', className ?? 'h-8 w-8')}
       loading="lazy"
       onError={() => setFailed(true)}
     />
@@ -750,12 +753,6 @@ function accountTypeLabelsFromBrokerList(bl: {
 }
 
 type ManualSubTabId = 'symbols' | 'channel_instructions' | 'signal_examples' | 'risk' | 'stops' | 'management' | 'filters'
-
-interface ManualSubTabDef {
-  id: ManualSubTabId
-  label: string
-  icon: typeof SlidersHorizontal
-}
 
 function defaultChannelConfigDraft(keywordFiltersEnabled = true): ChannelConfigDraft {
   return {
@@ -889,27 +886,6 @@ export function AccountConfigPage() {
   const cm = t.accountConfig.configureModal
   const bl = t.accountConfig.brokerList
 
-  const manualSubTabs = useMemo<ManualSubTabDef[]>(
-    () => [
-      { id: 'signal_examples', label: cm.manualSubTabs.aiTraining, icon: MessageSquareText },
-      { id: 'symbols', label: cm.manualSubTabs.symbols, icon: Coins },
-      { id: 'channel_instructions', label: cm.manualSubTabs.channelInstructions, icon: ScrollText },
-      { id: 'risk', label: cm.manualSubTabs.risk, icon: Wallet },
-      { id: 'stops', label: cm.manualSubTabs.stops, icon: Target },
-      { id: 'management', label: cm.manualSubTabs.management, icon: Settings2 },
-      { id: 'filters', label: cm.manualSubTabs.filters, icon: Filter },
-    ],
-    [
-      cm.manualSubTabs.aiTraining,
-      cm.manualSubTabs.symbols,
-      cm.manualSubTabs.channelInstructions,
-      cm.manualSubTabs.risk,
-      cm.manualSubTabs.stops,
-      cm.manualSubTabs.management,
-      cm.manualSubTabs.filters,
-    ],
-  )
-
   const channelFilterCategories = useMemo(
     () => getChannelFilterCategories(cm),
     [cm],
@@ -1021,39 +997,28 @@ export function AccountConfigPage() {
     selectedChannelId: null,
     channelConfigs: {},
   })
-  const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('signal_examples')
+  /** FAQ-style: which Configure Trading panels are expanded. */
+  const [openConfigSections, setOpenConfigSections] = useState<Partial<Record<ManualSubTabId, boolean>>>(() => ({
+    risk: true,
+  }))
   const configScrollRef = useRef<HTMLDivElement | null>(null)
   const sectionRefs = useRef<Partial<Record<ManualSubTabId, HTMLElement | null>>>({})
-  const tabButtonRefs = useRef<Partial<Record<ManualSubTabId, HTMLButtonElement | null>>>({})
-  const programmaticScrollRef = useRef(false)
-  const programmaticScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const setSectionRef = useCallback((id: ManualSubTabId, el: HTMLElement | null) => {
     sectionRefs.current[id] = el
   }, [])
 
-  const setTabButtonRef = useCallback((id: ManualSubTabId, el: HTMLButtonElement | null) => {
-    tabButtonRefs.current[id] = el
+  const isConfigSectionOpen = useCallback(
+    (id: ManualSubTabId) => openConfigSections[id] === true,
+    [openConfigSections],
+  )
+
+  const toggleConfigSection = useCallback((id: ManualSubTabId) => {
+    setOpenConfigSections(prev => ({ ...prev, [id]: !prev[id] }))
   }, [])
 
-  const scrollToConfigSection = useCallback((id: ManualSubTabId) => {
-    const el = sectionRefs.current[id]
-    if (!el) {
-      setActiveManualSubTab(id)
-      return
-    }
-    programmaticScrollRef.current = true
-    if (programmaticScrollTimerRef.current) clearTimeout(programmaticScrollTimerRef.current)
-    setActiveManualSubTab(id)
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    programmaticScrollTimerRef.current = setTimeout(() => {
-      programmaticScrollRef.current = false
-      programmaticScrollTimerRef.current = null
-    }, 700)
-  }, [])
-
-  const resetConfigSectionScroll = useCallback((id: ManualSubTabId = 'signal_examples') => {
-    setActiveManualSubTab(id)
+  const resetConfigSectionScroll = useCallback((id: ManualSubTabId = 'risk') => {
+    setOpenConfigSections({ [id]: true })
     const scroller = configScrollRef.current
     if (scroller) scroller.scrollTop = 0
   }, [])
@@ -1225,12 +1190,6 @@ export function AccountConfigPage() {
     [channelOptions, configDraft.selectedChannelId],
   )
   const selectedIsTradingView = selectedChannelOption?.source_kind === 'tradingview'
-  const visibleManualSubTabs = useMemo(
-    () => (selectedIsTradingView
-      ? manualSubTabs.filter(tab => tab.id !== 'signal_examples' && tab.id !== 'symbols' && tab.id !== 'channel_instructions')
-      : manualSubTabs),
-    [manualSubTabs, selectedIsTradingView],
-  )
 
   const configureAccountType = useMemo((): LinkedAccountType | undefined => {
     if (!configAccount) return undefined
@@ -1714,72 +1673,6 @@ export function AccountConfigPage() {
     return () => clearTimeout(t)
   }, [presetStatusMessage])
 
-  useEffect(() => {
-    if (!selectedChannelLinked) return
-    const root = configScrollRef.current
-    if (!root) return
-
-    const sectionIds = visibleManualSubTabs.map(s => s.id)
-    let observer: IntersectionObserver | null = null
-    let cancelled = false
-    let attempts = 0
-
-    const attach = () => {
-      if (cancelled) return
-      const els = sectionIds
-        .map(id => sectionRefs.current[id])
-        .filter((el): el is HTMLElement => Boolean(el))
-      if (els.length < sectionIds.length && attempts < 10) {
-        attempts += 1
-        requestAnimationFrame(attach)
-        return
-      }
-      if (els.length === 0) return
-      observer = new IntersectionObserver(
-        entries => {
-          if (programmaticScrollRef.current) return
-          const visible = entries
-            .filter(e => e.isIntersecting)
-            .map(e => {
-              const id = (e.target as HTMLElement).dataset.configSection as ManualSubTabId | undefined
-              return id ? { id, top: e.boundingClientRect.top } : null
-            })
-            .filter((v): v is { id: ManualSubTabId; top: number } => Boolean(v))
-          if (visible.length === 0) return
-          visible.sort((a, b) => a.top - b.top)
-          const next = visible[0]?.id
-          if (!next) return
-          setActiveManualSubTab(prev => (prev === next ? prev : next))
-        },
-        {
-          root,
-          rootMargin: '-10% 0px -65% 0px',
-          threshold: [0, 0.1, 0.25],
-        },
-      )
-      for (const el of els) observer.observe(el)
-    }
-
-    attach()
-
-    return () => {
-      cancelled = true
-      observer?.disconnect()
-    }
-  }, [visibleManualSubTabs, selectedChannelLinked, configDraft.selectedChannelId])
-
-  useEffect(() => {
-    if (!selectedChannelLinked) return
-    const btn = tabButtonRefs.current[activeManualSubTab]
-    btn?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
-  }, [activeManualSubTab, selectedChannelLinked])
-
-  useEffect(() => {
-    return () => {
-      if (programmaticScrollTimerRef.current) clearTimeout(programmaticScrollTimerRef.current)
-    }
-  }, [])
-
   const startBackgroundAiTraining = useCallback((channelId: string, opts?: { force?: boolean }) => {
     if (!userId) {
       return Promise.resolve({ trained: false, error: 'Not signed in' })
@@ -1883,8 +1776,7 @@ export function AccountConfigPage() {
       ? channelIds.find(id => normalizeChannelUuid(id) === preferred) ?? null
       : null
     const selectedId = preferredMatch ?? draft.selectedChannelId ?? channelOptions[0]?.id ?? null
-    const openingTradingView = channelOptions.find(channel => channel.id === selectedId)?.source_kind === 'tradingview'
-    resetConfigSectionScroll(openingTradingView ? 'risk' : 'signal_examples')
+    resetConfigSectionScroll('risk')
     const nextDraft = {
       ...draft,
       selectedChannelId: selectedId,
@@ -1973,8 +1865,7 @@ export function AccountConfigPage() {
 
   const selectConfigureChannel = (channelId: string) => {
     setConfigDraft(prev => ({ ...prev, selectedChannelId: channelId }))
-    const tradingView = channelOptions.find(channel => channel.id === channelId)?.source_kind === 'tradingview'
-    resetConfigSectionScroll(tradingView ? 'risk' : 'signal_examples')
+    resetConfigSectionScroll('risk')
   }
 
   const connectSelectedChannelToBroker = async () => {
@@ -3364,9 +3255,9 @@ export function AccountConfigPage() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="configure-trading-title"
-            className="relative z-1 w-full max-w-5xl h-dvh sm:h-[88vh] max-h-dvh sm:max-h-[88vh] flex flex-col rounded-none sm:rounded-2xl bg-white dark:bg-neutral-900 shadow-xl border-0 sm:border border-neutral-200/65 dark:border-neutral-800/55 overflow-hidden"
+            className="relative z-1 w-full max-w-5xl h-dvh sm:h-[88vh] max-h-dvh sm:max-h-[88vh] flex flex-col rounded-none sm:rounded-2xl bg-neutral-100 dark:bg-neutral-900 shadow-xl border-0 sm:border border-neutral-200/65 dark:border-neutral-800/55 overflow-hidden"
           >
-            <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-neutral-100 dark:border-neutral-800 flex items-start justify-between gap-3 shrink-0">
+            <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-neutral-200/80 dark:border-neutral-800 flex items-start justify-between gap-3 shrink-0 bg-neutral-100 dark:bg-neutral-900">
               <div className="min-w-0 flex-1">
                 <h3 id="configure-trading-title" className="text-base sm:text-lg font-semibold text-neutral-900 dark:text-neutral-50 truncate">
                   {cm.title}
@@ -3409,7 +3300,7 @@ export function AccountConfigPage() {
 
             <div className="flex flex-col sm:flex-row flex-1 min-h-0 min-w-0">
               {/* Channel sidebar */}
-              <nav className="shrink-0 flex sm:flex-col w-full sm:w-56 border-b sm:border-b-0 sm:border-e border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-2 sm:p-3 gap-2 sm:gap-1 overflow-x-auto sm:overflow-y-auto overscroll-x-contain">
+              <nav className="shrink-0 flex sm:flex-col w-full sm:w-56 border-b sm:border-b-0 sm:border-e border-neutral-200/80 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800/50 p-2 sm:p-3 gap-2 sm:gap-1 overflow-x-auto sm:overflow-y-auto overscroll-x-contain">
                 <div className="flex items-center justify-between gap-2 px-2 shrink-0 sm:w-full">
                   <p className="text-xs font-semibold uppercase tracking-wide text-neutral-900 dark:text-neutral-50">
                     {cm.channelsSidebar}
@@ -3510,34 +3401,6 @@ export function AccountConfigPage() {
 
               {/* Config body column */}
               <div className="flex-1 flex flex-col min-h-0 min-w-0">
-                {selectedChannelLinked ? (
-                  <div className="shrink-0 px-4 sm:px-6 pt-3 sm:pt-4 bg-white dark:bg-neutral-950 border-b border-neutral-100 dark:border-neutral-800 overflow-x-auto overscroll-x-contain">
-                    <div className="flex flex-nowrap items-center gap-1 min-w-max sm:min-w-0 sm:flex-wrap pb-px">
-                      {visibleManualSubTabs.map(sub => {
-                        const SubIcon = sub.icon
-                        const active = sub.id === activeManualSubTab
-                        return (
-                          <button
-                            key={sub.id}
-                            ref={el => setTabButtonRef(sub.id, el)}
-                            type="button"
-                            onClick={() => scrollToConfigSection(sub.id)}
-                            className={clsx(
-                                'shrink-0 flex items-center gap-1.5 px-3 py-2.5 sm:py-2 text-sm transition-colors border-b-2 -mb-px min-h-[44px] sm:min-h-0 whitespace-nowrap',
-                              active
-                                  ? 'border-green-400 text-green-500 dark:text-green-400'
-                                  : 'border-transparent text-neutral-900 dark:text-neutral-50 hover:text-neutral-900 dark:hover:text-neutral-100',
-                            )}
-                          >
-                              <SubIcon className={clsx('w-3.5 h-3.5 shrink-0', active ? 'text-green-400' : 'text-neutral-900 dark:text-neutral-50')} />
-                            {sub.label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-
                 <div
                   ref={configScrollRef}
                   className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 sm:py-5 min-h-0 overscroll-y-contain"
@@ -3625,162 +3488,49 @@ export function AccountConfigPage() {
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-8">
-                        {selectedIsTradingView ? null : (
-                        <section
-                          id="config-section-signal_examples"
-                          data-config-section="signal_examples"
-                          ref={el => setSectionRef('signal_examples', el)}
-                          className="scroll-mt-3 space-y-4"
-                        >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.aiTraining}
-                          </h3>
-                          
-                          {
-                          selectedChannelOption && configDraft.selectedChannelId && userId ? (
-                            <ChannelSignalExamplesSection
-                              channelId={configDraft.selectedChannelId}
-                              userId={userId}
-                              labels={cm.aiTraining}
-                              trainingActive={activeChannelTrainingRunning || activeChannelTrainingSaving}
-                              onRetrain={() => startBackgroundAiTraining(configDraft.selectedChannelId!, { force: true })}
-                            />
-                          ) : (
-                            <p className="text-sm text-neutral-900 dark:text-neutral-50">{cm.channels.selectChannelFirst}</p>
-                          )
-                        }
-                        </section>
-                        )}
-
-                        {selectedIsTradingView ? null : (
-                        <section
-                          id="config-section-symbols"
-                          data-config-section="symbols"
-                          ref={el => setSectionRef('symbols', el)}
-                          className="scroll-mt-3 space-y-4"
-                        >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.symbols}
-                          </h3>
-                          
-                          {
-                          selectedChannelOption && configDraft.selectedChannelId ? (
-                            <section className="rounded-xl border border-neutral-200/65 dark:border-neutral-800/55 p-4 space-y-4">
-                              <ConfigTitle variant="semibold" info={cm.channelSymbols.intro}>
-                                {cm.channelSymbols.title}
-                              </ConfigTitle>
-                              <ConfigureInput
-                                label={cm.channelSymbols.tradeOnlyLabel}
-                                hint={cm.channelSymbols.tradeOnlyHint}
-                                placeholder={cm.channelSymbols.tradeOnlyPlaceholder}
-                                value={symbolWhitelistToInput(channelManualSettings.symbol_to_trade)}
-                                onChange={e => {
-                                  const raw = e.target.value
-                                  setManual({ symbol_to_trade: raw.trim() === '' ? null : raw })
-                                }}
-                                onBlur={e => setManual({
-                                  symbol_to_trade: symbolWhitelistFromInput(e.target.value),
-                                })}
-                              />
-                              <ConfigureInput
-                                label={cm.channelSymbols.avoidLabel}
-                                hint={cm.channelSymbols.avoidHint}
-                                placeholder={cm.channelSymbols.avoidPlaceholder}
-                                value={
-                                  symbolsExcludeDraft
-                                  ?? symbolsExcludeToInput(channelManualSettings.symbols_exclude)
-                                }
-                                onChange={e => setSymbolsExcludeDraft(e.target.value)}
-                                onBlur={() => {
-                                  if (symbolsExcludeDraft === null) return
-                                  setManual({ symbols_exclude: symbolsExcludeFromInput(symbolsExcludeDraft) })
-                                  setSymbolsExcludeDraft(null)
-                                }}
-                              />
-                            </section>
-                          ) : (
-                            <p className="text-sm text-neutral-900 dark:text-neutral-50">{cm.channels.selectChannelFirst}</p>
-                          )
-                        }
-                        </section>
-                        )}
-
-                        {selectedIsTradingView ? null : (
-                        <section
-                          id="config-section-channel_instructions"
-                          data-config-section="channel_instructions"
-                          ref={el => setSectionRef('channel_instructions', el)}
-                          className="scroll-mt-3 space-y-4"
-                        >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.channelInstructions}
-                          </h3>
-                          
-                          {
-                          selectedChannelOption && configDraft.selectedChannelId ? (
-                            <div className="relative">
-                              <section
-                                className={clsx(
-                                  'space-y-3',
-                                  !keywordFiltersEnabled && 'pointer-events-none select-none opacity-60',
-                                )}
-                                aria-disabled={!keywordFiltersEnabled}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <ConfigTitle variant="semibold" info={`${cm.channels.filtersIntro}\n\n${cm.channelFilters.footer}`}>{cm.channels.keywordFilters}</ConfigTitle>
-                                  <p className="text-xs text-neutral-900 dark:text-neutral-50">
-                                    {(() => {
-                                      const f = normalizeChannelFilters(
-                                        configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters
-                                          ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
-                                      )
-                                      const total = channelFilterCategories.reduce(
-                                        (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
-                                      )
-                                      return total === 0
-                                        ? cm.channels.allAllowed
-                                        : interpolate(cm.channels.ignoredAcross, { total: String(total) })
-                                    })()}
-                                  </p>
-                                </div>
-                                
-                                <ChannelFiltersCard
-                                  filters={normalizeChannelFilters(
-                                    configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters
-                                      ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
-                                  )}
-                                  categories={channelFilterCategories}
-                                  labels={cm.channelFilters}
-                                  disabled={!keywordFiltersEnabled}
-                                  onChange={(key, value) => setChannelFilter(configDraft.selectedChannelId!, key, value)}
-                                  onReset={() => resetChannelFilters(configDraft.selectedChannelId!)}
-                                />
-                              </section>
-                              {!keywordFiltersEnabled ? (
-                                <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
-                                  <div className="pointer-events-auto w-full max-w-md">
-                                    <UpgradePrompt reason={pw.advancedFeature} />
-                                  </div>
-                                </div>
+                      <div className="space-y-3">
+                        <h4 className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base sm:text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">
+                          {cm.configureChannelOnBroker.split(/(\{channel\}|\{broker\})/g).map((part, index) => {
+                            if (part === '{channel}') {
+                              return (
+                                <span key={index} className="inline-flex min-w-0 items-center gap-1.5">
+                                  {selectedChannelOption ? (
+                                    <SourceKindLogo
+                                      sourceKind={selectedChannelOption.source_kind}
+                                      className="h-5 w-5"
+                                    />
+                                  ) : null}
+                                  <span className="truncate">
+                                    {selectedChannelOption?.display_name ?? cm.channelFilters.unnamedChannel}
+                                  </span>
+                                </span>
+                              )
+                            }
+                            if (part === '{broker}') {
+                              return (
+                                <span key={index} className="inline-flex min-w-0 items-center gap-1.5">
+                                  {configAccount?.platform ? (
+                                    <PlatformIcon platform={configAccount.platform} className="h-5 w-5" />
                               ) : null}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-neutral-900 dark:text-neutral-50">{cm.channels.selectChannelFirst}</p>
-                          )
-                        }
-                        </section>
-                        )}
+                                  <span className="truncate">
+                                    {configAccount ? getBrokerDisplayLabel(configAccount) : '—'}
+                                  </span>
+                                </span>
+                              )
+                            }
+                            return part ? <span key={index}>{part}</span> : null
+                          })}
+                        </h4>
 
-                        <section
-                          id="config-section-risk"
-                          data-config-section="risk"
-                          ref={el => setSectionRef('risk', el)}
-                          className="scroll-mt-3 space-y-4"
+                        <ConfigAccordionSection
+                          id="risk"
+                          title={cm.manualSubTabs.risk}
+                          description={cm.manualSubTabDescriptions.risk}
+                          icon={Wallet}
+                          open={isConfigSectionOpen('risk')}
+                          onToggle={() => toggleConfigSection('risk')}
+                          sectionRef={el => setSectionRef('risk', el)}
                         >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.risk}
-                          </h3>
                           <div className="space-y-4">
                             {channelManualSettings.risk_mode === 'fixed_lot' && (
                               <div className="flex justify-end">
@@ -4107,18 +3857,17 @@ export function AccountConfigPage() {
                             )}
 
                           </div>
-                        </section>
+                        </ConfigAccordionSection>
 
-                        <section
-                          id="config-section-stops"
-                          data-config-section="stops"
-                          ref={el => setSectionRef('stops', el)}
-                          className="scroll-mt-3 space-y-4"
+                        <ConfigAccordionSection
+                          id="stops"
+                          title={cm.manualSubTabs.stops}
+                          description={cm.manualSubTabDescriptions.stops}
+                          icon={Target}
+                          open={isConfigSectionOpen('stops')}
+                          onToggle={() => toggleConfigSection('stops')}
+                          sectionRef={el => setSectionRef('stops', el)}
                         >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.stops}
-                          </h3>
-
                           {
                           (() => {
                           const ms = channelManualSettings
@@ -4301,18 +4050,17 @@ export function AccountConfigPage() {
                           )
                         })()
                         }
-                        </section>
+                        </ConfigAccordionSection>
 
-                        <section
-                          id="config-section-management"
-                          data-config-section="management"
-                          ref={el => setSectionRef('management', el)}
-                          className="scroll-mt-3 space-y-4"
+                        <ConfigAccordionSection
+                          id="management"
+                          title={cm.manualSubTabs.management}
+                          description={cm.manualSubTabDescriptions.management}
+                          icon={Settings2}
+                          open={isConfigSectionOpen('management')}
+                          onToggle={() => toggleConfigSection('management')}
+                          sectionRef={el => setSectionRef('management', el)}
                         >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.management}
-                          </h3>
-
                           {
                           (() => {
                           const ms = channelManualSettings
@@ -4700,17 +4448,17 @@ export function AccountConfigPage() {
                           )
                         })()
                         }
-                        </section>
+                        </ConfigAccordionSection>
 
-                        <section
-                          id="config-section-filters"
-                          data-config-section="filters"
-                          ref={el => setSectionRef('filters', el)}
-                          className="scroll-mt-3 space-y-4"
+                        <ConfigAccordionSection
+                          id="filters"
+                          title={cm.manualSubTabs.filters}
+                          description={cm.manualSubTabDescriptions.filters}
+                          icon={Filter}
+                          open={isConfigSectionOpen('filters')}
+                          onToggle={() => toggleConfigSection('filters')}
+                          sectionRef={el => setSectionRef('filters', el)}
                         >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.filters}
-                          </h3>
                           <div className="space-y-6">
                             <section className="rounded-lg border border-neutral-200/65 dark:border-neutral-800/55 p-4 space-y-3">
                               <ConfigTitle info={cm.filters.timeSubtitle}>{cm.filters.timeTitle}</ConfigTitle>
@@ -4831,7 +4579,151 @@ export function AccountConfigPage() {
                         )}
                             </section>
                       </div>
+                        </ConfigAccordionSection>
+
+
+                        {selectedIsTradingView ? null : (
+                        <ConfigAccordionSection
+                          id="signal_examples"
+                          title={cm.manualSubTabs.aiTraining}
+                          description={cm.manualSubTabDescriptions.aiTraining}
+                          icon={MessageSquareText}
+                          open={isConfigSectionOpen('signal_examples')}
+                          onToggle={() => toggleConfigSection('signal_examples')}
+                          sectionRef={el => setSectionRef('signal_examples', el)}
+                        >
+                          {
+                          selectedChannelOption && configDraft.selectedChannelId && userId ? (
+                            <ChannelSignalExamplesSection
+                              channelId={configDraft.selectedChannelId}
+                              userId={userId}
+                              labels={cm.aiTraining}
+                              trainingActive={activeChannelTrainingRunning || activeChannelTrainingSaving}
+                              onRetrain={() => startBackgroundAiTraining(configDraft.selectedChannelId!, { force: true })}
+                            />
+                          ) : (
+                            <p className="text-sm text-neutral-900 dark:text-neutral-50">{cm.channels.selectChannelFirst}</p>
+                          )
+                        }
+                        </ConfigAccordionSection>
+                        )}
+
+                        {selectedIsTradingView ? null : (
+                        <ConfigAccordionSection
+                          id="symbols"
+                          title={cm.manualSubTabs.symbols}
+                          description={cm.manualSubTabDescriptions.symbols}
+                          icon={Coins}
+                          open={isConfigSectionOpen('symbols')}
+                          onToggle={() => toggleConfigSection('symbols')}
+                          sectionRef={el => setSectionRef('symbols', el)}
+                        >
+                          {
+                          selectedChannelOption && configDraft.selectedChannelId ? (
+                            <div className="space-y-4">
+                              <ConfigTitle variant="semibold" info={cm.channelSymbols.intro}>
+                                {cm.channelSymbols.title}
+                              </ConfigTitle>
+                              <ConfigureInput
+                                label={cm.channelSymbols.tradeOnlyLabel}
+                                hint={cm.channelSymbols.tradeOnlyHint}
+                                placeholder={cm.channelSymbols.tradeOnlyPlaceholder}
+                                value={symbolWhitelistToInput(channelManualSettings.symbol_to_trade)}
+                                onChange={e => {
+                                  const raw = e.target.value
+                                  setManual({ symbol_to_trade: raw.trim() === '' ? null : raw })
+                                }}
+                                onBlur={e => setManual({
+                                  symbol_to_trade: symbolWhitelistFromInput(e.target.value),
+                                })}
+                              />
+                              <ConfigureInput
+                                label={cm.channelSymbols.avoidLabel}
+                                hint={cm.channelSymbols.avoidHint}
+                                placeholder={cm.channelSymbols.avoidPlaceholder}
+                                value={
+                                  symbolsExcludeDraft
+                                  ?? symbolsExcludeToInput(channelManualSettings.symbols_exclude)
+                                }
+                                onChange={e => setSymbolsExcludeDraft(e.target.value)}
+                                onBlur={() => {
+                                  if (symbolsExcludeDraft === null) return
+                                  setManual({ symbols_exclude: symbolsExcludeFromInput(symbolsExcludeDraft) })
+                                  setSymbolsExcludeDraft(null)
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <p className="text-sm text-neutral-900 dark:text-neutral-50">{cm.channels.selectChannelFirst}</p>
+                          )
+                        }
+                        </ConfigAccordionSection>
+                        )}
+
+                        {selectedIsTradingView ? null : (
+                        <ConfigAccordionSection
+                          id="channel_instructions"
+                          title={cm.manualSubTabs.channelInstructions}
+                          description={cm.manualSubTabDescriptions.channelInstructions}
+                          icon={ScrollText}
+                          open={isConfigSectionOpen('channel_instructions')}
+                          onToggle={() => toggleConfigSection('channel_instructions')}
+                          sectionRef={el => setSectionRef('channel_instructions', el)}
+                        >
+                          {
+                          selectedChannelOption && configDraft.selectedChannelId ? (
+                            <div className="relative">
+                              <section
+                                className={clsx(
+                                  'space-y-3',
+                                  !keywordFiltersEnabled && 'pointer-events-none select-none opacity-60',
+                                )}
+                                aria-disabled={!keywordFiltersEnabled}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <ConfigTitle variant="semibold" info={`${cm.channels.filtersIntro}\n\n${cm.channelFilters.footer}`}>{cm.channels.keywordFilters}</ConfigTitle>
+                                  <p className="text-xs text-neutral-900 dark:text-neutral-50">
+                                    {(() => {
+                                      const f = normalizeChannelFilters(
+                                        configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters
+                                          ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
+                                      )
+                                      const total = channelFilterCategories.reduce(
+                                        (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
+                                      )
+                                      return total === 0
+                                        ? cm.channels.allAllowed
+                                        : interpolate(cm.channels.ignoredAcross, { total: String(total) })
+                                    })()}
+                                  </p>
+                                </div>
+                                
+                                <ChannelFiltersCard
+                                  filters={normalizeChannelFilters(
+                                    configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters
+                                      ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
+                                  )}
+                                  categories={channelFilterCategories}
+                                  labels={cm.channelFilters}
+                                  disabled={!keywordFiltersEnabled}
+                                  onChange={(key, value) => setChannelFilter(configDraft.selectedChannelId!, key, value)}
+                                  onReset={() => resetChannelFilters(configDraft.selectedChannelId!)}
+                                />
                         </section>
+                              {!keywordFiltersEnabled ? (
+                                <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
+                                  <div className="pointer-events-auto w-full max-w-md">
+                                    <UpgradePrompt reason={pw.advancedFeature} />
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-neutral-900 dark:text-neutral-50">{cm.channels.selectChannelFirst}</p>
+                          )
+                        }
+                        </ConfigAccordionSection>
+                        )}
 
 
                   </div>
@@ -4844,7 +4736,7 @@ export function AccountConfigPage() {
                           </div>
                     </div>
 
-            <div className="shrink-0 px-4 sm:px-6 py-3 sm:py-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-row flex-wrap items-center justify-center gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-4">
+            <div className="shrink-0 px-4 sm:px-6 py-3 sm:py-4 border-t border-neutral-200/80 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-900 flex flex-row flex-wrap items-center justify-center gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-4">
               <div className="flex flex-row items-center gap-1 sm:gap-3 text-center sm:text-start">
                 {configSavedAt != null && (
                   <span className="text-xs text-success-600 transition-opacity">{cm.saved}</span>
@@ -5314,6 +5206,71 @@ export function AccountConfigPage() {
 }
 
 // ── Tab subcomponents ────────────────────────────────────────────────────
+
+/** FAQ-style collapsible panel for Configure Trading sections. */
+function ConfigAccordionSection({
+  id,
+  title,
+  description,
+  icon: Icon,
+  open,
+  onToggle,
+  sectionRef,
+  children,
+}: {
+  id: ManualSubTabId
+  title: string
+  description?: string
+  icon: typeof SlidersHorizontal
+  open: boolean
+  onToggle: () => void
+  sectionRef?: (el: HTMLElement | null) => void
+  children: ReactNode
+}) {
+  return (
+    <section
+      id={`config-section-${id}`}
+      data-config-section={id}
+      ref={sectionRef}
+      className="scroll-mt-3 rounded-xl border border-neutral-200/80 dark:border-neutral-800/55 overflow-hidden bg-white dark:bg-neutral-950 shadow-xs"
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="w-full flex items-start gap-3 px-4 py-3.5 text-start min-h-[48px] bg-white hover:bg-neutral-50 dark:bg-neutral-950 dark:hover:bg-neutral-900/60 transition-colors"
+      >
+        <Icon
+          className={clsx(
+            'w-4 h-4 shrink-0 mt-0.5',
+            open ? 'text-green-500 dark:text-green-400' : 'text-neutral-900 dark:text-neutral-50',
+          )}
+        />
+        <span className="flex-1 min-w-0">
+          <span className="block text-sm font-semibold text-neutral-900 dark:text-neutral-50">
+            {title}
+          </span>
+          {description ? (
+            <span className="mt-0.5 block text-xs font-normal leading-snug text-neutral-500 dark:text-neutral-400">
+              {description}
+            </span>
+          ) : null}
+        </span>
+        <ChevronDown
+          className={clsx(
+            'w-4 h-4 shrink-0 mt-0.5 text-neutral-900 dark:text-neutral-50 transition-transform duration-200',
+            open && 'rotate-180',
+          )}
+        />
+      </button>
+      {open ? (
+        <div className="border-t border-neutral-100 dark:border-neutral-800 px-4 py-4 space-y-4 bg-white dark:bg-neutral-950">
+          {children}
+        </div>
+      ) : null}
+    </section>
+  )
+}
 
 function FeatureBullet({ icon: Icon, title, body }: { icon: typeof DollarSign; title: string; body: string }) {
   return (

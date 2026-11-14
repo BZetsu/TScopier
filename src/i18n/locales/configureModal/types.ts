@@ -5,6 +5,8 @@ export interface ChannelFilterCategoryTranslation {
 
 export interface ConfigureModalTranslations {
   title: string
+  /** Body heading above settings: Configure {channel} on {broker} (placeholders become logo+name). */
+  configureChannelOnBroker: string
   close: string
   saved: string
   cancel: string
@@ -70,6 +72,16 @@ export interface ConfigureModalTranslations {
     channels: string
   }
   manualSubTabs: {
+    symbols: string
+    channelInstructions: string
+    risk: string
+    stops: string
+    management: string
+    filters: string
+    aiTraining: string
+  }
+  /** One-line blurb under each Configure Trading accordion header. */
+  manualSubTabDescriptions: {
     symbols: string
     channelInstructions: string
     risk: string

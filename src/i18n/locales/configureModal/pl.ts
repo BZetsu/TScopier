@@ -1,7 +1,8 @@
 import type { ConfigureModalTranslations } from './types'
 
 export const configureModalPl: ConfigureModalTranslations = {
-  title: 'Skonfiguruj handel',
+  title: 'Handel',
+  configureChannelOnBroker: 'Skonfiguruj {channel} na {broker}',
   close: 'Zamknąć',
   saved: 'Zapisano',
   cancel: 'Anulować',
@@ -73,6 +74,15 @@ export const configureModalPl: ConfigureModalTranslations = {
     management: 'Kierownictwo',
     filters: 'Filtry',
     aiTraining: 'Przykłady sygnałów'
+  },
+  manualSubTabDescriptions: {
+    aiTraining: 'Naucz kopiarkę, jak ten kanał pisze i aktualizuje sygnały.',
+    symbols: 'Ogranicz kopiowane symbole z tego kanału albo wyklucz niektóre.',
+    channelInstructions: 'Zezwalaj lub ignoruj wiadomości zmieniające, zamykające lub zarządzające transakcjami.',
+    risk: 'Wielkość lota, styl single/multi i sposób sizingu każdej pozycji.',
+    stops: 'Stop loss, take-profity i predefiniowane cele.',
+    management: 'Breakeven, trailing stop, wygasanie pendingów i komentarze zleceń.',
+    filters: 'Ogranicz kopiowanie według godziny, dni tygodnia i ważnych newsów.',
   },
   aiTraining: {
     title: 'Szkolenie z zakresu sygnałów AI',

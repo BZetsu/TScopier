@@ -1,7 +1,8 @@
 import type { ConfigureModalTranslations } from './types'
 
 export const configureModalAr: ConfigureModalTranslations = {
-  title: 'إعداد التداول',
+  title: 'التداول',
+  configureChannelOnBroker: 'تكوين {channel} على {broker}',
   close: 'إغلاق',
   saved: 'تم الحفظ',
   cancel: 'إلغاء',
@@ -73,6 +74,15 @@ export const configureModalAr: ConfigureModalTranslations = {
     management: 'الإدارة',
     filters: 'الفلاتر',
     aiTraining: 'أمثلة الإشارات'
+  },
+  manualSubTabDescriptions: {
+    aiTraining: 'علّم الناسخ كيف يكتب هذا القناة ويحدّث إشاراته.',
+    symbols: 'حدد الرموز المنسوخة من هذا القناة أو استبعد بعضها.',
+    channelInstructions: 'اسمح أو تجاهل الرسائل التي تعدّل أو تغلق أو تدير الصفقات.',
+    risk: 'حجم اللوت وأسلوب Single/Multi وكيفية حجم كل مركز.',
+    stops: 'وقف الخسارة وجني الأرباح والأهداف المحددة مسبقًا.',
+    management: 'التعادل والإيقاف المتحرك وانتهاء الأوامر المعلقة وتعليقات الأوامر.',
+    filters: 'قيّد النسخ حسب الوقت وأيام الأسبوع والأخبار عالية التأثير.',
   },
   aiTraining: {
     title: 'تدريب إشارات الذكاء الاصطناعي',

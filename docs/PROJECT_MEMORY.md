@@ -2,6 +2,60 @@
 
 ## Changelog
 
+### 2026-11-14 — Configure modal header title → “Trading”
+
+- **Context:** Modal chrome still said “Configure Trading” while the body already has Configure channel on broker.
+- **Plain English:** The top title is now just Trading.
+- **Fix (files):** [`configureModal`](src/i18n/locales/configureModal/) — `title` shortened in all locales.
+- **Tests/verification:** Open modal; header reads Trading.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading: accordion order (trading first)
+
+- **Context:** Signal Examples / Symbols / Instructions were at the top of Configure Trading.
+- **Plain English:** Trading settings (Risk, Targets, Management, Filters) come first; Signal Examples, Symbols, and Instructions are at the bottom. Risk opens by default.
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — reorder accordion blocks; default `openConfigSections` / `resetConfigSectionScroll` → `risk`.
+- **Tests/verification:** Parse check; open modal and confirm section order.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading: channel-on-broker body title
+
+- **Context:** Hard to tell which source/broker the accordion settings apply to once the modal is open.
+- **Plain English:** Above the settings list, the modal shows Configure Source on Broker with source and destination logos beside each name (no quote marks).
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — logo+name slots for `{channel}` / `{broker}`; [`configureModal`](src/i18n/locales/configureModal/) — `configureChannelOnBroker` without quotes.
+- **Tests/verification:** Open Configure Trading with a linked channel; title updates when switching source; logos match sidebar/platform icons.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading modal: ash shell, white accordions
+
+- **Context:** Configure Trading looked flat white-on-white in light mode.
+- **Plain English:** The modal chrome is ash gray; each settings accordion stays white so sections read clearly.
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — dialog/header/footer/sidebar `bg-neutral-100`; `ConfigAccordionSection` keeps `bg-white`.
+- **Tests/verification:** Visual in light mode.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading accordion: section descriptions
+
+- **Context:** FAQ-style Configure Trading headers showed titles only; users needed a one-line hint for each menu item.
+- **Plain English:** Each accordion row now shows a short description under the title (e.g. Risk explains lot size and trade style).
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — `description` on `ConfigAccordionSection`. [`configureModal`](src/i18n/locales/configureModal/) — `manualSubTabDescriptions` in types + all locales.
+- **Tests/verification:** Typecheck via locale typing; open Configure Trading and confirm blurbs under each section header.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading modal: FAQ-style accordion sections
+
+- **Context:** Configure Trading felt crowded — horizontal sub-tabs plus a long always-open scroll of Symbols / Instructions / Risk / Targets / Management / Filters / Signal Examples.
+- **Plain English:** Each settings group is now an inline collapsible row (like an FAQ). Click a header to expand or collapse; Signal Examples starts open when you open the modal. Switching channels resets to one open section.
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — `ConfigAccordionSection`, per-section open state, removed top tab strip + intersection spy-scroll.
+- **Tests/verification:** Lint clean on the page file; open Configure Trading → click sections to expand/collapse.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
 ### 2026-11-14 — “Close all trades now” skipped Demo (live snapshot miss)
 
 - **Context:** FOREX KING BACKUP “Close all trades now” (`mgmt_close` signal `70c91aea…`, basket `c2b506fb…` “BTC sell now”). UI: *Did not close your open trade (position not in live snapshot…)*. Fusion Markets closed (ticket `49652718`); Demo left **20 open** BTCUSDm sells.
