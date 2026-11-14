@@ -211,10 +211,14 @@ export function resolveTradeFailureDisplay(args: {
   return null
 }
 
-export function buildTradeFailureAssistantPrompt(failure: TradeFailureDisplay): string {
+export function buildTradeFailureAssistantPrompt(
+  failure: TradeFailureDisplay,
+  opts?: { instruction?: string },
+): string {
   const context = sanitizeContext(failure.safeContext)
   return [
-    'Please explain this trade copy issue using the structured reason below.',
+    opts?.instruction?.trim() ||
+      'Please explain this trade copy issue using the structured reason below. Reply in English.',
     `Reason code: ${failure.reasonCode}`,
     `Title: ${failure.title}`,
     `Explanation: ${failure.explanation}`,

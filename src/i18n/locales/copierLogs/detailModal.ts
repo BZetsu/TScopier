@@ -25,6 +25,11 @@ export const detailModalEn: CopierDetailModalTranslations = {
   receivedAt: 'Received',
   closedAt: 'Closed',
   explainWithAi: 'Explain with AI',
+  explainSignalPrompt:
+    'Please explain what happened with this trade signal in clear, everyday language. Reply in English.',
+  explainFailurePrompt:
+    'Please explain this trade copy issue using the structured reason below. Reply in English.',
+  askAiAboutIssue: 'Ask AI about this issue',
 }
 
 export const detailModalEs: CopierDetailModalTranslations = {
@@ -50,6 +55,11 @@ export const detailModalEs: CopierDetailModalTranslations = {
   receivedAt: 'Recibida',
   closedAt: 'Cerrada',
   explainWithAi: 'Explicar con IA',
+  explainSignalPrompt:
+    'Por favor explica qué ocurrió con esta señal de trading en un lenguaje claro y sencillo. Responde en español.',
+  explainFailurePrompt:
+    'Por favor explica este problema de copia de trades usando el motivo estructurado de abajo. Responde en español.',
+  askAiAboutIssue: 'Preguntar a la IA sobre este problema',
 }
 
 export const detailModalFr: CopierDetailModalTranslations = {
@@ -75,6 +85,11 @@ export const detailModalFr: CopierDetailModalTranslations = {
   receivedAt: 'Reçu',
   closedAt: 'Clôturé',
   explainWithAi: 'Expliquer avec l’IA',
+  explainSignalPrompt:
+    'Explique clairement, en langage simple, ce qui s’est passé avec ce signal de trading. Réponds en français.',
+  explainFailurePrompt:
+    'Explique ce problème de copie de trade en t’appuyant sur le motif structuré ci-dessous. Réponds en français.',
+  askAiAboutIssue: 'Demander à l’IA à propos de ce problème',
 }
 
 export const detailModalPl: CopierDetailModalTranslations = {
@@ -100,6 +115,11 @@ export const detailModalPl: CopierDetailModalTranslations = {
   receivedAt: 'Odebrano',
   closedAt: 'Zamknięto',
   explainWithAi: 'Wyjaśnij z AI',
+  explainSignalPrompt:
+    'Wyjaśnij prostym, codziennym językiem, co stało się z tym sygnałem transakcyjnym. Odpowiedz po polsku.',
+  explainFailurePrompt:
+    'Wyjaśnij ten problem z kopiowaniem transakcji na podstawie ustrukturyzowanego powodu poniżej. Odpowiedz po polsku.',
+  askAiAboutIssue: 'Zapytaj AI o ten problem',
 }
 
 export const detailModalNl: CopierDetailModalTranslations = {
@@ -125,6 +145,11 @@ export const detailModalNl: CopierDetailModalTranslations = {
   receivedAt: 'Ontvangen',
   closedAt: 'Gesloten',
   explainWithAi: 'Uitleggen met AI',
+  explainSignalPrompt:
+    'Leg in duidelijke, alledaagse taal uit wat er met dit tradesignaal is gebeurd. Antwoord in het Nederlands.',
+  explainFailurePrompt:
+    'Leg dit trade-kopieerprobleem uit aan de hand van de gestructureerde reden hieronder. Antwoord in het Nederlands.',
+  askAiAboutIssue: 'Vraag AI over dit probleem',
 }
 
 export const detailModalSv: CopierDetailModalTranslations = {
@@ -150,6 +175,11 @@ export const detailModalSv: CopierDetailModalTranslations = {
   receivedAt: 'Mottagen',
   closedAt: 'Stängd',
   explainWithAi: 'Förklara med AI',
+  explainSignalPrompt:
+    'Förklara på ett enkelt, vardagligt språk vad som hände med den här handelssignalen. Svara på svenska.',
+  explainFailurePrompt:
+    'Förklara det här problemet med trade-kopiering utifrån den strukturerade orsaken nedan. Svara på svenska.',
+  askAiAboutIssue: 'Fråga AI om det här problemet',
 }
 
 export const detailModalRu: CopierDetailModalTranslations = {
@@ -175,6 +205,11 @@ export const detailModalRu: CopierDetailModalTranslations = {
   receivedAt: 'Получен',
   closedAt: 'Закрыт',
   explainWithAi: 'Объяснить с ИИ',
+  explainSignalPrompt:
+    'Пожалуйста, простым понятным языком объясни, что произошло с этим торговым сигналом. Ответь на русском.',
+  explainFailurePrompt:
+    'Пожалуйста, объясни эту проблему копирования сделки по структурированной причине ниже. Ответь на русском.',
+  askAiAboutIssue: 'Спросить ИИ об этой проблеме',
 }
 
 export const detailModalJa: CopierDetailModalTranslations = {
@@ -200,6 +235,11 @@ export const detailModalJa: CopierDetailModalTranslations = {
   receivedAt: '受信',
   closedAt: '決済',
   explainWithAi: 'AIで説明する',
+  explainSignalPrompt:
+    'このトレードシグナルで何が起きたか、わかりやすい日常の言葉で説明してください。日本語で答えてください。',
+  explainFailurePrompt:
+    '以下の構造化された理由を使って、このトレードコピーの問題を説明してください。日本語で答えてください。',
+  askAiAboutIssue: 'この問題についてAIに聞く',
 }
 
 export const detailModalAr: CopierDetailModalTranslations = {
@@ -225,4 +265,9 @@ export const detailModalAr: CopierDetailModalTranslations = {
   receivedAt: 'تم الاستلام',
   closedAt: 'تم الإغلاق',
   explainWithAi: 'اشرح بالذكاء الاصطناعي',
+  explainSignalPrompt:
+    'يرجى شرح ما حدث مع إشارة التداول هذه بلغة واضحة وبسيطة. أجب بالعربية.',
+  explainFailurePrompt:
+    'يرجى شرح مشكلة نسخ هذه الصفقة باستخدام السبب المنظم أدناه. أجب بالعربية.',
+  askAiAboutIssue: 'اسأل الذكاء الاصطناعي عن هذه المشكلة',
 }

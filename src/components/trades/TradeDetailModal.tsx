@@ -317,9 +317,15 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
 
   const askAssistantAboutFailure = () => {
     if (!structuredBrokerFailure) return
+    const dm = t.copierLogs.detailModal
     assistant.persistMessages(prev => [
       ...prev,
-      { role: 'user', content: buildTradeFailureAssistantPrompt(structuredBrokerFailure) },
+      {
+        role: 'user',
+        content: buildTradeFailureAssistantPrompt(structuredBrokerFailure, {
+          instruction: dm?.explainFailurePrompt,
+        }),
+      },
     ])
     assistant.openAssistant()
   }
@@ -327,6 +333,7 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
   const askAssistantExplainSignal = () => {
     if (!trade) return
     const parsed = context?.signal?.parsed_data as Record<string, unknown> | null
+    const dm = t.copierLogs.detailModal
     const ctx = [
       `Signal ID: ${context?.signal?.id}`,
       `Status: ${context?.signal?.status}`,
@@ -338,7 +345,9 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
       context?.signal?.skip_reason ? `Skip reason: ${context.signal.skip_reason}` : '',
       rawMessage ? `\nOriginal Telegram message:\n${rawMessage}` : '',
     ].filter(Boolean).join('\n')
-    assistant.setPendingAutoSend(`Please explain what happened with this trade signal in plain English.\n\n${ctx}`)
+    assistant.setPendingAutoSend(
+      `${dm?.explainSignalPrompt ?? 'Please explain what happened with this trade signal in clear, everyday language.'}\n\n${ctx}`,
+    )
     assistant.openAssistant()
   }
 
@@ -732,7 +741,7 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
                     onClick={askAssistantAboutFailure}
                     className="text-xs font-semibold text-green-500 dark:text-teal-300 hover:underline underline-offset-2"
                   >
-                    Ask AI about this issue
+                    {t.copierLogs.detailModal?.askAiAboutIssue ?? 'Ask AI about this issue'}
                   </button>
                 </div>
               ) : null}

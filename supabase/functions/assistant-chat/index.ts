@@ -10,6 +10,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import {
   ASSISTANT_SYSTEM_PROMPT,
   FEATURE_TOPICS,
+  assistantReplyLanguageAddon,
 } from "../_shared/assistantKnowledge.ts";
 import {
   guardAssistantUserMessage,
@@ -2685,8 +2686,12 @@ Deno.serve(async (req: Request) => {
   }
 
   const incoming = Array.isArray(body.messages) ? body.messages : [];
+  const uiLocale = typeof body.locale === "string" ? body.locale : undefined;
   const messages: ChatMessage[] = [
-    { role: "system", content: ASSISTANT_SYSTEM_PROMPT },
+    {
+      role: "system",
+      content: ASSISTANT_SYSTEM_PROMPT + assistantReplyLanguageAddon(uiLocale),
+    },
     ...incoming
       .filter((m: { role?: string; content?: string }) =>
         m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string"

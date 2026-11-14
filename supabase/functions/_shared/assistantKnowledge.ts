@@ -1,3 +1,32 @@
+/** Map UniCopier UI locale codes to English language names for the model. */
+const ASSISTANT_LOCALE_LANGUAGES: Record<string, string> = {
+  en: "English",
+  es: "Spanish",
+  fr: "French",
+  pl: "Polish",
+  ru: "Russian",
+  sv: "Swedish",
+  nl: "Dutch",
+  ja: "Japanese",
+  ar: "Arabic",
+};
+
+/** Appended to the system prompt so replies match the user's UniCopier UI language. */
+export function assistantReplyLanguageAddon(localeRaw?: string | null): string {
+  const locale = String(localeRaw ?? "en").trim().toLowerCase().slice(0, 8) || "en";
+  const language = ASSISTANT_LOCALE_LANGUAGES[locale] ?? "English";
+  if (locale === "en" || !ASSISTANT_LOCALE_LANGUAGES[locale]) {
+    return `
+
+## Reply language
+Reply in clear, everyday English. If the user writes in another language, match their language.`;
+  }
+  return `
+
+## Reply language
+The user's UniCopier UI language is **${language}** (locale \`${locale}\`). Always reply in **${language}**, including trade-signal explanations and Confirm card summaries. Keep tool argument keys/identifiers in English; do not invent translations for reason codes.`;
+}
+
 /** Compact product knowledge for the in-app AI assistant system prompt. */
 export const ASSISTANT_SYSTEM_PROMPT = `You are UniCopier's in-app assistant. You help signed-in users understand the product and perform actions they are already allowed to do in the app.
 

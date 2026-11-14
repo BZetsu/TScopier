@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-14 — Assistant trade explain respects UI language
+
+- **Context:** “Explain with AI” always asked for plain English even when UniCopier UI was another language.
+- **Plain English:** Explain-with-AI prompts and assistant replies now follow the user’s UniCopier language.
+- **Root cause (technical):** Hardcoded English auto-send strings; `locale` was sent by the client but unused in `assistant-chat`.
+- **Fix (files):** Localized `explainSignalPrompt` / `explainFailurePrompt` / `askAiAboutIssue` in [`detailModal.ts`](src/i18n/locales/copierLogs/detailModal.ts); wired in Copier Log / Trade / Signal Review modals; [`assistantReplyLanguageAddon`](supabase/functions/_shared/assistantKnowledge.ts) + locale on system prompt in [`assistant-chat`](supabase/functions/assistant-chat/index.ts).
+- **Tests/verification:** `tradeFailureDisplay` prompt tests; typecheck via locale bundle.
+- **Deploy state:** `assistant-chat` → Migration (`supmsgcubipmmowrzoub`). Frontend needs rebuild for localized prompts.
+- **Follow-ups:** Redeploy `assistant-chat` to production if desired.
+
 ### 2026-11-14 — Assistant: export Account Trades CSV
 
 - **Context:** Trader asked the AI assistant to export today’s account trades as CSV for analysis.
