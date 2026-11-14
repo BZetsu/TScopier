@@ -1,7 +1,8 @@
 import type { ConfigureModalTranslations } from './types'
 
 export const configureModalSv: ConfigureModalTranslations = {
-  title: 'Konfigurera handel',
+  title: 'Handel',
+  configureChannelOnBroker: 'Konfigurera {channel} på {broker}',
   close: 'Nära',
   saved: 'Sparad',
   cancel: 'Avboka',
@@ -73,6 +74,15 @@ export const configureModalSv: ConfigureModalTranslations = {
     management: 'Förvaltning',
     filters: 'Filter',
     aiTraining: 'Signalexempel'
+  },
+  manualSubTabDescriptions: {
+    aiTraining: 'Lär kopieraren hur den här kanalen skriver och uppdaterar signaler.',
+    symbols: 'Begränsa vilka symboler som kopieras från kanalen, eller exkludera några.',
+    channelInstructions: 'Tillåt eller ignorera meddelanden som ändrar, stänger eller hanterar affärer.',
+    risk: 'Lotstorlek, single- vs multi-stil och hur varje position storleksätts.',
+    stops: 'Stop loss, take-profits och fördefinierade mål.',
+    management: 'Breakeven, trailing stop, pending-utgång och orderkommentarer.',
+    filters: 'Begränsa kopiering efter tid, veckodagar och nyheter med hög påverkan.',
   },
   aiTraining: {
     title: 'AI-signalträning',

@@ -1,7 +1,8 @@
 import type { ConfigureModalTranslations } from './types'
 
 export const configureModalJa: ConfigureModalTranslations = {
-  title: '取引の設定',
+  title: '取引',
+  configureChannelOnBroker: '{broker} で {channel} を設定',
   close: '近い',
   saved: '保存されました',
   cancel: 'キャンセル',
@@ -73,6 +74,15 @@ export const configureModalJa: ConfigureModalTranslations = {
     management: '管理',
     filters: 'フィルター',
     aiTraining: 'シグナル例'
+  },
+  manualSubTabDescriptions: {
+    aiTraining: 'このチャネルのシグナルの書き方・更新の仕方をコピーに学習させます。',
+    symbols: 'コピーする銘柄を制限したり、一部を除外したりします。',
+    channelInstructions: '変更・決済・管理メッセージを許可または無視します。',
+    risk: 'ロット、シングル／マルチ、各ポジションのサイズ設定です。',
+    stops: '損切り、利確、事前定義の目標です。',
+    management: '建値移動、トレーリング、待機注文の期限、注文コメントです。',
+    filters: '時間帯・曜日・重要ニュースでコピーを制限します。',
   },
   aiTraining: {
     title: 'AI信号トレーニング',

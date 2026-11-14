@@ -1,7 +1,8 @@
 import type { ConfigureModalTranslations } from './types'
 
 export const configureModalRu: ConfigureModalTranslations = {
-  title: 'Настроить торговлю',
+  title: 'Торговля',
+  configureChannelOnBroker: 'Настроить {channel} на {broker}',
   close: 'Закрывать',
   saved: 'Сохранено',
   cancel: 'Отмена',
@@ -73,6 +74,15 @@ export const configureModalRu: ConfigureModalTranslations = {
     management: 'Управление',
     filters: 'Фильтры',
     aiTraining: 'Примеры сигналов'
+  },
+  manualSubTabDescriptions: {
+    aiTraining: 'Научите копировщик, как этот канал пишет и обновляет сигналы.',
+    symbols: 'Ограничьте копируемые символы канала или исключите некоторые.',
+    channelInstructions: 'Разрешайте или игнорируйте сообщения, которые меняют, закрывают или управляют сделками.',
+    risk: 'Размер лота, стиль single/multi и размер каждой позиции.',
+    stops: 'Stop loss, take-profit и заданные заранее цели.',
+    management: 'Breakeven, trailing stop, срок pending и комментарии ордеров.',
+    filters: 'Ограничьте копирование по времени суток, дням недели и важным новостям.',
   },
   aiTraining: {
     title: 'Обучение сигналам ИИ',

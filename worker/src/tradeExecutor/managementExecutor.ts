@@ -1545,7 +1545,10 @@ export async function applyManagement(
         byUuid.set(u, list)
       }
       await Promise.all([...byUuid.entries()].map(async ([u, legs]) => {
-        if (mgmtLiveOrdersByUuid.has(u)) return
+        // Re-fetch when the early warm stored [] (catch-all empty) — otherwise
+        // every Demo close-all leg skips as "not in live snapshot".
+        const existing = mgmtLiveOrdersByUuid.get(u)
+        if (existing && existing.length > 0) return
         const broker = byBroker.get(legs[0]!.broker_account_id)
         const api = broker ? ctx.apiFor(broker) : null
         if (!api) return
@@ -1606,16 +1609,27 @@ export async function applyManagement(
             trade,
             openedOrders: mgmtLiveOrdersByUuid.get(uuid) ?? breakevenOrdersByUuid.get(uuid),
           })
-          if (resolution.status !== 'resolved') {
-            if (isLivePositionAbsentReason(resolution.reason)) {
-              throw new PositionAbsentFromLiveError(resolution.reason)
+          if (resolution.status === 'resolved') {
+            livePositionRow = resolution.row
+            if (resolution.ticket !== effectiveTicket) {
+              ticketReconciledFrom = effectiveTicket
+              effectiveTicket = resolution.ticket
             }
+          } else if (action === 'close' || closeFullLeg) {
+            // Full close already has a stored ticket. Do not abort when the
+            // shared OpenedOrders snapshot cannot match it (empty/stale read,
+            // or layered siblings that make attribute matching ambiguous) —
+            // that skip left Demo baskets open after "close all trades" while
+            // Fusion closed fine. Fire OrderClose with the stored ticket;
+            // unknown-ticket / already-closed is treated as confirmed.
+            console.warn(
+              `[tradeExecutor] mgmt close proceeding without live identity`
+              + ` trade=${trade.id} ticket=${effectiveTicket}: ${resolution.reason}`,
+            )
+          } else if (isLivePositionAbsentReason(resolution.reason)) {
+            throw new PositionAbsentFromLiveError(resolution.reason)
+          } else {
             throw new Error(`live position reconciliation required: ${resolution.reason}`)
-          }
-          livePositionRow = resolution.row
-          if (resolution.ticket !== effectiveTicket) {
-            ticketReconciledFrom = effectiveTicket
-            effectiveTicket = resolution.ticket
           }
         }
           let closeConfirmed = false
