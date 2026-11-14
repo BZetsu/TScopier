@@ -129,3 +129,37 @@ Reproduced twice on staging (baskets opened via `TP_BUNDLE_ENABLED=true`):
 - **M3** two hand-rolled ticket-alias parsers in `managementExecutor.ts` (`ticketsFromOpenedOrdersSnapshot`, modify prewarm) disagree with `rawOrderTicket`/`ingestBrokerTickets` — straggler sweep can under-close for `orderId`/`deal` payloads. Watch in 1.3.
 - **M4** TradingView entries bypass price-plausibility/commentary checks — malformed alert with absurd positive levels passes dispatch. Watch in 5.2.
 - **M5** TV webhook ACK-before-work: failures only visible in `tradingview_webhook_deliveries`; alerts without expanded `id` can duplicate on redelivery. Watch in 5.1.
+
+## 9. Main-push batch 2026-11-13/14 (PRs #217–#220) — checks added 2026-11-14
+
+Martins pushed another batch to `main` (80 of the 109 main-only commits) while this
+branch carried its own line; the merge on 2026-11-14 took **his side** for every
+conflict (his code is the source of truth). To keep that batch protected, the
+preservation script gained **17 checks** (now **63/63**):
+
+- **orderSend reliability / concurrency:** `worker/src/perAccountConcurrency.ts`
+  (module + wired in `mtapiProvider.ts`), `worker/src/brokerTradeError.ts`
+  (busy `userImpact = delayed`), `worker/src/observability/businessEvents.ts`
+  (module + wired in `userListener.ts`), global caps `MTAPI_GLOBAL_ORDER_CONCURRENCY`
+  and `MTAPI_GLOBAL_ORDER_WAIT_MS` in `mtapiProvider.ts`.
+- **Dashboard accuracy / Copier Log:** `src/lib/dashboardLiveOpenMetrics.ts`
+  (module + wired in `DashboardPage.tsx`), `copierLogLifecycle.ts`,
+  `copierProcessToast.ts` (+ wired in `CopierProcessToasts.tsx`),
+  `channelWorkerLogMessage.ts`, `fxsocketStreamParse.ts`.
+- **TradingView configuration:** `tl.unicopier.com` default in
+  `TradingViewSourcePanel.tsx`; `{{plot(…)}}` plot-based alert template in
+  `src/lib/tradingViewAlertTemplate.ts`.
+
+Paired behaviour checks — his own test files ship with the batch and must keep
+passing: `worker/src/perAccountConcurrency.test.ts`,
+`worker/src/brokerTradeError.test.ts`,
+`worker/src/observability/businessEvents.test.ts`,
+`src/lib/dashboardLiveOpenMetrics.test.ts`,
+`src/lib/copierLogLifecycle.test.ts`,
+`src/lib/copierProcessToast.test.ts`,
+`src/lib/channelWorkerLogMessage.test.ts`,
+`src/lib/fxsocketStreamParse.test.ts`.
+
+Known-red status unchanged: `managementClose.test.ts` still fails to compile
+(mock missing `OrderResult.ticket`, repair **I2** parked in `stash@{1}`) — documented
+in §7, not new fallout from this merge. No repair applied without owner sign-off.

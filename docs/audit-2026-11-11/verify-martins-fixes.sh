@@ -71,6 +71,29 @@ exists "migration signals.source_kind"        supabase/migrations/20261111081000
 exists "migration signals.source_display_name" supabase/migrations/20261111091500_signals_source_display_name.sql
 exists "migration TV alert config"            supabase/migrations/20261112080000_tradingview_webhook_alert_config.sql
 
+# ---- orderSend reliability / concurrency (main PRs #217-#220) --------------
+exists "per-account concurrency module"        worker/src/perAccountConcurrency.ts
+must "per-account concurrency wired"           worker/src/mtapiProvider.ts        'perAccountConcurrency'
+exists "broker trade-error classifier"         worker/src/brokerTradeError.ts
+must "busy userImpact = delayed"               worker/src/brokerTradeError.ts     'delayed'
+exists "business events module"                worker/src/observability/businessEvents.ts
+must "business events wired (listener)"        worker/src/userListener.ts         'businessEvents'
+must "global order concurrency env"            worker/src/mtapiProvider.ts        'MTAPI_GLOBAL_ORDER_CONCURRENCY'
+must "global order wait env"                   worker/src/mtapiProvider.ts        'MTAPI_GLOBAL_ORDER_WAIT_MS'
+
+# ---- Dashboard accuracy / Copier Log (his batch) ---------------------------
+exists "live open metrics module"              src/lib/dashboardLiveOpenMetrics.ts
+must "live metrics wired (dashboard)"          src/pages/dashboard/DashboardPage.tsx 'dashboardLiveOpenMetrics'
+exists "copier log lifecycle module"           src/lib/copierLogLifecycle.ts
+exists "copier process toast module"           src/lib/copierProcessToast.ts
+must "process toast wired"                     src/components/dashboard/CopierProcessToasts.tsx 'copierProcessToast'
+exists "channel worker log message module"     src/lib/channelWorkerLogMessage.ts
+exists "fxsocket stream parse module"          src/lib/fxsocketStreamParse.ts
+
+# ---- TradingView configuration (his batch) ---------------------------------
+must "TV ingest host default (tl.unicopier)"   src/components/dashboard/TradingViewSourcePanel.tsx 'tl\.unicopier\.com'
+must "plot-based alert template"               src/lib/tradingViewAlertTemplate.ts '\{\{plot\('
+
 echo "----------------------------------------"
 echo "code-preservation: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
