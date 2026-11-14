@@ -202,6 +202,14 @@ export interface NavTranslations {
       reportStatusOpen: string
       reportStatusResolved: string
     }
+    csvCard: {
+      title: string
+      ready: string
+      empty: string
+      download: string
+      countLabel: string
+      exportFailed: string
+    }
     broker: {
       title: string
       hint: string

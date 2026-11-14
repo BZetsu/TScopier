@@ -214,7 +214,15 @@ export const en: Translations = {
         reportStatusOpen: 'Open',
         reportStatusResolved: 'Resolved',
       },
-broker: {
+      csvCard: {
+        title: 'CSV export',
+        ready: 'Your account trades CSV is ready.',
+        empty: 'No account trades found for that day.',
+        download: 'Download CSV',
+        countLabel: '{count} trades',
+        exportFailed: 'Could not export account trades. Try Account Trades in the app.',
+      },
+      broker: {
         title: 'Connect trading account',
         hint: 'Enter your broker details. The password stays in this secure card — never type it in chat.',
         platformLabel: 'Platform',

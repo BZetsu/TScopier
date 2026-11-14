@@ -205,6 +205,14 @@ export const chromeJa: AppChromeTranslations = {
         reportStatusOpen: 'オープン',
         reportStatusResolved: '解決済み',
       },
+      csvCard: {
+        title: 'CSV エクスポート',
+        ready: '口座トレードの CSV の準備ができました。',
+        empty: 'その日の口座トレードは見つかりませんでした。',
+        download: 'CSV をダウンロード',
+        countLabel: '{count} 件',
+        exportFailed: '口座トレードをエクスポートできませんでした。アプリの口座トレードを試してください。',
+      },
 
     },
 

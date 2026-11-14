@@ -205,6 +205,14 @@ export const chromeAr: AppChromeTranslations = {
         reportStatusOpen: 'مفتوح',
         reportStatusResolved: 'تم الحل',
       },
+      csvCard: {
+        title: 'تصدير CSV',
+        ready: 'ملف CSV لصفقات الحساب جاهز.',
+        empty: 'لا توجد صفقات حساب لهذا اليوم.',
+        download: 'تنزيل CSV',
+        countLabel: '{count} صفقات',
+        exportFailed: 'تعذّر تصدير صفقات الحساب. جرّب صفحة صفقات الحساب في التطبيق.',
+      },
 
     },
 
