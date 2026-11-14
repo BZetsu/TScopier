@@ -2,6 +2,159 @@
 
 ## Changelog
 
+### 2026-11-14 — Configure modal header title → “Trading”
+
+- **Context:** Modal chrome still said “Configure Trading” while the body already has Configure channel on broker.
+- **Plain English:** The top title is now just Trading.
+- **Fix (files):** [`configureModal`](src/i18n/locales/configureModal/) — `title` shortened in all locales.
+- **Tests/verification:** Open modal; header reads Trading.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading: accordion order (trading first)
+
+- **Context:** Signal Examples / Symbols / Instructions were at the top of Configure Trading.
+- **Plain English:** Trading settings (Risk, Targets, Management, Filters) come first; Signal Examples, Symbols, and Instructions are at the bottom. Risk opens by default.
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — reorder accordion blocks; default `openConfigSections` / `resetConfigSectionScroll` → `risk`.
+- **Tests/verification:** Parse check; open modal and confirm section order.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading: channel-on-broker body title
+
+- **Context:** Hard to tell which source/broker the accordion settings apply to once the modal is open.
+- **Plain English:** Above the settings list, the modal shows Configure Source on Broker with source and destination logos beside each name (no quote marks).
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — logo+name slots for `{channel}` / `{broker}`; [`configureModal`](src/i18n/locales/configureModal/) — `configureChannelOnBroker` without quotes.
+- **Tests/verification:** Open Configure Trading with a linked channel; title updates when switching source; logos match sidebar/platform icons.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading modal: ash shell, white accordions
+
+- **Context:** Configure Trading looked flat white-on-white in light mode.
+- **Plain English:** The modal chrome is ash gray; each settings accordion stays white so sections read clearly.
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — dialog/header/footer/sidebar `bg-neutral-100`; `ConfigAccordionSection` keeps `bg-white`.
+- **Tests/verification:** Visual in light mode.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading accordion: section descriptions
+
+- **Context:** FAQ-style Configure Trading headers showed titles only; users needed a one-line hint for each menu item.
+- **Plain English:** Each accordion row now shows a short description under the title (e.g. Risk explains lot size and trade style).
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — `description` on `ConfigAccordionSection`. [`configureModal`](src/i18n/locales/configureModal/) — `manualSubTabDescriptions` in types + all locales.
+- **Tests/verification:** Typecheck via locale typing; open Configure Trading and confirm blurbs under each section header.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading modal: FAQ-style accordion sections
+
+- **Context:** Configure Trading felt crowded — horizontal sub-tabs plus a long always-open scroll of Symbols / Instructions / Risk / Targets / Management / Filters / Signal Examples.
+- **Plain English:** Each settings group is now an inline collapsible row (like an FAQ). Click a header to expand or collapse; Signal Examples starts open when you open the modal. Switching channels resets to one open section.
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — `ConfigAccordionSection`, per-section open state, removed top tab strip + intersection spy-scroll.
+- **Tests/verification:** Lint clean on the page file; open Configure Trading → click sections to expand/collapse.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — “Close all trades now” skipped Demo (live snapshot miss)
+
+- **Context:** FOREX KING BACKUP “Close all trades now” (`mgmt_close` signal `70c91aea…`, basket `c2b506fb…` “BTC sell now”). UI: *Did not close your open trade (position not in live snapshot…)*. Fusion Markets closed (ticket `49652718`); Demo left **20 open** BTCUSDm sells.
+- **Plain English:** Close-all worked on Fusion. On Demo it never sent a broker close — it looked at a live-positions list, could not match each stored ticket, and stopped with “awaiting reconciliation” instead of closing. The positions stayed open.
+- **Root cause (technical):** `managementExecutor` required `resolveCurrentLivePosition` success before `OrderClose`. Absent/ambiguous snapshot (`stored ticket has no live position match`) threw `PositionAbsentFromLiveError` → `mgmt_close` **skipped** (no `orderClose`). Early OpenedOrders warm also `.catch(() => [])` and `prepareMgmtLiveOrderSnapshots` skipped re-fetch when a non-empty map already held `[]`.
+- **Fix (files):** [`managementExecutor.ts`](worker/src/tradeExecutor/managementExecutor.ts) — full close proceeds with stored ticket when identity resolve fails; refresh empty OpenedOrders snapshots before close.
+- **Tests/verification:** Unit path review; needs **trade-migration** (and prod trade) worker redeploy, then re-send close-all or use UI Close this trade on Demo basket.
+- **Deploy state:** Code local only — worker redeploy required.
+- **Follow-ups:** Redeploy worker; optional: settle DB when close confirms unknown-ticket after absent snapshot.
+
+### 2026-11-14 — Close trade: “trade service did not answer” on Fusion cTrader
+
+- **Context:** Martins Migration — Close this trade / Close this account on signal `a58de3cb…` (“BTC sell now”) showed *The trade service did not answer* while Demo was Closed and Fusion Markets stayed Open (ticket `49652216`).
+- **Plain English:** The close button was not timing out. Fusion Markets is a **cTrader** account. The close API only allowed MetaTrader providers (MTAPI/FxSocket), so it rejected Fusion with HTTP 400. The UI hid that as a generic “try again.” Demo (MT5) had already closed earlier; Fusion never got a real close attempt through that path.
+- **Root cause (technical):** (1) Edge `force-close-trades` broker-scope gate: `provider !== fxsocket && !== mtapi` → `400 Broker provider is invalid` (edge logs 17:31:50Z). (2) Worker `forceCloseSignalById` / broker-scope selects omitted `ctrader_account_id` (and other non-MT session columns), so even signal-scope close could not resolve a cTrader session and counted the leg as failed/unreachable.
+- **Fix (files):** [`supabase/functions/force-close-trades/index.ts`](supabase/functions/force-close-trades/index.ts) — allow ctrader/binance/bybit/kucoin/dxtrade/tradelocker/matchtrader; provider-aware session check. [`worker/src/forceCloseSignalTrades.ts`](worker/src/forceCloseSignalTrades.ts) — select all provider session ids. [`EditSignalOverrideModal.tsx`](src/components/dashboard/EditSignalOverrideModal.tsx) — map provider/session 400s to `closeNotConnected` instead of `closeRetry`.
+- **Tests/verification:** Edge redeployed Migration `force-close-trades` **v39** and Production **v31** (same sha). Confirm Fusion still open until **trade-migration** / prod trade worker redeploy picks up the select fix, then retry Close this account / Yes close trade.
+- **Deploy state:** Edge Migration ✅ v39; Production ✅ v31. Worker + frontend still need deploy for full close + clearer copy.
+- **Follow-ups:** Redeploy `trade-migration` (and frontend). Confirm edge `TRADE_WORKER_URL` points at `https://trade-migration.up.railway.app` (not listener-only).
+
+### 2026-11-14 — False “Closed on broker” for live BuyLimit (Copier log)
+
+- **Context:** Copier Process showed BTCUSD Closed / “Closed on broker” while the Fusion Markets BuyLimit was still live (Martins Migration, ticket `49652208`, trade `1f08c89e…`, ~14:46 UTC).
+- **Plain English:** A resting limit order was marked closed in our database even though it was still on the broker. The log then said “Closed on broker.” We restored that order to pending and stopped the background sweep from doing this again.
+- **Root cause (technical):** `tradeBrokerDriftMonitor` treats tickets missing from `/OpenedOrders` as ghosts after two passes. Many bridges’ OpenedOrders are positions-only, so a `status=pending` BuyLimit never appears → `missingOnce` → `close_reason=position_gone` with null fill. Row had `lot_size=0` from broker echo `lots=0` on LIMIT accept.
+- **Fix (files):** [`tradeBrokerDrift.ts`](worker/src/tradeBrokerDrift.ts) never plans/closes pending ghosts (open-only CAS); tests in [`tradeBrokerDrift.test.ts`](worker/src/tradeBrokerDrift.test.ts); [`orderLegExecution.ts`](worker/src/tradeExecutor/orderLegExecution.ts) keep requested volume when broker lots≤0. Migration SQL reopened trade `1f08c89e…` → `pending`, lot 3, cleared close fields.
+- **Tests/verification:** `npx tsx --test src/tradeBrokerDrift.test.ts`; trade row reopened on Migration.
+- **Deploy state:** Code local; Migration DB repaired. Worker redeploy needed for drift fix.
+- **Follow-ups:** Redeploy trade worker; optional ClosedOrders corroboration if we later want drift to retire abandoned pendings.
+
+### 2026-11-14 — Resend Parameters / Edit SL/TP runs in background + closable modal
+
+- **Context:** Manage Trades Edit SL/TP stayed on “Sending Order” while the edge function awaited worker OrderModify across every open leg; Escape/X were disabled. Reconciler felt slow (5s/15s ticks).
+- **Plain English:** Saving or resending SL/TP now returns as soon as the override is stored. Broker updates run on the worker in the background; the modal can always be closed. The page shows a banner that apply is running. Basket reconcile ticks faster when there is work.
+- **Root cause (technical):** `signal-override` awaited `callWorkerApply` → `applySignalOverride` (blocking HTTP); modal `actionBusy` disabled dismiss.
+- **Fix (files):** [`supabase/functions/signal-override/index.ts`](supabase/functions/signal-override/index.ts) `EdgeRuntime.waitUntil` kick + immediate `{ queued: true }`; [`worker/src/httpServer.ts`](worker/src/httpServer.ts) background apply + accept response; [`EditSignalOverrideModal.tsx`](src/components/dashboard/EditSignalOverrideModal.tsx) close on save, never lock dismiss; [`SignalHistoryPage.tsx`](src/pages/dashboard/SignalHistoryPage.tsx) + i18n `applyQueued`; [`basketSlTpReconcileMonitor.ts`](worker/src/basketSlTpReconcileMonitor.ts) active 2s / idle 8s defaults.
+- **Tests/verification:** Deploy edge to Migration; worker redeploy needed for async apply + faster reconcile; UI: Resend closes modal immediately with background banner.
+- **Deploy state:** Edge `signal-override` v39 on Migration `supmsgcubipmmowrzoub`. Worker + frontend still need deploy for background accept + faster reconcile ticks + closable UI.
+- **Follow-ups:** Redeploy trade worker (and frontend) wherever Manage Trades is tested.
+
+### 2026-11-14 — Martins prod: open BTC sells have no SL/TP (reconciler idle, not broken)
+
+- **Context:** User asked why SL/TP missing on `martins.osodi@gmail.com` (prod) and what happened to the reconciler.
+- **Plain English:** The open BTC sells never had stop or take-profit levels in the channel message, and this account’s predefined SL/TP pips are turned off. The worker opened the legs with SL=0/TP=0 on purpose. The reconciler did not invent levels — it had no targets and no jobs to run.
+- **Root cause (technical):** Signal `0ee0e1e5…` raw “Lets all Sell BTC now”; `parsed_data.sl=null`, `tp=[]`; OrderSend payloads `stoploss:0`/`takeprofit:0`; `manual_settings.use_predefined_sl_pips=false` / `use_predefined_tp_pips=false`; `basket_reconcile_jobs` and `basket_sl_tp_targets` counts = 0 for this user; post-fill `basket_leg_modify` skipped `no_stops_to_apply`. Same pattern on closed signal `b2d57ea5…`. Older signals with SL/TP in the text did get stops. Account “New Con” `974cd34d…`.
+- **Fix (files):** Diagnosis only this turn — no code change.
+- **Tests/verification:** Prod SQL on user `a23f24d9…`: 15/15 open legs missing SL+TP; 0 reconcile jobs/targets.
+- **Deploy state:** N/A (investigation).
+- **Follow-ups:** Enable predefined SL/TP pips on the account (30 / 20-40-60 already configured but toggles off), or use Edit SL/TP / Resend; optional product rule to refuse market entries with no stops when predefined pips are off.
+
+### 2026-11-14 — Copier Process “Order Skipped” on live fills
+
+- **Context:** Copier Process showed many “Order placement / Skipped” rows with “Completed: sell BTCUSD…” while the sell was live on the broker.
+- **Plain English:** After a successful open, the worker logs per-leg stop housekeeping as skipped when there is nothing to change. The UI treated those as skipped orders and even reused the buy/sell label, so a live fill looked skipped.
+- **Root cause (technical):** `basket_leg_modify` + `no_stops_to_apply`; `resolveTradeActivityKind` preferred signal `sell` over `basket_leg_modify` → kindOrder; message fallthrough used “Completed: sell”.
+- **Fix (files):** [`tradeActivities.ts`](src/lib/tradeActivities.ts) kind order; [`channelWorkerLogMessage.ts`](src/lib/channelWorkerLogMessage.ts) hide `basket_leg_modify`, silence `no_stops_to_apply`, never “Completed” on skipped status.
+- **Tests/verification:** `tradeActivities.test.ts`, `channelWorkerLogMessage.test.ts` for BTCUSD sell + no_stops skip.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Dispatch push timeline noise + short 429/502 retries
+
+- **Context:** Copier Execution Timeline showed many `dispatch push attempt (failed)` rows next to successes; users thought signals were failing often.
+- **Plain English:** Most of those rows were misleading. Every push logged a fake “success” before trying, and real retries on a busy/cold worker used tiny backoffs (tens of ms), so rate-limit/502 attempts stacked in the same second. Production still handed off ~682/686 signals in 7 days; only a handful fully failed (429, Railway 502, timeout) and the DB sweep still picks those up.
+- **Root cause (technical):** `tradeSignalPush` logged `phase=start` with `status=success`; retry sleep was `PUSH_RETRY_BASE_MS * attempt` (~50–100ms) for 429/5xx.
+- **Fix (files):** [`tradeSignalPush.ts`](worker/src/tradeSignalPush.ts) drop start marker; 400–2500ms backoff on 429/5xx/timeout; [`copierLogDetail.ts`](src/lib/copierLogDetail.ts) hide historical start rows + plain-English dispatch summaries.
+- **Tests/verification:** `copierLogDetail.test.ts` dispatch helpers; redeploy worker for logging/backoff; frontend for timeline copy.
+- **Deploy state:** Frontend + worker deploy needed.
+- **Follow-ups:** If 502s cluster, check Railway trade-worker health / cold starts on `tscopier-worker-production`.
+
+### 2026-11-14 — Edit SL/TP Resend Parameters when unchanged
+
+- **Context:** Update Live Trades stayed greyed out when SL/TP matched the current override, so users could not re-push stops that never landed on the broker.
+- **Plain English:** With the same values, the button says “Resend Parameters” and stays clickable; it becomes “Update Live Trades” only after you edit. Resend forces the broker modify even if the database already looks correct.
+- **Fix (files):** [`EditSignalOverrideModal.tsx`](src/components/dashboard/EditSignalOverrideModal.tsx); i18n `resendParameters`; [`signalOverrideApi.ts`](src/lib/signalOverrideApi.ts) `force_apply`; edge [`signal-override`](supabase/functions/signal-override/index.ts); worker [`applySignalOverride.ts`](worker/src/applySignalOverride.ts) + [`httpServer.ts`](worker/src/httpServer.ts).
+- **Tests/verification:** `applySignalOverride.test.ts` forceApply dry-run; open Edit SL/TP with unchanged levels → Resend Parameters enabled; change a level → Update Live Trades.
+- **Deploy state:** Frontend + edge `signal-override` + worker (Migration branch for edge when deploying).
+- **Follow-ups:** Deploy edge + worker for force_apply to take effect in staging/prod.
+
+### 2026-11-14 — Dashboard Open Trades / Open PnL near-realtime
+
+- **Context:** Sidebar showed “N Open” while Dashboard Open Trades / Open PnL stayed at 0; opens did not appear instantly.
+- **Plain English:** The cards now seed and refresh from the same broker open-positions feed as the sidebar, keep prior counts when a poll skips the opens fetch, and re-check within about half a second when trades change in the database.
+- **Root cause (technical):** MTAPI REST poll treated a flat AccountSummary as `open_trades = 0` without fetching OpenedOrders; WS `onAccount` never updated open count; `useDashboardRealtime` quiet path used `syncLive: false`; sidebar counted all `status=open` (incl. pending) vs cards’ market-only rule.
+- **Fix (files):** [`brokerOpenBook.ts`](src/lib/brokerOpenBook.ts) shared market-open book; [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) seed + 40s reconcile + preserve-on-skip + WS/realtime nudge; [`useDashboardRealtime.ts`](src/hooks/useDashboardRealtime.ts) `onTradesChange`; [`useHasOpenTrades.ts`](src/hooks/useHasOpenTrades.ts) + [`tradesSessionCache.ts`](src/lib/tradesSessionCache.ts) market-only badge; [`dashboardLiveOpenMetrics.ts`](src/lib/dashboardLiveOpenMetrics.ts) `resolveOpenCountWhenOpensFetchSkipped`.
+- **Tests/verification:** `brokerOpenBook.test.ts`, `dashboardLiveOpenMetrics.test.ts` skip-fetch cases; with live MT opens, Open Trades / Open PnL and sidebar badge should match within ~1s of open/close.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Copier Engine Active channels exclude non-Telegram sources
+
+- **Context:** TradingView / Discord / WhatsApp rows in `telegram_channels` appeared under Active channels with “Invalid Telegram ID”.
+- **Plain English:** Those sources share one table but aren’t Telegram chats. A couple of refresh paths forgot to filter them, so they showed up and failed the Telegram ID check.
+- **Root cause (technical):** `handleTelegramSessionInvalid` and `fetchTgChannels` reconcile called `setChannels` with all `source_kind`s; ChannelRow always ran `hasValidTelegramChannelIdentity`.
+- **Fix (files):** [`telegramChannelIdentity.ts`](src/lib/telegramChannelIdentity.ts) `isTelegramSourceChannel`; [`CopierEnginePage.tsx`](src/pages/dashboard/CopierEnginePage.tsx) filter on load/session-invalid/fetch/realtime; skip invalid-ID banner for non-Telegram.
+- **Tests/verification:** `telegramChannelIdentity.test.ts` source-kind cases; refresh Copier Engine with TV/Discord/WhatsApp configured — Active channels should be Telegram-only.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
 ### 2026-11-14 — Features section scroll hijack
 
 - **Context:** Sticky scroll-track “hijack” never pinned because `marketing-hero-bg` used `overflow-hidden`; user wanted the page to stop and advance cards.

@@ -75,8 +75,19 @@ type BrokerRow = {
   provider_transition_state?: 'stable' | 'transition' | null
   provider_transition_target?: 'fxsocket' | 'mtapi' | null
   metaapi_account_id?: string | null
+  ctrader_account_id?: string | null
+  binance_account_id?: string | null
+  bybit_account_id?: string | null
+  kucoin_account_id?: string | null
+  dxtrade_account_id?: string | null
+  tradelocker_account_id?: string | null
+  matchtrader_account_id?: string | null
   signal_channel_ids?: string[] | null
 }
+
+/** Columns needed to resolve every provider session for force-close. */
+const BROKER_FORCE_CLOSE_SELECT =
+  'id,user_id,provider,platform,mtapi_session_id,fxsocket_account_id,metaapi_account_id,ctrader_account_id,binance_account_id,bybit_account_id,kucoin_account_id,dxtrade_account_id,tradelocker_account_id,matchtrader_account_id,signal_channel_ids,writer_epoch,provider_transition_state,provider_transition_target'
 
 type ChannelCloseAccum = {
   closed: number
@@ -483,7 +494,7 @@ export async function forceCloseSignalTrades(
 
   const { data: broker, error: brokerErr } = await supabase
     .from('broker_accounts')
-    .select('id,user_id,platform,provider,mtapi_session_id,fxsocket_account_id,metaapi_account_id,signal_channel_ids,writer_epoch,provider_transition_state,provider_transition_target')
+    .select(BROKER_FORCE_CLOSE_SELECT)
     .eq('id', brokerAccountId)
     .eq('user_id', userId)
     .maybeSingle()
@@ -648,7 +659,7 @@ export async function forceCloseSignalById(
 
   const { data: brokerRows, error: brokerRowsErr } = await supabase
     .from('broker_accounts')
-    .select('id,user_id,provider,platform,mtapi_session_id,fxsocket_account_id,metaapi_account_id,writer_epoch,provider_transition_state,provider_transition_target')
+    .select(BROKER_FORCE_CLOSE_SELECT)
     .eq('user_id', userId)
     .in('id', brokerIds)
   if (brokerRowsErr) {
