@@ -6,7 +6,7 @@ import { normalizeOrderResponse, isTransientMtApiError, isOrderOpTimedOutMessage
 import type { BrokerProvider } from './brokerProvider'
 import { ingestMtHistoryRows, type MtHistoryProfile } from './mtTradeFields'
 import { auditOrderClose } from './orderCloseAudit'
-import { createConcurrencyGate } from './perAccountConcurrency'
+import { ConcurrencyBusyError, createConcurrencyGate } from './perAccountConcurrency'
 import { createBrokerGateway, type BrokerGateway, type BrokerPriority } from './brokerGateway'
 import {
   currentEntryReadPriority,
@@ -113,6 +113,10 @@ function isSessionGone(error: unknown): boolean {
 }
 
 const tradeOpGate = createConcurrencyGate()
+/** Cross-account OrderSendSafe lane — many brokers share one MTAPI bridge. */
+const globalOrderGate = createConcurrencyGate()
+const GLOBAL_ORDER_KEY = '__mtapi_global_order__'
+
 /**
  * Legacy OrderModify concurrency. Prefer MT_MODIFY_OP_CONCURRENCY; this remains
  * as a fallback when the modify-specific env is unset.
@@ -121,10 +125,31 @@ function perAccountTradeConcurrency(): number {
   return Math.max(1, Number(process.env.MT_TRADE_OP_CONCURRENCY ?? 1) || 1)
 }
 
+/** Global in-flight OrderSendSafe cap across all accounts (default 6, max 32). */
+export function globalOrderConcurrency(): number {
+  const raw = Number(process.env.MTAPI_GLOBAL_ORDER_CONCURRENCY ?? 6)
+  return Math.max(1, Math.min(32, Number.isFinite(raw) ? raw : 6))
+}
+
+/** Max wait for a global order slot before broker_busy (default 45s, max 60s). */
+export function globalOrderWaitMs(): number {
+  const raw = Number(process.env.MTAPI_GLOBAL_ORDER_WAIT_MS ?? 45_000)
+  return Math.max(500, Math.min(60_000, Number.isFinite(raw) ? raw : 45_000))
+}
+
+/** True when the global order lane is ≥75% utilized or has waiters. */
+export function isMtapiGlobalOrderSaturated(): boolean {
+  const limit = globalOrderConcurrency()
+  const active = globalOrderGate.activeCount(GLOBAL_ORDER_KEY)
+  const waiting = globalOrderGate.waitingCount(GLOBAL_ORDER_KEY)
+  return waiting > 0 || active >= Math.max(1, Math.ceil(limit * 0.75))
+}
+
 /**
  * Multi-leg range entries fan out with Promise.allSettled; without send overlap
- * 34 legs take ~12s at ~350ms RTT. Cap at 6. On throttle we step this session
- * down to 1 for SEND_THROTTLE_STEPDOWN_MS.
+ * 34 legs take ~12s at ~350ms RTT. Cap at 6. On real bridge throttle we step
+ * this session down to 1 for SEND_THROTTLE_STEPDOWN_MS. Mild global saturation
+ * must not force 1 — that queues Gold-lab baskets into BROKER_BUSY storms.
  */
 function perAccountSendConcurrency(sessionId: string): number {
   const stepDownUntil = sendThrottleStepDownUntil.get(sessionId) ?? 0
@@ -522,7 +547,31 @@ export class MtapiProvider implements BrokerProvider {
   }
 
   async orderSend(id: string, args: OrderSendArgs): Promise<OrderResult> {
-    const release = await tradeOpGate.acquire(id, perAccountSendConcurrency(id))
+    const globalLimit = globalOrderConcurrency()
+    const waitBudget = globalOrderWaitMs()
+    const globalStarted = Date.now()
+    let releaseGlobal: (() => void) | null = null
+    try {
+      releaseGlobal = await globalOrderGate.acquireWithDeadline(
+        GLOBAL_ORDER_KEY,
+        globalLimit,
+        waitBudget,
+      )
+    } catch (err) {
+      if (err instanceof ConcurrencyBusyError) {
+        throw new MtapiApiError(
+          'MTAPI OrderSendSafe broker busy',
+          503,
+          'BROKER_BUSY',
+        )
+      }
+      throw err
+    }
+    const globalWaitMs = Date.now() - globalStarted
+    const accountLimit = perAccountSendConcurrency(id)
+    const accountStarted = Date.now()
+    const release = await tradeOpGate.acquire(id, accountLimit)
+    const accountWaitMs = Date.now() - accountStarted
     try {
       const params: Record<string, string | number> = {
         symbol: args.symbol,
@@ -540,7 +589,18 @@ export class MtapiProvider implements BrokerProvider {
       // retry is opt-in (`MTAPI_ORDER_THROTTLE_RETRY=true`) until it is.
       const orderThrottleRetry = env('MTAPI_ORDER_THROTTLE_RETRY') === 'true' ? 'pre_accept' : 'off'
       try {
+        const httpStarted = Date.now()
         const raw = await this.requestWithRetry('OrderSendSafe', params, id, false, orderThrottleRetry)
+        const httpMs = Date.now() - httpStarted
+        if (globalWaitMs >= 250 || accountWaitMs >= 250 || httpMs >= 1_000) {
+          console.warn(
+            `[mtapiProvider] OrderSendSafe id=${id}`
+            + ` global_wait_ms=${globalWaitMs} account_wait_ms=${accountWaitMs}`
+            + ` http_ms=${httpMs} global_active=${globalOrderGate.activeCount(GLOBAL_ORDER_KEY)}`
+            + ` global_waiting=${globalOrderGate.waitingCount(GLOBAL_ORDER_KEY)}`
+            + ` account_limit=${accountLimit}`,
+          )
+        }
         const result = normalizeOrderResponse(raw, { platform: this.platform(id), operation: args.operation })
         if (normalizeMtBrokerTicket(result.ticket) == null) {
           throw new MtapiApiError('OrderSendSafe returned no valid broker ticket', 502, 'INVALID_TICKET')
@@ -552,6 +612,7 @@ export class MtapiProvider implements BrokerProvider {
       }
     } finally {
       release()
+      releaseGlobal?.()
     }
   }
 

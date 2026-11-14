@@ -52,6 +52,7 @@ import { collapseIdenticalImmediateLegs } from './collapseIdenticalImmediateLegs
 import { authorityFromBrokerRow, withBrokerWriteAuthority } from '../brokerWriteAuthority'
 import { writeExecutionLog } from '../observability/executionLog'
 import { normalizeBrokerTradeTicket } from '../brokerTradeTicket'
+import { isMtapiGlobalOrderSaturated } from '../mtapiProvider'
 export { collapseIdenticalImmediateLegs }
 
 /** Normalized broker fill shape shared by the v1 client and the v2 fxClient. */
@@ -454,6 +455,17 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       } catch (err) {
         setPipelineTimestamp(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'broker_response_received_at', Date.now())
         const rawAttemptError = err instanceof Error ? err.message : String(err)
+        // Capacity gate can expire before the bridge is truly down — retry once
+        // in-basket instead of failing the leg as "Broker busy".
+        const brokerBusy = /broker busy|BROKER_BUSY|CONCURRENCY_BUSY|OrderSendSafe broker busy/i.test(rawAttemptError)
+        if (brokerBusy && attempt === 0) {
+          console.warn(
+            `[tradeExecutor] OrderSend broker busy; retrying once signal=${signal.id}`
+            + ` broker=${broker.id} leg=${leg.idx + 1}/${totalCount}`,
+          )
+          await new Promise<void>(r => setTimeout(r, 400))
+          continue
+        }
         lastAttemptError = humanizeOrderSendError(rawAttemptError, sendArgs.symbol)
         const hasStops = (Number(sendArgs.stoploss) || 0) > 0 || (Number(sendArgs.takeprofit) || 0) > 0
         if (isInvalidStopsMessage(rawAttemptError) && hasStops && !wrongSideSl) {
@@ -578,12 +590,16 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
               : reasonCode === 'BROKER_SYMBOL_NOT_FOUND'
                 ? 'trade_copy_blocked'
                 : 'broker_order_rejected',
-            severity: reasonCode === 'BROKER_RATE_LIMITED' ? 'warning' : 'error',
+            severity: reasonCode === 'BROKER_RATE_LIMITED' || reasonCode === 'BROKER_BUSY'
+              ? 'warning'
+              : 'error',
             reasonCode,
             message: reasonCode === 'BROKER_SYMBOL_NOT_FOUND'
               ? `Broker does not offer ${sendArgs.symbol} — symbol not in broker inventory`
-              : 'Broker rejected trade copy order',
-            userImpact: 'failed',
+              : reasonCode === 'BROKER_BUSY'
+                ? 'Broker busy — order deferred to avoid timeout'
+                : 'Broker rejected trade copy order',
+            userImpact: reasonCode === 'BROKER_BUSY' ? 'delayed' : 'failed',
             context: {
               user_id: signal.user_id,
               signal_id: signal.id,
@@ -1038,9 +1054,28 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
     return true
   }
 
-  // All immediates fan out in parallel. Virtual pendings are already
-  // persisted; the worker monitor + edge sweep will fire them on trigger.
-  const sendResults = await Promise.allSettled(sendLegs.map(sendLeg))
+  // Default: fan out in parallel (per-account + global gates still apply).
+  // Opt-in serialize under saturation — off by default after Gold-lab busy storms.
+  const serializeWhenSaturated = String(process.env.MT_SEND_SERIALIZE_WHEN_SATURATED ?? '')
+    .toLowerCase() === 'true'
+  const saturated = serializeWhenSaturated && isMtapiGlobalOrderSaturated()
+  const legGapMs = saturated
+    ? Math.max(0, Math.min(500, Number(process.env.MT_SEND_LEG_GAP_MS ?? 50) || 0))
+    : 0
+  let sendResults: PromiseSettledResult<boolean>[]
+  if (saturated && sendLegs.length > 1) {
+    sendResults = []
+    for (const leg of sendLegs) {
+      try {
+        sendResults.push({ status: 'fulfilled', value: await sendLeg(leg) })
+      } catch (reason) {
+        sendResults.push({ status: 'rejected', reason })
+      }
+      if (legGapMs > 0) await new Promise<void>(r => setTimeout(r, legGapMs))
+    }
+  } else {
+    sendResults = await Promise.allSettled(sendLegs.map(sendLeg))
+  }
 
   let materializedBrokerPendings = materializedVirtuals
   if (deferBrokerRangePendingMaterialize && brokerPendingMode && virtualPendings.length > 0 && api) {
