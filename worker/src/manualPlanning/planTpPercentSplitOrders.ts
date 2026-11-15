@@ -101,8 +101,106 @@ export function planTpPercentSplitOrders(args: PlanTpPercentSplitOrdersArgs): Pl
     fallback_reason: fallbackReason,
   })
 
+  /**
+   * Size one order per Targets % bucket. `tp` may be 0 on teasers (prices attach
+   * on the follow-up); volume split still applies whenever ≥2 buckets survive.
+   */
+  const emitPercentSplit = (
+    buckets: SplitBucket[],
+    emptyLadderFallback: string,
+  ): PlannerResult => {
+    if (buckets.length === 0) {
+      return directOrder(ladder[0] ?? 0, emptyLadderFallback)
+    }
+    if (buckets.length === 1) {
+      return directOrder(
+        buckets[0]!.tp,
+        `${reasonPrefix}_single_bucket_${buckets[0]!.label}`,
+        buckets[0]!.label,
+      )
+    }
+
+    const toUnits = (lots: number): number => Math.floor((lots / lotStep) + 1e-9)
+    const totalUnits = toUnits(manualLot)
+    const minUnits = Math.max(1, toUnits(minLot))
+
+    const planned = buckets.map(b => ({ ...b, units: Math.max(0, toUnits(b.rawLots)) }))
+    const kept: typeof planned = []
+    let rescuedUnits = 0
+    for (const b of planned) {
+      if (b.units > 0 && b.units >= minUnits) kept.push(b)
+      else rescuedUnits += b.units
+    }
+    if (kept.length === 0) {
+      return directOrder(ladder[0] ?? 0, `${reasonPrefix}_all_buckets_below_min_lot`)
+    }
+    if (kept.length === 1) {
+      return directOrder(
+        kept[0]!.tp,
+        `${reasonPrefix}_single_bucket_${kept[0]!.label}`,
+        kept[0]!.label,
+      )
+    }
+
+    const farthest = kept[kept.length - 1]!
+    let floorSum = 0
+    for (const b of kept) floorSum += b.units
+    const remainderUnits = totalUnits - floorSum - rescuedUnits
+    if (remainderUnits < 0) {
+      return directOrder(ladder[0] ?? 0, `${reasonPrefix}_targets_over_100`)
+    }
+    const farthestUnits = farthest.units + rescuedUnits + remainderUnits
+    if (farthestUnits < minUnits) {
+      return directOrder(farthest.tp, `${reasonPrefix}_total_below_min_lot`, farthest.label)
+    }
+
+    const orders: OrderSendArgs[] = []
+    for (const b of kept) {
+      const units = b === farthest ? farthestUnits : b.units
+      if (units < minUnits) continue
+      const volume = Math.round(units * lotStep * 1e8) / 1e8
+      if (!(volume > 0)) continue
+      orders.push({
+        ...orderBase,
+        volume,
+        stoploss: roundPrice(finalSl),
+        takeprofit: roundPrice(b.tp),
+        ...expirationFields,
+        comment: appendOrderCommentSuffix(commentPrefix, `:${b.label.toLowerCase()}`),
+      })
+    }
+
+    if (orders.length === 0) return directOrder(ladder[0] ?? 0, `${reasonPrefix}_zero_orders`)
+    if (orders.length === 1) {
+      return directOrder(ladder[0] ?? orders[0]!.takeprofit, `${reasonPrefix}_single_surviving_leg`)
+    }
+
+    return {
+      orders,
+      ...tail,
+      ...(ladder.length === 0 ? { fallback_reason: `${reasonPrefix}_open_tp_split` } : {}),
+    }
+  }
+
+  // Teaser / bare entry (no TP prices yet): still split by Targets % when the
+  // channel has ≥2 enabled percent rows. Legs open naked; follow-up attaches TPs.
   if (ladder.length === 0) {
-    return directOrder(0, `${reasonPrefix}_open_tp`)
+    const lots = manual.tp_lots ?? []
+    const buckets: SplitBucket[] = []
+    for (let i = 0; i < lots.length; i++) {
+      const row = lots[i]
+      if (!row || row.enabled === false) continue
+      const pct = Number(row.percent)
+      if (!(Number.isFinite(pct) && pct > 0)) continue
+      buckets.push({
+        tpIndex: i,
+        tp: 0,
+        label: String(row.label ?? `TP${i + 1}`),
+        rawLots: (manualLot * Math.min(100, pct)) / 100,
+      })
+    }
+    if (buckets.length < 2) return directOrder(0, `${reasonPrefix}_open_tp`)
+    return emitPercentSplit(buckets, `${reasonPrefix}_open_tp`)
   }
 
   const { bucketRows } = resolveTpBucketRows(ladder, manual.tp_lots ?? null)
@@ -114,65 +212,5 @@ export function planTpPercentSplitOrders(args: PlanTpPercentSplitOrdersArgs): Pl
     buckets.push({ tpIndex: i, tp, label: row.label, rawLots: (manualLot * row.percent) / 100 })
   }
 
-  if (buckets.length === 0) return directOrder(ladder[0]!, `${reasonPrefix}_no_enabled_buckets`)
-  if (buckets.length === 1) {
-    return directOrder(
-      buckets[0]!.tp,
-      `${reasonPrefix}_single_bucket_${buckets[0]!.label}`,
-      buckets[0]!.label,
-    )
-  }
-
-  const toUnits = (lots: number): number => Math.floor((lots / lotStep) + 1e-9)
-  const totalUnits = toUnits(manualLot)
-  const minUnits = Math.max(1, toUnits(minLot))
-
-  const planned = buckets.map(b => ({ ...b, units: Math.max(0, toUnits(b.rawLots)) }))
-  const kept: typeof planned = []
-  let rescuedUnits = 0
-  for (const b of planned) {
-    if (b.units > 0 && b.units >= minUnits) kept.push(b)
-    else rescuedUnits += b.units
-  }
-  if (kept.length === 0) {
-    return directOrder(ladder[0]!, `${reasonPrefix}_all_buckets_below_min_lot`)
-  }
-  if (kept.length === 1) {
-    return directOrder(
-      kept[0]!.tp,
-      `${reasonPrefix}_single_bucket_${kept[0]!.label}`,
-      kept[0]!.label,
-    )
-  }
-
-  const farthest = kept[kept.length - 1]!
-  let floorSum = 0
-  for (const b of kept) floorSum += b.units
-  const remainderUnits = totalUnits - floorSum - rescuedUnits
-  if (remainderUnits < 0) return directOrder(ladder[0]!, `${reasonPrefix}_targets_over_100`)
-  const farthestUnits = farthest.units + rescuedUnits + remainderUnits
-  if (farthestUnits < minUnits) {
-    return directOrder(farthest.tp, `${reasonPrefix}_total_below_min_lot`, farthest.label)
-  }
-
-  const orders: OrderSendArgs[] = []
-  for (const b of kept) {
-    const units = b === farthest ? farthestUnits : b.units
-    if (units < minUnits) continue
-    const volume = Math.round(units * lotStep * 1e8) / 1e8
-    if (!(volume > 0)) continue
-    orders.push({
-      ...orderBase,
-      volume,
-      stoploss: roundPrice(finalSl),
-      takeprofit: roundPrice(b.tp),
-      ...expirationFields,
-      comment: appendOrderCommentSuffix(commentPrefix, `:${b.label.toLowerCase()}`),
-    })
-  }
-
-  if (orders.length === 0) return directOrder(ladder[0]!, `${reasonPrefix}_zero_orders`)
-  if (orders.length === 1) return directOrder(ladder[0]!, `${reasonPrefix}_single_surviving_leg`)
-
-  return { orders, ...tail }
+  return emitPercentSplit(buckets, `${reasonPrefix}_no_enabled_buckets`)
 }

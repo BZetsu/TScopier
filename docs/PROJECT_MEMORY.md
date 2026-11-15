@@ -2,6 +2,26 @@
 
 ## Changelog
 
+### 2026-11-15 — Single teaser: split lots by Targets % before TP prices arrive
+
+- **Context:** Bare “buy now” teasers on Single Entry opened one full-lot trade; lots only split when the follow-up brought TP/SL prices.
+- **Plain English:** If Targets % has two or more enabled rows (e.g. 50/30/20), Single opens those sized legs immediately on the teaser (naked TPs). The later TP/SL message fills in the prices.
+- **Root cause (technical):** [`planTpPercentSplitOrders.ts`](worker/src/manualPlanning/planTpPercentSplitOrders.ts) returned one full-lot `_open_tp` when `finalTps` was empty.
+- **Fix (files):** Empty-ladder path builds buckets from enabled `tp_lots` and emits the percent split with `takeprofit: 0` (`*_open_tp_split`).
+- **Tests/verification:** `manualPlanner.test.ts` teaser 3.0 → 1.5/0.9/0.6 naked; single-row teaser stays 1×full.
+- **Deploy state:** Worker local — redeploy for live teasers.
+- **Follow-ups:** Deploy trade worker.
+
+### 2026-11-15 — Range/Multi merge refresh froze survivor TPs (FOREX KING Demo)
+
+- **Context:** FOREX KING BACKUP → Demo BTC buy `7f546323…` opened 20 legs; after TP follow-up (65400/65800/66100) and TP1 hits, survivors were rewritten to **65400 only**.
+- **Plain English:** When some take-profits filled, the remaining trades should have kept TP2/TP3. Merge/refresh was rebuilding Range targets without the freeze gate, so survivors got shoved onto TP1. Management modify could also pin multi-leg baskets to the first TP if it read account Single instead of channel Multi/Range.
+- **Root cause (technical):** [`slTpRefresh.ts`](worker/src/tradeExecutor/basketMerge/slTpRefresh.ts) skipped TP-hit freeze when `range_trading === true`; [`managementModifyBaskets.ts`](worker/src/managementModifyBaskets.ts) used account `manual_settings` + `parsedTpLevels[0]` for non-multi baskets.
+- **Fix (files):** Apply `preserveOpenLegTakeProfits` after TP hit for Range and Multi in slTpRefresh; resolve per-channel manual settings; distribute TPs for any multi-leg basket instead of pinning to TP1.
+- **Tests/verification:** `rangeBasketTpSync.test.ts` closed-leg freeze + preserve survivors regression.
+- **Deploy state:** Worker local — redeploy required.
+- **Follow-ups:** Deploy trade worker. Demo FOREX KING channel config currently shows `trade_style=single` / `range_trading=false` (verify Configure if Range is intended).
+
 ### 2026-11-15 — Reconciler smashed Single percent-split TPs to farthest
 
 - **Context:** Migration BTC sell `1a11e460…` opened correctly as 65400/65200/65000 (50/30/20), then ~90s later Demo legs were all `basket_leg_modify`’d to `target_tp: 65000`.

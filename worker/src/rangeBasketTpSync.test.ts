@@ -402,6 +402,37 @@ test('resolveRangeTpRebalanceGate: sticky TP touch freezes even under forceLayer
   assert.equal(gate.reason, 'tp_touched')
 })
 
+test('resolveRangeTpRebalanceGate: closed basket leg freezes open TPs (FOREX KING survivor case)', () => {
+  // After TP1 legs close, remaining open legs must keep TP2/TP3 — not be
+  // count-weighted back onto TP1 (65400) like Demo signal 7f546323.
+  const gate = resolveRangeTpRebalanceGate({
+    activePendingCount: 0,
+    maxPendingStepIdx: 0,
+    phase: 'instant_only',
+    forceLayeringRebalance: false,
+    hasClosedBasketLegs: true,
+    tpTouched: false,
+  })
+  assert.equal(gate.mode, 'backfill_only')
+  assert.equal(gate.allowOpenLegTpModify, false)
+  assert.equal(gate.reason, 'basket_leg_closed')
+})
+
+test('preserveOpenLegTakeProfits: survivors keep 65800/66100 when redistrib wants 65400', () => {
+  const legs = [
+    { tp: 65800 },
+    { tp: 66100 },
+    { tp: 65800 },
+  ] as Array<{ tp: number }>
+  const redistributed = [
+    { stoploss: 65130, takeprofit: 65400 },
+    { stoploss: 65130, takeprofit: 65400 },
+    { stoploss: 65130, takeprofit: 65400 },
+  ]
+  const out = preserveOpenLegTakeProfits(legs as never, redistributed)
+  assert.deepEqual(out.map(t => t.takeprofit), [65800, 66100, 65800])
+})
+
 test('resolveRangeTpRebalanceGate: redistributes while layering before any TP hit', () => {
   const gate = resolveRangeTpRebalanceGate({
     activePendingCount: 5,
