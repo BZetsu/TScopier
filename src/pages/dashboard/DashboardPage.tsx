@@ -1353,6 +1353,12 @@ export function DashboardPage() {
     return accountCount
   }, [linkedAccounts, linkedAccountBalances, effectiveChartTrades, stats.openTrades, mtTrades])
 
+  const activeSourceKinds = useMemo(() => {
+    const present = new Set(Object.values(channelSourceKinds))
+    const order: SignalSourceKind[] = ['telegram', 'discord', 'whatsapp', 'tradingview']
+    return order.filter(kind => present.has(kind))
+  }, [channelSourceKinds])
+
   const openPnlSub = useMemo(() => {
     if (openPnlAccountCount === 0) return t.dashboard.openPnlNoOpen
     if (openPnlAccountCount === 1) return t.dashboard.openPnlAcrossOneAccount
@@ -3172,21 +3178,29 @@ export function DashboardPage() {
       <div className={`${DASHBOARD_CARD} grid grid-cols-2 divide-x divide-y divide-neutral-100/90 dark:divide-white/8 lg:grid-cols-4 lg:divide-y-0`}>
           <OverviewStat
             label={t.dashboard.activeSignalChannels}
-            value={String(stats.activeChannels)}
+            value={String(activeSourceKinds.length)}
+            valueAddon={
+              activeSourceKinds.length > 0 ? (
+                <CopierDestinationLogos
+                  icons={activeSourceKinds.map(kind => SIGNAL_SOURCE_MARKS[kind].iconSrc)}
+                  sizeClassName="h-5 w-5"
+                />
+              ) : undefined
+            }
             addTo="/channels"
             addLabel={t.dashboard.manageChannels}
-          />
-          <OverviewStat
-            label={t.dashboard.openTrades}
-            value={String(stats.openTrades)}
-            addTo="/manage-signals"
-            addLabel={t.dashboard.manageTrades}
           />
           <OverviewStat
             label={t.dashboard.tradingAccountsConnected}
             value={String(stats.accounts)}
             addTo="/brokers"
             addLabel={t.dashboard.addOrManageAccounts}
+          />
+          <OverviewStat
+            label={t.dashboard.openTrades}
+            value={String(stats.openTrades)}
+            addTo="/manage-signals"
+            addLabel={t.dashboard.manageTrades}
           />
           <OverviewStat
             label={t.dashboard.tradesCopiedToday}
@@ -3612,6 +3626,7 @@ function StatBlock({ label, labelHint, value, sub, subColor, valueColor = 'text-
 function OverviewStat({
   label,
   value,
+  valueAddon,
   sub,
   addTo,
   onAdd,
@@ -3619,6 +3634,8 @@ function OverviewStat({
 }: {
   label: string
   value: string
+  /** Overlapping logos (or similar) shown beside the value. */
+  valueAddon?: ReactNode
   sub?: string
   addTo?: string
   onAdd?: () => void
@@ -3629,7 +3646,10 @@ function OverviewStat({
   return (
     <div className="px-4 py-4 sm:px-5">
       <p className={APP_SECTION_LABEL}>{label}</p>
-      <p className="mt-2 text-xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50">{value}</p>
+      <div className="mt-2 flex min-w-0 items-center gap-2">
+        {valueAddon}
+        <p className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50">{value}</p>
+      </div>
       {onAdd ? (
         <button type="button" onClick={onAdd} className={actionClass}>
           {addLabel ?? `Add ${label}`}

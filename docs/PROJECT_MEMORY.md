@@ -2,6 +2,14 @@
 
 ## Changelog
 
+### 2026-11-15 — Dashboard: Active Signal Sources + stacked logos
+
+- **Context:** Overview stat still said “Active Signal Channels” with a bare count; first pass showed channel count (e.g. 3) next to unique platform logos (e.g. 2).
+- **Plain English:** The card is **Active Signal Sources**: overlapping platform logos plus a matching count of connected platforms (Telegram / Discord / WhatsApp / TradingView), not total channel rows.
+- **Fix (files):** [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) OverviewStat `valueAddon` + `activeSourceKinds.length`; i18n label updates in en/fr/es + dashboard locale packs.
+- **Deploy state:** Frontend only.
+- **Follow-ups:** None.
+
 ### 2026-11-15 — Configure with AI: fix “no input” after Load from channel
 
 - **Context:** On production, after loading UPDATE/ENTRY samples the model replied that the user provided no input.
