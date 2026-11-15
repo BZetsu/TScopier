@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-15 — Multi-leg strict entry pendings: unique index blocked TP2/TP3
+
+- **Context:** After placing percent-split SellLimits, Migration Demo `e24fb8b3` only kept **one** pending (2.5 lots TP1). BTCUSD market path opened 2–3 legs.
+- **Plain English:** Waiting for entry price could only store one pending order per signal. The 2nd and 3rd TP shares were rejected by the database and cancelled on the broker.
+- **Root cause (technical):** Unique index `signal_entry_pending_orders_active_unique` on `(signal_id, broker_account_id) WHERE status=broker_pending`.
+- **Fix (files):** Migration `20261115162000_signal_entry_pending_multi_leg_unique.sql` → unique on `(signal_id, broker_account_id, broker_ticket)`; log SEP insert failures in `strictEntryPending.ts`. Applied on Migration `supmsgcubipmmowrzoub`.
+- **Tests/verification:** Index verified on Migration; worker redeploy still required for the multi-pending placer.
+- **Deploy state:** Migration DB updated; worker local.
+- **Follow-ups:** Redeploy worker; re-send signal or manually add missing Demo TP2/TP3 pendings for `e24fb8b3`.
+
 ### 2026-11-15 — Single + Use Signal Entry Price: split limit pendings by TP %
 
 - **Context:** With Use Signal Entry Price (First/Last Price), when live price was away from entry the worker deferred to one SellLimit/BuyLimit for the **full lot** (`:strictEntryAgg`) instead of one pending per Targets % leg. Seen on Migration `4c92e903` (Demo 5.0 SellLimit @ 64950).

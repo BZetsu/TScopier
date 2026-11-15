@@ -138,6 +138,23 @@ async function placeOneStrictPending(args: PlaceOnePendingArgs): Promise<boolean
       console.error(
         `[tradeExecutor] signal_entry_pending_orders INSERT failed signal=${signal.id} broker=${broker.id}: ${sepErr.message}`,
       )
+      await writeExecutionLog(ctx.supabase, {
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        broker_account_id: broker.id,
+        action: 'signal_entry_pending_failed',
+        status: 'failed',
+        request_payload: {
+          operation: pendingOp,
+          entry_price: entryPx,
+          volume,
+          takeprofit: pendingTp,
+          ticket,
+          trade_id: tradeId,
+          symbol,
+        } as unknown as Record<string, unknown>,
+        error_message: sepErr.message,
+      }).catch(() => {})
       await ctx.supabase.from('trades').delete().eq('id', tradeId)
       try {
         await api.orderClose(uuid, { ticket })
