@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-15 — Pending/mgmt: stop farthest-TP backfill on percent-split legs
+
+- **Context:** User reported reconciler still pinning Pending Order trades to farthest TP on Migration.
+- **Plain English:** Demo Use-Signal-Entry pendings that placed after the multi-leg fix already had the right TPs (64200/64000/63900). The old smash was on **open** Demo legs (`1a11e460` → all 65000). A separate bug: channel SL/TP apply could still fill a naked pending with the **deepest** ladder TP because management rows lacked `next_tp_index`.
+- **Root cause (technical):** (1) Migration trade worker still needs redeploy for `shouldApplySingleTakeProfitTarget → false`. (2) `channelStopApply` freeze/naked path used `frozenDeepestTp`; `MGMT_TRADE_SELECT` omitted `next_tp_index`.
+- **Fix (files):** Load `next_tp_index` in [`managementScope.ts`](worker/src/managementScope.ts); percent-split identity/reladder (no deepest) in [`channelStopApply.ts`](worker/src/channelStopApply.ts).
+- **Tests/verification:** Migration SQL: `70c8bc9b` Demo pending place/fill kept distinct TPs; `1a11e460` Demo closed all at 65000 (pre-fix smash).
+- **Deploy state:** Worker local — redeploy trade-migration for live effect.
+- **Follow-ups:** Redeploy worker.
+
 ### 2026-11-15 — Configure/Assistant AI: answer questions, no “confusion” stalls
 
 - **Context:** Users asking clear how-tos (e.g. close trades when the signal post is deleted) got a vague “there might be some confusion… share specific requests” brush-off.
