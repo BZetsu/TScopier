@@ -8,7 +8,6 @@ import type { FxsocketBrokerClient, OrderSendArgs } from './fxsocketClient'
 import type { MergeModifySummary, PerLegStopTarget } from './multiTradeMerge'
 import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistribution'
 import { bundleSteadyLegTps } from './manualPlanning/tpBundleIdentity'
-import { isTpBundleEnabled } from './manualPlanning/tpBundleRollout'
 import type { ManualTpLot } from './manualPlanning/types'
 import { resolveChosenTakeProfit } from './manualPlanning/partialTpSchedule'
 import { filterPlausibleInstrumentPrices } from './tradableSymbol'
@@ -366,14 +365,10 @@ export async function runBasketLegModifies(args: {
     })
     : 0
   let perLegTargets: PerLegStopTarget[]
-  if (
-    args.bundleIdentity === true
-    && isTpBundleEnabled()
-    && rawTargets.length < familyTrades.length
-  ) {
-    // Bundled basket with short/lost targets: steady state — legs keep their
-    // own TP, naked legs backfill positionally from the ladder (never
-    // count-weighted, which would collapse the ladder onto TP1/TP2) (D3).
+  if (args.bundleIdentity === true) {
+    // Percent-split Single + bundled multi: keep each leg's own TP; naked legs
+    // backfill from the ladder. Never pin to single_tp_target / farthest, and
+    // never count-weight (that collapses distinct TPs onto one level).
     const sl = rawTargets[0]?.stoploss ?? 0
     const ladder = parsedTps.length
       ? parsedTps
@@ -382,10 +377,25 @@ export async function runBasketLegModifies(args: {
       currentTps: familyTrades.map(tr => tr.tp),
       ladder,
     })
-    perLegTargets = familyTrades.map((_, i) => ({
-      stoploss: sl,
-      takeprofit: tps[i] ?? 0,
-    }))
+    // Prefer caller-provided per-leg targets when they already cover every open
+    // leg (fresh reconcile); otherwise rebuild from current TPs + ladder.
+    if (rawTargets.length >= familyTrades.length) {
+      perLegTargets = familyTrades.map((_, i) => {
+        const fromRaw = rawTargets[i]
+        const steady = tps[i] ?? 0
+        const rawTp = Number(fromRaw?.takeprofit) || 0
+        return {
+          stoploss: Number(fromRaw?.stoploss) || sl,
+          // Prefer a positive raw target; fall back to steady identity.
+          takeprofit: rawTp > 0 ? rawTp : steady,
+        }
+      })
+    } else {
+      perLegTargets = familyTrades.map((_, i) => ({
+        stoploss: sl,
+        takeprofit: tps[i] ?? 0,
+      }))
+    }
   } else {
     perLegTargets = expandPerLegTargetsToCount({
       targets: rawTargets,
@@ -1146,11 +1156,7 @@ export async function upsertBasketReconcileJob(
   )
   const parsedTps = (args.signalTps ?? []).filter(t => typeof t === 'number' && Number.isFinite(t) && t > 0)
   let baseTargets = args.perLegTargets
-  if (
-    args.bundleIdentity === true
-    && isTpBundleEnabled()
-    && baseTargets.length < args.familyTrades.length
-  ) {
+  if (args.bundleIdentity === true && baseTargets.length < args.familyTrades.length) {
     const ladder = parsedTps.length
       ? parsedTps
       : baseTargets.map(t => t.takeprofit).filter(tp => typeof tp === 'number' && tp > 0)
