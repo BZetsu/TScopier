@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-11-15 (database verification) — staging index migration confirmed; the 16-row registration block landed on staging instead of production
+
+- **Verified read-only:** staging now has `signal_entry_pending_orders_active_ticket_unique` and the `20261115162000` row ✓. Production has the same index plus its registration to the `20261115162000` row (and a duplicate-name row `20261115162234` created by the dev account, which is harmless).
+- **Mis-target:** the 16-row registration block for the support/source migrations was executed on **staging**, where those objects do **not** exist — staging's `schema_migrations` now claims 16 versions that were never applied. Production still has **0** of those 16 rows.
+- **Correct fix:** apply the 16 migration files to **staging** (the objects are genuinely needed there, and the existing rows then become truthful), and run the same registration block on **production** (where the objects already exist). Alternative: delete the 16 staging rows first if a later CLI apply should register them itself.
+- **Deploy state:** this note plus the checklist rewrite are pushed to `upstream/staging` and `bzetu/staging` on the owner's instruction.
+
 ### 2026-11-15 (seventh pull) — PRs #231–#232 merged into staging (strict-entry pendings, configure-with-AI answers); new index migration state recorded
 
 - **Context:** two more production PRs landed while the test repairs were being finished: **#231** — strict entry creates a separate pending order per TP share; **#232** — configure/assistant AI answers questions (no "confusion" stalls) and the multi-leg pending unique index was corrected (TP2/TP3 were blocked by the old index).

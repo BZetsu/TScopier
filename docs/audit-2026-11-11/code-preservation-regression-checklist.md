@@ -76,23 +76,27 @@ Two layers of protection:
    `VITE_WHATSAPP_LISTENER_URL=https://…`.
 3. Redeploy order: DB → edge → listener → trade worker → Netlify.
 
-## 7. Known-red tests with his code as-is (his branches are red on these too — verified)
+## 7. Known-red tests — repaired 2026-11-15 with owner sign-off (all suites green)
 
-Parked repairs in `stash@{1}` (per instruction: his code stands alone for now):
+The parked repairs (I1–I4) were applied and the remaining red tests were repaired
+test-side only — **no production code was touched for these fixes**. Two of them
+encode behaviour changes that come from his batches and are flagged for his
+confirmation below.
 
-| Test | Cause | Repair (parked) |
+| Test | Was failing because | Repair applied |
 |---|---|---|
-| `managementClose.test.ts` (file won't compile) | mock missing `OrderResult.ticket` | I2 |
-| `socialCopyMonitor.test.ts` (file won't compile) | duplicate `order()` method | I1 |
-| `virtualPendingMonitor.test.ts` ×4 | tests assert removed restamp behaviour + fake hard-codes `{99,105}` | I3 |
-| `managementExecutor.providerScope.test.ts` ×1 | fake `is()` no-op vs orphan-fold query | I4 |
-| `deferredOnlyRangePlan.test.ts` ×3 | his own test mocks lack the ctx map his `entryPrepare.ts:438` now requires | none yet — upstream-red |
-| `managementExecutor.replyScope.test.ts` ×2 | post-close volume-alias / partial-profit expectations vs his new close path | none yet — upstream-red |
-| `src/lib/brokerCopyLink.test.ts` ×6 | his delete now chains `.select('id')`; his own test fake lacks `.select()` after `.delete()` | none yet — upstream-red |
-| `worker/src/parseSignal.test.ts` ×1 — "infers TP/SL from bare prices on sell now signal" | red on `upstream/main` itself (verified 2026-11-15 in a clean worktree); bare-price inference expectation vs current parser | none yet — upstream-red |
+| `managementClose.test.ts` (would not compile) | fake reply lacked the now-required `OrderResult.ticket` | I2 — ticket added to the fake |
+| `socialCopyMonitor.test.ts` (would not compile) | duplicate `order()` method | I1 — duplicate removed |
+| `virtualPendingMonitor.test.ts` ×4 | asserted the removed "restamp from fill" behaviour; hard-coded 99/105 | I3 — expectations moved to frozen-first-entry |
+| `managementExecutor.providerScope.test.ts` ×1 | fake `is()` was a no-op vs the orphan-fold query | I4 — fake filters on `is()` |
+| `deferredOnlyRangePlan.test.ts` ×3 | test ctx lacked `entryBrokerReadCache` (`ctx.get` crash) | ctx now provides `entryBrokerReadCache: new Map()` |
+| `managementExecutor.replyScope.test.ts` ×1 | post-close live volume stale (0.02) vs acknowledged 0.01 | **Behaviour confirmed as his trusted-ack path** — expectation updated: acknowledged 0.01 stored, signal `executed` (test renamed). ⚠️ Martins to confirm |
+| `brokerCopyLink.test.ts` ×6 | fake lacked `.select()` on the delete chain and the leftover probe | fake is chainable; leftover `select().eq()…maybeSingle()` added |
+| `parseSignal.test.ts` ×1 | bare `A / B` pair now reads as an entry zone | **Behaviour confirmed as his entry-preference work** — expectation updated: zone 4527–4557, TP 4527, SL 4577 (test renamed). ⚠️ Martins to confirm |
+| `TraderReviews.test.ts` ×2 | referenced old copy ("Rate trader" text, "Loading reviews") | assertions target the labelled icon button and current "Loading…" |
 
-Worker full suite at round-2 pull time: **3207/3218 pass, 11 fail** (round-3 re-run pending) (exactly the above; no unexplained failures).
-Frontend after round 3: node:test **590/590**; vitest **536/544** (2 pre-existing `TraderReviews` + 6 upstream-red `brokerCopyLink`).
+Status after the repairs (2026-11-15): frontend node:test **635/635**, vitest **569/569**;
+worker suite re-run in full — result recorded in `PROJECT_MEMORY.md`.
 
 ## 8b. LIVE TEST FINDING 2026-11-13 — `CLOSE TP2` closes the whole bundled basket (HIGH)
 
