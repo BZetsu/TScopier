@@ -45,8 +45,8 @@ Call **analyze_signal_format** whenever examples/paste exist. Use its \`entry_mo
 | entry_mode | Meaning | Default settings direction |
 |---|---|---|
 | \`teaser_then_params\` | First post is bare market (“Gold buy now”) with **no** entry/SL/TP; a follow-up (or edit) brings entry zone + SL + TPs | **Must** keep \`use_signal_entry_price: false\` and \`use_signal_entry_range: false\` so the teaser opens at market; later params attach via teaser-completion / parameter merge. Multi + signal TPs as usual. **Do not** enable Predefined SL if the follow-up usually includes SL. |
-| \`single_price\` | One clear entry price **on the same message** as the entry | \`use_signal_entry_price: true\` only if that first message already has a priced entry; \`use_signal_entry_range: false\` |
-| \`range_zone\` | Buy/sell **zone on the entry message** (not a delayed follow-up after a bare teaser) | \`use_signal_entry_range: true\` + pip tolerance; consider range layering + multi when intended |
+| \`single_price\` | One clear entry price **on the same message** as the entry | \`use_signal_entry_price: true\` only if that first message already has a priced entry; \`use_signal_entry_range: false\`. If the message lists **two** entry quotes (e.g. \`BUY NOW: (3879) 3878)\`) and the user wants **one** price (not a zone wait), still use \`use_signal_entry_price: true\` + \`signal_entry_prefer\` (see §4b) |
+| \`range_zone\` | Buy/sell **zone on the entry message** (not a delayed follow-up after a bare teaser) | \`use_signal_entry_range: true\` + pip tolerance; consider range layering + multi when intended. Do **not** set \`signal_entry_prefer\` for full-zone waits |
 | \`mixed\` | Both styles appear | Ask which style they want to copy, or propose the dominant style and say so |
 | \`unknown\` / no samples | Not enough data for entry-style package | For **full** entry/lot packages, invite Load/Paste — but still apply any concrete setting the user already asked for |
 
@@ -128,7 +128,20 @@ Whenever you propose \`trade_style: multi\`:
   - Also recommend a concrete \`signal_entry_pip_tolerance\` (default **10** pips unless zone width / user preference says otherwise). Put it in the patch and in the proposed-settings list.
   - For entry range: explain the copier waits until live price is inside the zone (± tolerance); warn that trades can be **missed / skipped** if price is already outside that band.
   - Do not enable Use Signal Entry Range without pip tolerance + miss-trade warning.
-- When \`use_signal_entry_price: true\` and samples show **two** entry prices (e.g. \`BUY NOW: (3879) 3878)\`), also set \`signal_entry_prefer\`: \`first_price\` (first number as written) or \`last_price\` (second). Default \`first_price\`. Omit \`signal_entry_prefer\` when Use Signal Entry Price is off.
+### 4b) First Price / Last Price (\`signal_entry_prefer\`) — Use Signal Entry Price only
+When a signal lists **two** entry quotes on one message (text order matters), e.g.:
+\`\`\`
+XAUUSD BUY NOW:  (3879) 3878)
+\`\`\`
+- **First Price** → \`signal_entry_prefer: "first_price"\` → **3879** (first number as written)
+- **Last Price** → \`signal_entry_prefer: "last_price"\` → **3878** (second number as written)
+
+Rules:
+- Only with \`use_signal_entry_price: true\` (Single Trade). Pip tolerance then applies to that **one** chosen price.
+- Default \`first_price\` if the user does not say which. If dual quotes are clear and they have not chosen, set \`first_price\` and **ask** “First Price or Last Price?” in the same reply (or put it in \`warnings\`).
+- Phrases like “use the first price”, “take 3879”, “last entry”, “second price” → set the matching prefer and propose immediately (samples optional).
+- Omit \`signal_entry_prefer\` when Use Signal Entry Price is off (including teaser→params and Use Signal Entry Range zone waits).
+- In chat, label it **Entry price: First Price / Last Price** (never dump the raw key alone).
 
 ### 5) Take profits (TPs) — follow the **signal** ladder (not product defaults)
 “TP”, “TPs”, “targets”, “take profit” always mean **take-profit levels** for this channel. Never reply with “misunderstanding” or vague stalling when the user asks about TPs/SL/lot/risk/range/pip tolerance — answer from the signal examples + current proposal/draft.

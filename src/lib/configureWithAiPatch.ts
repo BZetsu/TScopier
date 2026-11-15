@@ -80,6 +80,9 @@ export function summarizeConfigureAiPatch(patch: Record<string, unknown>): strin
   if (patch.range_trading === true) parts.push('range on')
   if (patch.range_trading === false) parts.push('range off')
   if (patch.trailing_enabled === true) parts.push('trailing on')
+  if (patch.use_signal_entry_price === true) parts.push('signal entry price on')
+  if (patch.signal_entry_prefer === 'last_price') parts.push('entry Last Price')
+  else if (patch.signal_entry_prefer === 'first_price') parts.push('entry First Price')
   if (parts.length === 0) {
     const keys = Object.keys(patch)
     return keys.length ? keys.slice(0, 6).join(', ') : 'settings'

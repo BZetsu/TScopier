@@ -2,14 +2,22 @@
 
 ## Changelog
 
+### 2026-11-15 — Configure with AI: First / Last entry price
+
+- **Context:** Configure with AI needed to know about `signal_entry_prefer` (First/Last under Use Signal Entry Price).
+- **Plain English:** The AI can propose Entry price: First Price or Last Price when a signal lists two entry quotes, and Apply writes that into the form.
+- **Fix (files):** Knowledge §4b; analyze `dual_entry_quotes` + suggested prefer; propose auto-default + warning; tool/prompt/summary allowlist already included `signal_entry_prefer`.
+- **Deploy state:** `configure-with-ai` → Migration `supmsgcubipmmowrzoub` and production `sxkpcovbyaficvtkpsdo`.
+- **Follow-ups:** Frontend/worker still need deploy for the Configure UI + execution path.
+
 ### 2026-11-15 — Use Signal Entry Price: First / Last Price
 
 - **Context:** Signals often list two entry quotes (e.g. `BUY NOW: (3879) 3878)`); users need to pick one price for strict entry.
 - **Plain English:** Under Use Signal Entry Price (before Pip Tolerance) you can choose **First Price** or **Last Price** — the first or last number as written in the signal.
 - **Fix (files):** `signal_entry_prefer` on ManualSettings + config UI/i18n/summary; parse stores `entry_zone_first`/`entry_zone_last` (paren + slash forms); planner collapses via `resolvePreferredSignalEntryPrice`; Configure with AI allowlist/knowledge.
 - **Tests/verification:** `parseSignal.entryPrefer.test.ts`, `parsedEntry.test.ts`, normalize prefer default.
-- **Deploy state:** Frontend + worker local; edge knowledge/tools need Migration deploy for Configure with AI.
-- **Follow-ups:** Deploy worker + optional Migration edge for AI; no DB migration.
+- **Deploy state:** Frontend + worker local; Configure with AI edge updated on Migration (see entry above).
+- **Follow-ups:** Deploy worker; promote edge to production when ready.
 
 ### 2026-11-15 — Multi basket: freeze survivor TPs after TP hit
 
