@@ -222,6 +222,11 @@ export const configureModalSv: ConfigureModalTranslations = {
     signalEntryTitle: 'Utförande av signalinmatning',
     signalEntryBody: 'Använd signalinträdespris gäller endast i Single Trade-läge. När den är aktiverad måste signalen inkludera en explicit tolkad post (pris, zon, @pris eller etiketter som "Entry Price:"). Efter någon kanalfördröjning jämför arbetaren livecitatet med det inlägget: Köp fyllningar på marknaden endast när fråga är vid eller under posten; annars sätter det en köpgräns vid ingången. Sälja är det omvända. Mäklarens take-profit mål den senast analyserade TP när du har flera mål, med valfria partiella stängningar från din TP stege. Kopiator spårar varje strängt inträde som väntar så fyller synkroniseras med din handelslista; väntan avbryts när korgen är platt. Bara "köp nu" meddelanden utan inmatning hoppas över.',
     useSignalEntryPrice: 'Använd Signal Entry Price',
+    signalEntryPrefer: 'Inträdespris',
+    signalEntryPreferHint:
+      'När signalen listar två inträdespriser (ett intervall), välj det första eller sista priset som det skrivs. Piptolerans gäller sedan det valda priset.',
+    signalEntryPreferFirst: 'Första priset',
+    signalEntryPreferLast: 'Sista priset',
     pipToleranceLegacy: 'Piptolerans (legacy)',
     pipToleranceHint: 'Oanvänd för strikt inträdesdirigering; sparas för bakåtkompatibilitet med sparade inställningar.',
     multiIntro: 'Range Trading delar upp din fasta lott i många mindre order (t.ex. 1,0 lot @ 5%/leg = 20 trades på 0,05). Benen är fördelade över signalens TP:er med hjälp av procentraderna nedan. Om storleken per ben faller under mäklarens symbolminimum, faller planeraren tillbaka till en enda fullstor handel och loggar orsaken.',

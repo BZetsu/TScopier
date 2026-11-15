@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### 2026-11-15 — Use Signal Entry Price: First / Last Price
+
+- **Context:** Signals often list two entry quotes (e.g. `BUY NOW: (3879) 3878)`); users need to pick one price for strict entry.
+- **Plain English:** Under Use Signal Entry Price (before Pip Tolerance) you can choose **First Price** or **Last Price** — the first or last number as written in the signal.
+- **Fix (files):** `signal_entry_prefer` on ManualSettings + config UI/i18n/summary; parse stores `entry_zone_first`/`entry_zone_last` (paren + slash forms); planner collapses via `resolvePreferredSignalEntryPrice`; Configure with AI allowlist/knowledge.
+- **Tests/verification:** `parseSignal.entryPrefer.test.ts`, `parsedEntry.test.ts`, normalize prefer default.
+- **Deploy state:** Frontend + worker local; edge knowledge/tools need Migration deploy for Configure with AI.
+- **Follow-ups:** Deploy worker + optional Migration edge for AI; no DB migration.
+
 ### 2026-11-15 — Multi basket: freeze survivor TPs after TP hit
 
 - **Context:** After TP1 closed, remaining open legs had their take-profits rewritten to the TP1 price (wrong).

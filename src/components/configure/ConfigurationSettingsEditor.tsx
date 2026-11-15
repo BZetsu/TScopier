@@ -488,13 +488,29 @@ export function ConfigurationSettingsEditor({
               />
             </SettingRow>
             {settings.use_signal_entry_price === true ? (
-              <SettingRow label={cm.risk.pipToleranceLegacy}>
-                <NumberField
-                  value={finiteNumber(settings.signal_entry_pip_tolerance, 10)}
-                  min={0}
-                  onCommit={value => onPatch({ signal_entry_pip_tolerance: value })}
-                />
-              </SettingRow>
+              <>
+                <SettingRow label={cm.risk.signalEntryPrefer}>
+                  <Choice
+                    value={settings.signal_entry_prefer ?? 'first_price'}
+                    options={[
+                      { value: 'first_price', label: cm.risk.signalEntryPreferFirst },
+                      { value: 'last_price', label: cm.risk.signalEntryPreferLast },
+                    ]}
+                    onChange={value =>
+                      onPatch({
+                        signal_entry_prefer: value === 'last_price' ? 'last_price' : 'first_price',
+                      })
+                    }
+                  />
+                </SettingRow>
+                <SettingRow label={cm.risk.pipToleranceLegacy}>
+                  <NumberField
+                    value={finiteNumber(settings.signal_entry_pip_tolerance, 10)}
+                    min={0}
+                    onCommit={value => onPatch({ signal_entry_pip_tolerance: value })}
+                  />
+                </SettingRow>
+              </>
             ) : null}
           </>
         )}

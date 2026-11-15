@@ -234,6 +234,11 @@ export const configureModalEn: ConfigureModalTranslations = {
     signalEntryBody:
       'Use Signal Entry Price applies only in Single Trade mode. When enabled, the signal must include an explicit parsed entry (price, zone, @ price, or labels like "Entry Price:"). After any channel delay, the worker compares the live quote to that entry: Buy fills at market only when ask is at or below the entry; otherwise it places a buy limit at the entry. Sell is the inverse. The broker take-profit targets the last parsed TP when you have several targets, with optional partial closes from your TP ladder. Copier tracks each strict-entry pending so fills sync to your trade list; pendings are cancelled when the basket is flat. Bare "buy now" messages with no entry are skipped.',
     useSignalEntryPrice: 'Use Signal Entry Price',
+    signalEntryPrefer: 'Entry price',
+    signalEntryPreferHint:
+      'When the signal lists two entry prices (a range), choose the first or last price as written. Pip tolerance then applies to that single price.',
+    signalEntryPreferFirst: 'First Price',
+    signalEntryPreferLast: 'Last Price',
     pipToleranceLegacy: 'Pip tolerance',
     pipToleranceHint:
       'Allowed distance from the signal entry level before entry is deferred (single trade strict entry and range signal range).',

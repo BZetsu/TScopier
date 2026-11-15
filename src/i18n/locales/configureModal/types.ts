@@ -224,6 +224,10 @@ export interface ConfigureModalTranslations {
     signalEntryTitle: string
     signalEntryBody: string
     useSignalEntryPrice: string
+    signalEntryPrefer: string
+    signalEntryPreferHint: string
+    signalEntryPreferFirst: string
+    signalEntryPreferLast: string
     pipToleranceLegacy: string
     pipToleranceHint: string
     multiIntro: string

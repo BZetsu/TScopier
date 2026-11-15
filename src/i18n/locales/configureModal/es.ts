@@ -231,6 +231,11 @@ export const configureModalEs: ConfigureModalTranslations = {
     signalEntryBody:
       'Usar precio de entrada de la señal solo aplica en modo Operación única. Si está activo, la señal debe incluir una entrada explícita parseada (precio, zona, @ precio o etiquetas como «Precio de entrada:»). Tras cualquier retraso del canal, el worker compara la cotización en vivo con esa entrada: en compras ejecuta a mercado solo si el ask está en o por debajo de la entrada; si no, coloca un buy limit en la entrada. En ventas es lo inverso. El take profit del broker apunta al último TP parseado cuando hay varios objetivos, con cierres parciales opcionales según su escalera de TP. El copiador rastrea cada pendiente de entrada estricta para sincronizar los fills con su lista de operaciones; los pendientes se cancelan cuando la cesta queda plana. Los mensajes «comprar ahora» sin entrada se omiten.',
     useSignalEntryPrice: 'Usar precio de entrada de la señal',
+    signalEntryPrefer: 'Precio de entrada',
+    signalEntryPreferHint:
+      'Cuando la señal lista dos precios de entrada (un rango), elige el primero o el último tal como está escrito. La tolerancia en pips se aplica a ese único precio.',
+    signalEntryPreferFirst: 'Primer precio',
+    signalEntryPreferLast: 'Último precio',
     pipToleranceLegacy: 'Tolerancia en pips (heredada)',
     pipToleranceHint:
       'Sin uso en el enrutamiento de entrada estricta; se conserva por compatibilidad con ajustes guardados.',

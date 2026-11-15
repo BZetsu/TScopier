@@ -785,6 +785,15 @@ function executeTool(
       if (!entryGateOn && "signal_entry_pip_tolerance" in patch) {
         delete patch.signal_entry_pip_tolerance;
       }
+      // First/Last entry prefer only applies with Use Signal Entry Price.
+      if (patch.use_signal_entry_price !== true && "signal_entry_prefer" in patch) {
+        delete patch.signal_entry_prefer;
+      } else if ("signal_entry_prefer" in patch) {
+        patch.signal_entry_prefer =
+          String(patch.signal_entry_prefer ?? "first_price").toLowerCase() === "last_price"
+            ? "last_price"
+            : "first_price";
+      }
       // Multi → Range Layering: fill the range by adding legs as price moves against entry.
       const suggested = (analysis.suggested ?? {}) as Record<string, unknown>;
       const styleIsMulti =

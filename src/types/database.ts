@@ -442,6 +442,11 @@ export interface ManualSettings {
    * market fill if still acceptable, otherwise limit/stop at signal entry.
    */
   use_signal_entry_price?: boolean
+  /**
+   * When the signal lists two entry prices, which one Use Signal Entry Price uses
+   * (as written: first mentioned vs last). Default `first_price`.
+   */
+  signal_entry_prefer?: 'first_price' | 'last_price'
   /** Pips above (buy) / below (sell) entry within which a market order is allowed. */
   signal_entry_pip_tolerance?: number
   use_predefined_sl_pips?: boolean
@@ -1001,6 +1006,10 @@ export type ParsedSignal = {
   entry_price?: number
   entry_zone_low?: number
   entry_zone_high?: number
+  /** First entry price as written in the signal (before min/max sort). */
+  entry_zone_first?: number
+  /** Last entry price as written in the signal (before min/max sort). */
+  entry_zone_last?: number
   sl?: number
   tp?: number[]
   open_tp?: boolean

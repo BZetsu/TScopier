@@ -4,9 +4,9 @@ import { deriveManualStopsWithClamp, mirrorParsedAbsoluteStopsForReverse, resolv
 import { flipOperation, resolveOpExecAndStrict } from './executionShape'
 import { signalEntryPriceStrictEnabled, signalEntryRangeStrictEnabled } from './manualSettings'
 import {
+  normalizeSignalEntryPrefer,
   parsedHasExplicitEntryAnchor,
-  resolvedParsedEntryPrice,
-  resolvedParsedEntryZone,
+  resolvePreferredSignalEntryPrice,
   SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
   SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED,
 } from './parsedEntry'
@@ -80,14 +80,15 @@ export function planManualOrders(args: {
     return { orders: [], skip_reason: SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED, delay_ms }
   }
 
-  let entry: number | null = resolvedParsedEntryPrice(parsed)
-  if (entry == null) {
-    const z = resolvedParsedEntryZone(parsed)
-    if (z) {
-      const prefer = channelKeywords?.additional?.prefer_entry ?? 'first_price'
-      entry = prefer === 'last_price' ? z.hi : z.lo
-    }
-  }
+  const preferEntry =
+    normalizeSignalEntryPrefer(
+      (manual as { signal_entry_prefer?: unknown }).signal_entry_prefer
+        ?? channelKeywords?.additional?.prefer_entry
+        ?? 'first_price',
+    )
+  // Dual entry quotes: prefer ordered first/last (or zone lo/hi) over a scalar
+  // entry_price so Use Signal Entry Price honors First/Last Price.
+  let entry: number | null = resolvePreferredSignalEntryPrice(parsed, preferEntry)
   const entryOk = entry != null && Number.isFinite(entry) && entry > 0
   const entryAnchorFromSignal = entryOk ? entry : null
 

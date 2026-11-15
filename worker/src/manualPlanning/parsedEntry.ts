@@ -29,6 +29,50 @@ export function resolvedParsedEntryZone(parsed: ParsedSignal): { lo: number; hi:
   return { lo: Math.min(lo, hi), hi: Math.max(lo, hi) }
 }
 
+/** Ordered entry pair as written in the signal (first mentioned → last mentioned). */
+export function resolvedParsedEntryZoneOrdered(
+  parsed: ParsedSignal,
+): { first: number; last: number } | null {
+  const ext = parsed as unknown as Record<string, unknown>
+  const first =
+    readPositiveNum(parsed.entry_zone_first)
+    ?? readPositiveNum(ext.entryZoneFirst)
+  const last =
+    readPositiveNum(parsed.entry_zone_last)
+    ?? readPositiveNum(ext.entryZoneLast)
+  if (first != null && last != null) return { first, last }
+  return null
+}
+
+export type SignalEntryPrefer = 'first_price' | 'last_price'
+
+export function normalizeSignalEntryPrefer(raw: unknown): SignalEntryPrefer {
+  return String(raw ?? 'first_price').toLowerCase() === 'last_price'
+    ? 'last_price'
+    : 'first_price'
+}
+
+/**
+ * Collapse a dual entry (ordered pair or min/max zone) to one price for
+ * Use Signal Entry Price. Prefers text order when available; otherwise lo/hi.
+ * When an ordered pair exists it wins over a scalar `entry_price` so dual quotes
+ * are not stuck on a first-only parse.
+ */
+export function resolvePreferredSignalEntryPrice(
+  parsed: ParsedSignal,
+  prefer: SignalEntryPrefer,
+): number | null {
+  const ordered = resolvedParsedEntryZoneOrdered(parsed)
+  if (ordered) {
+    return prefer === 'last_price' ? ordered.last : ordered.first
+  }
+  const z = resolvedParsedEntryZone(parsed)
+  if (z) {
+    return prefer === 'last_price' ? z.hi : z.lo
+  }
+  return resolvedParsedEntryPrice(parsed)
+}
+
 /**
  * True when the parsed signal includes an explicit entry **price** or **zone**
  * (not a bare market “buy now”). Used with strict signal entry so planning
@@ -36,6 +80,7 @@ export function resolvedParsedEntryZone(parsed: ParsedSignal): { lo: number; hi:
  */
 export function parsedHasExplicitEntryAnchor(parsed: ParsedSignal): boolean {
   if (resolvedParsedEntryPrice(parsed) != null) return true
+  if (resolvedParsedEntryZoneOrdered(parsed) != null) return true
   const z = resolvedParsedEntryZone(parsed)
   return z != null && z.lo > 0 && z.hi > 0
 }

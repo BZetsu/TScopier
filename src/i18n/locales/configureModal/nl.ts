@@ -222,6 +222,11 @@ export const configureModalNl: ConfigureModalTranslations = {
     signalEntryTitle: 'Uitvoering van signaalinvoer',
     signalEntryBody: 'Gebruik signaalinvoerprijs is alleen van toepassing in de Single Trade-modus. Indien ingeschakeld, moet het signaal een expliciet geparseerde invoer bevatten (prijs, zone, @-prijs of labels zoals \'Invoerprijs:\'). Na elke kanaalvertraging vergelijkt de medewerker de live koers met die invoer: Koop alleen vullingen op de markt als de vraag zich op of onder de invoer bevindt; anders plaatst het een kooplimiet bij de ingang. Verkopen is het omgekeerde. De take-profitmakelaar richt zich op de laatst geparseerde TP als u meerdere doelen heeft, met optionele gedeeltelijke afsluitingen vanaf uw TP-ladder. Copier houdt elke in behandeling zijnde strikte invoer bij, zodat de vullingen worden gesynchroniseerd met uw handelslijst; In afwachting worden geannuleerd wanneer de mand plat is. Kale "koop nu"-berichten zonder vermelding worden overgeslagen.',
     useSignalEntryPrice: 'Gebruik signaalinvoerprijs',
+    signalEntryPrefer: 'Entry-prijs',
+    signalEntryPreferHint:
+      'Als het signaal twee entry-prijzen (een range) noemt, kies de eerste of laatste prijs zoals geschreven. Pip-tolerantie geldt dan voor die ene prijs.',
+    signalEntryPreferFirst: 'Eerste prijs',
+    signalEntryPreferLast: 'Laatste prijs',
     pipToleranceLegacy: 'Pip-tolerantie (verouderd)',
     pipToleranceHint: 'Ongebruikt voor strikte toegangsroutering; bewaard voor achterwaartse compatibiliteit met opgeslagen instellingen.',
     multiIntro: 'Range Trading splitst uw vaste lot op in veel kleinere orders (bijvoorbeeld 1,0 lot @ 5%/leg = 20 transacties van 0,05). Benen worden verdeeld over de TP\'s van het signaal met behulp van de onderstaande percentagerijen. Als de grootte per been onder het symboolminimum van de makelaar valt, valt de planner terug op een enkele transactie op volledige grootte en registreert de reden.',

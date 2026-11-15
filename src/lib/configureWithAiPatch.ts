@@ -21,6 +21,7 @@ export const CONFIGURE_AI_PATCHABLE_KEYS = new Set([
   'close_worse_entries_pips',
   'reverse_signal',
   'use_signal_entry_price',
+  'signal_entry_prefer',
   'signal_entry_pip_tolerance',
   'use_predefined_sl_pips',
   'predefined_sl_pips',

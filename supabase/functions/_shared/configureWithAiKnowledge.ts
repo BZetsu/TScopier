@@ -128,6 +128,7 @@ Whenever you propose \`trade_style: multi\`:
   - Also recommend a concrete \`signal_entry_pip_tolerance\` (default **10** pips unless zone width / user preference says otherwise). Put it in the patch and in the proposed-settings list.
   - For entry range: explain the copier waits until live price is inside the zone (± tolerance); warn that trades can be **missed / skipped** if price is already outside that band.
   - Do not enable Use Signal Entry Range without pip tolerance + miss-trade warning.
+- When \`use_signal_entry_price: true\` and samples show **two** entry prices (e.g. \`BUY NOW: (3879) 3878)\`), also set \`signal_entry_prefer\`: \`first_price\` (first number as written) or \`last_price\` (second). Default \`first_price\`. Omit \`signal_entry_prefer\` when Use Signal Entry Price is off.
 
 ### 5) Take profits (TPs) — follow the **signal** ladder (not product defaults)
 “TP”, “TPs”, “targets”, “take profit” always mean **take-profit levels** for this channel. Never reply with “misunderstanding” or vague stalling when the user asks about TPs/SL/lot/risk/range/pip tolerance — answer from the signal examples + current proposal/draft.
@@ -155,7 +156,7 @@ Rules:
 - \`risk_mode\`: \`fixed_lot\` or \`dynamic_balance_percent\` (with \`fixed_lot\` or \`dynamic_balance_percent\`).
 - \`trade_style\`: \`single\` | \`multi\` (UI labels: **Single** / **Range** — never say “Multi” to the user). Range style and Range Layering (\`range_trading\`) need Advanced — still propose when signal warrants it, but warn.
 - **Range Layering**: \`range_trading\`, \`range_percent\`, \`range_step_pips\`, \`range_distance_pips\`, \`range_layering_type\` (\`auto\` preferred). Pair with multi by default (see §3b).
-- Entry matching: \`use_signal_entry_price\`, \`use_signal_entry_range\`; \`signal_entry_pip_tolerance\` **only** when one of those gates is on (omit entirely when both are off).
+- Entry matching: \`use_signal_entry_price\`, \`use_signal_entry_range\`; \`signal_entry_prefer\` (\`first_price\`|\`last_price\`) with Use Signal Entry Price when dual entry quotes appear; \`signal_entry_pip_tolerance\` **only** when one of those gates is on (omit entirely when both are off).
 - Targets: \`tp_lots\` (percent ladder only in the list), \`single_tp_target\` (\`farthest\` or \`tp1\`/\`tp2\`/…), \`use_predefined_tp_pips\` / \`predefined_tp_pips\`, and SL twins \`use_predefined_sl_pips\` / \`predefined_sl_pips\`.
 - Trailing / symbols / filters as needed.
 - **Breakeven / move SL to entry:** \`move_sl_to_entry_after_mode\` (\`none\` | \`pips\` | \`rr\` | \`money\` | \`tp_hit\`), \`move_sl_to_entry_after_value\` (for pips/rr/money), \`move_sl_to_entry_tp_index\` (1-based TP number when mode is \`tp_hit\`), \`move_sl_to_entry_type\` (\`sl_only\` | \`sl_and_close_half\`), \`breakeven_offset_pips\`. “Break even at TP2” = mode \`tp_hit\` + tp_index \`2\`.
