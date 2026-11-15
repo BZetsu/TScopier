@@ -76,12 +76,12 @@ export async function syncMultiBasketLegTakeProfits(ctx: TradeExecutorContext, a
 
     const { data: familyRows, error } = await ctx.supabase
       .from('trades')
-      .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol')
-      .eq('broker_account_id', broker.id)
-      .eq('signal_id', signal.id)
-      .eq('status', 'open')
-      .order('opened_at', { ascending: true })
-      .limit(500)
+    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,next_tp_index')
+    .eq('broker_account_id', broker.id)
+    .eq('signal_id', signal.id)
+    .eq('status', 'open')
+    .order('opened_at', { ascending: true })
+    .limit(500)
     if (error || !(familyRows ?? []).length) return
 
     const familyTrades = (familyRows ?? []) as BasketOpenLeg[]
@@ -96,7 +96,9 @@ export async function syncMultiBasketLegTakeProfits(ctx: TradeExecutorContext, a
       immediateLegCount,
       tpLots: manual.tp_lots,
       currentLegTps: familyTrades.map(tr => tr.tp),
+      legIdentities: familyTrades,
       bundleReladder: false,
+      forceSteadyTps: true,
       isBuy: direction !== 'sell',
     })
     if (!perLegTargets.length) return

@@ -18,7 +18,11 @@ import {
 } from './basketEffectiveStops'
 import { parseUserOverride } from './signalOverride'
 import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistribution'
-import { bundleSteadyLegTps, isTpPercentSplitBasket } from './manualPlanning/tpBundleIdentity'
+import {
+  bundleSteadyLegTps,
+  isTpPercentSplitBasket,
+  resolveBundleLegTpIndexes,
+} from './manualPlanning/tpBundleIdentity'
 import type { ManualTpLot } from './manualPlanning/types'
 import {
   resolveChosenTakeProfit,
@@ -241,9 +245,15 @@ export async function resolveFreshBasketReconcileTargets(
       const ladder = signalTps.length
         ? signalTps
         : stored.map(t => t.takeprofit).filter(tp => typeof tp === 'number' && tp > 0)
+      const legTpIndexes = resolveBundleLegTpIndexes({
+        legs: args.familyTrades,
+        ladderLength: ladder.length,
+        tpLots: args.manual.tp_lots,
+      })
       const tps = bundleSteadyLegTps({
         currentTps: args.familyTrades.map(tr => tr.tp),
         ladder,
+        legTpIndexes,
       })
       perLegTargets = args.familyTrades.map((_, i) => ({
         stoploss: sl,
