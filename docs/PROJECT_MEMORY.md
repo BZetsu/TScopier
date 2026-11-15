@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-15 — Message edit left Demo strict-entry pendings on old SL/TP
+
+- **Context:** FOREX KING signal `0b582d78` on Migration Demo was edited (SL 65150→65100, TPs 64200/64000/63900→64500/64000/63500). Fusion open legs got `basket_leg_modify`; Demo SellLimits stayed on the old stops.
+- **Plain English:** Editing a signal updated filled trades but ignored waiting limit orders on Demo.
+- **Root cause (technical):** Same-signal revision anchor + family load filtered `status='open'` only, so Demo pending-only baskets never entered modify (`parameter_follow_up_no_open_basket` / empty family). Live-market SL guard would also mishandle pendings.
+- **Fix (files):** Include `pending` in [`resolveOpenBasketAnchorForSameSignal`](worker/src/multiTradeMerge.ts), mergeRouting leg probe, [`slTpRefresh`](worker/src/tradeExecutor/basketMerge/slTpRefresh.ts) family load, [`loadOpenBasketLegs`](worker/src/basketSlTpReconcile.ts); pending legs use entry as stop guard; sync `signal_entry_pending_orders` after modify.
+- **Tests/verification:** Migration logs 19:02Z Fusion modified; Demo SEP still 65150/64200… until worker redeploy + re-edit or manual sync.
+- **Deploy state:** Worker local — redeploy trade-migration.
+- **Follow-ups:** Redeploy; optionally OrderModify pending entry price when the edit changes the limit price.
+
 ### 2026-11-15 — Pending/mgmt: stop farthest-TP backfill on percent-split legs
 
 - **Context:** User reported reconciler still pinning Pending Order trades to farthest TP on Migration.
