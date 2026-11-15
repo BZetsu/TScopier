@@ -48,7 +48,7 @@ describe('describeChannelConfiguration', () => {
       use_signal_entry_price: false,
     } as ManualSettings
 
-    expect(riskValue(settings, 'Trade Style')).toBe('Single Entry')
+    expect(riskValue(settings, 'Trade Style')).toBe('Single Entries')
     expect(riskValue(settings, 'Lot Size')).toBe('0.1')
     expect(riskValue(settings, 'Range Layering')).toBeUndefined()
     expect(riskValue(settings, 'Use Signal Entry Price')).toBe('OFF')
