@@ -269,8 +269,10 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       return revisionRefreshWithoutOpenBasketOutcome(sameSignalRefresh)
     }
 
-    // Live-fast: single open-leg probe. Queued path may briefly wait for the
-    // entry claim holder's trades row to land before modify-only refresh.
+    // Live-fast: single open/pending-leg probe. Queued path may briefly wait for
+    // the entry claim holder's trades row to land before modify-only refresh.
+    // Pending (strict-entry limits) must count — otherwise a Demo-only pending
+    // basket never refreshes on Telegram message edit.
     const openLegDeadline = Date.now() + (liveEntryFast ? 0 : 3_000)
     while (Date.now() <= openLegDeadline) {
       const { count } = await ctx.supabase
@@ -279,7 +281,7 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
         .eq('user_id', signal.user_id)
         .eq('broker_account_id', broker.id)
         .eq('signal_id', anchor.anchorSignalId)
-        .eq('status', 'open')
+        .in('status', ['open', 'pending'])
         .eq('direction', direction)
       if ((count ?? 0) > 0) break
       if (liveEntryFast || Date.now() >= openLegDeadline) break
