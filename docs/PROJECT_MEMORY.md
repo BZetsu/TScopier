@@ -2,6 +2,18 @@
 
 ## Changelog
 
+### 2026-11-15 (seventh pull) — PRs #231–#232 merged into staging (strict-entry pendings, configure-with-AI answers); new index migration state recorded
+
+- **Context:** two more production PRs landed while the test repairs were being finished: **#231** — strict entry creates a separate pending order per TP share; **#232** — configure/assistant AI answers questions (no "confusion" stalls) and the multi-leg pending unique index was corrected (TP2/TP3 were blocked by the old index).
+- **Plain English:** both were pulled in with the usual single memory-file conflict; his six new notes went to his own memory file. The strict-entry code compiles and its tests pass; the configure-with-AI changes are edge-function only.
+- **Technical:**
+  - `worker/src/tradeExecutor/strictEntryPending.ts` (+ its new test, casts widened through `unknown` so the file compiles under ts-node) — per-TP pending orders.
+  - `supabase/migrations/20261115162000_signal_entry_pending_multi_leg_unique.sql` — drops `signal_entry_pending_orders_active_unique`, creates `signal_entry_pending_orders_active_ticket_unique`.
+  - `supabase/functions/configure-with-ai` + `_shared/configureWithAiKnowledge.ts` / `assistantKnowledge.ts` and deploy bundles.
+- **Database state (read-only check after the pull):** **production already has the new index** (`signal_entry_pending_orders_active_ticket_unique`, old one gone) but the migration version is **not registered** in `schema_migrations`; **staging still has the old index** — the migration must be applied there before staging exercises multi-leg strict entries.
+- **Deploy state:** merges `17faeed6` (#231) and `7e689523` (#232) plus the test-repair commit are on `staging-merge`, pushed to `upstream/staging` and `bzetu/staging`.
+- **Follow-ups:** apply `20261115162000` to staging (and register the version on both databases); Martins to confirm the trusted-ack and entry-zone behaviour items from the test repairs; `TP_BUNDLE_ENABLED` still to be added on Railway when bundling is enabled.
+
 ### 2026-11-15 — All 20 known-red tests repaired (owner sign-off, test-side only) + PR #231 pulled; suites fully green
 
 - **Context:** the owner asked to fix every failing test, without changing behaviour. Sign-off note: all repairs are **test files only** — no production code was touched. Two expectations encode behaviour that came from Martins's batches; both were red on his own `main` before this work.
