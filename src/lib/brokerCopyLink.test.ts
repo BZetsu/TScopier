@@ -158,17 +158,30 @@ function fakeClient(options: FakeOptions = {}) {
     from(table: string) {
       if (table === 'broker_copy_links') {
         return {
-          delete: () => ({
-            eq: () => ({
-              eq: () => ({
-                eq: () => {
-                  log.push('delete')
-                  const message = repeat(options.deleteErrors, deleteIdx++)
-                  return Promise.resolve({ error: message ? { message } : null })
-                },
-              }),
-            }),
-          }),
+          delete: () => {
+            // Chainable for any number of `.eq(...)` calls; `.select('id')` is
+            // the terminal call in the current delete paths and performs the
+            // (fake) delete exactly once.
+            const runDelete = () => {
+              log.push('delete')
+              const message = repeat(options.deleteErrors, deleteIdx++)
+              return Promise.resolve({ data: message ? null : [], error: message ? { message } : null })
+            }
+            const builder: { eq: () => unknown; select: () => unknown } = {
+              eq: () => builder,
+              select: runDelete,
+            }
+            return builder
+          },
+          // Leftover probe after a delete that returned no rows:
+          // select('id').eq().eq().eq().maybeSingle()
+          select: () => {
+            const chain: { eq: () => unknown; maybeSingle: () => Promise<{ data: null }> } = {
+              eq: () => chain,
+              maybeSingle: () => Promise.resolve({ data: null }),
+            }
+            return chain
+          },
         }
       }
       if (table === 'mirror_copy_link_state') {

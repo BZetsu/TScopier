@@ -39,7 +39,7 @@ describe('managementClose', () => {
 
   it('closeMarketPositionFast rejects hard close failures', async () => {
     const api = mockApi({
-      orderClose: async () => ({ state: 'rejected' }),
+      orderClose: async () => ({ ticket: 12345, state: 'rejected' }),
     })
     const result = await closeMarketPositionFast(api, 'uuid', 12345)
     assert.equal(result.confirmed, false)

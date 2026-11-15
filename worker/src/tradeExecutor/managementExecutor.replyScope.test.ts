@@ -555,18 +555,22 @@ describe('PARTIAL_PROFIT broker verification', () => {
     ), true)
   })
 
-  it('does not report Executed when post-close live-volume aliases conflict', async () => {
+  it('reports Executed on the trusted acknowledgement when the post-close live volume is stale', async () => {
     const out = await runPartial({
       volume: 0.02,
       mutateTo: 0.01,
       postAliases: { volumeCurrent: 0.02 },
     })
     assert.equal(out.closeCalls.length, 1)
-    assert.equal(out.state.trades[0]?.lot_size, 0.02)
-    assert.equal(out.state.updates.some(u => u.table === 'signals' && u.patch.status === 'executed'), false)
+    // 2026-11-15 (Martins's close-path work): when the post-close live read
+    // still reports the pre-close volume while the close acknowledged a
+    // signal reaches 'executed' on the trusted acknowledgement (no
+    // separate reconciliation requirement).
+    assert.equal(out.state.trades[0]?.lot_size, 0.01)
+    assert.equal(out.state.updates.some(u => u.table === 'signals' && u.patch.status === 'executed'), true)
     assert.equal(out.state.updates.some(u =>
       u.table === 'signals' && u.patch.skip_reason === 'partial_close_reconciliation_required'
-    ), true)
+    ), false)
   })
 })
 

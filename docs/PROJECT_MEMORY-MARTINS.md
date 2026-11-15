@@ -5,6 +5,8 @@ Changelog entries authored / owned by Martins, kept separate from the main `PROJ
 
 ## Changelog
 
+
+
 ### 2026-11-15 — Single teaser follow-up: TP by `:tpN`, not open time
 
 - **Context:** FOREX KING “Btc sell now” then TP/SL follow-up on Migration (`1df27fc2` / Demo BTCUSDm). Lots opened correctly 2.5/1.5/1.0 with `:tp1/:tp2/:tp3`, but follow-up attached 65200/65000/64900 by `opened_at` — so the 1-lot `:tp3` got TP1 and closed first.
