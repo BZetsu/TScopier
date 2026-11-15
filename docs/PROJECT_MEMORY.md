@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-15 — Single trade: split lots across broker TPs
+
+- **Context:** Single Entry used one full-lot order plus worker `partial_tp` closes at earlier Targets % levels; users wanted each TP visible as its own broker trade.
+- **Plain English:** Single Entry now opens a separate broker trade per enabled Take-Profit % (e.g. 3.0 lot + 50/30/20 → 1.5 / 0.9 / 0.6). No auto partial closes. Single TP Target is hidden/unused. Basic plans keep `trade_style: single`.
+- **Root cause (technical):** N/A — product behavior change.
+- **Fix (files):** Shared [`planTpPercentSplitOrders.ts`](worker/src/manualPlanning/planTpPercentSplitOrders.ts); Single via [`planSingleManualOrders.ts`](worker/src/manualPlanning/planSingleManualOrders.ts); `isTpPercentSplitBasket` + remove `single_style_multi_leg_blocked`; UI/i18n + [`singleTpLotBreakdown.ts`](src/lib/singleTpLotBreakdown.ts); Configure with AI knowledge omits `single_tp_target` / partial-close copy.
+- **Tests/verification:** `manualPlanner.test.ts` (3-leg / 1-TP / 3.0 lot); `singleTpLotBreakdown.test.ts`; `singleStyleHardBlock.test.ts`.
+- **Deploy state:** Local only — worker + frontend + edge knowledge need deploy; plan says deploy `configure-with-ai` when asked.
+- **Follow-ups:** Deploy worker; redeploy `configure-with-ai` to Migration (and production if asked).
+
 ### 2026-11-15 — Configure with AI: First / Last entry price
 
 - **Context:** Configure with AI needed to know about `signal_entry_prefer` (First/Last under Use Signal Entry Price).

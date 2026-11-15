@@ -42,6 +42,7 @@ import {
 import { isMtBridgeGlitchMessage } from '../../brokerConnectError'
 import { MtOperation } from '../../fxsocketClient'
 import { buildPerLegStopTargets, mergePlanImmediateOrders, type MergeModifySummary } from '../../multiTradeMerge'
+import { isTpPercentSplitBasket } from '../../manualPlanning/tpBundleIdentity'
 import {
   isExplicitBasketSlSource,
   logEffectiveBasketStops,
@@ -435,11 +436,14 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
             mergePlanImmediateOrders(plan).length,
             Math.max(0, familyTrades.length - Math.max(0, maxPendingStepIdx - activePendingCount)),
           )
-    // Single-mode partial schedule comes from planManualOrders (uses derived finalTps,
-    // predefined TP pips, Targets %, single_tp_target — not raw parsed.tp alone).
+    // Legacy single-mode one-leg partials (no longer planned for Single percent-split).
+    const percentSplitBasket = isTpPercentSplitBasket(manual)
     const singlePartialPartials: PlannerPartialTp[] =
-      manual.trade_style !== 'multi' ? (plan.partialTps ?? []) : []
-    const singleBrokerTpRaw = manual.trade_style !== 'multi' ? plan.orders[0]?.takeprofit : undefined
+      !percentSplitBasket && manual.trade_style !== 'multi' ? (plan.partialTps ?? []) : []
+    const singleBrokerTpRaw =
+      !percentSplitBasket && manual.trade_style !== 'multi'
+        ? plan.orders[0]?.takeprofit
+        : undefined
     const singleBrokerTp =
       typeof singleBrokerTpRaw === 'number' && Number.isFinite(singleBrokerTpRaw) && singleBrokerTpRaw > 0
         ? singleBrokerTpRaw
@@ -467,10 +471,11 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           immediateLegCount: refreshImmediateLegCount,
           tpLots: manual.tp_lots,
           currentLegTps: familyTrades.map(tr => tr.tp),
-          bundleReladder: sameSignalRefresh === true,
+          bundleReladder: percentSplitBasket && sameSignalRefresh === true,
+          forceSteadyTps: percentSplitBasket,
           isBuy: direction !== 'sell',
         })
-    if (manual.trade_style !== 'multi' && singleBrokerTp != null) {
+    if (!percentSplitBasket && manual.trade_style !== 'multi' && singleBrokerTp != null) {
       perLegTargets = perLegTargets.map(target => ({ ...target, takeprofit: singleBrokerTp }))
     }
     // Multi (non-range, non-bundle path): after a TP hit, do not count-weight
@@ -720,9 +725,10 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           tpLots: manual.tp_lots,
           currentLegTps: familyTrades.map(tr => tr.tp),
           bundleReladder: false,
+          forceSteadyTps: percentSplitBasket,
           isBuy: direction !== 'sell',
         })
-        if (manual.trade_style !== 'multi' && singleBrokerTp != null) {
+        if (!percentSplitBasket && manual.trade_style !== 'multi' && singleBrokerTp != null) {
           for (let i = 0; i < refreshedTargets.length; i++) {
             refreshedTargets[i] = { ...refreshedTargets[i]!, takeprofit: singleBrokerTp }
           }
@@ -1048,7 +1054,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         nImmCwe,
         overrideTp,
         lastError: partialMsg,
-        bundleIdentity: manual.range_trading !== true && manual.trade_style === 'multi',
+        bundleIdentity: percentSplitBasket,
       })
     } else {
       const { data: existingJob } = await ctx.supabase

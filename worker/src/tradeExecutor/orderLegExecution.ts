@@ -140,26 +140,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
     })
   }
 
-  if (manual.trade_style !== 'multi' && workingLegs.length > 1) {
-    console.error(
-      `[tradeExecutor] single_style_multi_leg_blocked ${workingLegs.length} legs`
-      + ` signal=${signal.id} broker=${broker.id}`,
-    )
-    await writeExecutionLog(ctx.supabase, {
-      user_id: signal.user_id,
-      signal_id: signal.id,
-      broker_account_id: broker.id,
-      action: 'single_style_multi_leg_blocked',
-      status: 'failed',
-      request_payload: { leg_count: workingLegs.length } as unknown as Record<string, unknown>,
-      error_message: `single trade_style refused ${workingLegs.length} immediate legs`,
-    })
-    return {
-      channelDelayMs,
-      channelDelaySkipped,
-      failureReason: 'single_style_multi_leg_blocked',
-    }
-  }
+  // Single trade style may send multiple immediates (one per Targets % TP).
 
   const sendLegs = workingLegs
 

@@ -1474,7 +1474,6 @@ export function AccountConfigPage() {
     if ((channelManualSettings.trade_style ?? 'single') === 'multi') return null
     const slices = computeSingleTpLotBreakdown({
       manualLot: previewManualLot,
-      singleTpTarget: channelManualSettings.single_tp_target ?? 'farthest',
       tpLots: channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS,
     })
     if (!slices.length) return null
@@ -1487,26 +1486,23 @@ export function AccountConfigPage() {
       .join(join)
   }, [
     channelManualSettings.trade_style,
-    channelManualSettings.single_tp_target,
     channelManualSettings.tp_lots,
     previewManualLot,
     cm.risk.singleTpLotBreakdownJoin,
     cm.risk.singleTpLotBreakdownSlice,
   ])
 
-  /** Levels whose partial close the worker will drop at this lot (partial_tp_below_min_lot). */
+  /** Levels that cannot open as separate trades at this lot (share below min lot). */
   const partialTpShortfall = useMemo(() => {
     if (!configDraft.selectedChannelId) return null
     if ((channelManualSettings.trade_style ?? 'single') !== 'single') return null
     return computeSingleTpPartialShortfall({
       manualLot: previewManualLot,
-      singleTpTarget: channelManualSettings.single_tp_target ?? 'farthest',
       tpLots: channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS,
     })
   }, [
     configDraft.selectedChannelId,
     channelManualSettings.trade_style,
-    channelManualSettings.single_tp_target,
     channelManualSettings.tp_lots,
     previewManualLot,
   ])
@@ -3701,25 +3697,6 @@ export function AccountConfigPage() {
 
                             {channelManualSettings.trade_style !== 'multi' && (
                               <div className="space-y-4">
-                              <ConfigureSelect
-                                label={cm.risk.singleTpTarget}
-                                hint={cm.risk.singleTpTargetHint}
-                                value={channelManualSettings.single_tp_target ?? 'farthest'}
-                                onChange={e => {
-                                  const v = e.target.value as ManualSettings['single_tp_target']
-                                  setManual({ single_tp_target: v })
-                                }}
-                                options={[
-                                  { value: 'farthest', label: cm.risk.singleTpTargetFarthest },
-                                  ...(channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS)
-                                    .map((row, i) => ({ row, origIdx: i }))
-                                    .filter(({ row }) => row.enabled !== false)
-                                    .map(({ row, origIdx }) => ({
-                                      value: `tp${origIdx + 1}` as const,
-                                      label: row.label?.trim() || `TP${origIdx + 1}`,
-                                    })),
-                                ]}
-                              />
                               {singleTpLotBreakdownText ? (
                                 <div className="rounded-md border border-neutral-200/65 dark:border-neutral-800/55 bg-neutral-50 dark:bg-neutral-900/60 px-3 py-2.5 space-y-1">
                                   <p className="text-xs font-medium text-neutral-900 dark:text-neutral-50">

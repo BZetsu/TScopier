@@ -174,12 +174,7 @@ export function describeChannelConfiguration(
       )
     }
   } else {
-    const target = row.single_tp_target ?? 'farthest'
     riskRows.push(
-      {
-        label: cm.risk.singleTpTarget,
-        value: target === 'farthest' ? cm.risk.singleTpTargetFarthest : target.toUpperCase(),
-      },
       { label: cm.risk.useSignalEntryPrice, value: onOff(row.use_signal_entry_price === true, copy) },
     )
     if (row.use_signal_entry_price === true) {

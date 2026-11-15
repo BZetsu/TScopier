@@ -213,23 +213,23 @@ export const configureModalFr: ConfigureModalTranslations = {
     dynamicBalanceLotSizeFallback: '{lot} lots (repli sur lot fixe — solde du compte non chargé)',
     tradeStyle: 'Style de trading',
     tradeStyleHint:
-      'Entrée unique : un ordre à la taille de lot configurée. Range Trading : répartit ce lot en plusieurs ordres plus petits sur les take-profit du signal.',
+      'Entrée unique : ouvre un trade broker distinct pour chaque Take-Profit % activé (même lot total). Range Trading : répartit ce lot en plusieurs ordres plus petits sur les take-profit du signal.',
     singleTrade: 'Entrée unique',
     multiTrades: 'Range Trading',
     singleTpTarget: 'Objectif TP en mode unique',
     singleTpTargetHint:
-      'Choisissez quel TP la position broker doit viser en Position unique. Les TP précédents peuvent toujours déclencher des fermetures partielles selon votre répartition %.',
+      'Obsolète pour Entrée unique — chaque Take-Profit activé ouvre son propre trade broker avec ce TP visible.',
     singleTpTargetFarthest: 'TP le plus éloigné (auto)',
     singleTpTargetTp1: 'TP1',
     singleTpTargetTp2: 'TP2',
     singleTpTargetTp3: 'TP3',
     singleTpLotBreakdownTitle: 'Lot breakdown',
-    singleTpLotBreakdownSlice: '{lot} lots closes @ {tp}',
-    partialTpMinLotWarning: 'Avec un volume de {lot}, ce trade ne peut pas être réparti : {levels} ne seront pas clôturés partiellement et seul le dernier take profit est placé chez le courtier. Chaque niveau nécessite au moins 0.01 de volume — augmentez le volume pour clôturer à chaque niveau.',
+    singleTpLotBreakdownSlice: '{lot} lots opens @ {tp}',
+    partialTpMinLotWarning: 'Avec un volume de {lot}, ces niveaux ne peuvent pas s’ouvrir en trades séparés : {levels}. Leur part est ajoutée au TP le plus éloigné. Chaque niveau nécessite au moins 0.01 de volume — augmentez le volume pour ouvrir chaque niveau.',
     singleTpLotBreakdownJoin: ', ',
     signalEntryTitle: 'Exécution de l’entrée du signal',
     signalEntryBody:
-      'Utiliser le prix d’entrée du signal s’applique uniquement en mode Position unique. Si activé, le signal doit inclure une entrée explicite analysée (prix, zone, @ prix ou libellés comme « Prix d’entrée : »). Après tout délai du canal, le worker compare la cotation en direct à cette entrée : en achat, exécution au marché seulement si l’ask est au ou en dessous de l’entrée ; sinon, placement d’un buy limit à l’entrée. En vente, l’inverse. Le take profit du courtier vise le dernier TP analysé lorsque plusieurs objectifs existent, avec fermetures partielles optionnelles selon votre échelle de TP. Le copieur suit chaque ordre en attente à entrée stricte pour synchroniser les exécutions avec votre liste ; les ordres en attente sont annulés lorsque le panier est à plat. Les messages « acheter maintenant » sans entrée sont ignorés.',
+      'Utiliser le prix d’entrée du signal s’applique uniquement en mode Position unique. Si activé, le signal doit inclure une entrée explicite analysée (prix, zone, @ prix ou libellés comme « Prix d’entrée : »). Après tout délai du canal, le worker compare la cotation en direct à cette entrée : en achat, exécution au marché seulement si l’ask est au ou en dessous de l’entrée ; sinon, placement d’un buy limit à l’entrée. En vente, l’inverse. Lorsque plusieurs Take-Profit sont activés, Entrée unique ouvre un trade broker par TP selon vos %. Le copieur suit chaque ordre en attente à entrée stricte pour synchroniser les exécutions avec votre liste ; les ordres en attente sont annulés lorsque le panier est à plat. Les messages « acheter maintenant » sans entrée sont ignorés.',
     useSignalEntryPrice: 'Utiliser le prix d’entrée du signal',
     signalEntryPrefer: 'Prix d’entrée',
     signalEntryPreferHint:
@@ -323,7 +323,7 @@ export const configureModalFr: ConfigureModalTranslations = {
       usePredefinedTp: 'Utiliser comme TP prédéfini',
       tpLevelsTitle: 'Niveaux de take-profit',
       tpLevelsHint:
-        'Pips = distance depuis l’entrée pour chaque TP. % cible = part du volume (single) ou des jambes (multi) fermée à ce TP.',
+        'Pips = distance depuis l’entrée pour chaque TP. % cible = part du volume ouverte à ce TP (Entrée unique = un trade par niveau ; Range Trading = répartition des jambes).',
       tpPipsCol: 'Pips',
       tpPercentCol: '% cible',
       tpLabel: 'TP{index}',
@@ -399,7 +399,7 @@ export const configureModalFr: ConfigureModalTranslations = {
     multiTradeNote:
       'Range Trading : répartit les jambes planifiées sur les TP selon ces pourcentages (ex. 50/30/20 sur 20 jambes → 10/6/4 sur TP1/TP2/TP3).',
     singleTradeNote:
-      'Position unique : l’ordre vise le dernier TP activé chez le courtier ; le worker ferme partiellement le pourcentage configuré à chaque TP antérieur (ex. 50/30/20 sur 1,0 lot → ferme 0,50 à TP1, 0,30 à TP2, le 0,20 restant à TP3 via le courtier).',
+      'Entrée unique : ouvre un trade broker distinct pour chaque TP activé selon ces pourcentages (ex. 50/30/20 sur 3,0 lots → 1,5 @ TP1, 0,9 @ TP2, 0,6 @ TP3). Chaque trade a son propre take-profit broker — pas de fermetures partielles par le worker.',
     enabledTotal: 'Total activé :',
     unallocated: '{pct}% non alloué',
     overCap: 'Dépasse 100 % (plafonné à la prochaine modification)',

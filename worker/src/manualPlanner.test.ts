@@ -1428,7 +1428,7 @@ test('planManualOrders: single+strict off+bare Buy stays Buy (no redundant op fl
   assert.equal(plan.orders[0]!.price, 0)
 })
 
-test('planManualOrders: single trade + 3 TPs + 50/30/20 → partial_tp schedule on plan', () => {
+test('planManualOrders: single trade + 3 TPs + 50/30/20 → three broker legs, no partialTps', () => {
   const plan = planManualOrders({
     parsed: {
       ...baseParsed,
@@ -1454,11 +1454,77 @@ test('planManualOrders: single trade + 3 TPs + 50/30/20 → partial_tp schedule 
     ctx: baseCtx,
     commentPrefix: 'TScopier:abc',
   })
+  assert.equal(plan.orders.length, 3)
+  assert.equal(plan.orders[0]!.volume, 0.5)
+  assert.equal(plan.orders[0]!.takeprofit, 4290)
+  assert.equal(plan.orders[1]!.volume, 0.3)
+  assert.equal(plan.orders[1]!.takeprofit, 4288)
+  assert.equal(plan.orders[2]!.volume, 0.2)
+  assert.equal(plan.orders[2]!.takeprofit, 4286)
+  assert.equal(plan.partialTps?.length ?? 0, 0)
+})
+
+test('planManualOrders: single trade + 1 TP → one full-lot order, no partialTps', () => {
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      action: 'sell',
+      entry_price: 4292,
+      sl: 4299,
+      tp: [4290],
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Sell',
+    manual: {
+      ...baseManual,
+      trade_style: 'single',
+      range_trading: false,
+      tp_lots: [
+        { label: 'TP1', lot: 0.01, percent: 100, enabled: true },
+      ],
+    },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
   assert.equal(plan.orders.length, 1)
-  assert.equal(plan.orders[0]!.takeprofit, 4286)
-  assert.equal(plan.partialTps?.length, 2)
-  assert.equal(plan.partialTps![0]!.closeLots, 0.5)
-  assert.equal(plan.partialTps![1]!.closeLots, 0.3)
+  assert.equal(plan.orders[0]!.volume, 1.0)
+  assert.equal(plan.orders[0]!.takeprofit, 4290)
+  assert.equal(plan.partialTps?.length ?? 0, 0)
+})
+
+test('planManualOrders: single trade + 3 lots + 50/30/20 → 1.5 / 0.9 / 0.6', () => {
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      action: 'buy',
+      entry_price: 2000,
+      sl: 1990,
+      tp: [2010, 2020, 2030],
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      ...baseManual,
+      trade_style: 'single',
+      range_trading: false,
+      tp_lots: [
+        { label: 'TP1', lot: 0.01, percent: 50, enabled: true },
+        { label: 'TP2', lot: 0.01, percent: 30, enabled: true },
+        { label: 'TP3', lot: 0.01, percent: 20, enabled: true },
+      ],
+    },
+    channelKeywords: null,
+    manualLot: 3.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  assert.equal(plan.orders.length, 3)
+  assert.equal(plan.orders[0]!.volume, 1.5)
+  assert.equal(plan.orders[1]!.volume, 0.9)
+  assert.equal(plan.orders[2]!.volume, 0.6)
+  assert.equal(plan.partialTps?.length ?? 0, 0)
 })
 
 // ── planSinglePartialTps ───────────────────────────────────────────────────

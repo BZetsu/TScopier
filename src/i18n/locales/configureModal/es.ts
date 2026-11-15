@@ -213,23 +213,23 @@ export const configureModalEs: ConfigureModalTranslations = {
     dynamicBalanceLotSizeFallback: '{lot} lotes (respaldo de lote fijo — balance de cuenta no cargado)',
     tradeStyle: 'Estilo de operación',
     tradeStyleHint:
-      'Entrada única: una orden con su lote configurado completo. Range Trading: divide ese lote en varias órdenes más pequeñas entre los take-profit de la señal.',
+      'Entrada única: abre una operación broker distinta por cada Take-Profit % activado (mismo lote total). Range Trading: divide ese lote en varias órdenes más pequeñas entre los take-profit de la señal.',
     singleTrade: 'Entrada única',
     multiTrades: 'Range Trading',
     singleTpTarget: 'Objetivo TP en modo único',
     singleTpTargetHint:
-      'Elige qué TP debe usar la orden del broker en Operación única. Los TP anteriores aún pueden ejecutar cierres parciales según tu distribución %.',
+      'Obsoleto para Entrada única — cada Take-Profit activado abre su propia operación broker con ese TP visible.',
     singleTpTargetFarthest: 'TP más lejano (auto)',
     singleTpTargetTp1: 'TP1',
     singleTpTargetTp2: 'TP2',
     singleTpTargetTp3: 'TP3',
     singleTpLotBreakdownTitle: 'Lot breakdown',
-    singleTpLotBreakdownSlice: '{lot} lots closes @ {tp}',
-    partialTpMinLotWarning: 'Con un lote de {lot} este trade no se puede dividir: {levels} no se cerrarán como take parciales y solo se coloca el take profit final en el bróker. Cada nivel necesita al menos 0.01 de lote: aumenta el lote para cerrar en todos los niveles.',
+    singleTpLotBreakdownSlice: '{lot} lots opens @ {tp}',
+    partialTpMinLotWarning: 'Con un lote de {lot} estos niveles no pueden abrirse como operaciones separadas: {levels}. Su parte se suma al TP más lejano. Cada nivel necesita al menos 0.01 de lote: aumenta el lote para abrir cada nivel.',
     singleTpLotBreakdownJoin: ', ',
     signalEntryTitle: 'Ejecución de entrada de señal',
     signalEntryBody:
-      'Usar precio de entrada de la señal solo aplica en modo Operación única. Si está activo, la señal debe incluir una entrada explícita parseada (precio, zona, @ precio o etiquetas como «Precio de entrada:»). Tras cualquier retraso del canal, el worker compara la cotización en vivo con esa entrada: en compras ejecuta a mercado solo si el ask está en o por debajo de la entrada; si no, coloca un buy limit en la entrada. En ventas es lo inverso. El take profit del broker apunta al último TP parseado cuando hay varios objetivos, con cierres parciales opcionales según su escalera de TP. El copiador rastrea cada pendiente de entrada estricta para sincronizar los fills con su lista de operaciones; los pendientes se cancelan cuando la cesta queda plana. Los mensajes «comprar ahora» sin entrada se omiten.',
+      'Usar precio de entrada de la señal solo aplica en modo Operación única. Si está activo, la señal debe incluir una entrada explícita parseada (precio, zona, @ precio o etiquetas como «Precio de entrada:»). Tras cualquier retraso del canal, el worker compara la cotización en vivo con esa entrada: en compras ejecuta a mercado solo si el ask está en o por debajo de la entrada; si no, coloca un buy limit en la entrada. En ventas es lo inverso. Con varios Take-Profit activados, Entrada única abre una operación broker por TP según tus %. El copiador rastrea cada pendiente de entrada estricta para sincronizar los fills con su lista de operaciones; los pendientes se cancelan cuando la cesta queda plana. Los mensajes «comprar ahora» sin entrada se omiten.',
     useSignalEntryPrice: 'Usar precio de entrada de la señal',
     signalEntryPrefer: 'Precio de entrada',
     signalEntryPreferHint:
@@ -323,7 +323,7 @@ export const configureModalEs: ConfigureModalTranslations = {
       usePredefinedTp: 'Usar como TP predefinido',
       tpLevelsTitle: 'Niveles de take-profit',
       tpLevelsHint:
-        'Pips = distancia desde la entrada por TP. % objetivo = parte del volumen (single) o piernas (multi) cerrada en ese TP.',
+        'Pips = distancia desde la entrada por TP. % objetivo = parte del volumen abierta en ese TP (Entrada única = una operación por nivel; Range Trading = distribución de piernas).',
       tpPipsCol: 'Pips',
       tpPercentCol: '% objetivo',
       tpLabel: 'TP{index}',
@@ -399,7 +399,7 @@ export const configureModalEs: ConfigureModalTranslations = {
     multiTradeNote:
       'Range Trading: reparte las piernas planificadas entre TP según estos porcentajes (p. ej. 50/30/20 de 20 piernas → 10/6/4 en TP1/TP2/TP3).',
     singleTradeNote:
-      'Operación única: la orden llega al último TP activo en el broker; el worker cierra parcialmente el porcentaje configurado en cada TP anterior (p. ej. 50/30/20 en 1,0 lote → cierra 0,50 en TP1, 0,30 en TP2 y el 0,20 restante en TP3 vía el broker).',
+      'Entrada única: abre una operación broker distinta por cada TP activado según estos porcentajes (p. ej. 50/30/20 en 3,0 lotes → 1,5 @ TP1, 0,9 @ TP2, 0,6 @ TP3). Cada operación tiene su propio take-profit en el broker — sin cierres parciales del worker.',
     enabledTotal: 'Total activado:',
     unallocated: '{pct}% sin asignar',
     overCap: 'Supera el 100 % (se limitará en la próxima edición)',

@@ -1,13 +1,7 @@
 import type { OrderSendArgs } from '../fxsocketClient'
 import type { PipQuote } from '../pipCalculator'
-import {
-  normalizeAutoBeConfig,
-  resolveAutoBeTpHitTriggerPrice,
-  shouldOmitBrokerTpForAutoBeTpHit,
-} from '../autoManagement'
 import type { ManualSettings, PlannerContext, PlannerResult, PlannerStrictEntry } from './types'
-import { planSinglePartialTps } from './partialTpSchedule'
-import { resolveTpBucketRows } from './tpBucketDistribution'
+import { planTpPercentSplitOrders } from './planTpPercentSplitOrders'
 
 export interface PlanSingleManualOrdersArgs {
   orderBase: Omit<OrderSendArgs, 'volume' | 'stoploss' | 'takeprofit' | 'expiration' | 'expirationType'>
@@ -25,78 +19,42 @@ export interface PlanSingleManualOrdersArgs {
   pipQuote: PipQuote
   roundPrice: (v: number | null | undefined) => number
   fallbackReason?: string
+  /** Order comment prefix (symbol/side); used for `:tp1` suffixes on split legs. */
+  commentPrefix?: string
 }
 
+/**
+ * Single trade style: split the fixed lot across Targets % into one broker
+ * order per TP (visible take-profits). No worker partial-close schedule.
+ * Degenerate cases (one TP / lot too small) emit a single full-lot order.
+ */
 export function planSingleManualOrders(args: PlanSingleManualOrdersArgs): PlannerResult {
-  const {
-    orderBase,
-    expirationFields,
-    strictEntry,
-    manualLot,
-    finalSl,
-    finalTps,
-    manual,
-    ctx,
-    delay_ms,
-    entryAnchor,
-    isBuy,
-    pip,
-    pipQuote,
-    roundPrice,
-    fallbackReason,
-  } = args
-
-  const { bucketRows } = resolveTpBucketRows(finalTps, manual.tp_lots)
-  const partialPlan = planSinglePartialTps({
-    manualLot,
-    minLot: Number.isFinite(ctx.minLot) && ctx.minLot > 0 ? ctx.minLot : 0.01,
-    lotStep: Number.isFinite(ctx.lotStep) && ctx.lotStep > 0 ? ctx.lotStep : 0.01,
-    finalTps,
-    bucketRows,
-    singleTpTarget: manual.single_tp_target,
-    isBuy,
+  const result = planTpPercentSplitOrders({
+    orderBase: args.orderBase,
+    expirationFields: args.expirationFields,
+    strictEntry: args.strictEntry,
+    manual: args.manual,
+    manualLot: args.manualLot,
+    ctx: args.ctx,
+    delay_ms: args.delay_ms,
+    entryAnchor: args.entryAnchor,
+    isBuy: args.isBuy,
+    pip: args.pip,
+    pipQuote: args.pipQuote,
+    finalSl: args.finalSl,
+    finalTps: args.finalTps,
+    roundPrice: args.roundPrice,
+    commentPrefix: args.commentPrefix ?? '',
+    reasonPrefix: 'single_tp_split',
   })
-  let brokerTp: number | null =
-    partialPlan.brokerTp
-    ?? (finalTps.length >= 2 ? (finalTps[finalTps.length - 1] ?? null) : (finalTps[0] ?? null))
-  const autoBeCfg = normalizeAutoBeConfig(manual)
-  const autoBeTpHitTriggerPrice = autoBeCfg?.mode === 'tp_hit'
-    ? resolveAutoBeTpHitTriggerPrice({
-      tpIndex: autoBeCfg.tpIndex,
-      partialTps: partialPlan.partials,
-      finalTps,
-      brokerTp,
-    })
-    : null
-  if (
-    shouldOmitBrokerTpForAutoBeTpHit({
-      manual,
-      brokerTp,
-      finalTps,
-      partialTps: partialPlan.partials,
-    })
-  ) {
-    // Predefined/single TP override: broker TP would close the trade at the same
-    // price Move-SL-on-TP-hit needs to fire. Leave TP empty; monitor moves SL.
-    brokerTp = null
+  if (args.fallbackReason && !result.fallback_reason) {
+    return { ...result, fallback_reason: args.fallbackReason }
   }
-  const combinedFallback = fallbackReason ?? partialPlan.fallbackReason
-  return {
-    orders: [{
-      ...orderBase,
-      volume: manualLot,
-      stoploss: roundPrice(finalSl),
-      takeprofit: brokerTp != null ? roundPrice(brokerTp) : 0,
-      ...expirationFields,
-    }],
-    delay_ms,
-    anchor: { source: entryAnchor != null ? 'signal' : 'unknown', value: entryAnchor },
-    pip,
-    pipQuote,
-    isBuy,
-    ...(strictEntry ? { strictEntry } : {}),
-    ...(combinedFallback ? { fallback_reason: combinedFallback } : {}),
-    ...(partialPlan.partials.length > 0 ? { partialTps: partialPlan.partials } : {}),
-    ...(autoBeTpHitTriggerPrice != null ? { autoBeTpHitTriggerPrice } : {}),
+  if (args.fallbackReason && result.fallback_reason) {
+    return {
+      ...result,
+      fallback_reason: `${args.fallbackReason}|${result.fallback_reason}`,
+    }
   }
+  return result
 }
