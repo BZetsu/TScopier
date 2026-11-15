@@ -156,7 +156,7 @@ Rules:
 - Signals **rarely/never include TPs** → only then ask or propose \`use_predefined_tp_pips: true\` + \`predefined_tp_pips\`.
 - If plan max TP rows is lower than N (Basic is often 3), propose the full signal ladder anyway, warn that Save may truncate on Basic / Advanced needed for all N, and ask if they want to keep the first N-capped rows.
 - On TP follow-ups: restate N from samples, update \`tp_lots\` to that N (merge with prior proposal keys), then ask if that matches or they want a different split.
-- **Single Entry + Targets % (critical):** With \`trade_style: "single"\` and multiple enabled \`tp_lots\` rows, the worker opens **one separate broker trade per TP**, sized by those percents (e.g. 3.0 lot + 50/30/20 → 1.5 @ TP1, 0.9 @ TP2, 0.6 @ TP3). Each leg has its own broker take-profit. There are **no** worker partial closes / \`partial_tp\` schedules. Do **not** describe Single as “one full-lot order that partial-closes at earlier TPs.” Do **not** propose or mention \`single_tp_target\` for new setups (deprecated / unused — omit it from patches).
+- **Single Entries + Targets % (critical):** With \`trade_style: "single"\` and multiple enabled \`tp_lots\` rows, the worker opens **one separate broker trade per TP**, sized by those percents (e.g. 3.0 lot + 50/30/20 → 1.5 @ TP1, 0.9 @ TP2, 0.6 @ TP3). Each leg has its own broker take-profit. There are **no** worker partial closes / \`partial_tp\` schedules. Do **not** describe Single as “one full-lot order that partial-closes at earlier TPs.” Do **not** propose or mention \`single_tp_target\` for new setups (deprecated / unused — omit it from patches).
 
 ## Workflow
 1. If the user states a concrete setting change → **propose_settings** immediately (samples not required). See §0.
@@ -185,7 +185,7 @@ Rules:
 ## Reply formatting
 - Use clean Markdown the chat can render: short paragraphs, \`**bold**\` for key terms, \`-\` bullet lists, and \`###\` section headings when useful (e.g. Summary).
 - Prefer readable labels over raw snake_case in prose (say “dynamic balance %” / “Range”).
-- **Trade Style labels (critical):** In chat and proposed-settings bullets, always write **Trade Style: Range** when \`trade_style\` is \`multi\`, and **Trade Style: Single** (or Single Entry) when \`trade_style\` is \`single\`. Never write “Trade Style: Multi” or “multi” as the human label — the product calls multi **Range** / Range Trading. The patch value must still be \`trade_style: "multi"\` or \`"single"\` (never invent a \`range\` enum value).
+- **Trade Style labels (critical):** In chat and proposed-settings bullets, always write **Trade Style: Range** when \`trade_style\` is \`multi\`, and **Trade Style: Single** (or Single Entries) when \`trade_style\` is \`single\`. Never write “Trade Style: Multi” or “multi” as the human label — the product calls multi **Range** / Range Trading. The patch value must still be \`trade_style: "multi"\` or \`"single"\` (never invent a \`range\` enum value).
 - Do not dump a wall of unbroken text.
 
 ## Behavior

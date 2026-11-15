@@ -16,6 +16,7 @@ import { takeProfitForLegIndex } from './manualPlanning/tpBucketDistribution'
 import {
   isTpPercentSplitBasket,
   remapBundleLegTpsByTpOrder,
+  resolveBundleLegTpIndexes,
 } from './manualPlanning/tpBundleIdentity'
 import type { ManualSettings, ManualTpLot } from './manualPlanning/types'
 import type { MgmtTradeRow } from './managementScope'
@@ -44,6 +45,7 @@ function mgmtRowToBasketLeg(row: MgmtTradeRow): BasketOpenLeg {
     entry_price: row.entry_price,
     direction: row.direction,
     symbol: row.symbol,
+    next_tp_index: (row as { next_tp_index?: number | null }).next_tp_index ?? null,
   }
 }
 
@@ -76,11 +78,19 @@ function buildMgmtModifyTargets(args: {
   // bundleReladder already means Single percent-split or bundled Multi.
   const bundled = bundleReladder === true && hasNewTp
   const isBuy = !String(familyTrades[0]?.direction ?? '').toLowerCase().includes('sell')
+  const legTpIndexes = bundled
+    ? resolveBundleLegTpIndexes({
+      legs: familyTrades,
+      ladderLength: parsedTpLevels.length,
+      tpLots,
+    })
+    : null
   const bundleTps = bundled
     ? remapBundleLegTpsByTpOrder({
       legs: familyTrades.map(tr => tr.tp),
       ladder: parsedTpLevels,
       isBuy,
+      legTpIndexes: legTpIndexes ?? undefined,
     })
     : null
   return familyTrades.map((tr, legIndex) => {

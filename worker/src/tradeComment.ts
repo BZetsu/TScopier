@@ -71,6 +71,19 @@ export function appendOrderCommentSuffix(prefix: string, suffix: string): string
   return `${prefix}${suffix}`
 }
 
+/**
+ * 0-based take-profit level from an order comment (`:tp1` → 0, `:rg2.tp3` → 2).
+ * Used so teaser follow-ups attach ladder prices to the planned leg, not by open time.
+ */
+export function parseOrderCommentTpIndex(comment: string | null | undefined): number | null {
+  if (!comment) return null
+  const m = String(comment).toLowerCase().match(/(?:^|:)(?:rg\d+\.)?tp(\d+)\b/)
+  if (!m) return null
+  const n = Number(m[1])
+  if (!Number.isFinite(n) || n < 1) return null
+  return Math.floor(n) - 1
+}
+
 /** Comment for basket refresh OrderSend when a leg must be re-opened. */
 export function buildBasketRefreshComment(signalId: string, manual?: OrderCommentsManual): string {
   if (!areOrderCommentsEnabled(manual)) return ''

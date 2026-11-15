@@ -8,6 +8,7 @@ import {
   resolveTscopierCommentPrefix,
   appendOrderCommentSuffix,
   buildBasketRefreshComment,
+  parseOrderCommentTpIndex,
 } from './tradeComment'
 
 test('resolveChannelLabelForComment prefers display_name', () => {
@@ -42,6 +43,14 @@ test('resolveTscopierCommentPrefix respects order_comments_enabled', () => {
 test('appendOrderCommentSuffix returns empty when prefix is empty', () => {
   assert.equal(appendOrderCommentSuffix('', ':tp1'), '')
   assert.equal(appendOrderCommentSuffix('UniCopier:abc', ':tp1'), 'UniCopier:abc:tp1')
+})
+
+test('parseOrderCommentTpIndex reads :tpN and :rgN.tpM', () => {
+  assert.equal(parseOrderCommentTpIndex('UniCopier:FOREXKINGBAC:1df27fc2:tp1'), 0)
+  assert.equal(parseOrderCommentTpIndex('UniCopier:x:abc:tp3'), 2)
+  assert.equal(parseOrderCommentTpIndex('TSc:4d999b3e:rg2.tp3'), 2)
+  assert.equal(parseOrderCommentTpIndex('no-suffix'), null)
+  assert.equal(parseOrderCommentTpIndex(''), null)
 })
 
 test('buildBasketRefreshComment empty when comments disabled', () => {

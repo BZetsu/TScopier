@@ -7,7 +7,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FxsocketBrokerClient, OrderSendArgs } from './fxsocketClient'
 import type { MergeModifySummary, PerLegStopTarget } from './multiTradeMerge'
 import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistribution'
-import { bundleSteadyLegTps } from './manualPlanning/tpBundleIdentity'
+import {
+  bundleSteadyLegTps,
+  resolveBundleLegTpIndexes,
+} from './manualPlanning/tpBundleIdentity'
 import type { ManualTpLot } from './manualPlanning/types'
 import { resolveChosenTakeProfit } from './manualPlanning/partialTpSchedule'
 import { filterPlausibleInstrumentPrices } from './tradableSymbol'
@@ -48,6 +51,10 @@ export type BasketOpenLeg = {
   auto_be_offset_pips?: number | null
   /** Close-worse-entries threshold — broker TP must stay 0 (CWE monitor closes). */
   cwe_close_price?: number | null
+  /** 1-based planned TP level (from `:tpN` at open). */
+  next_tp_index?: number | null
+  /** Broker order comment when enriched from OpenedOrders. */
+  comment?: string | null
 }
 
 export type LegModifyError = {
@@ -367,15 +374,20 @@ export async function runBasketLegModifies(args: {
   let perLegTargets: PerLegStopTarget[]
   if (args.bundleIdentity === true) {
     // Percent-split Single + bundled multi: keep each leg's own TP; naked legs
-    // backfill from the ladder. Never pin to single_tp_target / farthest, and
-    // never count-weight (that collapses distinct TPs onto one level).
+    // backfill from planned `:tpN` / next_tp_index (not opened_at position).
     const sl = rawTargets[0]?.stoploss ?? 0
     const ladder = parsedTps.length
       ? parsedTps
       : rawTargets.map(t => t.takeprofit).filter(tp => typeof tp === 'number' && tp > 0)
+    const legTpIndexes = resolveBundleLegTpIndexes({
+      legs: familyTrades,
+      ladderLength: ladder.length,
+      tpLots,
+    })
     const tps = bundleSteadyLegTps({
       currentTps: familyTrades.map(tr => tr.tp),
       ladder,
+      legTpIndexes,
     })
     // Prefer caller-provided per-leg targets when they already cover every open
     // leg (fresh reconcile); otherwise rebuild from current TPs + ladder.
@@ -1161,9 +1173,15 @@ export async function upsertBasketReconcileJob(
       ? parsedTps
       : baseTargets.map(t => t.takeprofit).filter(tp => typeof tp === 'number' && tp > 0)
     const sl = baseTargets[0]?.stoploss ?? 0
+    const legTpIndexes = resolveBundleLegTpIndexes({
+      legs: args.familyTrades,
+      ladderLength: ladder.length,
+      tpLots: args.tpLots,
+    })
     const tps = bundleSteadyLegTps({
       currentTps: args.familyTrades.map(tr => tr.tp),
       ladder,
+      legTpIndexes,
     })
     baseTargets = args.familyTrades.map((_, i) => ({
       stoploss: sl,
@@ -1269,7 +1287,7 @@ export async function loadOpenBasketLegs(
 ): Promise<BasketOpenLeg[]> {
   const { data, error } = await supabase
     .from('trades')
-    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at,auto_be_offset_pips')
+    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at,auto_be_offset_pips,next_tp_index')
     .eq('broker_account_id', brokerAccountId)
     .eq('signal_id', anchorSignalId)
     .eq('status', 'open')
