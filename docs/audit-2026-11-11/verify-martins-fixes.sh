@@ -107,6 +107,13 @@ must "push retryable classifier (429/5xx)"   worker/src/tradeSignalPush.ts     '
 must "internal rebalance payload guard"      src/lib/channelWorkerLogMessage.ts 'isInternalRebalancePayload'
 exists "copier log detail module"            src/lib/copierLogDetail.ts
 
+# ---- Migration-branch batch 2026-11-14 evening (pre-#224) ------------------
+exists "account trades CSV module"           src/lib/accountTradesCsv.ts
+exists "account trades CSV core"             src/lib/accountTradesCsvCore.ts
+must "mirror copy balance/equity ratio"      worker/src/mirrorCopy/mirrorCopyPlan.ts 'balance_ratio'
+must "trade-failure assistant prompt"        src/lib/tradeFailureDisplay.ts 'buildTradeFailureAssistantPrompt'
+must "assistant language addon"              supabase/functions/assistant-chat/index.ts 'assistantReplyLanguageAddon'
+
 echo "----------------------------------------"
 echo "code-preservation: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

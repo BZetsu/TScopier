@@ -2,6 +2,24 @@
 
 ## Changelog
 
+### 2026-11-14 (third pull) — Two migration-branch commits ahead of main pulled into staging (CSV export, assistant language, mirror-copy ratio sizing); checklist 74 → 79
+
+- **Context:** after the second main pull, `upstream/migration` was **2 commits ahead of `main`** (PR #224 not yet merged): `1a7e28f4` Account Trades CSV export and `c0bd1b39` assistant replies respect the user's UI language — and the same batch carries a **mirror-copy balance/equity ratio sizing** change. The owner asked to pull them in so the staging → main promotion PR includes them.
+- **Plain English:** We brought in the two newest changes so our branch is current even ahead of production. One file needed a decision again — the project memory — where his three new notes were filed into his own memory file. The protection checklist grew to **79 checks**, all passing, and every test gate is green with only the same known failures recorded before.
+- **The two commits (plus their third documented change):**
+
+| Commit | What it does |
+|---|---|
+| `1a7e28f4` | Account Trades: **CSV export** (download card in the assistant panel, order/stat helpers in `src/lib/accountTradesCsv*.ts`, `export_account_trades_csv` assistant tool) |
+| `c0bd1b39` | Assistant replies now **respect the user's UI language** (`assistantReplyLanguageAddon` injected in `assistant-chat`; trade-failure explanations use `buildTradeFailureAssistantPrompt` with an explicit language instruction) |
+| (within the batch) | **Mirror copy: balance/equity ratio sizing** (`balance_ratio` / `equity_ratio` modes in `worker/src/mirrorCopy/mirrorCopyPlan.ts` + monitor, with tests) |
+
+- **Conflict record:** again exactly **one file — `docs/PROJECT_MEMORY.md`**. His block held 80 headings; **3 were new** and moved to `PROJECT_MEMORY-MARTINS.md` (77 duplicates skipped whole-entry). His file now holds226 entries with **0 duplicate headings**. Source note: pulled from `upstream/migration` directly because `main` had not merged #224 yet — when his PR lands, the same commit hashes arrive in `main` and will not duplicate.
+- **Checklist upgrade (74 → 79, all passing):** `accountTradesCsv.ts` + `accountTradesCsvCore.ts` exist; `balance_ratio` sizing in `mirrorCopyPlan.ts`; `buildTradeFailureAssistantPrompt`; `assistantReplyLanguageAddon` in `assistant-chat`.
+- **Gates:** protection script **79/79**; `npx tsc -b` clean; frontend node:test **631/631**, vitest **556 passed with the documented 8 known-reds** (6 `brokerCopyLink`, 2 `TraderReviews` — his batch added 20 vitest tests, all passing); worker build clean; **worker suite 3,245 / 3,256 pass** — the 11 failures are exactly the §7 known-red list again, **zero unexplained** (run in three sequential chunks).
+- **Deploy state:** local only — merge commit `417f74d9` plus this docs commit on `staging-merge`, **not pushed**. Branch now contains `main` through `98aad25a` **and** `migration` through `c0bd1b39`.
+- **Follow-ups:** if `main` merges #224 (or newer) with anything beyond these hashes, pull once more before opening the promotion PR; parked known-red repairs (I1–I4) remain untouched by instruction; the 16 staging-only migrations still need registration reconciliation on prod at promotion time.
+
 ### 2026-11-14 (second pull) — Merged main again: Martins's PRs #221–#223 into staging (one conflict; his 27 new entries moved to his file; checklist 63 → 74)
 
 - **Context:** after the morning merge (PRs #217–#220) Martins kept pushing: `main` moved another **20 commits** through PRs **#221–#223** during the day. Owner asked to pull them in so the staging → main promotion PR stays mergeable, to document each push, to bring his written entries into his own memory file, and to extend the protection checklist.
