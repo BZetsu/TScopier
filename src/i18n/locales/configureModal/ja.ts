@@ -590,6 +590,58 @@ export const configureModalJa: ConfigureModalTranslations = {
   },
   riskDisclaimer: {
     warning: '警告！あなたの資本が危険にさらされています。信頼できる信号プロバイダーのみをコピーしてください。',
-    fullLink: '完全なリスク免責事項を参照してください'
-  }
+    fullLink: '完全なリスク免責事項を参照してください',
+  },
+  configureWithAi: {
+    button: 'AIで設定',
+    title: 'AIで設定',
+    subtitle:
+      '取引の仕方を説明するか、このチャンネルのシグナル形式を読み込んで設定を最適化します。',
+    close: '閉じる',
+    placeholder: '例: ブレークイーブンをTP2に、またはリスク1%…',
+    send: '送信',
+    thinking: '考え中…',
+    welcome:
+      '任意の設定を依頼できます（例: ブレークイーブンをTP2に）。またはこのチャンネルのシグナル形式を読み込んで一式を設定できます。',
+    needChannel: 'AIで設定するには、先にチャンネルを選択してください。',
+    loadFromChannel: 'チャンネルから読み込む',
+    loadJsonFormat: 'JSON形式を読み込む',
+    loadingExamples: 'このチャンネルのシグナルを読み込み中…',
+    loadingJsonFormat: 'TradingViewのJSON形式を読み込み中…',
+    examplesLoaded: 'シグナル例を{count}件読み込みました。',
+    examplesEmpty:
+      'このチャンネルに最近のシグナルがありません — 下にサンプルを貼るか、新しいメッセージを待ってください。',
+    examplesEmptyTradingView:
+      'TradingViewアラートJSONがまだありません — 下にサンプルを貼るか、チャンネルでアラートテンプレートを設定してください。',
+    pasteLabel: 'シグナル形式を貼り付け',
+    pastePlaceholder: 'チャンネルのサンプルシグナルを1件以上貼り付け…',
+    pastePlaceholderTradingView: 'TradingViewアラートJSONを1件以上貼り付け…',
+    usePaste: '貼り付けたシグナルを使う',
+    clearPaste: '貼り付けをクリア',
+    examplesCount: 'コンテキスト内の例: {count}件',
+    examplesHeading: 'シグナル例',
+    examplesHeadingTradingView: 'TradingView JSON形式',
+    exampleLabelEntry: 'エントリー',
+    exampleLabelUpdate: '更新',
+    exampleLabelIgnore: '無視',
+    analyzingExamples: 'シグナル形式を分析中…',
+    analyzingJsonFormat: 'TradingView JSON形式を分析中…',
+    analyzeRequest:
+      'シグナル例です（エントリーと、ある場合は更新/modify/close）。エントリー様式（単一価格 vs レンジ/ゾーン）、チャンネルのmodify/close管理、口座サイズを踏まえ、ロット・スタイル・ターゲット・管理の分かりやすい要約をください。足りない点を聞いてから設定案を出してください。',
+    analyzeRequestTradingView:
+      'TradingViewアラートJSON形式です。ペイロード形状（エントリー、SL、TP）、口座サイズを踏まえ、ロット・スタイル・ターゲット・管理を提案してください。足りない点を聞いてから設定案を出してください。',
+    applyToForm: '設定を適用',
+    applySettings: '設定を適用',
+    applySettingsHint: '設定を構成に適用します。',
+    somethingElsePill: '別の案',
+    dismissProposal: '却下',
+    proposalTitle: '提案された設定',
+    proposalApplied:
+      'フォームに適用しました — 準備ができたら「取引を設定」で保存してください。',
+    proposalRationale: '理由',
+    proposalWarnings: 'メモ',
+    errorFallback: '問題が発生しました。もう一度お試しください。',
+    trainHint:
+      '設定アコーディオンのシグナル例を学習させて、チャンネルのサンプルを更新することもできます。',
+  },
 }

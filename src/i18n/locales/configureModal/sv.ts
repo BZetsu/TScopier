@@ -590,6 +590,58 @@ export const configureModalSv: ConfigureModalTranslations = {
   },
   riskDisclaimer: {
     warning: 'Varning! Ditt kapital är i fara. Endast kopiera signalleverantörer du litar på.',
-    fullLink: 'Se fullständig riskfriskrivning'
-  }
+    fullLink: 'Se fullständig riskfriskrivning',
+  },
+  configureWithAi: {
+    button: 'Konfigurera med AI',
+    title: 'Konfigurera med AI',
+    subtitle:
+      'Beskriv hur du vill handla — eller ladda kanalens signalformat för skräddarsydda inställningar.',
+    close: 'Stäng',
+    placeholder: 't.ex. Sätt break even till TP2, eller använd 1 % risk…',
+    send: 'Skicka',
+    thinking: 'Tänker…',
+    welcome:
+      'Be om valfri inställning (t.ex. break even till TP2), eller ladda kanalens signalformat för en full setup.',
+    needChannel: 'Välj en kanal först för att konfigurera med AI.',
+    loadFromChannel: 'Ladda från kanal',
+    loadJsonFormat: 'Ladda JSON-format',
+    loadingExamples: 'Laddar signaler från den här kanalen…',
+    loadingJsonFormat: 'Laddar TradingView JSON-format…',
+    examplesLoaded: 'Laddade {count} signalexempel.',
+    examplesEmpty:
+      'Inga senaste signaler på den här kanalen ännu — klistra in några exempel nedan, eller vänta på nya meddelanden.',
+    examplesEmptyTradingView:
+      'Ingen TradingView-alert-JSON hittades ännu — klistra in ett exempel nedan, eller konfigurera alertmallen på kanalen.',
+    pasteLabel: 'Klistra in signalformat',
+    pastePlaceholder: 'Klistra in en eller flera exempelkanalsignaler…',
+    pastePlaceholderTradingView: 'Klistra in en eller flera TradingView-alert-JSON-payloads…',
+    usePaste: 'Använd inklistrade signaler',
+    clearPaste: 'Rensa inklistring',
+    examplesCount: '{count} exempel i kontext',
+    examplesHeading: 'Signalexempel',
+    examplesHeadingTradingView: 'TradingView JSON-format',
+    exampleLabelEntry: 'Entry',
+    exampleLabelUpdate: 'Uppdatering',
+    exampleLabelIgnore: 'Ignorera',
+    analyzingExamples: 'Analyserar ditt signalformat…',
+    analyzingJsonFormat: 'Analyserar ditt TradingView JSON-format…',
+    analyzeRequest:
+      'Här är mina signalexempel (entry och update/modify/close när de finns). Analysera entrystil (enskilt pris vs range/zon), hur kanalen skickar modify/close, ta hänsyn till min kontostorlek och ge en tydlig sammanfattning av lot, stil, mål och hantering. Fråga om det du fortfarande behöver, och föreslå sedan inställningar.',
+    analyzeRequestTradingView:
+      'Här är mitt TradingView-alert-JSON-format. Analysera payload-formen (entry, SL, TP), ta hänsyn till min kontostorlek och föreslå lot, stil, mål och hantering. Fråga om det du fortfarande behöver, och föreslå sedan inställningar.',
+    applyToForm: 'Tillämpa inställningar',
+    applySettings: 'Tillämpa inställningar',
+    applySettingsHint: 'Detta tillämpar inställningarna på konfigurationen.',
+    somethingElsePill: 'Något annat',
+    dismissProposal: 'Avfärda',
+    proposalTitle: 'Föreslagna inställningar',
+    proposalApplied:
+      'Tillämpat på formuläret — klicka på Spara i Konfigurera trading när du är redo.',
+    proposalRationale: 'Varför',
+    proposalWarnings: 'Anteckningar',
+    errorFallback: 'Något gick fel. Försök igen.',
+    trainHint:
+      'Du kan också träna Signalexempel i Konfigurera-dragspelen för att uppdatera kanalprover.',
+  },
 }

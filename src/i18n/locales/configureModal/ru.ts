@@ -590,6 +590,58 @@ export const configureModalRu: ConfigureModalTranslations = {
   },
   riskDisclaimer: {
     warning: 'Предупреждение! Ваш капитал находится под угрозой. Копируйте только поставщиков сигналов, которым вы доверяете.',
-    fullLink: 'См. полный отказ от ответственности за риски'
-  }
+    fullLink: 'См. полный отказ от ответственности за риски',
+  },
+  configureWithAi: {
+    button: 'Настроить с ИИ',
+    title: 'Настроить с ИИ',
+    subtitle:
+      'Опишите, как хотите торговать — или загрузите формат сигналов канала для подходящих настроек.',
+    close: 'Закрыть',
+    placeholder: 'напр. Поставить безубыток на TP2 или риск 1%…',
+    send: 'Отправить',
+    thinking: 'Думаю…',
+    welcome:
+      'Запросите любую настройку (напр. безубыток на TP2) или загрузите формат сигналов канала для полной настройки.',
+    needChannel: 'Сначала выберите канал, чтобы настроить с ИИ.',
+    loadFromChannel: 'Загрузить из канала',
+    loadJsonFormat: 'Загрузить JSON-формат',
+    loadingExamples: 'Загрузка сигналов из этого канала…',
+    loadingJsonFormat: 'Загрузка JSON-формата TradingView…',
+    examplesLoaded: 'Загружено примеров сигнала: {count}.',
+    examplesEmpty:
+      'Пока нет недавних сигналов на этом канале — вставьте несколько примеров ниже или дождитесь новых сообщений.',
+    examplesEmptyTradingView:
+      'JSON алерта TradingView пока не найден — вставьте пример ниже или настройте шаблон алерта на канале.',
+    pasteLabel: 'Вставить формат сигнала',
+    pastePlaceholder: 'Вставьте один или несколько примеров сигналов канала…',
+    pastePlaceholderTradingView: 'Вставьте один или несколько JSON payload алертов TradingView…',
+    usePaste: 'Использовать вставленные сигналы',
+    clearPaste: 'Очистить вставку',
+    examplesCount: 'Примеров в контексте: {count}',
+    examplesHeading: 'Примеры сигналов',
+    examplesHeadingTradingView: 'JSON-формат TradingView',
+    exampleLabelEntry: 'Вход',
+    exampleLabelUpdate: 'Обновление',
+    exampleLabelIgnore: 'Игнор',
+    analyzingExamples: 'Анализ формата сигналов…',
+    analyzingJsonFormat: 'Анализ вашего JSON-формата TradingView…',
+    analyzeRequest:
+      'Вот мои примеры сигналов (вход и update/modify/close, если есть). Проанализируй стиль входа (одна цена vs range/зона), как канал шлёт modify/close, учти размер счёта и дай понятное резюме лота, стиля, целей и управления. Спроси, чего не хватает, затем предложи настройки.',
+    analyzeRequestTradingView:
+      'Вот мой JSON-формат алерта TradingView. Проанализируй форму payload (вход, SL, TP), учти размер счёта и предложи лот, стиль, цели и управление. Спроси, чего не хватает, затем предложи настройки.',
+    applyToForm: 'Применить настройки',
+    applySettings: 'Применить настройки',
+    applySettingsHint: 'Это применит настройки к конфигурации.',
+    somethingElsePill: 'Что-то другое',
+    dismissProposal: 'Отклонить',
+    proposalTitle: 'Предложенные настройки',
+    proposalApplied:
+      'Применено к форме — нажмите Сохранить в «Настроить торговлю», когда будете готовы.',
+    proposalRationale: 'Почему',
+    proposalWarnings: 'Заметки',
+    errorFallback: 'Что-то пошло не так. Попробуйте ещё раз.',
+    trainHint:
+      'Вы также можете обучить Примеры сигналов в аккордеоне Настройки, чтобы обновить образцы канала.',
+  },
 }

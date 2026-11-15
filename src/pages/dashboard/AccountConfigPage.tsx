@@ -5,7 +5,7 @@ import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet, Link2,
   ChevronLeft, ChevronRight, ChevronDown, Search, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
-  Infinity as InfinityIcon, Coins, X, MessageSquareText, FileUp, FileDown, Clock,
+  Infinity as InfinityIcon, Coins, X, MessageSquareText, FileUp, FileDown, Clock, Sparkles,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -13,7 +13,7 @@ import { platformIconSrc } from '../../lib/activityRoute'
 import { humanizeMirrorDeleteError } from '../../lib/brokerCopyLink'
 import { useAuth } from '../../context/AuthContext'
 import { useConfirm } from '../../context/ConfirmDialogContext'
-import { useT } from '../../context/LocaleContext'
+import { useLocale, useT } from '../../context/LocaleContext'
 import { interpolate } from '../../i18n/interpolate'
 import { Toggle } from '../../components/ui/Toggle'
 import { PageHeader } from '../../components/layout/PageHeader'
@@ -24,6 +24,9 @@ import { Alert } from '../../components/ui/Alert'
 import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
 import { BrokerConfigurationsModal } from '../../components/configure/BrokerConfigurationsModal'
 import { RiskLotCalculatorModal } from '../../components/configure/RiskLotCalculatorModal'
+import { ConfigureWithAiModal } from '../../components/configure/ConfigureWithAiModal'
+import { sanitizeConfigureAiPatch } from '../../lib/configureWithAiPatch'
+import { configureModalEn } from '../../i18n/locales/configureModal/en'
 import { CopyLimitsTargetsSection } from '../../components/configure/CopyLimitsTargetsSection'
 import { ChannelSignalExamplesSection } from '../../components/configure/ChannelSignalExamplesSection'
 import { useUserProfile } from '../../context/UserProfileContext'
@@ -880,6 +883,7 @@ async function resolveLatestManualSettingsPlanContext(args: {
 
 export function AccountConfigPage() {
   const t = useT()
+  const { locale } = useLocale()
   const confirm = useConfirm()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -1066,6 +1070,7 @@ export function AccountConfigPage() {
   const [riskNumberDrafts, setRiskNumberDrafts] = useState<RiskNumberDrafts>({})
   const [symbolsExcludeDraft, setSymbolsExcludeDraft] = useState<string | null>(null)
   const [riskCalcOpen, setRiskCalcOpen] = useState(false)
+  const [configureWithAiOpen, setConfigureWithAiOpen] = useState(false)
   const brokerHealthSyncKey = useMemo(
     () => brokers
       .filter(b => hasLinkedBrokerForUi(b))
@@ -1985,6 +1990,8 @@ export function AccountConfigPage() {
     setEditingPreset(null)
     setPendingDeletePreset(null)
     setChannelLinkEditMode(false)
+    setConfigureWithAiOpen(false)
+    setRiskCalcOpen(false)
     setError('')
     return true
   }
@@ -3183,6 +3190,61 @@ export function AccountConfigPage() {
         cancelLabel={cm.cancel}
       />
 
+      {configAccount && configDraft.selectedChannelId ? (
+        <ConfigureWithAiModal
+          open={configureWithAiOpen}
+          onClose={() => setConfigureWithAiOpen(false)}
+          locale={locale}
+          copy={cm.configureWithAi ?? configureModalEn.configureWithAi}
+          onApplyPatch={raw => {
+            const patch = sanitizeConfigureAiPatch(raw)
+            if (!Object.keys(patch).length) return
+            const merged = {
+              ...channelManualSettings,
+              ...patch,
+            } as ManualSettings
+            const normalized = normalizeManualSettingsForPlan(
+              manualSettingsPlanCtx.plan,
+              manualSettingsPlanCtx.status,
+              merged as unknown as Record<string, unknown>,
+              subscription?.trial_ends_at,
+            ) as ManualSettings
+            setManual(normalized)
+            setRiskNumberDrafts({})
+          }}
+          context={{
+            broker_account_id: configAccount.id,
+            channel_id: configDraft.selectedChannelId,
+            channel_name: selectedChannelOption?.display_name,
+            source_kind: selectedChannelOption?.source_kind ?? null,
+            manual_settings: channelManualSettings as unknown as Record<string, unknown>,
+            plan_features: {
+              multi_trade_style: multiTradeStyleEnabled,
+              range_trading: canUsePlanFeature('range_trading'),
+              auto_management: autoManagementPlanEnabled,
+              reverse_signal: canUsePlanFeature('reverse_signal'),
+            },
+            plan_limits: {
+              max_tp_rows: limits.maxTpRows,
+            },
+            broker: {
+              balance: configAccountTotalBalance,
+              equity: configAccount.last_equity != null ? Number(configAccount.last_equity) : null,
+              currency: configAccount.last_currency,
+              label: configAccount.label,
+            },
+          }}
+          onTrainChannel={
+            configDraft.selectedChannelId && !selectedIsTradingView
+              ? () => {
+                  startBackgroundAiTraining(configDraft.selectedChannelId!, { force: true })
+                  setConfigureWithAiOpen(false)
+                }
+              : undefined
+          }
+        />
+      ) : null}
+
       <BrokerStatusModal
         open={statusModalBroker != null}
         broker={statusModalBroker}
@@ -3289,13 +3351,27 @@ export function AccountConfigPage() {
                   ) : null}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => closeConfigureModal()}
-                className="shrink-0 min-h-[44px] px-3 py-2 text-sm font-medium text-neutral-900 dark:text-neutral-50 hover:text-neutral-900 dark:hover:text-neutral-50 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800"
-              >
-                {cm.close}
-              </button>
+              <div className="flex shrink-0 items-center gap-1">
+                {configDraft.selectedChannelId ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="min-h-[44px]"
+                    onClick={() => setConfigureWithAiOpen(true)}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    {(cm.configureWithAi ?? configureModalEn.configureWithAi).button}
+                  </Button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => closeConfigureModal()}
+                  className="shrink-0 min-h-[44px] px-3 py-2 text-sm font-medium text-neutral-900 dark:text-neutral-50 hover:text-neutral-900 dark:hover:text-neutral-50 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                >
+                  {cm.close}
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-col sm:flex-row flex-1 min-h-0 min-w-0">

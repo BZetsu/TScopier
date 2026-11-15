@@ -590,6 +590,58 @@ export const configureModalNl: ConfigureModalTranslations = {
   },
   riskDisclaimer: {
     warning: 'Waarschuwing! Uw kapitaal loopt gevaar. Kopieer alleen signaalaanbieders die u vertrouwt.',
-    fullLink: 'Zie de volledige risicodisclaimer'
-  }
+    fullLink: 'Zie de volledige risicodisclaimer',
+  },
+  configureWithAi: {
+    button: 'Configureren met AI',
+    title: 'Configureren met AI',
+    subtitle:
+      'Beschrijf hoe je wilt traden — of laad het signaalformaat van dit kanaal voor passende instellingen.',
+    close: 'Sluiten',
+    placeholder: 'bijv. Zet break-even op TP2, of gebruik 1% risico…',
+    send: 'Verzenden',
+    thinking: 'Bezig…',
+    welcome:
+      'Vraag om elke instelling (bijv. break-even op TP2), of laad het signaalformaat van dit kanaal voor een volledige setup.',
+    needChannel: 'Selecteer eerst een kanaal om met AI te configureren.',
+    loadFromChannel: 'Laden van kanaal',
+    loadJsonFormat: 'JSON-formaat laden',
+    loadingExamples: 'Signalen van dit kanaal laden…',
+    loadingJsonFormat: 'TradingView JSON-formaat laden…',
+    examplesLoaded: '{count} signaalvoorbeeld(en) geladen.',
+    examplesEmpty:
+      'Nog geen recente signalen op dit kanaal — plak hieronder een paar voorbeelden, of wacht op nieuwe berichten.',
+    examplesEmptyTradingView:
+      'Nog geen TradingView-alert-JSON gevonden — plak hieronder een voorbeeld, of configureer het alertsjabloon op het kanaal.',
+    pasteLabel: 'Signaalformaat plakken',
+    pastePlaceholder: 'Plak een of meer voorbeeldkanalen-signalen…',
+    pastePlaceholderTradingView: 'Plak een of meer TradingView-alert-JSON-payloads…',
+    usePaste: 'Geplakte signalen gebruiken',
+    clearPaste: 'Plakken wissen',
+    examplesCount: '{count} voorbeeld(en) in context',
+    examplesHeading: 'Signaalvoorbeelden',
+    examplesHeadingTradingView: 'TradingView JSON-formaat',
+    exampleLabelEntry: 'Entry',
+    exampleLabelUpdate: 'Update',
+    exampleLabelIgnore: 'Negeren',
+    analyzingExamples: 'Je signaalformaat analyseren…',
+    analyzingJsonFormat: 'Je TradingView JSON-formaat analyseren…',
+    analyzeRequest:
+      'Hier zijn mijn signaalvoorbeelden (entry en update/modify/close indien aanwezig). Analyseer de entry-stijl (enkele prijs vs range/zone), hoe het kanaal modify/close stuurt, houd rekening met mijn accountgrootte, en geef een duidelijke samenvatting van lot, stijl, targets en beheer. Vraag wat je nog nodig hebt en stel dan instellingen voor.',
+    analyzeRequestTradingView:
+      'Hier is mijn TradingView-alert-JSON-formaat. Analyseer de payload-vorm (entry, SL, TP’s), houd rekening met mijn accountgrootte, en stel lot, stijl, targets en beheer voor. Vraag wat je nog nodig hebt en stel dan instellingen voor.',
+    applyToForm: 'Instellingen toepassen',
+    applySettings: 'Instellingen toepassen',
+    applySettingsHint: 'Hiermee worden de instellingen op de configuratie toegepast.',
+    somethingElsePill: 'Iets anders',
+    dismissProposal: 'Negeren',
+    proposalTitle: 'Voorgestelde instellingen',
+    proposalApplied:
+      'Toegepast op het formulier — klik op Opslaan in Trading configureren wanneer je klaar bent.',
+    proposalRationale: 'Waarom',
+    proposalWarnings: 'Notities',
+    errorFallback: 'Er ging iets mis. Probeer het opnieuw.',
+    trainHint:
+      'Je kunt ook Signaalvoorbeelden trainen in de Configureren-accordeon om kanaalvoorbeelden te vernieuwen.',
+  },
 }
