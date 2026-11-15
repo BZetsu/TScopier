@@ -666,7 +666,6 @@ function analyzeSignalExamples(
             ? true
             : false,
       add_new_trades_to_existing: entry_mode === "teaser_then_params" ? true : undefined,
-      single_tp_target: suggestedTradeStyle === "single" ? "farthest" : null,
       tp_lots: suggestedTpLots,
       tp_lots_must_match_signal_count: signalTpCount || null,
       notes:
@@ -686,7 +685,7 @@ function analyzeSignalExamples(
       (entry_mode === "teaser_then_params"
         ? "entry_mode=teaser_then_params: MUST set use_signal_entry_price=false and use_signal_entry_range=false (bare 'buy now' would otherwise skip). Explain teaser opens at market and follow-up params attach SL/TPs. "
         : "") +
-      "Honor entry_mode + account.size_tier. Take-Profit Levels (tp_lots) MUST use signal_tp_count finite TP rows — never default to product TP1–TP3; exclude TP: open from the ladder count. Prefer suggested.tp_lots. Keep use_predefined_tp_pips false when signals include TP prices. Confirm risk mode/percent — do NOT invent Total Lot Size or 0.01-per-TP lines. Warn if multi/range needs Advanced. If use_signal_entry_range:true, include signal_entry_pip_tolerance + miss-trade warning. If dual_entry_quotes>0 and use_signal_entry_price:true, set signal_entry_prefer (first_price|last_price; default first) and label Entry price: First/Last Price. Answer TP follow-ups directly. End interactively." +
+      "Honor entry_mode + account.size_tier. Take-Profit Levels (tp_lots) MUST use signal_tp_count finite TP rows — never default to product TP1–TP3; exclude TP: open from the ladder count. Prefer suggested.tp_lots. Keep use_predefined_tp_pips false when signals include TP prices. Confirm risk mode/percent — do NOT invent Total Lot Size or 0.01-per-TP lines. Single Entry opens one broker trade per enabled TP % (no worker partial closes); omit single_tp_target. Warn if multi/range needs Advanced. If use_signal_entry_range:true, include signal_entry_pip_tolerance + miss-trade warning. If dual_entry_quotes>0 and use_signal_entry_price:true, set signal_entry_prefer (first_price|last_price; default first) and label Entry price: First/Last Price. Answer TP follow-ups directly. End interactively." +
       (tpPlanWarning ? ` ${tpPlanWarning}` : ""),
   };
 }

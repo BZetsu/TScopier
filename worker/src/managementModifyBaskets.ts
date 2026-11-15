@@ -14,10 +14,9 @@ import {
 } from './basketSlTpReconcile'
 import { takeProfitForLegIndex } from './manualPlanning/tpBucketDistribution'
 import {
-  isBundleBasket,
+  isTpPercentSplitBasket,
   remapBundleLegTpsByTpOrder,
 } from './manualPlanning/tpBundleIdentity'
-import { isTpBundleEnabled } from './manualPlanning/tpBundleRollout'
 import type { ManualSettings, ManualTpLot } from './manualPlanning/types'
 import type { MgmtTradeRow } from './managementScope'
 import {
@@ -73,7 +72,8 @@ function buildMgmtModifyTargets(args: {
     tpLots,
     bundleReladder,
   } = args
-  const bundled = bundleReladder === true && isTpBundleEnabled() && hasNewTp && multiBasket
+  // bundleReladder already means Single percent-split or bundled Multi.
+  const bundled = bundleReladder === true && hasNewTp
   const isBuy = !String(familyTrades[0]?.direction ?? '').toLowerCase().includes('sell')
   const bundleTps = bundled
     ? remapBundleLegTpsByTpOrder({
@@ -216,7 +216,7 @@ export async function applyMgmtModifyToBasketGroups(args: {
       parsedTpLevels,
       multiBasket,
       tpLots: manual.tp_lots,
-      bundleReladder: isBundleBasket(manual),
+      bundleReladder: isTpPercentSplitBasket(manual),
     })
 
     const nImmCwe = brokerRows.filter(r => r.cwe_close_price != null).length

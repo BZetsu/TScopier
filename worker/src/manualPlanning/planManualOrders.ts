@@ -164,6 +164,7 @@ export function planManualOrders(args: {
     pip,
     pipQuote,
     roundPrice,
+    commentPrefix,
   }
 
   const rangeEntryWait = buildRangeEntryWait({ manual, parsed, isBuy })

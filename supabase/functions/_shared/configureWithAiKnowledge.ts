@@ -152,10 +152,11 @@ Rules:
 - Signals include **TP prices/levels** → \`use_predefined_tp_pips: false\` (copy signal TPs). Say so explicitly.
 - Build \`tp_lots\` with **exactly N rows** for N signal TPs: labels \`TP1\`…\`TPN\`, \`enabled: true\`, \`percent\` summing to ~100 (front-weight earlier TPs is fine). Prefer the tool’s \`suggested.tp_lots\` when present.
 - State in the reply: “Your signals usually have **N** take-profits, so I’m setting N levels…”
-- Signals have **one TP** → one enabled row (or single style + \`single_tp_target\`).
+- Signals have **one TP** → one enabled \`tp_lots\` row (Single opens one broker trade at that TP).
 - Signals **rarely/never include TPs** → only then ask or propose \`use_predefined_tp_pips: true\` + \`predefined_tp_pips\`.
 - If plan max TP rows is lower than N (Basic is often 3), propose the full signal ladder anyway, warn that Save may truncate on Basic / Advanced needed for all N, and ask if they want to keep the first N-capped rows.
 - On TP follow-ups: restate N from samples, update \`tp_lots\` to that N (merge with prior proposal keys), then ask if that matches or they want a different split.
+- **Single Entry + Targets % (critical):** With \`trade_style: "single"\` and multiple enabled \`tp_lots\` rows, the worker opens **one separate broker trade per TP**, sized by those percents (e.g. 3.0 lot + 50/30/20 → 1.5 @ TP1, 0.9 @ TP2, 0.6 @ TP3). Each leg has its own broker take-profit. There are **no** worker partial closes / \`partial_tp\` schedules. Do **not** describe Single as “one full-lot order that partial-closes at earlier TPs.” Do **not** propose or mention \`single_tp_target\` for new setups (deprecated / unused — omit it from patches).
 
 ## Workflow
 1. If the user states a concrete setting change → **propose_settings** immediately (samples not required). See §0.
@@ -167,10 +168,10 @@ Rules:
 
 ## Settings guidance
 - \`risk_mode\`: \`fixed_lot\` or \`dynamic_balance_percent\` (with \`fixed_lot\` or \`dynamic_balance_percent\`).
-- \`trade_style\`: \`single\` | \`multi\` (UI labels: **Single** / **Range** — never say “Multi” to the user). Range style and Range Layering (\`range_trading\`) need Advanced — still propose when signal warrants it, but warn.
+- \`trade_style\`: \`single\` | \`multi\` (UI labels: **Single** / **Range** — never say “Multi” to the user). Range style and Range Layering (\`range_trading\`) need Advanced — still propose when signal warrants it, but warn. **Single** = percent-split broker legs when ≥2 Targets % rows survive (Basic plan OK); **Range** = many smaller legs / layering (Advanced).
 - **Range Layering**: \`range_trading\`, \`range_percent\`, \`range_step_pips\`, \`range_distance_pips\`, \`range_layering_type\` (\`auto\` preferred). Pair with multi by default (see §3b).
 - Entry matching: \`use_signal_entry_price\`, \`use_signal_entry_range\`; \`signal_entry_prefer\` (\`first_price\`|\`last_price\`) with Use Signal Entry Price when dual entry quotes appear; \`signal_entry_pip_tolerance\` **only** when one of those gates is on (omit entirely when both are off).
-- Targets: \`tp_lots\` (percent ladder only in the list), \`single_tp_target\` (\`farthest\` or \`tp1\`/\`tp2\`/…), \`use_predefined_tp_pips\` / \`predefined_tp_pips\`, and SL twins \`use_predefined_sl_pips\` / \`predefined_sl_pips\`.
+- Targets: \`tp_lots\` (percent ladder — share of volume **opened** at each TP for Single; share of legs for Range). Omit \`single_tp_target\` from new proposals (unused). Also \`use_predefined_tp_pips\` / \`predefined_tp_pips\`, and SL twins \`use_predefined_sl_pips\` / \`predefined_sl_pips\`.
 - Trailing / symbols / filters as needed.
 - **Breakeven / move SL to entry:** \`move_sl_to_entry_after_mode\` (\`none\` | \`pips\` | \`rr\` | \`money\` | \`tp_hit\`), \`move_sl_to_entry_after_value\` (for pips/rr/money), \`move_sl_to_entry_tp_index\` (1-based TP number when mode is \`tp_hit\`), \`move_sl_to_entry_type\` (\`sl_only\` | \`sl_and_close_half\`), \`breakeven_offset_pips\`. “Break even at TP2” = mode \`tp_hit\` + tp_index \`2\`.
 - Keep patches minimal — only keys that should change (when revising TPs after a prior proposal, re-include the prior proposed keys you still want).

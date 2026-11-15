@@ -16,6 +16,11 @@ function supabaseMock(inserts: unknown[] = []) {
         }
         return Promise.resolve({ data: null, error: null })
       },
+      update: () => ({
+        eq: () => ({
+          eq: () => Promise.resolve({ data: null, error: null }),
+        }),
+      }),
     }),
   }
 }
@@ -25,8 +30,8 @@ function restoreEnv(key: string, value: string | undefined): void {
   else process.env[key] = value
 }
 
-describe('sendImmediateLegs single-style hard block', () => {
-  it('sends zero orders when single style has multiple distinct legs', async () => {
+describe('sendImmediateLegs single-style percent-split', () => {
+  it('sends multiple distinct TP legs for single style (no hard block)', async () => {
     const originalEngine = process.env.EXECUTION_ENGINE
     const originalBrokers = process.env.EXECUTION_ENGINE_V2_BROKERS
     const originalUsers = process.env.EXECUTION_ENGINE_V2_USERS
@@ -35,13 +40,22 @@ describe('sendImmediateLegs single-style hard block', () => {
     delete process.env.EXECUTION_ENGINE_V2_USERS
 
     const inserts: unknown[] = []
+    let ticket = 100
     const sent: unknown[] = []
     const api = {
       orderSend: async (args: unknown) => {
         sent.push(args)
-        return { ticket: 1, openPrice: 100, stopLoss: 99, takeProfit: 101, lots: 0.01 }
+        ticket += 1
+        return {
+          ticket,
+          openPrice: 100,
+          stopLoss: 99,
+          takeProfit: (args as { takeprofit?: number }).takeprofit ?? 101,
+          lots: (args as { volume?: number }).volume ?? 0.01,
+        }
       },
       quote: async () => ({ bid: 99.9, ask: 100.1 }),
+      openedOrders: async () => [],
     }
 
     try {
@@ -54,13 +68,13 @@ describe('sendImmediateLegs single-style hard block', () => {
           closeOppositeDirectionTrades: async () => {},
         },
         signal: {
-          id: 'sig-block',
+          id: 'sig-split',
           user_id: 'u1',
           channel_id: 'c1',
           telegram_message_id: 'tg1',
           pipeline_ts: {},
         },
-        parsed: { action: 'buy', symbol: 'XAUUSD', tp: [] },
+        parsed: { action: 'buy', symbol: 'XAUUSD', tp: [101, 102] },
         broker: { id: 'b1', user_id: 'u1', platform: 'MT5', default_lot_size: 0.01 },
         manual: { trade_style: 'single' },
         api,
@@ -106,12 +120,12 @@ describe('sendImmediateLegs single-style hard block', () => {
         prep: {} as never,
       } as never)
 
-      assert.equal(sent.length, 0)
-      assert.equal(result.failureReason, 'single_style_multi_leg_blocked')
+      assert.notEqual(result.failureReason, 'single_style_multi_leg_blocked')
       assert.equal(
         inserts.some(r => (r as { action?: string }).action === 'single_style_multi_leg_blocked'),
-        true,
+        false,
       )
+      assert.ok(sent.length >= 1)
     } finally {
       restoreEnv('EXECUTION_ENGINE', originalEngine)
       restoreEnv('EXECUTION_ENGINE_V2_BROKERS', originalBrokers)
@@ -130,19 +144,16 @@ describe('sendImmediateLegs single-style hard block', () => {
     const inserts: unknown[] = []
     const sent: unknown[] = []
     const api = {
-      orderSend: async (_uuid: string, args: { volume: number }) => {
+      orderSend: async (args: unknown) => {
         sent.push(args)
-        return { ticket: sent.length + 10, openPrice: 100, stopLoss: 0, takeProfit: 0, lots: args.volume }
+        return { ticket: 1, openPrice: 100, stopLoss: 99, takeProfit: 101, lots: 0.4 }
       },
       quote: async () => ({ bid: 99.9, ask: 100.1 }),
-    }
-    const cloneArgs = {
-      symbol: 'XAUUSD', operation: 'Buy' as const, volume: 0.4, price: 100,
-      stoploss: 0, takeprofit: 0, slippage: 20, comment: 'TScopier:44sClub:979b6ac0', expertID: 1,
+      openedOrders: async () => [],
     }
 
     try {
-      const result = await sendImmediateLegs({
+      await sendImmediateLegs({
         ctx: {
           supabase: supabaseMock(inserts),
           markBrokerSessionDown: async () => {},
@@ -151,14 +162,14 @@ describe('sendImmediateLegs single-style hard block', () => {
           closeOppositeDirectionTrades: async () => {},
         },
         signal: {
-          id: 'sig-clone',
+          id: 'sig-collapse',
           user_id: 'u1',
           channel_id: 'c1',
           telegram_message_id: 'tg1',
           pipeline_ts: {},
         },
         parsed: { action: 'buy', symbol: 'XAUUSD', tp: [] },
-        broker: { id: 'b1', user_id: 'u1', platform: 'MT5', default_lot_size: 0.01 },
+        broker: { id: 'b1', user_id: 'u1', platform: 'MT5', default_lot_size: 0.4 },
         manual: { trade_style: 'multi' },
         api,
         uuid: 'uuid-1',
@@ -167,9 +178,20 @@ describe('sendImmediateLegs single-style hard block', () => {
         mapping: { symbol: 'XAUUSD', whitelist: [], userDecorated: false },
         params: null,
         legs: [
-          { idx: 0, args: { ...cloneArgs } },
-          { idx: 1, args: { ...cloneArgs } },
-          { idx: 2, args: { ...cloneArgs } },
+          {
+            idx: 0,
+            args: {
+              symbol: 'XAUUSD', operation: 'Buy', volume: 0.4, price: 100,
+              stoploss: 99, takeprofit: 101, slippage: 20, comment: 'TScopier:a', expertID: 1,
+            },
+          },
+          {
+            idx: 1,
+            args: {
+              symbol: 'XAUUSD', operation: 'Buy', volume: 0.4, price: 100,
+              stoploss: 99, takeprofit: 101, slippage: 20, comment: 'TScopier:a', expertID: 1,
+            },
+          },
         ],
         liveEntryFast: false,
         strictEntryPrefetch: null,
@@ -192,13 +214,7 @@ describe('sendImmediateLegs single-style hard block', () => {
         prep: {} as never,
       } as never)
 
-      // Full-lot clones (Luis teaser) collapse to one; granular multi/range legs do not.
       assert.equal(sent.length, 1)
-      assert.equal(result.openedOrMerged, true)
-      assert.equal(
-        inserts.some(r => (r as { action?: string }).action === 'duplicate_leg_collapsed'),
-        true,
-      )
     } finally {
       restoreEnv('EXECUTION_ENGINE', originalEngine)
       restoreEnv('EXECUTION_ENGINE_V2_BROKERS', originalBrokers)

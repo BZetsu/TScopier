@@ -465,22 +465,6 @@ export function ConfigurationSettingsEditor({
           </>
         ) : (
           <>
-            <SettingRow label={cm.risk.singleTpTarget}>
-              <Choice
-                value={settings.single_tp_target ?? 'farthest'}
-                options={[
-                  { value: 'farthest', label: cm.risk.singleTpTargetFarthest },
-                  ...tpLots
-                    .map((row, index) => ({ row, index }))
-                    .filter(({ row }) => row.enabled !== false)
-                    .map(({ row, index }) => ({
-                      value: `tp${index + 1}`,
-                      label: row.label?.trim() || `TP${index + 1}`,
-                    })),
-                ]}
-                onChange={value => onPatch({ single_tp_target: value as ManualSettings['single_tp_target'] })}
-              />
-            </SettingRow>
             <SettingRow label={cm.risk.useSignalEntryPrice}>
               <OnOff onLabel={copy.on} offLabel={copy.off}
                 checked={settings.use_signal_entry_price === true}

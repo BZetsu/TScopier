@@ -39,6 +39,20 @@ export function isBundleBasket(manual: unknown): boolean {
 }
 
 /**
+ * True when open legs should keep per-TP identity (one broker TP per leg),
+ * not count-weighted redistrib / worker partial closes:
+ * - Single trade style (percent-split broker TPs), or
+ * - Bundled multi (`isBundleBasket`).
+ * Range/layering baskets are excluded.
+ */
+export function isTpPercentSplitBasket(manual: unknown): boolean {
+  const m = (manual ?? {}) as { trade_style?: string | null; range_trading?: boolean | null }
+  if (m.range_trading === true) return false
+  if (m.trade_style !== 'multi') return true
+  return isBundleBasket(manual)
+}
+
+/**
  * Reladder map for bundled baskets: leg id → new TP, assigned 1:1 by current
  * TP order (buy ascending, sell descending). Drop-in replacement for the
  * count-weighted buildEntryQualityTakeProfitMap when the bundle flag is on.

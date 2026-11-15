@@ -118,6 +118,11 @@ export function buildPerLegStopTargets(args: {
   currentLegTps?: Array<number | null | undefined>
   /** Bundled basket receiving an explicit TP change — 1:1 remap by TP order. */
   bundleReladder?: boolean
+  /**
+   * Force per-leg TP identity (Single percent-split or bundled Multi) even when
+   * TP_BUNDLE_ENABLED is off.
+   */
+  forceSteadyTps?: boolean
   /** Trade direction for the reladder sort; falls back to the plan's direction. */
   isBuy?: boolean
 }): PerLegStopTarget[] {
@@ -149,11 +154,11 @@ export function buildPerLegStopTargets(args: {
   const total = Math.max(n, totalPlannedLegCount ?? n)
   const rangeCount = Math.max(0, total - immCount)
 
-  // Bundled (non-range) baskets: identity rules, never count weights. The plan
-  // ladder (one order per level) wins when it covers every leg; otherwise the
-  // parsed ladder is used positionally (leg i ↔ level i).
+  // Percent-split / bundled (non-range) baskets: identity rules, never count
+  // weights. The plan ladder (one order per level) wins when it covers every
+  // leg; otherwise the parsed ladder is used positionally (leg i ↔ level i).
   if (
-    isTpBundleEnabled()
+    (isTpBundleEnabled() || args.forceSteadyTps === true)
     && args.currentLegTps != null
     && args.currentLegTps.length >= n
     && rangeCount === 0
