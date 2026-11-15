@@ -39,6 +39,8 @@ export type MgmtTradeRow = {
   entry_price: number | null
   opened_at: string | null
   cwe_close_price?: number | null
+  /** 1-based planned TP level for Single percent-split / pending identity. */
+  next_tp_index?: number | null
 }
 
 const MAX_PLAUSIBLE_PIPS = 500
@@ -196,7 +198,7 @@ export function resolveNewestOpenSymbolTrades(trades: MgmtTradeRow[]): MgmtTrade
 }
 
 const MGMT_TRADE_SELECT =
-  'id,signal_id,broker_account_id,metaapi_order_id,broker_position_ticket,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price'
+  'id,signal_id,broker_account_id,metaapi_order_id,broker_position_ticket,symbol,direction,lot_size,status,sl,tp,entry_price,opened_at,cwe_close_price,next_tp_index'
 
 /** Active legs eligible for management (open + broker-pending strict entries). */
 export function isMgmtEligibleTradeStatus(status: string): boolean {

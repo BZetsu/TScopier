@@ -15,7 +15,12 @@ import {
 import {
   loadChannelActiveTradeParamsForSymbol
 } from './channelActiveTradeParams'
-import { bundleTpOrderMap, isTpPercentSplitBasket } from './manualPlanning/tpBundleIdentity'
+import {
+  bundleSteadyLegTps,
+  bundleTpOrderMap,
+  isTpPercentSplitBasket,
+  resolveBundleLegTpIndexes,
+} from './manualPlanning/tpBundleIdentity'
 import {
   buildEntryQualityTakeProfitMap,
   type EntryQualityLeg,
@@ -64,6 +69,9 @@ export type ChannelStopLeg = {
    *  skipped for them. */
   status?: string
   lot_size?: number
+  /** 1-based planned TP level — required so pending/naked legs are not
+   *  backfilled with the farthest ladder TP. */
+  next_tp_index?: number | null
 }
 
 export type ChannelStopBroker = {
@@ -439,6 +447,7 @@ function mgmtRowToLeg(row: MgmtTradeRow): ChannelStopLeg {
     telegram_channel_id: null,
     status: row.status,
     lot_size: row.lot_size,
+    next_tp_index: row.next_tp_index ?? null,
   }
 }
 
@@ -689,6 +698,7 @@ function legToBasketOpenLeg(leg: ChannelStopLeg): BasketOpenLeg {
     entry_price: leg.entry_price,
     direction: leg.direction,
     symbol: leg.symbol,
+    next_tp_index: leg.next_tp_index ?? null,
   }
 }
 
@@ -943,28 +953,68 @@ export async function applyChannelStopsToBaskets(
     }
 
     const frozenDeepestTp = deepestFinalTp(plausibleTpLevels, isBuy)
-    const tpMap = slOnly || tpOnly || tpFrozen
-      ? new Map<string, number>()
-      : isTpPercentSplitBasket(broker.manual_settings)
-        // Percent-split basket: explicit TP change re-maps levels 1:1 by TP
-        // order — never the count-weighted entry-quality slots.
-        ? bundleTpOrderMap({
-            legs: legs.map(tr => ({ id: tr.id, tp: tr.tp })),
-            ladder: plausibleTpLevels,
-            isBuy,
+    const percentSplit = isTpPercentSplitBasket(broker.manual_settings)
+    // Identity map for percent-split (incl. pending SellLimit/BuyLimit legs):
+    // never fall back to farthest/deepest when a leg is naked.
+    const percentSplitIdentityMap = percentSplit
+      ? (() => {
+          const identityLegs = legs.map(tr => ({
+            id: tr.id,
+            tp: tr.tp,
+            lot_size: tr.lot_size,
+            next_tp_index: tr.next_tp_index,
+          }))
+          const legTpIndexes = resolveBundleLegTpIndexes({
+            legs: identityLegs,
+            ladderLength: plausibleTpLevels.length,
+            tpLots: tpLots ?? null,
           })
-        : buildEntryQualityTakeProfitMap({
+          const tps = bundleSteadyLegTps({
+            currentTps: legs.map(tr => tr.tp),
+            ladder: plausibleTpLevels,
+            legTpIndexes,
+          })
+          const out = new Map<string, number>()
+          legs.forEach((tr, i) => {
+            const tp = tps[i]
+            if (typeof tp === 'number' && tp > 0) out.set(tr.id, tp)
+          })
+          return out
+        })()
+      : null
+    const percentSplitReladderMap = percentSplit
+      ? bundleTpOrderMap({
           legs: legs.map(tr => ({
             id: tr.id,
-            entryPrice: Number(tr.entry_price ?? 0),
-            openedAt: tr.opened_at ?? '',
-          })) satisfies EntryQualityLeg[],
+            tp: tr.tp,
+            lot_size: tr.lot_size,
+            next_tp_index: tr.next_tp_index,
+          })),
+          ladder: plausibleTpLevels,
           isBuy,
-          slotLegCount: legs.length,
-          finalTps: plausibleTpLevels,
           tpLots: tpLots ?? null,
-          chosenTp,
         })
+      : null
+    // Freeze / SL-only: keep identity (never deepest). TP-only or full refresh:
+    // reladder percent-split 1:1; classic single keeps prior empty-map + keepTp.
+    const tpMap = tpFrozen || slOnly
+      ? (percentSplitIdentityMap ?? new Map<string, number>())
+      : tpOnly
+        ? (percentSplitReladderMap ?? new Map<string, number>())
+        : percentSplit
+          ? (percentSplitReladderMap ?? new Map<string, number>())
+          : buildEntryQualityTakeProfitMap({
+            legs: legs.map(tr => ({
+              id: tr.id,
+              entryPrice: Number(tr.entry_price ?? 0),
+              openedAt: tr.opened_at ?? '',
+            })) satisfies EntryQualityLeg[],
+            isBuy,
+            slotLegCount: legs.length,
+            finalTps: plausibleTpLevels,
+            tpLots: tpLots ?? null,
+            chosenTp,
+          })
 
     const slCache = new Map<string, number>()
     const perLegTargets: Array<{ stoploss: number; takeprofit: number }> = []
@@ -985,13 +1035,16 @@ export async function applyChannelStopsToBaskets(
       const ticket = Number(tr.metaapi_order_id)
       const keepTp = positiveNum(tr.tp)
       const keepSl = positiveNum(tr.sl)
+      // Percent-split (incl. pending): identity/ladder before deepest. Deepest
+      // is only for classic single/range freeze backfill of truly naked legs.
+      const identityTp = percentSplitIdentityMap?.get(tr.id) ?? null
       const targetTp = tpFrozen
-        ? (keepTp ?? (frozenDeepestTp > 0 ? frozenDeepestTp : null))
+        ? (keepTp ?? identityTp ?? (percentSplit ? null : (frozenDeepestTp > 0 ? frozenDeepestTp : null)))
         : tpOnly
-          ? (tpMap.get(tr.id) ?? keepTp)
+          ? (tpMap.get(tr.id) ?? keepTp ?? identityTp)
           : slOnly
             ? keepTp
-            : (tpMap.get(tr.id) ?? keepTp)
+            : (tpMap.get(tr.id) ?? keepTp ?? identityTp)
 
       let targetSl: number | null = tpOnly ? keepSl : null
       if (!tpOnly && hasNewSl) {
