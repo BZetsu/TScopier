@@ -47,6 +47,16 @@ function isNumbered(line: string) {
   return /^\d+[.)]\s+/.test(line)
 }
 
+function isHeading(line: string) {
+  return /^#{1,4}\s+\S/.test(line)
+}
+
+function parseHeading(line: string): { level: number; text: string } | null {
+  const m = line.match(/^(#{1,4})\s+(.+)$/)
+  if (!m) return null
+  return { level: m[1].length, text: m[2].trim() }
+}
+
 /** Light cleanup when the model dumps numbered/bulleted steps on one line. */
 function normalizeChatMarkdown(raw: string): string {
   return raw
@@ -54,10 +64,21 @@ function normalizeChatMarkdown(raw: string): string {
     .replace(/([^\n])\s+(\d+\.\s+\*\*)/g, '$1\n\n$2')
     .replace(/([^\n])\s+(\d+\.\s+[A-Z])/g, '$1\n\n$2')
     .replace(/([.:])\s+-\s+/g, '$1\n- ')
+    .replace(/([^\n])\s+(#{1,4}\s+)/g, '$1\n\n$2')
     .trim()
 }
 
-/** Lightweight formatting for assistant replies (paragraphs, lists, bold, code). */
+function headingClass(level: number, variant: Variant): string {
+  const base =
+    variant === 'user'
+      ? 'font-semibold text-inherit'
+      : 'font-semibold text-neutral-900 dark:text-neutral-50'
+  if (level <= 2) return clsx(base, 'mt-3 mb-1 text-[15px] leading-snug')
+  if (level === 3) return clsx(base, 'mt-2.5 mb-1 text-[13.5px] leading-snug')
+  return clsx(base, 'mt-2 mb-0.5 text-[13px] leading-snug')
+}
+
+/** Lightweight formatting for assistant replies (paragraphs, lists, headings, bold, code). */
 export function AssistantMessageContent({
   text,
   variant,
@@ -74,6 +95,20 @@ export function AssistantMessageContent({
     const line = lines[i]
     if (!line.trim()) {
       i += 1
+      continue
+    }
+
+    if (isHeading(line)) {
+      const heading = parseHeading(line)
+      i += 1
+      if (heading) {
+        const Tag = heading.level <= 2 ? 'h3' : heading.level === 3 ? 'h4' : 'h5'
+        blocks.push(
+          <Tag key={key++} className={headingClass(heading.level, variant)}>
+            {renderInline(heading.text, variant)}
+          </Tag>,
+        )
+      }
       continue
     }
 
@@ -111,7 +146,13 @@ export function AssistantMessageContent({
 
     const para: string[] = [line]
     i += 1
-    while (i < lines.length && lines[i].trim() && !isBullet(lines[i]) && !isNumbered(lines[i])) {
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !isBullet(lines[i]) &&
+      !isNumbered(lines[i]) &&
+      !isHeading(lines[i])
+    ) {
       para.push(lines[i])
       i += 1
     }

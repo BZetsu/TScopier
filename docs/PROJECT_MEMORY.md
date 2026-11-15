@@ -2,6 +2,157 @@
 
 ## Changelog
 
+### 2026-11-15 — Configure with AI: pip tolerance only with entry gate
+
+- **Context:** Proposals listed Signal Entry Pip Tolerance: 10 while Use Signal Entry Range (and Price) were off.
+- **Plain English:** Pip tolerance is only suggested when an entry gate is on; with teaser→params it is omitted.
+- **Fix (files):** Knowledge §4 + propose strip/warn in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) / [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
+- **Deploy state:** `configure-with-ai` → Migration.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: ban fake Total Lot Size bullets
+
+- **Context:** Proposals invented “Total Lot Size: 0.01 per TP (total 0.03…)” under dynamic 1% on a large account.
+- **Plain English:** That line is removed from guidance — TP rows stay percent-only; dynamic % sizes the whole basket, not 0.01 per TP.
+- **Fix (files):** Knowledge §2b + context reminders in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) / [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
+- **Deploy state:** `configure-with-ai` → Migration.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: label Multi as Range
+
+- **Context:** AI proposals said “Trade Style: Multi”; product UI already calls that style Range Trading.
+- **Plain English:** Configure with AI now says **Trade Style: Range** in chat (patch value stays \`multi\`).
+- **Fix (files):** Label rules in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); tool/warning copy in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
+- **Deploy state:** `configure-with-ai` → Migration (redeploy).
+- **Follow-ups:** Promote to production if needed.
+
+### 2026-11-15 — Configure with AI: production deploy
+
+- **Context:** User asked to promote the Configure with AI edge function to production after Migration testing (pills, Range Layering with Multi, teaser rules).
+- **Plain English:** Production now runs the same Configure with AI expert as Migration (Apply pills, Range Layering with Multi, teaser entry-gate rules).
+- **Fix (files):** Deployed [`configure-with-ai`](supabase/functions/configure-with-ai/index.ts) (+ shared knowledge/tools) to production `sxkpcovbyaficvtkpsdo`.
+- **Tests/verification:** CLI deploy succeeded (`TScopierAI` · production).
+- **Deploy state:** `configure-with-ai` → production (`sxkpcovbyaficvtkpsdo`); Migration already had the same build.
+- **Follow-ups:** Frontend/Netlify still needs the modal pills UI if not already live on app.tscopier.ai.
+
+### 2026-11-15 — Configure with AI: Range Layering with Multi
+
+- **Context:** Multi proposals omitted Range Layering, so only the first split opened and the entry range was unused.
+- **Plain English:** When Configure with AI recommends Multi, it now also recommends **Range Layering** so new trades can add as price moves against entry and the full range is used.
+- **Root cause (technical):** Analyze/suggest forced \`range_trading: false\` for teaser→params and knowledge treated multi TP as range-off.
+- **Fix (files):** Knowledge §3b + teaser multi guidance in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); suggest defaults + propose auto-fill/warnings in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
+- **Tests/verification:** Redeploy edge; re-run Configure with AI on a multi/teaser channel — proposal should list Range Layering on with step/distance.
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`).
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: Apply via in-chat pills
+
+- **Context:** Apply Settings button was easy to miss / missing when the model listed settings without `propose_settings`.
+- **Plain English:** After a proposal, **Apply settings** and **Something else** appear as pills under the reply; tapping Apply writes the draft to the form.
+- **Root cause (technical):** Prose proposals without a tool call left `pending_settings_patch` null, so no Apply UI rendered.
+- **Fix (files):** In-chat pills in [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx); force `propose_settings` + `chat_actions` in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); knowledge rule in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts).
+- **Tests/verification:** Edge redeployed; reload app and re-run Configure with AI until a proposal — pills under the reply.
+- **Deploy state:** Frontend local/Netlify; `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`).
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: sticky Apply Settings bar
+
+- **Context:** Apply was below a tall chat bubble and easy to miss / scroll past.
+- **Plain English:** **Apply Settings** stays pinned above the composer (plus under the latest reply) whenever a proposal is pending.
+- **Fix (files):** [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx); knowledge requires `propose_settings` whenever listing a proposal.
+- **Deploy state:** Frontend local/Netlify; `configure-with-ai` → Migration.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: no Predefined SL on teaser→params
+
+- **Context:** AI suggested Predefined SL “until signal SL arrives”; Predefined SL actually overrides signal SL.
+- **Plain English:** For teaser→parameters channels that send SL in the follow-up, Predefined SL stays off and is no longer recommended with that wrong rationale.
+- **Fix (files):** Knowledge + suggest/propose enforcement in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) / [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`).
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: label modify/close as Update
+
+- **Context:** Channel management messages (MOVE SL/TP, CLOSE HALF) were shown and treated as Entry.
+- **Plain English:** Samples are classified as Entry vs Update from parsed data or raw text; load keeps a mix of both so AI sees modify/close formats too.
+- **Fix (files):** [`configureWithAiSignalFormat.ts`](src/lib/configureWithAiSignalFormat.ts) classifiers + tests; [`configureWithAiSignalLoad.ts`](src/lib/configureWithAiSignalLoad.ts); knowledge §1c; analyze request copy.
+- **Deploy state:** Frontend local/Netlify; `configure-with-ai` → Migration.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: distinct signal formats only
+
+- **Context:** Load-from-channel dumped many near-duplicate signals (same layout, different prices).
+- **Plain English:** Samples are deduped by format shape (prices scrubbed) so AI only sees different signal layouts for context.
+- **Fix (files):** [`configureWithAiSignalFormat.ts`](src/lib/configureWithAiSignalFormat.ts) + tests; [`configureWithAiSignalLoad.ts`](src/lib/configureWithAiSignalLoad.ts) uses format fingerprints (max 8).
+- **Deploy state:** Frontend only.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: load from channel vs TradingView JSON
+
+- **Context:** “Load from channel” only read saved examples; TradingView needed alert JSON, not chat history.
+- **Plain English:** Telegram/WhatsApp/Discord now pull recent channel signals (Telegram can backfill history). TradingView shows **Load JSON format** from the alert template (+ recent alerts).
+- **Fix (files):** [`configureWithAiSignalLoad.ts`](src/lib/configureWithAiSignalLoad.ts); [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx); `source_kind` from [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx); configureModal i18n; context hint in configure-with-ai knowledge.
+- **Deploy state:** Frontend local/Netlify; `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`) with `source_kind` context.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: Apply Settings follow-up
+
+- **Context:** Users needed a clear in-chat action after a settings proposal.
+- **Plain English:** When AI proposes settings, an **Apply Settings** follow-up button appears under the reply (with short helper text) and on the proposal card.
+- **Fix (files):** [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx); `applySettings` / `applySettingsHint` in configureModal i18n.
+- **Deploy state:** Frontend only (local / Netlify rebuild).
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure with AI: teaser → parameters format
+
+- **Context:** Channels that post “Gold buy now” then a follow-up with entry band/SL/multi-TP (incl. `TP: open`) were at risk of Use Signal Entry Price/Range recommendations that skip the bare teaser.
+- **Plain English:** UniCopier already opens the teaser at market and attaches later SL/TPs. Configure with AI now detects that pattern, keeps entry-price/range gates off, and sizes finite TP rows (open/runner excluded).
+- **Fix (files):** Knowledge §1b in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); `teaser_then_params` detection + propose enforcement in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`).
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure with AI: TP ladder follows signal count
+
+- **Context:** Proposals kept default Take-Profit Levels TP1–TP3 even when signals posted a different number of TPs.
+- **Plain English:** Take-Profit rows now match how many TPs the channel signals use; the server corrects mismatched ladders and warns if the plan caps rows.
+- **Fix (files):** Signal TP mode + raw TP counting, `buildSuggestedTpLots(N)`, propose auto-align in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); knowledge rule in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); `plan_limits.max_tp_rows` from [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx).
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`). Frontend rebuild for `plan_limits`.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure with AI: answer TP follow-ups
+
+- **Context:** “What about TPs?” got a generic “misunderstanding” reply instead of take-profit guidance.
+- **Plain English:** The expert now treats TP questions as take-profits, covers targets in the first proposal when signals have them, and can revise the current Apply card from follow-ups.
+- **Fix (files):** TP decision section + no-dodge rule in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); richer TP analysis/suggestions + pending patch in context in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); client passes `pending_settings_patch` from [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx).
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`). Frontend rebuild needed for pending-patch context on follow-ups.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure with AI: pip tolerance + interactive close
+
+- **Context:** Range-entry proposals said Use Signal Entry Range without discussing pip tolerance or miss risk; closes felt one-shot.
+- **Plain English:** When recommending Use Signal Entry Range, the expert now sets/explains pip tolerance, warns that trades can be missed if price is too far from the zone, and asks whether to proceed or if you have something else in mind.
+- **Fix (files):** [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) section 4 + interactive close; [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts) suggested tolerance, hints, soft warning on proposals.
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`).
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure with AI: account size + single vs range
+
+- **Context:** Expert should weight account size and whether signals are single-price or range/zone.
+- **Plain English:** Recommendations now classify single entry vs buy/sell zone and scale lots/risk from the broker balance/equity tier.
+- **Fix (files):** [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) decision framework; richer `analyze_signal_format` + proposal checks in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); welcome copy.
+- **Deploy state:** Redeploy `configure-with-ai` to Migration.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure with AI (draft expert modal)
+
+- **Context:** Users needed guided trading config from signal format without cracking their heads on every setting.
+- **Plain English:** Configure Trading has a **Configure with AI** button that opens a nested expert chat. It loads or accepts pasted signal samples, recommends lot/style/management, and **Apply to form** updates the draft (Save still persists).
+- **Root cause (technical):** N/A — new feature; separate from global `assistant-chat`.
+- **Fix (files):** Edge [`configure-with-ai`](supabase/functions/configure-with-ai/index.ts) + [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); extended [`CONFIGURE_AI_PATCHABLE_KEYS`](supabase/functions/_shared/assistantConfigTools.ts); UI [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx), client/patch helpers, [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) wire-up; configureModal i18n.
+- **Tests/verification:** `configureWithAiPatch.test.ts`; `tsc -b` clean.
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`). Frontend needs Netlify/local rebuild.
+- **Follow-ups:** Production deploy when ready; optional lot-calculator deep-link.
+
 ### 2026-11-14 — Assistant trade explain respects UI language
 
 - **Context:** “Explain with AI” always asked for plain English even when UniCopier UI was another language.

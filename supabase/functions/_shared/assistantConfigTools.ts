@@ -70,11 +70,44 @@ export const PATCHABLE_MANUAL_KEYS = new Set([
   "trailing_distance_pips",
 ]);
 
+/**
+ * Broader allowlist for the Configure with AI expert (draft-only patches).
+ * Includes management / TP lot / breakeven keys the global assistant does not write.
+ */
+export const CONFIGURE_AI_PATCHABLE_KEYS = new Set([
+  ...PATCHABLE_MANUAL_KEYS,
+  "tp_lots",
+  "single_tp_target",
+  "move_sl_to_entry_after_mode",
+  "move_sl_to_entry_after_tp_index",
+  "move_sl_to_entry_after_pips",
+  "news_trading_enabled",
+  "news_avoid_impacts",
+  "close_before_news_minutes",
+  "resume_after_news_minutes",
+  "time_filter_enabled",
+  "trade_start_hour",
+  "trade_end_hour",
+  "days_filter_enabled",
+  "trade_days",
+]);
+
 export function sanitizeManualPatch(raw: unknown): Record<string, unknown> {
+  return sanitizePatchAgainstAllowlist(raw, PATCHABLE_MANUAL_KEYS);
+}
+
+export function sanitizeConfigureAiPatch(raw: unknown): Record<string, unknown> {
+  return sanitizePatchAgainstAllowlist(raw, CONFIGURE_AI_PATCHABLE_KEYS);
+}
+
+function sanitizePatchAgainstAllowlist(
+  raw: unknown,
+  allowlist: Set<string>,
+): Record<string, unknown> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (!PATCHABLE_MANUAL_KEYS.has(key)) continue;
+    if (!allowlist.has(key)) continue;
     if (value === undefined) continue;
     out[key] = value;
   }
