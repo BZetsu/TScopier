@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-15 — Multi basket: freeze survivor TPs after TP hit
+
+- **Context:** After TP1 closed, remaining open legs had their take-profits rewritten to the TP1 price (wrong).
+- **Plain English:** Once a take-profit is hit on a multi basket, the survivors keep the TP levels they already had. We no longer reshuffle them onto nearer targets.
+- **Root cause (technical):** Non-range multi reconcile / merge refresh re-ran count-weighted Targets % (`expandPerLegTargetsToCount` / `buildPerLegStopTargets`) after a leg closed, so fewer open legs were remapped onto the near end of the signal ladder. Range already froze on closed-leg / TP-touch; multi did not.
+- **Fix (files):** Freeze multi TPs after `hasClosedBasketLegs` or `hasTpTouchedLock` in [`basketReconcileTargets.ts`](worker/src/basketReconcileTargets.ts) and [`slTpRefresh.ts`](worker/src/tradeExecutor/basketMerge/slTpRefresh.ts) (preserve open-leg TPs; message revisions still reladder).
+- **Tests/verification:** `basketReconcileTargets.test.ts` + worker `tsc --noEmit`.
+- **Deploy state:** Worker local only — deploy worker for effect on live baskets.
+- **Follow-ups:** Redeploy trade worker; existing mis-set survivor TPs need a manual/broker fix or channel SL/TP update to correct.
+
 ### 2026-11-15 — Dashboard: Active Signal Sources + stacked logos
 
 - **Context:** Overview stat still said “Active Signal Channels” with a bare count; first pass showed channel count (e.g. 3) next to unique platform logos (e.g. 2).

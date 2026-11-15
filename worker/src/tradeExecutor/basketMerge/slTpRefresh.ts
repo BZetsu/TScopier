@@ -47,7 +47,14 @@ import {
   logEffectiveBasketStops,
   resolveEffectiveBasketStops,
 } from '../../basketEffectiveStops'
-import { buildRangeBasketTpTargets, pickV2MergeDistributeTargets, toRangeBasketParsedSlice } from '../../rangeBasketTpSync'
+import {
+  buildRangeBasketTpTargets,
+  hasClosedBasketLegs,
+  pickV2MergeDistributeTargets,
+  preserveOpenLegTakeProfits,
+  toRangeBasketParsedSlice,
+} from '../../rangeBasketTpSync'
+import { hasTpTouchedLock } from '../../rangePendingFireGuard'
 import { isRangeLayerTillCloseEnabled } from '../../rangeLayerTillClose'
 import {
   patchActiveRangePendingLegStops,
@@ -466,6 +473,31 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     if (manual.trade_style !== 'multi' && singleBrokerTp != null) {
       perLegTargets = perLegTargets.map(target => ({ ...target, takeprofit: singleBrokerTp }))
     }
+    // Multi (non-range, non-bundle path): after a TP hit, do not count-weight
+    // redistrib survivors onto nearer levels (classic "all TPs → TP1"). Explicit
+    // same-signal message revisions still reladder.
+    let multiTpFrozen = false
+    if (
+      manual.range_trading !== true
+      && sameSignalRefresh !== true
+      && familyTrades.length > 0
+    ) {
+      const [hasClosedLegs, tpTouched] = await Promise.all([
+        hasClosedBasketLegs(ctx.supabase, broker.id, anchorSignalId),
+        hasTpTouchedLock(ctx.supabase, {
+          signalId: anchorSignalId,
+          brokerAccountId: broker.id,
+          symbol,
+        }),
+      ])
+      if (hasClosedLegs || tpTouched) {
+        perLegTargets = preserveOpenLegTakeProfits(familyTrades, perLegTargets).map(t => ({
+          stoploss: Number(t.stoploss) || 0,
+          takeprofit: Number(t.takeprofit) || 0,
+        }))
+        multiTpFrozen = true
+      }
+    }
 
     let anchor: number | null = plan.anchor?.value ?? null
     if (virtualPendings.length > 0 && (anchor == null || anchor <= 0)) {
@@ -679,7 +711,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         await new Promise(r => setTimeout(r, roundSleepMs))
         familyTrades = await loadFamilyTrades()
         summary.openLegs = familyTrades.length
-        const refreshedTargets = buildPerLegStopTargets({
+        let refreshedTargets = buildPerLegStopTargets({
           plan,
           parsed: effectiveParsed,
           openLegCount: familyTrades.length,
@@ -694,6 +726,12 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           for (let i = 0; i < refreshedTargets.length; i++) {
             refreshedTargets[i] = { ...refreshedTargets[i]!, takeprofit: singleBrokerTp }
           }
+        }
+        if (multiTpFrozen) {
+          refreshedTargets = preserveOpenLegTakeProfits(familyTrades, refreshedTargets).map(t => ({
+            stoploss: Number(t.stoploss) || 0,
+            takeprofit: Number(t.takeprofit) || 0,
+          }))
         }
         if (refreshedTargets.length) {
           perLegTargets.length = 0
