@@ -45,6 +45,8 @@ export type BasketOpenLeg = {
   entry_price: number | null
   direction: string
   symbol: string
+  /** DB status — pending = resting BuyLimit/SellLimit (strict entry). */
+  status?: string | null
   /** Set by autoManagementMonitor when the leg was moved to breakeven. */
   auto_be_applied_at?: string | null
   /** Offset used when this leg was moved to breakeven (pips beyond entry). */
@@ -574,13 +576,16 @@ export async function runBasketLegModifies(args: {
       }
     }
 
-    // The wrong-side / min-distance guard must judge the stop against the live
-    // market, never the entry price: entry is stale the moment price moves, and
-    // comparing a profitable trail to the entry rejected every break-even move
-    // for buys as `wrong_side_sl` (incident 2026-10-28). The entry ref stays
-    // for the modify price and for the "never loosen" rule further down; when
-    // no live quote is available we keep the old entry-based behaviour.
-    const guardRef = marketRef > 0 ? marketRef : ref
+    // Open positions: judge stops against the live market (entry is stale once
+    // price moves — incident 2026-10-28). Resting pending BuyLimit/SellLimit:
+    // the broker validates against the pending entry price, so a live-market
+    // guard would wrongly reject a valid SL between entry and market (same
+    // rule as channelStopApply).
+    const isPendingLeg = String(tr.status ?? '').toLowerCase() === 'pending'
+    const entryRef = Number(tr.entry_price) || 0
+    const guardRef = isPendingLeg && entryRef > 0
+      ? entryRef
+      : (marketRef > 0 ? marketRef : ref)
 
     let stoploss = target.stoploss
     let takeprofit = cweIdx < nImmCwe ? 0 : target.takeprofit
@@ -835,6 +840,18 @@ export async function runBasketLegModifies(args: {
           : (typeof newTp === 'number' && newTp > 0 ? newTp : null)
       }
       await supabase.from('trades').update(tradePatch).eq('id', tr.id)
+      if (isPendingLeg) {
+        const sepPatch: { stoploss?: number | null; takeprofit?: number | null } = {}
+        if (safe.slApplied) sepPatch.stoploss = tradePatch.sl ?? null
+        if (safe.tpApplied) sepPatch.takeprofit = tradePatch.tp ?? null
+        if (Object.keys(sepPatch).length > 0) {
+          await supabase
+            .from('signal_entry_pending_orders')
+            .update(sepPatch)
+            .eq('trade_id', tr.id)
+            .eq('status', 'broker_pending')
+        }
+      }
       await logLegModify({
         userId,
         signalId,
@@ -1287,10 +1304,10 @@ export async function loadOpenBasketLegs(
 ): Promise<BasketOpenLeg[]> {
   const { data, error } = await supabase
     .from('trades')
-    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at,auto_be_offset_pips,next_tp_index')
+    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at,auto_be_offset_pips,next_tp_index,status')
     .eq('broker_account_id', brokerAccountId)
     .eq('signal_id', anchorSignalId)
-    .eq('status', 'open')
+    .in('status', ['open', 'pending'])
     .order('opened_at', { ascending: true })
     .limit(500)
   if (error) return []
