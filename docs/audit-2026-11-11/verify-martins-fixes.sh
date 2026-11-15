@@ -120,6 +120,10 @@ exists "configure-with-ai client"            src/lib/configureWithAiClient.ts
 exists "configure AI patch builder"          src/lib/configureWithAiPatch.ts
 exists "configure AI signal format parser"   src/lib/configureWithAiSignalFormat.ts
 
+# ---- TP split distribution rule (owner-approved 2026-11-13, restored 2026-11-15) --
+must "bundle min-lot rounds UP (ceil)"       worker/src/manualPlanning/planTpPercentSplitOrders.ts 'Math.ceil\(minLot / lotStep'
+must "bundle rescue pot (nearest-first)"      worker/src/manualPlanning/planTpPercentSplitOrders.ts 'rescue pot'
+
 echo "----------------------------------------"
 echo "code-preservation: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

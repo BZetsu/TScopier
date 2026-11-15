@@ -89,6 +89,7 @@ Parked repairs in `stash@{1}` (per instruction: his code stands alone for now):
 | `deferredOnlyRangePlan.test.ts` ×3 | his own test mocks lack the ctx map his `entryPrepare.ts:438` now requires | none yet — upstream-red |
 | `managementExecutor.replyScope.test.ts` ×2 | post-close volume-alias / partial-profit expectations vs his new close path | none yet — upstream-red |
 | `src/lib/brokerCopyLink.test.ts` ×6 | his delete now chains `.select('id')`; his own test fake lacks `.select()` after `.delete()` | none yet — upstream-red |
+| `worker/src/parseSignal.test.ts` ×1 — "infers TP/SL from bare prices on sell now signal" | red on `upstream/main` itself (verified 2026-11-15 in a clean worktree); bare-price inference expectation vs current parser | none yet — upstream-red |
 
 Worker full suite at round-2 pull time: **3207/3218 pass, 11 fail** (round-3 re-run pending) (exactly the above; no unexplained failures).
 Frontend after round 3: node:test **590/590**; vitest **536/544** (2 pre-existing `TraderReviews` + 6 upstream-red `brokerCopyLink`).

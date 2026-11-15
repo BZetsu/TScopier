@@ -2,6 +2,19 @@
 
 ## Changelog
 
+### 2026-11-15 (fifth and sixth pulls) — Main's TP/entry batch (#226–#230) merged into staging; owner-approved lot distribution reinstated inside the new shared planner
+
+- **Context:** `main` moved twice while the promotion PR was being prepared: **PRs #226–#229 (11 commits)** — single-style one-trade-per-take-profit, teaser split by Targets %, multi-basket survivor TP freeze, reconciler fixes, signal-entry first/last price, dashboard wording — then **PR #230 (3 commits)** — teaser follow-up TP matched by `:tpN`, localisation of "Single Entries", edge-function redeploys.
+- **Plain English:** his new work replaces the separate single/multi split paths with one shared planner, so single accounts also get one broker trade per take-profit. In doing that, the **lot distribution rule approved on 13 November** was not carried over, so per the owner's instruction it was **reinstated inside his shared helper**: floor each share to the lot step, top short levels back up to the broker minimum nearest-first, round the minimum **up**, and give only the true leftover to the deepest level. The teaser behaviour is now his (a teaser splits immediately); our one outdated teaser test was updated to match. Two conflicts total, both the project-memory file (his11 new notes went to his file); everything else merged automatically.
+- **Technical:**
+  - `worker/src/manualPlanning/planTpPercentSplitOrders.ts` — replaced the `kept/rescuedUnits/remainderUnits` distribution with the approved `floor → top-up → deepest` algorithm (ceil `minUnits`, over-100 guard before rescue, nearest-first top-up, leftover to the farthest survivor). `planBundleManualOrders.ts` is now his thin wrapper; the restore lives in the shared module so **single and multi both inherit it**.
+  - `worker/src/manualPlanning/planBundleManualOrders.test.ts` — the `open_tp` test now expects the split teaser behaviour (`0.5/0.3/0.2`, TP0, `bundle_open_tp_split`); the other19 planner tests pass unchanged.
+  - Protection script: **+2 checks → 85/85** (`Math.ceil(minLot / lotStep` and `rescue pot` anchors).
+  - New documented known-red: `worker/src/parseSignal.test.ts` — "infers TP/SL from bare prices on sell now signal" **fails on `upstream/main` itself** (verified in a clean worktree of his branch on 2026-11-15), so it joins §7 of the checklist rather than being treated as merge fallout.
+- **Gates:** protection **85/85**; `npx tsc -b` clean; frontend node:test **635/635**, vitest **561 passed with the documented 8 known-reds**; worker build clean; **worker suite 3,264 / 3,276 pass** — the 12 failures are exactly the documented known-red set (2 compile + deferredOnlyRangePlan ×3 + VirtualPendingMonitor ×4 + providerScope ×1 + replyScope ×1 + the parseSignal case), **zero unexplained**.
+- **Deploy state:** both merges plus docs committed on `staging-merge` and pushed to `upstream/staging` and `bzetu/staging` so the promotion PR compares the current branch.
+- **Follow-ups:** the parked known-red repairs (I1–I4) remain untouched pending Martins's sign-off; `TP_BUNDLE_ENABLED` still needs adding on Railway when bundling is to be enabled.
+
 ### 2026-11-15 (fourth pull) — Main moved again (#224/#225, "Configure with AI"): 6 commits merged into staging; checklist 79 → 83
 
 - **Context:** while the promotion PR was being prepared, Martins merged PRs **#224 and #225** (6 commits): the **Configure with AI** feature for the account-configuration page — an AI chat modal that turns a plain-language description (or a loaded channel signal / TradingView alert JSON) into a trading configuration, with apply-in-chat controls, a sticky "Apply Settings" bar, wording fixes, full localisation, a fix for the "no input" answer after loading a signal, and production deploys.
