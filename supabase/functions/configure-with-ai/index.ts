@@ -1027,6 +1027,7 @@ function buildContextSystemBlock(ctx: ConfigureContext): string {
     signal_example_count: examples.length,
     instructions: [
       "Signal samples are optional for narrow edits. Concrete user requests (breakeven, trailing, lot/risk, style, etc.) → propose_settings immediately; never refuse only because signal_example_count is 0.",
+      "Answer how-to / I-want questions clearly. Never stall with confusion / please-share-specific-requests. UniCopier has NO auto-close-when-signal-message-is-deleted — say so and offer CLOSE messages, close_on_opposite_signal, or app force-close.",
       "If signal_example_count > 0 OR the user asks to analyze/propose from signals: the samples ARE the input — never say they provided no input. Call analyze_signal_format then propose_settings in this turn.",
       "Break even at TP N → move_sl_to_entry_after_mode=tp_hit + move_sl_to_entry_tp_index=N.",
       "When samples exist, classify single_price vs range_zone / teaser_then_params before a full package. When absent, still apply the asked settings.",

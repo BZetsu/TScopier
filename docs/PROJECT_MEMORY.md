@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-15 — Configure/Assistant AI: answer questions, no “confusion” stalls
+
+- **Context:** Users asking clear how-tos (e.g. close trades when the signal post is deleted) got a vague “there might be some confusion… share specific requests” brush-off.
+- **Plain English:** The AI now answers product questions even when it cannot flip a setting, and tells the truth when a feature does not exist.
+- **Root cause (technical):** Configure-with-AI “Scope (strict)” + missing guidance for unsupported close-on-delete; model fell back to refusal hedges.
+- **Fix (files):** Q&A §0c + softer scope in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); context reminder in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); same answer-first + no-delete-close fact in [`assistantKnowledge.ts`](supabase/functions/_shared/assistantKnowledge.ts).
+- **Tests/verification:** Deployed `configure-with-ai` + `assistant-chat` to Migration and production.
+- **Deploy state:** Migration `supmsgcubipmmowrzoub` + production `sxkpcovbyaficvtkpsdo`.
+- **Follow-ups:** None for prompts; close-on-message-delete remains unsupported product-wise.
+
 ### 2026-11-15 — Multi-leg strict entry pendings: unique index blocked TP2/TP3
 
 - **Context:** After placing percent-split SellLimits, Migration Demo `e24fb8b3` only kept **one** pending (2.5 lots TP1). BTCUSD market path opened 2–3 legs.
@@ -9,7 +19,7 @@
 - **Root cause (technical):** Unique index `signal_entry_pending_orders_active_unique` on `(signal_id, broker_account_id) WHERE status=broker_pending`.
 - **Fix (files):** Migration `20261115162000_signal_entry_pending_multi_leg_unique.sql` → unique on `(signal_id, broker_account_id, broker_ticket)`; log SEP insert failures in `strictEntryPending.ts`. Applied on Migration `supmsgcubipmmowrzoub`.
 - **Tests/verification:** Index verified on Migration; worker redeploy still required for the multi-pending placer.
-- **Deploy state:** Migration DB updated; worker local.
+- **Deploy state:** Migration DB updated; same migration applied to production `sxkpcovbyaficvtkpsdo` (2026-11-15). Worker local / redeploy still needed for placer.
 - **Follow-ups:** Redeploy worker; re-send signal or manually add missing Demo TP2/TP3 pendings for `e24fb8b3`.
 
 ### 2026-11-15 — Single + Use Signal Entry Price: split limit pendings by TP %
