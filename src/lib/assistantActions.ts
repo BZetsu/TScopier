@@ -33,6 +33,8 @@ export type AssistantActionHandlers = {
   startTelegramLinkFlow?: () => void
   startBrokerConnectFlow?: (prefill?: AssistantBrokerConnectPrefill | null) => void
   requestConfigureBroker?: (brokerId: string) => void
+  /** Live Account Trades → CSV download (async; fires download in the browser). */
+  exportAccountTradesCsv?: (args: Record<string, unknown>) => void | Promise<void>
 }
 
 function prefillFromAction(action: PendingClientAction): AssistantBrokerConnectPrefill {
@@ -92,6 +94,12 @@ export function runPendingClientActions(
       case 'open_live_chat':
         handlers.openLiveChat()
         notes.push('Opened live chat')
+        break
+      case 'export_account_trades_csv':
+        if (handlers.exportAccountTradesCsv) {
+          void handlers.exportAccountTradesCsv(action.args ?? {})
+          notes.push(action.summary || 'Exporting account trades CSV')
+        }
         break
       case 'open_broker_config':
       case 'propose_config_change': {

@@ -25,6 +25,14 @@ export interface MirrorCopyPlan {
   takeProfit: number | null
 }
 
+/** Live balances/equity used when sizingMode is balance_ratio or equity_ratio. */
+export interface MirrorCopyAccountMetrics {
+  sourceBalance: number | null
+  destinationBalance: number | null
+  sourceEquity: number | null
+  destinationEquity: number | null
+}
+
 /** Destination symbol for a source symbol, honouring the optional rename map. */
 export function mirrorCopySymbol(settings: MirrorCopySettings, sourceSymbol: string): string {
   const symbol = sourceSymbol.trim()
@@ -41,8 +49,16 @@ export function directionAllows(settings: MirrorCopySettings, side: 'buy' | 'sel
  * mode is unsupported, the size cannot be derived, or the source volume is unusable.
  * A per-symbol override and the user's max_lot are applied here, so they hold
  * regardless of caller.
+ *
+ * balance_ratio / equity_ratio need `accountMetrics` with positive source and
+ * destination values; without them this returns null (caller must fetch summaries).
  */
-export function mirrorCopyVolume(settings: MirrorCopySettings, sourceVolume: number, symbol?: string): number | null {
+export function mirrorCopyVolume(
+  settings: MirrorCopySettings,
+  sourceVolume: number,
+  symbol?: string,
+  accountMetrics?: MirrorCopyAccountMetrics | null,
+): number | null {
   if (!Number.isFinite(sourceVolume) || sourceVolume <= 0) return null
   if (settings.sizingMode === 'unsupported') return null
 
@@ -53,8 +69,20 @@ export function mirrorCopyVolume(settings: MirrorCopySettings, sourceVolume: num
   } else if (settings.sizingMode === 'fixed_lot') {
     if (settings.fixedLot == null) return null
     requested = settings.fixedLot
-  } else {
+  } else if (settings.sizingMode === 'lot_multiplier') {
     requested = sourceVolume * settings.lotMultiplier
+  } else if (settings.sizingMode === 'balance_ratio') {
+    const source = accountMetrics?.sourceBalance
+    const dest = accountMetrics?.destinationBalance
+    if (source == null || source <= 0 || dest == null || dest <= 0) return null
+    requested = sourceVolume * (dest / source) * settings.balanceMultiplier
+  } else if (settings.sizingMode === 'equity_ratio') {
+    const source = accountMetrics?.sourceEquity
+    const dest = accountMetrics?.destinationEquity
+    if (source == null || source <= 0 || dest == null || dest <= 0) return null
+    requested = sourceVolume * (dest / source) * settings.equityMultiplier
+  } else {
+    return null
   }
 
   if (!Number.isFinite(requested) || requested <= 0) return null
@@ -86,11 +114,15 @@ export function sourcePositionAllowed(settings: MirrorCopySettings, position: No
 }
 
 /** Combine every decision into a plan, or null when the position must not be copied. */
-export function planMirrorCopy(settings: MirrorCopySettings, position: NormalizedSourcePosition): MirrorCopyPlan | null {
+export function planMirrorCopy(
+  settings: MirrorCopySettings,
+  position: NormalizedSourcePosition,
+  accountMetrics?: MirrorCopyAccountMetrics | null,
+): MirrorCopyPlan | null {
   if (!sourcePositionAllowed(settings, position)) return null
   // Sizing overrides are keyed on the destination symbol, matching the app's evaluator.
   const symbol = mirrorCopySymbol(settings, position.symbol)
-  const requestedVolume = mirrorCopyVolume(settings, position.volume, symbol)
+  const requestedVolume = mirrorCopyVolume(settings, position.volume, symbol, accountMetrics)
   if (requestedVolume == null) return null
   const stops = mirrorCopyStops(settings, position)
   return {

@@ -206,6 +206,14 @@ export const chromeSv: AppChromeTranslations = {
         reportStatusOpen: 'Öppen',
         reportStatusResolved: 'Löst',
       },
+      csvCard: {
+        title: 'CSV-export',
+        ready: 'Din CSV med kontots affärer är klar.',
+        empty: 'Inga kontoaffärer hittades för den dagen.',
+        download: 'Ladda ner CSV',
+        countLabel: '{count} affärer',
+        exportFailed: 'Kunde inte exportera kontoaffärer. Prova Kontoaffärer i appen.',
+      },
 
     },
 

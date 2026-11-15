@@ -229,6 +229,14 @@ export const fr: Translations = {
         reportStatusOpen: 'Ouvert',
         reportStatusResolved: 'Résolu',
       },
+      csvCard: {
+        title: 'Export CSV',
+        ready: 'Votre CSV des trades du compte est prêt.',
+        empty: 'Aucun trade de compte trouvé pour ce jour.',
+        download: 'Télécharger le CSV',
+        countLabel: '{count} trades',
+        exportFailed: 'Impossible d’exporter les trades. Essayez Trades du compte dans l’app.',
+      },
     },
 
   },

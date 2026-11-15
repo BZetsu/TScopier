@@ -5,6 +5,36 @@ Changelog entries authored / owned by Martins, kept separate from the main `PROJ
 
 ## Changelog
 
+### 2026-11-14 — Assistant trade explain respects UI language
+
+- **Context:** “Explain with AI” always asked for plain English even when UniCopier UI was another language.
+- **Plain English:** Explain-with-AI prompts and assistant replies now follow the user’s UniCopier language.
+- **Root cause (technical):** Hardcoded English auto-send strings; `locale` was sent by the client but unused in `assistant-chat`.
+- **Fix (files):** Localized `explainSignalPrompt` / `explainFailurePrompt` / `askAiAboutIssue` in [`detailModal.ts`](src/i18n/locales/copierLogs/detailModal.ts); wired in Copier Log / Trade / Signal Review modals; [`assistantReplyLanguageAddon`](supabase/functions/_shared/assistantKnowledge.ts) + locale on system prompt in [`assistant-chat`](supabase/functions/assistant-chat/index.ts).
+- **Tests/verification:** `tradeFailureDisplay` prompt tests; typecheck via locale bundle.
+- **Deploy state:** `assistant-chat` → Migration (`supmsgcubipmmowrzoub`). Frontend needs rebuild for localized prompts.
+- **Follow-ups:** Redeploy `assistant-chat` to production if desired.
+
+### 2026-11-14 — Assistant: export Account Trades CSV
+
+- **Context:** Trader asked the AI assistant to export today’s account trades as CSV for analysis.
+- **Plain English:** The assistant can now export Account Trades for a day (default today) as a downloadable CSV, optionally filtered to one broker.
+- **Root cause (technical):** N/A — new capability.
+- **Fix (files):** `export_account_trades_csv` tool in [`assistant-chat/index.ts`](supabase/functions/assistant-chat/index.ts) + knowledge prompt; client download via [`accountTradesCsv.ts`](src/lib/accountTradesCsv.ts) / [`accountTradesCsvCore.ts`](src/lib/accountTradesCsvCore.ts); [`AssistantCsvDownloadCard`](src/components/assistant/AssistantCsvDownloadCard.tsx) + [`AssistantPanel`](src/components/assistant/AssistantPanel.tsx) / [`assistantActions`](src/lib/assistantActions.ts); i18n `csvCard`.
+- **Tests/verification:** `npx tsx --test src/lib/accountTradesCsv.test.ts` (3 pass); `tsc -b` clean.
+- **Deploy state:** `assistant-chat` → Migration (`supmsgcubipmmowrzoub`) and production (`sxkpcovbyaficvtkpsdo`). Frontend needs Netlify/local rebuild for the download UI.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Mirror copy: support balance/equity ratio sizing
+
+- **Context:** Using mirror accounts failed with “Sizing mode not supported” / `SIZING_MODE_UNSUPPORTED`.
+- **Plain English:** Proportional mirror sizing (balance or equity ratio) was offered in the app but the copy engine rejected it. Those modes now work using live account balance/equity.
+- **Root cause (technical):** `parseMirrorCopySettings` mapped `balance_ratio` / `equity_ratio` (and legacy `dynamic_balance_percent`) to `sizingMode: 'unsupported'`; monitor `failLink`’d before open.
+- **Fix (files):** [`mirrorCopyTypes.ts`](worker/src/mirrorCopy/mirrorCopyTypes.ts), [`mirrorCopyPlan.ts`](worker/src/mirrorCopy/mirrorCopyPlan.ts), [`mirrorCopyMonitor.ts`](worker/src/mirrorCopy/mirrorCopyMonitor.ts) — parse + volume with account metrics; tests updated.
+- **Tests/verification:** `npx tsx --test src/mirrorCopy/mirrorCopyPlan.test.ts src/mirrorCopy/mirrorCopyMonitor.test.ts` (59 pass).
+- **Deploy state:** Worker code local — redeploy trade/mirror worker (Migration) to clear live errors.
+- **Follow-ups:** Redeploy worker; re-enable/retry the mirror link after deploy.
+
 ### 2026-11-14 — Fix unused isInternalRebalancePayload (Netlify tsc)
 
 - **Context:** Netlify `tsc -b` failed: `isInternalRebalancePayload` declared but never read.

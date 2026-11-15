@@ -229,6 +229,14 @@ export const es: Translations = {
         reportStatusOpen: 'Abierto',
         reportStatusResolved: 'Resuelto',
       },
+      csvCard: {
+        title: 'Exportar CSV',
+        ready: 'Tu CSV de operaciones de cuenta está listo.',
+        empty: 'No hay operaciones de cuenta para ese día.',
+        download: 'Descargar CSV',
+        countLabel: '{count} operaciones',
+        exportFailed: 'No se pudieron exportar las operaciones. Prueba Cuenta / Operaciones en la app.',
+      },
     },
 
   },

@@ -120,7 +120,7 @@ export function CopierLogDetailModal({
       timeline?.length ? `Timeline: ${timeline.map(r => `${r.action} (${r.status})`).join(', ')}` : '',
       rawMessage && rawMessage !== '—' ? `\nOriginal Telegram message:\n${rawMessage}` : '',
     ].filter(Boolean).join('\n')
-    assistant.setPendingAutoSend(`Please explain what happened with this trade signal in plain English.\n\n${context}`)
+    assistant.setPendingAutoSend(`${dm.explainSignalPrompt}\n\n${context}`)
     assistant.openAssistant()
   }
 
