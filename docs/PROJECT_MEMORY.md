@@ -2,6 +2,26 @@
 
 ## Changelog
 
+### 2026-11-15 — All 20 known-red tests repaired (owner sign-off, test-side only) + PR #231 pulled; suites fully green
+
+- **Context:** the owner asked to fix every failing test, without changing behaviour. Sign-off note: all repairs are **test files only** — no production code was touched. Two expectations encode behaviour that came from Martins's batches; both were red on his own `main` before this work.
+- **Repairs (files):**
+  - `worker/src/managementClose.test.ts` (I2) — fake broker reply gained the now-required `OrderResult.ticket`.
+  - `worker/src/socialCopyMonitor.test.ts` (I1) — duplicate `order()` in the fake removed.
+  - `worker/src/virtualPendingMonitor.test.ts` ×4 (I3) — expectations moved from the removed "restamp from fill" behaviour to frozen-first-entry.
+  - `worker/src/tradeExecutor/managementExecutor.providerScope.test.ts` (I4) — fake `is()` now filters like the orphan-fold query.
+  - `worker/src/tradeExecutor/deferredOnlyRangePlan.test.ts` ×3 — test ctx gained `entryBrokerReadCache: new Map()`.
+  - `worker/src/tradeExecutor/managementExecutor.replyScope.test.ts` ×1 — **behaviour updated**: trusted acknowledgement (0.01 stored, signal `executed`) wins over a stale live volume; test renamed. Martins to confirm.
+  - `worker/src/parseSignal.test.ts` ×1 — **behaviour updated**: bare `A / B` pair on a sell-now reads as an entry zone (4527–4557, TP 4527, SL 4577); test renamed. Martins to confirm.
+  - `src/lib/brokerCopyLink.test.ts` ×6 — fake made chainable for the delete chain and gained the leftover `select().eq()…maybeSingle()` probe.
+  - `src/components/social/TraderReviews.test.ts` ×2 — assertions target the labelled icon button and the current "Loading…" text.
+  - `worker/src/tradeExecutor/strictEntryPending.test.ts` (new file from PR #231) — three `as PreparedEntry` casts widened through `unknown`; the file did not compile under ts-node on `main` either.
+- **Results:** frontend node:test **635/635**, vitest **569/569**; worker suite **3,302 / 3,303** — the single miss was `src/observability/sentry.test.ts` "event rate limiter re-allows an event after the window expires", which passes **48/48 three times in isolation** (timing-window test under full parallel load); after PR #231 the new strict-entry file passes **2/2**.
+- **Also pulled:** PR #231 (`6877b842`) — strict entry creates a **separate pending order per TP share** (`worker/src/tradeExecutor/strictEntryPending.ts`); one new memory entry moved to his file; merge `17faeed6`.
+- **Checklist:** §7 rewritten — the known-red table is now a repair log; protection script still **85/85**.
+- **Deploy state:** commits pushed to `upstream/staging` and `bzetu/staging` on the owner's instruction.
+- **Follow-ups:** Martins to confirm the two behaviour items (trusted acknowledgement; bare-pair sells as an entry zone); the sentry timing test is flaky under full load and could be given a small margin if it recurs.
+
 ### 2026-11-15 (fifth and sixth pulls) — Main's TP/entry batch (#226–#230) merged into staging; owner-approved lot distribution reinstated inside the new shared planner
 
 - **Context:** `main` moved twice while the promotion PR was being prepared: **PRs #226–#229 (11 commits)** — single-style one-trade-per-take-profit, teaser split by Targets %, multi-basket survivor TP freeze, reconciler fixes, signal-entry first/last price, dashboard wording — then **PR #230 (3 commits)** — teaser follow-up TP matched by `:tpN`, localisation of "Single Entries", edge-function redeploys.
