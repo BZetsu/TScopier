@@ -2,12 +2,20 @@
 
 ## Changelog
 
+### 2026-11-15 — Configure with AI: production redeploy (latest)
+
+- **Context:** User asked to apply the latest Configure with AI edge (Range label, no fake Total Lot Size, pip tolerance only with entry gate, Range Layering with Multi, pills) to production.
+- **Plain English:** Production Configure with AI matches Migration again.
+- **Fix (files):** Redeployed [`configure-with-ai`](supabase/functions/configure-with-ai/index.ts) to production `sxkpcovbyaficvtkpsdo`.
+- **Deploy state:** production (`sxkpcovbyaficvtkpsdo`).
+- **Follow-ups:** None.
+
 ### 2026-11-15 — Configure with AI: pip tolerance only with entry gate
 
 - **Context:** Proposals listed Signal Entry Pip Tolerance: 10 while Use Signal Entry Range (and Price) were off.
 - **Plain English:** Pip tolerance is only suggested when an entry gate is on; with teaser→params it is omitted.
 - **Fix (files):** Knowledge §4 + propose strip/warn in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) / [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
-- **Deploy state:** `configure-with-ai` → Migration.
+- **Deploy state:** `configure-with-ai` → Migration; also production (see above).
 - **Follow-ups:** None.
 
 ### 2026-11-15 — Configure with AI: ban fake Total Lot Size bullets
