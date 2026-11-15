@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-15 (fourth pull) — Main moved again (#224/#225, "Configure with AI"): 6 commits merged into staging; checklist 79 → 83
+
+- **Context:** while the promotion PR was being prepared, Martins merged PRs **#224 and #225** (6 commits): the **Configure with AI** feature for the account-configuration page — an AI chat modal that turns a plain-language description (or a loaded channel signal / TradingView alert JSON) into a trading configuration, with apply-in-chat controls, a sticky "Apply Settings" bar, wording fixes, full localisation, a fix for the "no input" answer after loading a signal, and production deploys.
+- **Plain English:** We pulled his newest feature into staging so the promotion PR keeps merging cleanly. As always, one file needed a decision — the project memory — and his 23 change notes were filed into his own memory file. The protection checklist grew to **83 checks**, all passing; the frontend checks are green with only the already-recorded known failures, and the worker code was not touched by this batch.
+- **Conflict record:** exactly **one file — `docs/PROJECT_MEMORY.md`** (his block held 103 headings; **23 were new**, 80 duplicates skipped whole-entry). Merge commit `bc1cc01c`.
+- **Checklist upgrade (79 → 83):** `ConfigureWithAiModal`, `configureWithAiClient.ts`, `configureWithAiPatch.ts`, `configureWithAiSignalFormat.ts` (the last two ship with tests).
+- **Gates:** protection script **83/83**; `npx tsc -b` clean; frontend node:test **634/634**, vitest **560 passed with the documented 8 known-reds**; no worker files in the batch, so the worker suite was not re-run.
+- **Deploy state:** merged locally then pushed to `upstream/staging` and `bzetu/staging` on the owner's instruction.
+- **Follow-ups:** none new — the promotion PR checklist is unchanged (no database changes in this batch).
+
 ### 2026-11-14 (third pull) — Two migration-branch commits ahead of main pulled into staging (CSV export, assistant language, mirror-copy ratio sizing); checklist 74 → 79
 
 - **Context:** after the second main pull, `upstream/migration` was **2 commits ahead of `main`** (PR #224 not yet merged): `1a7e28f4` Account Trades CSV export and `c0bd1b39` assistant replies respect the user's UI language — and the same batch carries a **mirror-copy balance/equity ratio sizing** change. The owner asked to pull them in so the staging → main promotion PR includes them.

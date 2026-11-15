@@ -114,6 +114,12 @@ must "mirror copy balance/equity ratio"      worker/src/mirrorCopy/mirrorCopyPla
 must "trade-failure assistant prompt"        src/lib/tradeFailureDisplay.ts 'buildTradeFailureAssistantPrompt'
 must "assistant language addon"              supabase/functions/assistant-chat/index.ts 'assistantReplyLanguageAddon'
 
+# ---- Configure with AI (main PRs #224-#225) --------------------------------
+exists "configure-with-ai modal"             src/components/configure/ConfigureWithAiModal.tsx
+exists "configure-with-ai client"            src/lib/configureWithAiClient.ts
+exists "configure AI patch builder"          src/lib/configureWithAiPatch.ts
+exists "configure AI signal format parser"   src/lib/configureWithAiSignalFormat.ts
+
 echo "----------------------------------------"
 echo "code-preservation: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
