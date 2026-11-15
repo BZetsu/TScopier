@@ -619,6 +619,10 @@ function normalizeManualSettings(
     close_worse_entries_pips: closeWorseEntriesPips,
     single_tp_target: singleTpTarget,
     use_signal_entry_price: (j as Record<string, unknown>).use_signal_entry_price === true,
+    signal_entry_prefer:
+      String((j as Record<string, unknown>).signal_entry_prefer ?? 'first_price').toLowerCase() === 'last_price'
+        ? 'last_price'
+        : 'first_price',
     signal_entry_pip_tolerance: Math.max(0, readNumber('signal_entry_pip_tolerance', DEFAULT_MANUAL_SETTINGS.signal_entry_pip_tolerance ?? 10)),
     symbol_mapping: Object.fromEntries(Object.entries(map).map(([k, v]) => [String(k).toUpperCase(), String(v).toUpperCase()])),
     symbol_prefix: '',
@@ -1470,7 +1474,6 @@ export function AccountConfigPage() {
     if ((channelManualSettings.trade_style ?? 'single') === 'multi') return null
     const slices = computeSingleTpLotBreakdown({
       manualLot: previewManualLot,
-      singleTpTarget: channelManualSettings.single_tp_target ?? 'farthest',
       tpLots: channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS,
     })
     if (!slices.length) return null
@@ -1483,26 +1486,23 @@ export function AccountConfigPage() {
       .join(join)
   }, [
     channelManualSettings.trade_style,
-    channelManualSettings.single_tp_target,
     channelManualSettings.tp_lots,
     previewManualLot,
     cm.risk.singleTpLotBreakdownJoin,
     cm.risk.singleTpLotBreakdownSlice,
   ])
 
-  /** Levels whose partial close the worker will drop at this lot (partial_tp_below_min_lot). */
+  /** Levels that cannot open as separate trades at this lot (share below min lot). */
   const partialTpShortfall = useMemo(() => {
     if (!configDraft.selectedChannelId) return null
     if ((channelManualSettings.trade_style ?? 'single') !== 'single') return null
     return computeSingleTpPartialShortfall({
       manualLot: previewManualLot,
-      singleTpTarget: channelManualSettings.single_tp_target ?? 'farthest',
       tpLots: channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS,
     })
   }, [
     configDraft.selectedChannelId,
     channelManualSettings.trade_style,
-    channelManualSettings.single_tp_target,
     channelManualSettings.tp_lots,
     previewManualLot,
   ])
@@ -3697,25 +3697,6 @@ export function AccountConfigPage() {
 
                             {channelManualSettings.trade_style !== 'multi' && (
                               <div className="space-y-4">
-                              <ConfigureSelect
-                                label={cm.risk.singleTpTarget}
-                                hint={cm.risk.singleTpTargetHint}
-                                value={channelManualSettings.single_tp_target ?? 'farthest'}
-                                onChange={e => {
-                                  const v = e.target.value as ManualSettings['single_tp_target']
-                                  setManual({ single_tp_target: v })
-                                }}
-                                options={[
-                                  { value: 'farthest', label: cm.risk.singleTpTargetFarthest },
-                                  ...(channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS)
-                                    .map((row, i) => ({ row, origIdx: i }))
-                                    .filter(({ row }) => row.enabled !== false)
-                                    .map(({ row, origIdx }) => ({
-                                      value: `tp${origIdx + 1}` as const,
-                                      label: row.label?.trim() || `TP${origIdx + 1}`,
-                                    })),
-                                ]}
-                              />
                               {singleTpLotBreakdownText ? (
                                 <div className="rounded-md border border-neutral-200/65 dark:border-neutral-800/55 bg-neutral-50 dark:bg-neutral-900/60 px-3 py-2.5 space-y-1">
                                   <p className="text-xs font-medium text-neutral-900 dark:text-neutral-50">
@@ -3746,6 +3727,21 @@ export function AccountConfigPage() {
                                   </div>
                                   {channelManualSettings.use_signal_entry_price && (
                                     <div className="border-t border-neutral-200/65 dark:border-neutral-800/55 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-2">
+                                      <ConfigureSelect
+                                        label={cm.risk.signalEntryPrefer}
+                                        hint={cm.risk.signalEntryPreferHint}
+                                        value={channelManualSettings.signal_entry_prefer ?? 'first_price'}
+                                        onChange={e =>
+                                          setManual({
+                                            signal_entry_prefer:
+                                              e.target.value === 'last_price' ? 'last_price' : 'first_price',
+                                          })
+                                        }
+                                        options={[
+                                          { value: 'first_price', label: cm.risk.signalEntryPreferFirst },
+                                          { value: 'last_price', label: cm.risk.signalEntryPreferLast },
+                                        ]}
+                                      />
                                       <ConfigureInput
                                         label={cm.risk.pipToleranceLegacy}
                                         hint={cm.risk.pipToleranceHint}

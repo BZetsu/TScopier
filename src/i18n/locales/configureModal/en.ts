@@ -216,24 +216,29 @@ export const configureModalEn: ConfigureModalTranslations = {
     dynamicBalanceLotSizeFallback: '{lot} lots (using fixed-lot fallback — account balance not loaded)',
     tradeStyle: 'Trade Style',
     tradeStyleHint:
-      'Single Entry: one order at your full configured lot. Range Trading: splits that lot into many smaller orders across the signal\'s take-profit levels.',
+      'Single Entry: opens a separate broker trade for each enabled Take-Profit % (same total lot). Range Trading: splits that lot into many smaller orders across the signal\'s take-profit levels.',
     singleTrade: 'Single Entry',
     multiTrades: 'Range Trading',
     singleTpTarget: 'Single TP target',
     singleTpTargetHint:
-      'Choose which TP the broker order should target in Single Trade mode. Earlier TP levels can still trigger partial closes based on your TP distribution.',
+      'Deprecated for Single Entry — each enabled Take-Profit level opens its own broker trade with that TP visible.',
     singleTpTargetFarthest: 'Farthest TP (auto)',
     singleTpTargetTp1: 'TP1',
     singleTpTargetTp2: 'TP2',
     singleTpTargetTp3: 'TP3',
     singleTpLotBreakdownTitle: 'Lot breakdown',
-    singleTpLotBreakdownSlice: '{lot} lots closes @ {tp}',
-    partialTpMinLotWarning: 'With a lot of {lot} this trade cannot be split: {levels} will not close as partial take-profits, and only the final take-profit is placed on the broker. Each level needs at least 0.01 lot — increase the lot to close at every level.',
+    singleTpLotBreakdownSlice: '{lot} lots opens @ {tp}',
+    partialTpMinLotWarning: 'With a lot of {lot} these levels cannot open as separate trades: {levels}. Their share is added to the farthest TP. Each level needs at least 0.01 lot — increase the lot to open every level.',
     singleTpLotBreakdownJoin: ', ',
     signalEntryTitle: 'Signal entry execution',
     signalEntryBody:
-      'Use Signal Entry Price applies only in Single Trade mode. When enabled, the signal must include an explicit parsed entry (price, zone, @ price, or labels like "Entry Price:"). After any channel delay, the worker compares the live quote to that entry: Buy fills at market only when ask is at or below the entry; otherwise it places a buy limit at the entry. Sell is the inverse. The broker take-profit targets the last parsed TP when you have several targets, with optional partial closes from your TP ladder. Copier tracks each strict-entry pending so fills sync to your trade list; pendings are cancelled when the basket is flat. Bare "buy now" messages with no entry are skipped.',
+      'Use Signal Entry Price applies only in Single Trade mode. When enabled, the signal must include an explicit parsed entry (price, zone, @ price, or labels like "Entry Price:"). After any channel delay, the worker compares the live quote to that entry: Buy fills at market only when ask is at or below the entry; otherwise it places a buy limit at the entry. Sell is the inverse. When several Take-Profit levels are enabled, Single Entry opens a separate broker trade per TP using your Targets %. Copier tracks each strict-entry pending so fills sync to your trade list; pendings are cancelled when the basket is flat. Bare "buy now" messages with no entry are skipped.',
     useSignalEntryPrice: 'Use Signal Entry Price',
+    signalEntryPrefer: 'Entry price',
+    signalEntryPreferHint:
+      'When the signal lists two entry prices (a range), choose the first or last price as written. Pip tolerance then applies to that single price.',
+    signalEntryPreferFirst: 'First Price',
+    signalEntryPreferLast: 'Last Price',
     pipToleranceLegacy: 'Pip tolerance',
     pipToleranceHint:
       'Allowed distance from the signal entry level before entry is deferred (single trade strict entry and range signal range).',
@@ -321,7 +326,7 @@ export const configureModalEn: ConfigureModalTranslations = {
       usePredefinedTp: 'Use as Predefined TP',
       tpLevelsTitle: 'Take-profit levels',
       tpLevelsHint:
-        'Pips = distance from entry for each TP. % target = share of volume (single) or legs (multi) closed at that TP.',
+        'Pips = distance from entry for each TP. % target = share of volume opened at that TP (Single Entry opens one trade per level; Range Trading distributes legs).',
       tpPipsCol: 'Pips',
       tpPercentCol: '% target',
       tpLabel: 'TP{index}',
@@ -397,7 +402,7 @@ export const configureModalEn: ConfigureModalTranslations = {
     multiTradeNote:
       'Range Trading: distributes the planned legs across TPs by these percentages (e.g. 50/30/20 of 20 legs → 10/6/4 at TP1/TP2/TP3).',
     singleTradeNote:
-      'Single-trade: the order rides to the last enabled TP at the broker; the worker auto-partial-closes the configured percentage at every earlier TP (e.g. 50/30/20 on a 1.0 lot → close 0.50 at TP1, 0.30 at TP2, remaining 0.20 closes at TP3 via the broker).',
+      'Single Entry: opens a separate broker trade for each enabled TP using these percentages (e.g. 50/30/20 on a 3.0 lot → 1.5 @ TP1, 0.9 @ TP2, 0.6 @ TP3). Each trade has its own broker take-profit — no worker partial closes.',
     enabledTotal: 'Enabled total:',
     unallocated: '{pct}% unallocated',
     overCap: 'Over 100% (capped on next edit)',

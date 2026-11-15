@@ -1,6 +1,6 @@
 /**
- * Preview how a Single Entry fixed lot splits across TPs (partial closes + broker terminal).
- * Mirrors worker/src/manualPlanning/partialTpSchedule.ts planSinglePartialTps sizing rules.
+ * Preview how a Single Entry fixed lot opens as separate broker trades
+ * (one per Targets % TP). Mirrors worker planTpPercentSplitOrders sizing.
  */
 
 export type SingleTpTarget = `tp${number}` | 'farthest'
@@ -14,33 +14,12 @@ export type SingleTpLotSlice = {
 
 export type SingleTpLotBreakdownArgs = {
   manualLot: number
+  /** @deprecated Unused — each enabled TP gets its own trade. Kept for call-site compat. */
   singleTpTarget?: SingleTpTarget | string | null
   /** TP distribution rows; only enabled rows with a usable percent participate. */
   tpLots: Array<{ label?: string; percent?: number; enabled?: boolean }>
   minLot?: number
   lotStep?: number
-}
-
-function normalizeSingleTpTarget(raw: unknown): SingleTpTarget {
-  const v = String(raw ?? 'farthest').toLowerCase()
-  const m = v.match(/^tp(\d+)$/)
-  return m ? (`tp${m[1]}` as SingleTpTarget) : 'farthest'
-}
-
-function resolveSingleTpTargetIndex(args: {
-  finalTps: number[]
-  singleTpTarget?: SingleTpTarget
-}): number {
-  const { finalTps } = args
-  if (!Array.isArray(finalTps) || finalTps.length === 0) return -1
-  const target = normalizeSingleTpTarget(args.singleTpTarget)
-  const tpMatch = target.match(/^tp(\d+)$/)
-  if (tpMatch) {
-    const idx = Number(tpMatch[1]) - 1
-    return Math.min(Math.max(0, idx), finalTps.length - 1)
-  }
-  // Preview has no buy/sell — same as worker when isBuy is undefined.
-  return finalTps.length - 1
 }
 
 function formatLot(lots: number): number {
@@ -54,8 +33,8 @@ function defaultLabel(idx: number, label?: string): string {
 }
 
 /**
- * Build ordered lot slices for the Single TP target preview.
- * Partials use floor(manualLot × percent/100 / lotStep) × lotStep; terminal gets the remainder.
+ * Build ordered lot slices — one open trade per enabled Targets % row.
+ * Floor each bucket to lotStep; sub-min and remainder go to the farthest bucket.
  */
 export function computeSingleTpLotBreakdown(args: SingleTpLotBreakdownArgs): SingleTpLotSlice[] {
   const minLot = args.minLot ?? 0.01
@@ -68,98 +47,86 @@ export function computeSingleTpLotBreakdown(args: SingleTpLotBreakdownArgs): Sin
     return [{ tpLabel: 'TP1', tpIdx: 1, lots: formatLot(manualLot) }]
   }
 
-  // Synthetic ascending prices — only indices matter for the preview.
-  const finalTps = enabled.map((_, i) => i + 1)
-  const bucketRows = enabled.map(r => ({
-    percent: Number(r.percent),
-  }))
   const labels = enabled.map((r, i) => defaultLabel(i, r.label))
+  const buckets: Array<{ idx: number; label: string; rawLots: number }> = []
+  for (let i = 0; i < enabled.length; i++) {
+    const pct = Number(enabled[i]?.percent)
+    if (!(Number.isFinite(pct) && pct > 0)) continue
+    buckets.push({
+      idx: i,
+      label: labels[i] ?? `TP${i + 1}`,
+      rawLots: (manualLot * Math.min(100, pct)) / 100,
+    })
+  }
 
-  const targetIndex = resolveSingleTpTargetIndex({
-    finalTps,
-    singleTpTarget: normalizeSingleTpTarget(args.singleTpTarget),
-  })
-  if (targetIndex < 0) {
+  if (buckets.length === 0) {
     return [{ tpLabel: labels[0] ?? 'TP1', tpIdx: 1, lots: formatLot(manualLot) }]
   }
-
-  if (finalTps.length < 2 || !bucketRows.length) {
+  if (buckets.length === 1) {
     return [{
-      tpLabel: labels[targetIndex] ?? labels[0] ?? 'TP1',
-      tpIdx: targetIndex + 1,
+      tpLabel: buckets[0]!.label,
+      tpIdx: buckets[0]!.idx + 1,
       lots: formatLot(manualLot),
     }]
   }
 
-  const terminalIdx = Math.max(0, Math.min(targetIndex, finalTps.length - 1))
-  const bucketCount = Math.min(bucketRows.length, finalTps.length, terminalIdx + 1)
-  if (bucketCount < 2) {
+  const toUnits = (lots: number): number => Math.floor((lots / lotStep) + 1e-9)
+  const totalUnits = toUnits(manualLot)
+  const minUnits = Math.max(1, toUnits(minLot))
+
+  const planned = buckets.map(b => ({ ...b, units: Math.max(0, toUnits(b.rawLots)) }))
+  const kept: typeof planned = []
+  let rescuedUnits = 0
+  for (const b of planned) {
+    if (b.units > 0 && b.units >= minUnits) kept.push(b)
+    else rescuedUnits += b.units
+  }
+  if (kept.length === 0) {
+    return [{ tpLabel: labels[0] ?? 'TP1', tpIdx: 1, lots: formatLot(manualLot) }]
+  }
+  if (kept.length === 1) {
     return [{
-      tpLabel: labels[terminalIdx] ?? 'TP1',
-      tpIdx: terminalIdx + 1,
+      tpLabel: kept[0]!.label,
+      tpIdx: kept[0]!.idx + 1,
       lots: formatLot(manualLot),
     }]
   }
 
-  const FP_EPS = 1e-9
-  const toUnits = (v: number): number => {
-    if (!Number.isFinite(v) || v <= 0) return 0
-    return Math.max(0, Math.floor(v / lotStep + FP_EPS))
+  const farthest = kept[kept.length - 1]!
+  let floorSum = 0
+  for (const b of kept) floorSum += b.units
+  const remainderUnits = totalUnits - floorSum - rescuedUnits
+  if (remainderUnits < 0) {
+    return [{ tpLabel: labels[0] ?? 'TP1', tpIdx: 1, lots: formatLot(manualLot) }]
   }
-  const unitsToLot = (u: number): number => Number((u * lotStep).toFixed(8))
-
-  const manualUnits = toUnits(manualLot)
-  const minUnits = Math.max(1, Math.round(minLot / lotStep))
-  const usableUnits = Math.max(0, manualUnits - minUnits)
-  let remainingUnits = usableUnits
+  const farthestUnits = farthest.units + rescuedUnits + remainderUnits
+  if (farthestUnits < minUnits) {
+    return [{
+      tpLabel: farthest.label,
+      tpIdx: farthest.idx + 1,
+      lots: formatLot(manualLot),
+    }]
+  }
 
   const slices: SingleTpLotSlice[] = []
-  let partialLotsSum = 0
-
-  for (let i = 0; i < bucketCount - 1; i++) {
-    const pctRaw = Number(bucketRows[i]?.percent)
-    const pct = Number.isFinite(pctRaw) && pctRaw > 0 ? Math.min(100, pctRaw) : 0
-    if (pct <= 0) continue
-    let units = toUnits(manualLot * (pct / 100))
+  for (const b of kept) {
+    const units = b === farthest ? farthestUnits : b.units
     if (units < minUnits) continue
-    if (units > remainingUnits) {
-      units = remainingUnits
-      if (units < minUnits) continue
-    }
-    remainingUnits -= units
-    const lots = unitsToLot(units)
-    partialLotsSum += lots
-    slices.push({
-      tpLabel: labels[i] ?? `TP${i + 1}`,
-      tpIdx: i + 1,
-      lots,
-    })
-    if (remainingUnits < minUnits) break
+    const lots = formatLot(Math.round(units * lotStep * 1e8) / 1e8)
+    if (!(lots > 0)) continue
+    slices.push({ tpLabel: b.label, tpIdx: b.idx + 1, lots })
   }
-
-  const remainder = formatLot(Math.max(0, manualLot - partialLotsSum))
-  if (remainder > 0 || slices.length === 0) {
-    slices.push({
-      tpLabel: labels[terminalIdx] ?? `TP${terminalIdx + 1}`,
-      tpIdx: terminalIdx + 1,
-      lots: remainder > 0 ? remainder : formatLot(manualLot),
-    })
-  }
-
-  return slices
+  return slices.length ? slices : [{ tpLabel: labels[0] ?? 'TP1', tpIdx: 1, lots: formatLot(manualLot) }]
 }
 
 export type SingleTpPartialShortfall = {
-  /** Labels of TP levels that should close partially but will not, in order. */
+  /** Labels of TP levels that should open but cannot at the current lot. */
   dropped: string[]
 }
 
 /**
- * Detect levels whose partial close cannot be scheduled for the current lot —
- * the preview equivalent of the worker's `partial_tp_below_min_lot` drop
- * (worker/src/manualPlanning/partialTpSchedule.ts). Returns null when every
- * intended level fits, when fewer than two TP rows are enabled, or when the
- * single-TP target deliberately puts everything on the first level.
+ * Levels whose share floors below the broker minimum and cannot open as a
+ * separate trade (their volume is rescued into the farthest TP).
  */
 export function computeSingleTpPartialShortfall(
   args: SingleTpLotBreakdownArgs,
@@ -167,21 +134,13 @@ export function computeSingleTpPartialShortfall(
   const enabled = (args.tpLots ?? []).filter(r => r?.enabled !== false)
   if (enabled.length < 2) return null
 
-  const finalTps = enabled.map((_, i) => i + 1)
-  const targetIndex = resolveSingleTpTargetIndex({
-    finalTps,
-    singleTpTarget: normalizeSingleTpTarget(args.singleTpTarget),
-  })
-  // Everything closes at the first level by configuration — no partials intended.
-  if (targetIndex <= 0) return null
-
   const labels = enabled.map((r, i) => defaultLabel(i, r.label))
   const slices = computeSingleTpLotBreakdown(args)
   if (!slices.length) return null
   const scheduledIdx = new Set(slices.map(s => s.tpIdx))
 
   const dropped: string[] = []
-  for (let i = 0; i < targetIndex; i++) {
+  for (let i = 0; i < enabled.length; i++) {
     const pct = Number(enabled[i]?.percent)
     if (!(Number.isFinite(pct) && pct > 0)) continue
     if (!scheduledIdx.has(i + 1)) dropped.push(labels[i] ?? `TP${i + 1}`)

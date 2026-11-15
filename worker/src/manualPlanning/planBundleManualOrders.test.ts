@@ -506,7 +506,10 @@ test('bundle: Targets % summing over 100 never over-allocates', () => {
   assert.ok(total <= 1.0 + 1e-9, `total ${total} exceeded manualLot`)
 })
 
-test('bundle: open_tp signal emits one full-lot order with no broker TP', () => {
+test('bundle: open_tp teaser splits by Targets % with no broker TP', () => {
+  // 2026-11-15 (Martins's teaser split): a teaser with no TP prices still
+  // splits the lot by the enabled Targets % rows; the TPs attach on the
+  // follow-up edit. Owner-approved distribution (floor → top-up) applies.
   const plan = withBundle(() => planManualOrders({
     parsed: { ...baseParsed, tp: [], open_tp: true },
     resolvedSymbol: 'XAUUSD',
@@ -517,9 +520,10 @@ test('bundle: open_tp signal emits one full-lot order with no broker TP', () => 
     ctx: baseCtx,
     commentPrefix: 'TScopier:abc',
   }))
-  assert.equal(plan.orders.length, 1)
-  assert.equal(Number(plan.orders[0]?.volume), 1.0)
-  assert.equal(Number(plan.orders[0]?.takeprofit), 0)
+  assert.equal(plan.orders.length, 3)
+  assert.deepEqual(plan.orders.map(o => Number(o.volume)), [0.5, 0.3, 0.2])
+  for (const order of plan.orders) assert.equal(Number(order.takeprofit), 0)
+  assert.equal(plan.fallback_reason, 'bundle_open_tp_split')
 })
 
 test('bundle: range_trading ignores the flag (classic path)', () => {

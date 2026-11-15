@@ -129,7 +129,7 @@ const TOOL_DEFS = [
     function: {
       name: "propose_settings",
       description:
-        "Propose a manual_settings patch for the Configure form Apply card. Does NOT save to the database. Rationale MUST state (1) single_price vs range_zone and (2) how account size drove lot/risk. In chat, label trade_style multi as Trade Style: Range (never Multi); patch value stays \"multi\". Do NOT invent Total Lot Size or 0.01-per-TP bullets — TP rows are percents; dynamic % sizes the whole basket.",
+        "Propose a manual_settings patch for the Configure form Apply card. Does NOT save to the database. Rationale MUST state (1) single_price vs range_zone and (2) how account size drove lot/risk. In chat, label trade_style multi as Trade Style: Range (never Multi); patch value stays \"multi\". When use_signal_entry_price is true and the signal lists two entry quotes, include signal_entry_prefer first_price|last_price (Entry price: First/Last Price). Do NOT invent Total Lot Size or 0.01-per-TP bullets — TP rows are percents; dynamic % sizes the whole basket.",
       parameters: {
         type: "object",
         properties: {
@@ -260,6 +260,24 @@ function rawLooksLikeSinglePrice(raw: string): boolean {
   if (rawLooksLikeRangeZone(raw)) return false;
   if (/\b(entry|enter|@|at)\s*:?\s*\d+(?:\.\d+)?\b/.test(t)) return true;
   if (/\b(buy|sell)\s+\w+\s+@?\s*\d+(?:\.\d+)?\b/.test(t)) return true;
+  return false;
+}
+
+/** Two entry quotes on one line (First/Last Price), e.g. BUY NOW: (3879) 3878) or NOW 3879 / 3878. */
+function rawLooksLikeDualEntryQuotes(raw: string): boolean {
+  const t = String(raw ?? "").replace(/\s+/g, " ");
+  if (
+    /\b(?:now|instant|market|mkt)\s*:?\s*\(?\s*\d+(?:\.\d+)?\s*\)?\s+[\/(\-]?\s*\d+(?:\.\d+)?/i
+      .test(t)
+  ) {
+    return true;
+  }
+  if (
+    /\b(?:buy|sell|long|short)\s+(?:now|instant|market|mkt)?\s*:?\s*\(?\s*\d+(?:\.\d+)?\s*\)?\s*(?:\/|-|–)\s*\(?\s*\d+(?:\.\d+)?/i
+      .test(t)
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -421,6 +439,7 @@ function analyzeSignalExamples(
   let bareTeaserHits = 0;
   let parameterFollowUpHits = 0;
   let openTpHits = 0;
+  let dualEntryQuotes = 0;
   let hasSl = 0;
   let hasSide = 0;
   const zoneWidths: number[] = [];
@@ -446,6 +465,12 @@ function analyzeSignalExamples(
     const rawTpCount = countTpsInRaw(raw);
 
     const intent = row.intent && typeof row.intent === "object" ? row.intent : null;
+    const intentEntry = Array.isArray(intent?.entry)
+      ? (intent!.entry as unknown[]).map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)
+      : [];
+    if (rawLooksLikeDualEntryQuotes(raw) || intentEntry.length >= 2) {
+      dualEntryQuotes++;
+    }
     if (!intent) {
       if (rawTpCount >= 1 && (label === "entry" || label === "update" || label === "")) {
         tpCounts.push(rawTpCount);
@@ -546,6 +571,11 @@ function analyzeSignalExamples(
     entry_mode !== "teaser_then_params" &&
     (entry_mode === "single_price" ||
       (entry_mode === "mixed" && !suggestedUseSignalEntryRange));
+  // Dual quotes + Use Signal Entry Price (not zone wait) → First/Last (default first).
+  const suggestEntryPriceGate =
+    suggestedUseSignalEntryPrice && !suggestedUseSignalEntryRange;
+  const suggestedSignalEntryPrefer =
+    suggestEntryPriceGate && dualEntryQuotes > 0 ? "first_price" : null;
 
   // Rough pip-ish distance for FX/gold when zone width looks like price points
   let suggestedRangeDistancePips: number | null = null;
@@ -594,6 +624,7 @@ function analyzeSignalExamples(
     ),
     zone_entry_examples: zoneEntry,
     single_entry_examples: singleEntry,
+    dual_entry_quotes: dualEntryQuotes,
     raw_zone_hits: rawZoneHits,
     raw_single_hits: rawSingleHits,
     bare_teaser_examples: bareTeaserHits,
@@ -609,9 +640,10 @@ function analyzeSignalExamples(
       range_layering_type: suggestedRangeLayering ? "auto" : null,
       range_percent: suggestedRangeLayering ? 50 : null,
       use_signal_entry_range: suggestedUseSignalEntryRange,
-      use_signal_entry_price:
-        suggestedUseSignalEntryPrice && !suggestedUseSignalEntryRange,
-      signal_entry_pip_tolerance: suggestedUseSignalEntryRange ? 10 : null,
+      use_signal_entry_price: suggestEntryPriceGate,
+      signal_entry_prefer: suggestedSignalEntryPrefer,
+      signal_entry_pip_tolerance:
+        suggestedUseSignalEntryRange || suggestEntryPriceGate ? 10 : null,
       range_distance_pips: suggestedRangeDistancePips,
       range_step_pips:
         suggestedRangeDistancePips == null
@@ -634,7 +666,6 @@ function analyzeSignalExamples(
             ? true
             : false,
       add_new_trades_to_existing: entry_mode === "teaser_then_params" ? true : undefined,
-      single_tp_target: suggestedTradeStyle === "single" ? "farthest" : null,
       tp_lots: suggestedTpLots,
       tp_lots_must_match_signal_count: signalTpCount || null,
       notes:
@@ -654,7 +685,7 @@ function analyzeSignalExamples(
       (entry_mode === "teaser_then_params"
         ? "entry_mode=teaser_then_params: MUST set use_signal_entry_price=false and use_signal_entry_range=false (bare 'buy now' would otherwise skip). Explain teaser opens at market and follow-up params attach SL/TPs. "
         : "") +
-      "Honor entry_mode + account.size_tier. Take-Profit Levels (tp_lots) MUST use signal_tp_count finite TP rows — never default to product TP1–TP3; exclude TP: open from the ladder count. Prefer suggested.tp_lots. Keep use_predefined_tp_pips false when signals include TP prices. Confirm risk mode/percent — do NOT invent Total Lot Size or 0.01-per-TP lines. Warn if multi/range needs Advanced. If use_signal_entry_range:true, include signal_entry_pip_tolerance + miss-trade warning. Answer TP follow-ups directly. End interactively." +
+      "Honor entry_mode + account.size_tier. Take-Profit Levels (tp_lots) MUST use signal_tp_count finite TP rows — never default to product TP1–TP3; exclude TP: open from the ladder count. Prefer suggested.tp_lots. Keep use_predefined_tp_pips false when signals include TP prices. Confirm risk mode/percent — do NOT invent Total Lot Size or 0.01-per-TP lines. Single Entry opens one broker trade per enabled TP % (no worker partial closes); omit single_tp_target. Warn if multi/range needs Advanced. If use_signal_entry_range:true, include signal_entry_pip_tolerance + miss-trade warning. If dual_entry_quotes>0 and use_signal_entry_price:true, set signal_entry_prefer (first_price|last_price; default first) and label Entry price: First/Last Price. Answer TP follow-ups directly. End interactively." +
       (tpPlanWarning ? ` ${tpPlanWarning}` : ""),
   };
 }
@@ -785,6 +816,18 @@ function executeTool(
       if (!entryGateOn && "signal_entry_pip_tolerance" in patch) {
         delete patch.signal_entry_pip_tolerance;
       }
+      // First/Last entry prefer only applies with Use Signal Entry Price.
+      const dualQuotes = Number(analysis.dual_entry_quotes ?? 0);
+      if (patch.use_signal_entry_price !== true && "signal_entry_prefer" in patch) {
+        delete patch.signal_entry_prefer;
+      } else if (patch.use_signal_entry_price === true) {
+        if ("signal_entry_prefer" in patch || dualQuotes > 0) {
+          patch.signal_entry_prefer =
+            String(patch.signal_entry_prefer ?? "first_price").toLowerCase() === "last_price"
+              ? "last_price"
+              : "first_price";
+        }
+      }
       // Multi → Range Layering: fill the range by adding legs as price moves against entry.
       const suggested = (analysis.suggested ?? {}) as Record<string, unknown>;
       const styleIsMulti =
@@ -903,6 +946,15 @@ function executeTool(
         );
         delete patch.signal_entry_pip_tolerance;
       }
+      if (patch.use_signal_entry_price === true && dualQuotes > 0) {
+        const prefer =
+          String(patch.signal_entry_prefer ?? "first_price") === "last_price"
+            ? "Last Price"
+            : "First Price";
+        softWarnings.push(
+          `Signals list two entry prices — Entry price is set to ${prefer} (as written). Confirm First Price vs Last Price if that is not what you want.`,
+        );
+      }
       const warnings = [
         ...modelWarnings,
         ...softWarnings,
@@ -985,6 +1037,8 @@ function buildContextSystemBlock(ctx: ConfigureContext): string {
       "If samples show bare 'buy/sell now' then a later parameters message (teaser_then_params): keep use_signal_entry_price, use_signal_entry_range, and use_predefined_sl_pips false. Predefined SL overrides signal SL — it does not wait for a later SL.",
       "Cover TPs in proposals when samples have targets; answer 'What about TPs?' (and similar) directly from signal_examples + pending_settings_patch — never claim a misunderstanding.",
       "If use_signal_entry_range is true: also set signal_entry_pip_tolerance and warn about missing trades when price is outside the zone ± tolerance. If both use_signal_entry_range and use_signal_entry_price are false: omit signal_entry_pip_tolerance entirely (do not list it in Proposed Settings).",
+      "If use_signal_entry_price is true and samples show two entry quotes (dual_entry_quotes): set signal_entry_prefer to first_price or last_price (default first). In chat say Entry price: First Price / Last Price. Omit signal_entry_prefer when Use Signal Entry Price is off.",
+      "If use_signal_entry_price is true and samples show two entry quotes (dual_entry_quotes): set signal_entry_prefer to first_price or last_price (default first). In chat say Entry price: First Price / Last Price. Omit signal_entry_prefer when Use Signal Entry Price is off.",
       "End proposal replies interactively: ask whether to proceed with these settings, or if they have something else in mind.",
     ],
   };

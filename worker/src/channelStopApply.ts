@@ -15,7 +15,7 @@ import {
 import {
   loadChannelActiveTradeParamsForSymbol
 } from './channelActiveTradeParams'
-import { bundleTpOrderMap, isBundleBasket } from './manualPlanning/tpBundleIdentity'
+import { bundleTpOrderMap, isTpPercentSplitBasket } from './manualPlanning/tpBundleIdentity'
 import {
   buildEntryQualityTakeProfitMap,
   type EntryQualityLeg,
@@ -945,9 +945,9 @@ export async function applyChannelStopsToBaskets(
     const frozenDeepestTp = deepestFinalTp(plausibleTpLevels, isBuy)
     const tpMap = slOnly || tpOnly || tpFrozen
       ? new Map<string, number>()
-      : isBundleBasket(broker.manual_settings)
-        // Bundled multi basket: explicit TP change re-maps levels 1:1 by TP
-        // order — never the count-weighted entry-quality slots (D3).
+      : isTpPercentSplitBasket(broker.manual_settings)
+        // Percent-split basket: explicit TP change re-maps levels 1:1 by TP
+        // order — never the count-weighted entry-quality slots.
         ? bundleTpOrderMap({
             legs: legs.map(tr => ({ id: tr.id, tp: tr.tp })),
             ladder: plausibleTpLevels,

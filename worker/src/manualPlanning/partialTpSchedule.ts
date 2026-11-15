@@ -92,10 +92,16 @@ export function resolveChosenTakeProfit(args: {
  * selected target apply to every open leg; multi/range setups spread legs across
  * the ladder on purpose.
  */
+/**
+ * Formerly pinned every Single-style leg to `single_tp_target` (usually farthest)
+ * during reconcile. That is retired: Single now opens one broker trade per
+ * Targets % TP, so pinning would smash distinct TPs onto the last level.
+ * Always false — keep the helper for call-site compatibility.
+ */
 export function shouldApplySingleTakeProfitTarget(
-  manual: { trade_style?: string | null } | null | undefined,
+  _manual: { trade_style?: string | null } | null | undefined,
 ): boolean {
-  return manual?.trade_style === 'single'
+  return false
 }
 /**
  * Build the per-TP partial close schedule for a `trade_style === 'single'`

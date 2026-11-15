@@ -2,6 +2,10 @@
  * Fresh SL/TP target resolution for basket reconcile jobs and drift sweeps.
  * Rebuilds per-leg targets from channel memory + entry-quality distribution
  * instead of trusting stale job JSON (e.g. all legs stuck on TP1).
+ *
+ * After a basket TP hit (closed leg / TP-touch lock), multi non-range baskets
+ * freeze open-leg take-profits — same as range — so count-weighted redistrib
+ * cannot collapse survivors onto the nearer (often TP1) level.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -14,8 +18,7 @@ import {
 } from './basketEffectiveStops'
 import { parseUserOverride } from './signalOverride'
 import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistribution'
-import { bundleSteadyLegTps } from './manualPlanning/tpBundleIdentity'
-import { isTpBundleEnabled } from './manualPlanning/tpBundleRollout'
+import { bundleSteadyLegTps, isTpPercentSplitBasket } from './manualPlanning/tpBundleIdentity'
 import type { ManualTpLot } from './manualPlanning/types'
 import {
   resolveChosenTakeProfit,
@@ -215,9 +218,26 @@ export async function resolveFreshBasketReconcileTargets(
   } else {
     const slNum = typeof parsed.sl === 'number' && parsed.sl > 0 ? parsed.sl : 0
     const sl = slNum > 0 ? slNum : (stored[0]?.stoploss ?? 0)
-    if (isTpBundleEnabled() && args.manual.trade_style === 'multi') {
-      // Bundled baskets: steady state — legs keep their own TP; naked legs are
-      // backfilled positionally from the ladder. Never count-weighted (D3).
+    // Multi (non-range) used to re-run count-weighted Targets % after every
+    // reconcile. When a TP1 leg closed, survivors were repainted onto nearer
+    // levels — often all onto TP1. Freeze once any basket leg has closed or a
+    // TP-touch lock exists (same rule as range).
+    const hasClosedLegs = await hasClosedBasketLegs(
+      supabase,
+      args.brokerAccountId,
+      args.anchorSignalId,
+    )
+    const tpTouched = await hasTpTouchedLock(supabase, {
+      signalId: args.anchorSignalId,
+      brokerAccountId: args.brokerAccountId,
+      symbol: args.symbol,
+    })
+    const freezeMultiTp = hasClosedLegs || tpTouched
+    const isBuy = args.direction === 'buy'
+
+    if (isTpPercentSplitBasket(args.manual)) {
+      // Single percent-split + bundled multi: each leg keeps its own broker TP.
+      // Never pin to single_tp_target / farthest (that rewrote all legs to last TP).
       const ladder = signalTps.length
         ? signalTps
         : stored.map(t => t.takeprofit).filter(tp => typeof tp === 'number' && tp > 0)
@@ -229,6 +249,21 @@ export async function resolveFreshBasketReconcileTargets(
         stoploss: sl,
         takeprofit: tps[i] ?? 0,
       }))
+      tpFrozen = freezeMultiTp
+    } else if (freezeMultiTp && args.familyTrades.length > 0) {
+      perLegTargets = backfillNakedLegTakeProfits(
+        args.familyTrades,
+        args.familyTrades.map(tr => ({
+          stoploss: sl,
+          takeprofit: Number(tr.tp) > 0 ? Number(tr.tp) : 0,
+        })),
+        signalTps,
+        isBuy,
+      ).map(t => ({
+        stoploss: Number(t.stoploss) || 0,
+        takeprofit: Number(t.takeprofit) || 0,
+      }))
+      tpFrozen = true
     } else {
       const seed = stored.length
         ? stored.map(t => ({ ...t, stoploss: sl || t.stoploss }))
@@ -633,7 +668,7 @@ export async function sweepOpenBasketsForReconcileDrift(
       nImmCwe: 0,
       overrideTp: null,
       lastError: 'Drift sweep: open legs out of sync with channel SL/TP ladder',
-      bundleIdentity: manual.range_trading !== true && manual.trade_style === 'multi',
+      bundleIdentity: isTpPercentSplitBasket(manual),
     })
 
     if (jobId) {

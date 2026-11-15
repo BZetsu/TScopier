@@ -24,6 +24,7 @@ export const DEFAULT_MANUAL_SETTINGS: Record<string, unknown> = {
   range_layering_type: "auto",
   reverse_signal: false,
   use_signal_entry_price: false,
+  signal_entry_prefer: "first_price",
   signal_entry_pip_tolerance: 10,
   close_on_opposite_signal: false,
   order_comments_enabled: true,
@@ -51,6 +52,7 @@ export const PATCHABLE_MANUAL_KEYS = new Set([
   "close_worse_entries_pips",
   "reverse_signal",
   "use_signal_entry_price",
+  "signal_entry_prefer",
   "signal_entry_pip_tolerance",
   "use_predefined_sl_pips",
   "predefined_sl_pips",
@@ -152,6 +154,9 @@ export function summarizeManualPatch(patch: Record<string, unknown>): string {
   if (patch.range_step_pips != null) parts.push(`step ${patch.range_step_pips}p`);
   if (patch.range_distance_pips != null) parts.push(`distance ${patch.range_distance_pips}p`);
   if (patch.reverse_signal === true) parts.push("reverse on");
+  if (patch.use_signal_entry_price === true) parts.push("signal entry price on");
+  if (patch.signal_entry_prefer === "last_price") parts.push("entry Last Price");
+  else if (patch.signal_entry_prefer === "first_price") parts.push("entry First Price");
   if (parts.length === 0) {
     const keys = Object.keys(patch);
     return keys.length ? keys.slice(0, 6).join(", ") : "settings";

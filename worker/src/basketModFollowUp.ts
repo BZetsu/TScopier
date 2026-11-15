@@ -3,7 +3,7 @@ import type { FxsocketBrokerClient } from './fxsocketClient'
 import { breakevenStopLossForSymbol } from './autoManagement'
 import type { ManualTpLot } from './manualPlanning/types'
 import { normalizeManualSettingsForExecution } from './manualPlanning/normalizeManualSettings'
-import { isBundleBasket } from './manualPlanning/tpBundleIdentity'
+import { isTpPercentSplitBasket } from './manualPlanning/tpBundleIdentity'
 import { resolveChannelTradingConfig } from './channelTradingConfig'
 import {
   channelParamsPredateBasket,
@@ -134,9 +134,9 @@ export function computeFollowUpStops(
         finalTps,
         tpLots: ctx.tpLots,
       })
-    } else if (isBundleBasket(ctx.manual)) {
-      // Bundled basket: a new fill keeps its own TP; only a naked leg is
-      // backfilled positionally. Never count-weighted (D3).
+    } else if (isTpPercentSplitBasket(ctx.manual)) {
+      // Percent-split basket (Single or bundled Multi): a new fill keeps its
+      // own TP; only a naked leg is backfilled positionally. Never count-weighted.
       if (takeprofit <= 0) takeprofit = finalTps[idx] ?? finalTps[finalTps.length - 1]!
     } else {
       takeprofit = takeProfitForSplitBasketLeg({

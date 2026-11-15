@@ -43,4 +43,17 @@ describe('configureWithAiPatch', () => {
     assert.equal(patch.breakeven_offset_pips, 3)
     assert.equal(patch.move_sl_to_entry_after_value, 10)
   })
+
+  it('allows signal_entry_prefer for First/Last entry price', () => {
+    const patch = sanitizeConfigureAiPatch({
+      use_signal_entry_price: true,
+      signal_entry_prefer: 'last_price',
+      signal_entry_pip_tolerance: 10,
+    })
+    assert.equal(patch.signal_entry_prefer, 'last_price')
+    assert.match(
+      summarizeConfigureAiPatch(patch),
+      /entry Last Price/,
+    )
+  })
 })

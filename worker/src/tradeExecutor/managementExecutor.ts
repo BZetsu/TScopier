@@ -68,8 +68,7 @@ import { upsertBasketReconcileJob, type BasketOpenLeg } from '../basketSlTpRecon
 import { findStaleBasketKeys, upsertBasketSlTpTarget } from '../basketTargetStore'
 import { isV2 } from '../engine/executionMode'
 import { getFxClient, toMtPlatform } from '../engine/fxClient'
-import { isTpBundleEnabled } from '../manualPlanning/tpBundleRollout'
-import { isBundleBasket } from '../manualPlanning/tpBundleIdentity'
+import { isTpPercentSplitBasket } from '../manualPlanning/tpBundleIdentity'
 import type { PerLegStopTarget } from '../multiTradeMerge'
 import { isBenignOrderModifyError, isPositionGoneCloseError } from '../orderModifyBenign'
 import { modifyLegSlTpWithFallback } from '../orderModifySafe'
@@ -1419,8 +1418,7 @@ export async function applyManagement(
     // with a log line (the provider's intent is already satisfied).
     const closeTpIndex = Number(parsed.close_tp_index)
     const bundleCloseActive =
-      isTpBundleEnabled()
-      && action === 'partial_profit'
+      action === 'partial_profit'
       && Number.isInteger(closeTpIndex)
       && closeTpIndex > 0
     const bundleFamilyKeys = new Set<string>()
@@ -1432,7 +1430,7 @@ export async function applyManagement(
         const broker = byBroker.get(brokerId)
         if (!broker) continue
         const manual = resolveChannelTradingConfig(broker, signal.channel_id).manual_settings
-        if (!isBundleBasket(manual)) continue
+        if (!isTpPercentSplitBasket(manual)) continue
         bundleFamilyKeys.add(key)
         const withTp = brokerRows.filter(r => {
           const ticket = Number(r.metaapi_order_id)

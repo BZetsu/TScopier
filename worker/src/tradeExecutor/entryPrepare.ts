@@ -1207,32 +1207,8 @@ export async function prepareEntryExecution(
       : {}),
   }))
 
-  // Single trade style: one broker order only (partials ride on partial_tp_legs).
-  // If the planner somehow emitted multiple immediates, hard-block rather than
-  // silently sending the first leg (that masked config/planner bugs).
-  if (isManual && manual.trade_style !== 'multi' && legs.length > 1) {
-    console.error(
-      `[tradeExecutor] single trade_style multi_leg_blocked ${legs.length} legs`
-      + ` signal=${signal.id} broker=${broker.id}`,
-    )
-    await writeExecutionLog(ctx.supabase, {
-      user_id: signal.user_id,
-      signal_id: signal.id,
-      broker_account_id: broker.id,
-      action: 'single_style_multi_leg_blocked',
-      status: 'failed',
-      request_payload: { leg_count: legs.length },
-      error_message: `single trade_style refused ${legs.length} immediate legs`,
-    })
-    return {
-      ok: false,
-      outcome: {
-        channelDelayMs,
-        channelDelaySkipped,
-        failureReason: 'single_style_multi_leg_blocked',
-      },
-    }
-  }
+  // Single trade style may emit multiple immediates (one per Targets % TP).
+  // Legacy hard-block removed — percent-split Single is intentional.
 
   // ── Anchor resolution ────────────────────────────────────────────────
   // Priority: parsed signal entry → live /Quote (Ask for buy, Bid for sell).

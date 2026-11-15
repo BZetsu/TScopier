@@ -465,22 +465,6 @@ export function ConfigurationSettingsEditor({
           </>
         ) : (
           <>
-            <SettingRow label={cm.risk.singleTpTarget}>
-              <Choice
-                value={settings.single_tp_target ?? 'farthest'}
-                options={[
-                  { value: 'farthest', label: cm.risk.singleTpTargetFarthest },
-                  ...tpLots
-                    .map((row, index) => ({ row, index }))
-                    .filter(({ row }) => row.enabled !== false)
-                    .map(({ row, index }) => ({
-                      value: `tp${index + 1}`,
-                      label: row.label?.trim() || `TP${index + 1}`,
-                    })),
-                ]}
-                onChange={value => onPatch({ single_tp_target: value as ManualSettings['single_tp_target'] })}
-              />
-            </SettingRow>
             <SettingRow label={cm.risk.useSignalEntryPrice}>
               <OnOff onLabel={copy.on} offLabel={copy.off}
                 checked={settings.use_signal_entry_price === true}
@@ -488,13 +472,29 @@ export function ConfigurationSettingsEditor({
               />
             </SettingRow>
             {settings.use_signal_entry_price === true ? (
-              <SettingRow label={cm.risk.pipToleranceLegacy}>
-                <NumberField
-                  value={finiteNumber(settings.signal_entry_pip_tolerance, 10)}
-                  min={0}
-                  onCommit={value => onPatch({ signal_entry_pip_tolerance: value })}
-                />
-              </SettingRow>
+              <>
+                <SettingRow label={cm.risk.signalEntryPrefer}>
+                  <Choice
+                    value={settings.signal_entry_prefer ?? 'first_price'}
+                    options={[
+                      { value: 'first_price', label: cm.risk.signalEntryPreferFirst },
+                      { value: 'last_price', label: cm.risk.signalEntryPreferLast },
+                    ]}
+                    onChange={value =>
+                      onPatch({
+                        signal_entry_prefer: value === 'last_price' ? 'last_price' : 'first_price',
+                      })
+                    }
+                  />
+                </SettingRow>
+                <SettingRow label={cm.risk.pipToleranceLegacy}>
+                  <NumberField
+                    value={finiteNumber(settings.signal_entry_pip_tolerance, 10)}
+                    min={0}
+                    onCommit={value => onPatch({ signal_entry_pip_tolerance: value })}
+                  />
+                </SettingRow>
+              </>
             ) : null}
           </>
         )}

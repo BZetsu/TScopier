@@ -14,16 +14,16 @@ import {
 } from './basketSlTpReconcile'
 import { takeProfitForLegIndex } from './manualPlanning/tpBucketDistribution'
 import {
-  isBundleBasket,
+  isTpPercentSplitBasket,
   remapBundleLegTpsByTpOrder,
 } from './manualPlanning/tpBundleIdentity'
-import { isTpBundleEnabled } from './manualPlanning/tpBundleRollout'
 import type { ManualSettings, ManualTpLot } from './manualPlanning/types'
 import type { MgmtTradeRow } from './managementScope'
 import {
   isChannelManagementBlocked,
   normalizeChannelMessageFiltersMap,
 } from './channelMessageFilters'
+import { resolveChannelTradingConfig } from './channelTradingConfig'
 import type { PerLegStopTarget } from './multiTradeMerge'
 import { brokerSessionUuid } from './tradeExecutor/helpers'
 
@@ -73,7 +73,8 @@ function buildMgmtModifyTargets(args: {
     tpLots,
     bundleReladder,
   } = args
-  const bundled = bundleReladder === true && isTpBundleEnabled() && hasNewTp && multiBasket
+  // bundleReladder already means Single percent-split or bundled Multi.
+  const bundled = bundleReladder === true && hasNewTp
   const isBuy = !String(familyTrades[0]?.direction ?? '').toLowerCase().includes('sell')
   const bundleTps = bundled
     ? remapBundleLegTpsByTpOrder({
@@ -89,7 +90,9 @@ function buildMgmtModifyTargets(args: {
       if (bundleTps != null) {
         const mapped = bundleTps[legIndex]
         if (mapped != null && mapped > 0) takeprofit = mapped
-      } else if (multiBasket) {
+      } else if (multiBasket || (familyTrades.length > 1 && parsedTpLevels.length >= 2)) {
+        // Multi / Range / multi-leg baskets: spread Targets % — never pin every
+        // open leg to TP1 (parsedTpLevels[0]), which looked like “TPs removed”.
         const distributed = takeProfitForLegIndex({
           legIndex,
           openLegCount: familyTrades.length,
@@ -120,6 +123,7 @@ export async function applyMgmtModifyToBasketGroups(args: {
     metaapi_account_id?: string | null
     fxsocket_account_id?: string | null
     manual_settings?: unknown
+    channel_trading_configs?: unknown
     channel_message_filters?: unknown
     default_lot_size?: number | null
   }>
@@ -178,9 +182,14 @@ export async function applyMgmtModifyToBasketGroups(args: {
     const anchorSignalId = familyTrades[0]!.signal_id
     const symbol = familyTrades[0]!.symbol
     const direction = inferBasketDirection(brokerRows)
-    const manual = (broker.manual_settings ?? {}) as ManualSettings
+    // Prefer per-channel Configure settings (account-level often stays Single while
+    // FOREX KING etc. run Range/Multi on the channel).
+    const manual = resolveChannelTradingConfig(
+      broker as Parameters<typeof resolveChannelTradingConfig>[0],
+      signal.channel_id,
+    ).manual_settings as ManualSettings
     const multiBasket =
-      manual.trade_style === 'multi'
+      (manual.trade_style === 'multi' || manual.range_trading === true)
       && familyTrades.length > 1
       && parsedTpLevels.length >= 2
 
@@ -216,7 +225,7 @@ export async function applyMgmtModifyToBasketGroups(args: {
       parsedTpLevels,
       multiBasket,
       tpLots: manual.tp_lots,
-      bundleReladder: isBundleBasket(manual),
+      bundleReladder: isTpPercentSplitBasket(manual),
     })
 
     const nImmCwe = brokerRows.filter(r => r.cwe_close_price != null).length

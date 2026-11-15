@@ -7,6 +7,14 @@ test('normalizeManualSettingsForExecution: range_layering_type defaults to auto'
   assert.equal(out.range_layering_type, 'auto')
 })
 
+test('normalizeManualSettingsForExecution: signal_entry_prefer defaults to first_price', () => {
+  assert.equal(normalizeManualSettingsForExecution({}).signal_entry_prefer, 'first_price')
+  assert.equal(
+    normalizeManualSettingsForExecution({ signal_entry_prefer: 'last_price' }).signal_entry_prefer,
+    'last_price',
+  )
+})
+
 test('normalizeManualSettingsForExecution: pending_order preserved', () => {
   const out = normalizeManualSettingsForExecution({
     trade_style: 'multi',
