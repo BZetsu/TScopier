@@ -2,6 +2,24 @@
 
 ## Changelog
 
+### 2026-11-15 — Configure with AI: i18n for all locales
+
+- **Context:** Configure with AI modal copy was English (or partial) in fr/es/nl/pl/sv/ru/ja/ar.
+- **Plain English:** Welcome, pills, TradingView strings, and related labels are translated in every configureModal locale.
+- **Fix (files):** [`configureModal/*.ts`](src/i18n/locales/configureModal/) (all non-en locales aligned to en keys).
+- **Deploy state:** Frontend only.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: work without signal samples
+
+- **Context:** Asking “set break even to TP2” without loading samples stalled the chat (AI demanded examples; Load/Paste pills disappeared).
+- **Plain English:** You can ask for settings right away — samples are optional. Break even at TP2 applies correctly; Load/Paste stays available if you want a full format setup later.
+- **Root cause (technical):** Knowledge required samples first; BE patch allowlist used wrong keys (\`after_tp_index\` / \`after_pips\` instead of \`move_sl_to_entry_tp_index\` / \`after_value\`); sending cleared welcome Load/Paste actions.
+- **Fix (files):** Knowledge §0 + BE keys in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts), [`assistantConfigTools.ts`](supabase/functions/_shared/assistantConfigTools.ts), [`configureWithAiPatch.ts`](src/lib/configureWithAiPatch.ts); propose normalize + context in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); persistent Load/Paste + welcome copy in [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx) / en i18n.
+- **Tests/verification:** `configureWithAiPatch` BE allowlist test; deploy edge to Migration.
+- **Deploy state:** `configure-with-ai` → Migration; frontend local/Netlify.
+- **Follow-ups:** Promote edge to production when ready.
+
 ### 2026-11-15 — Configure with AI: production redeploy (latest)
 
 - **Context:** User asked to apply the latest Configure with AI edge (Range label, no fake Total Lot Size, pip tolerance only with entry gate, Range Layering with Multi, pills) to production.

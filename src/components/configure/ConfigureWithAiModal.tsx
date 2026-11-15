@@ -127,7 +127,7 @@ export function ConfigureWithAiModal({
 
   const welcome = asText(
     copy?.welcome,
-    'How does your signal look like?',
+    'Ask for any setting or load this channel’s signal format for a full setup.',
   )
   const analyzeRequest = asText(
     isTradingView ? copy?.analyzeRequestTradingView : copy?.analyzeRequest,
@@ -595,6 +595,31 @@ export function ConfigureWithAiModal({
                 ? analyzingLabel
                 : asText(copy?.thinking, 'Thinking…')}
             </p>
+          ) : null}
+
+          {/* Keep Load/Paste available after the first reply so chat never feels stuck without samples. */}
+          {examples.length === 0 && !messages.some(m => m.showActions) && !sending ? (
+            <div className="me-auto flex max-w-[95%] flex-wrap gap-2 ps-0.5 pt-1">
+              <button
+                type="button"
+                disabled={loadingExamples || !context.channel_id}
+                onClick={() => void loadFromChannel()}
+                className={clsx(
+                  'inline-flex items-center gap-1.5 rounded-full border border-neutral-300 bg-white px-3.5 py-1.5 text-xs font-medium text-neutral-800 transition hover:border-emerald-400 hover:text-emerald-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:border-emerald-500 dark:hover:text-emerald-200',
+                  (loadingExamples || !context.channel_id) && 'pointer-events-none opacity-60',
+                )}
+              >
+                {loadingExamples ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {loadPrimaryLabel}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPasteOpen(v => !v)}
+                className="rounded-full border border-neutral-300 bg-white px-3.5 py-1.5 text-xs font-medium text-neutral-800 transition hover:border-emerald-400 hover:text-emerald-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:border-emerald-500 dark:hover:text-emerald-200"
+              >
+                {asText(copy?.pasteLabel, 'Paste signal format')}
+              </button>
+            </div>
           ) : null}
         </div>
 

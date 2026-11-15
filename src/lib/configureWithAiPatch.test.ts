@@ -28,4 +28,19 @@ describe('configureWithAiPatch', () => {
     assert.match(summary, /style single/)
     assert.match(summary, /range on/)
   })
+
+  it('allows breakeven / move-SL keys used by the product UI', () => {
+    const patch = sanitizeConfigureAiPatch({
+      move_sl_to_entry_after_mode: 'tp_hit',
+      move_sl_to_entry_tp_index: 2,
+      move_sl_to_entry_type: 'sl_only',
+      breakeven_offset_pips: 3,
+      move_sl_to_entry_after_value: 10,
+    })
+    assert.equal(patch.move_sl_to_entry_after_mode, 'tp_hit')
+    assert.equal(patch.move_sl_to_entry_tp_index, 2)
+    assert.equal(patch.move_sl_to_entry_type, 'sl_only')
+    assert.equal(patch.breakeven_offset_pips, 3)
+    assert.equal(patch.move_sl_to_entry_after_value, 10)
+  })
 })

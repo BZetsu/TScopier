@@ -400,7 +400,8 @@ function analyzeSignalExamples(
   if (rows.length === 0) {
     return {
       ok: false,
-      error: "No signal examples in context. Ask the user to paste samples or load from the channel.",
+      error:
+        "No signal examples in context yet. You can still propose concrete settings the user asked for (breakeven, risk, style, etc.). Invite Load/Paste only when you need entry-format analysis.",
       entry_mode: "unknown",
       account,
       focus: focus ?? null,
@@ -740,6 +741,15 @@ function executeTool(
     }
     case "propose_settings": {
       const patch = sanitizeConfigureAiPatch(args.settings);
+      // Normalize legacy / mistaken BE keys to the product schema.
+      if (patch.move_sl_to_entry_after_tp_index != null && patch.move_sl_to_entry_tp_index == null) {
+        patch.move_sl_to_entry_tp_index = patch.move_sl_to_entry_after_tp_index;
+      }
+      if (patch.move_sl_to_entry_after_pips != null && patch.move_sl_to_entry_after_value == null) {
+        patch.move_sl_to_entry_after_value = patch.move_sl_to_entry_after_pips;
+      }
+      delete patch.move_sl_to_entry_after_tp_index;
+      delete patch.move_sl_to_entry_after_pips;
       if (Object.keys(patch).length === 0) {
         return {
           content: JSON.stringify({
@@ -964,9 +974,11 @@ function buildContextSystemBlock(ctx: ConfigureContext): string {
     signal_examples: compactExamples,
     signal_example_count: examples.length,
     instructions: [
-      "Classify signals as single_price vs range_zone before proposing.",
-      "Size lots/risk from account_size.sizing_basis / size_tier; ask if unknown.",
-      "Every propose_settings rationale must cite entry type + account size basis.",
+      "Signal samples are optional. Concrete user requests (breakeven, trailing, lot/risk, style, etc.) → propose_settings immediately; never refuse only because signal_example_count is 0.",
+      "Break even at TP N → move_sl_to_entry_after_mode=tp_hit + move_sl_to_entry_tp_index=N.",
+      "When samples exist, classify single_price vs range_zone before a full package. When absent, still apply the asked settings.",
+      "Size lots/risk from account_size.sizing_basis / size_tier when the request needs sizing; ask if unknown.",
+      "Full-package rationales cite entry type + account size when known; single-setting patches may cite the user request instead.",
       "Never invent a Total Lot Size or 0.01-per-TP bullet. TP rows are percent shares only; dynamic_balance_percent sizes the whole basket (balance×pct/100/1000), not 0.01 per TP.",
       "Take-Profit Levels (tp_lots) must match the signal TP count from samples — never default to product TP1–TP3 when signals use another N. Keep use_predefined_tp_pips false when signals include TP prices.",
       "If samples show bare 'buy/sell now' then a later parameters message (teaser_then_params): keep use_signal_entry_price, use_signal_entry_range, and use_predefined_sl_pips false. Predefined SL overrides signal SL — it does not wait for a later SL.",

@@ -79,6 +79,11 @@ export const CONFIGURE_AI_PATCHABLE_KEYS = new Set([
   "tp_lots",
   "single_tp_target",
   "move_sl_to_entry_after_mode",
+  "move_sl_to_entry_after_value",
+  "move_sl_to_entry_tp_index",
+  "move_sl_to_entry_type",
+  "breakeven_offset_pips",
+  // Legacy aliases (ignored by product UI if present; prefer the keys above)
   "move_sl_to_entry_after_tp_index",
   "move_sl_to_entry_after_pips",
   "news_trading_enabled",

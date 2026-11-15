@@ -648,11 +648,11 @@ export const configureModalEn: ConfigureModalTranslations = {
     title: 'Configure with AI',
     subtitle: 'Describe how you want to trade — or load this channel’s signal format for tailored settings.',
     close: 'Close',
-    placeholder: 'e.g. Use 0.02 lots, multi-trade with trailing…',
+    placeholder: 'e.g. Set break even to TP2, or use 1% risk…',
     send: 'Send',
     thinking: 'Thinking…',
     welcome:
-      'How does your signal look like?',
+      'Ask for any setting (e.g. break even at TP2), or load this channel’s signal format for a full setup.',
     needChannel: 'Select a channel first to configure with AI.',
     loadFromChannel: 'Load from channel',
     loadJsonFormat: 'Load JSON format',
