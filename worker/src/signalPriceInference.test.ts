@@ -125,12 +125,32 @@ test('extractUnlabeledPrices skips bare calendar years in news prose', () => {
 })
 
 test('normalizeEntryZonePair expands gold shorthand zones', () => {
-  assert.deepEqual(normalizeEntryZonePair('4061', '59'), { low: 4059, high: 4061 })
-  assert.deepEqual(normalizeEntryZonePair('4105', '03'), { low: 4103, high: 4105 })
-  assert.deepEqual(normalizeEntryZonePair('4136', '38'), { low: 4136, high: 4138 })
+  assert.deepEqual(normalizeEntryZonePair('4061', '59'), {
+    low: 4059,
+    high: 4061,
+    first: 4061,
+    last: 4059,
+  })
+  assert.deepEqual(normalizeEntryZonePair('4105', '03'), {
+    low: 4103,
+    high: 4105,
+    first: 4105,
+    last: 4103,
+  })
+  assert.deepEqual(normalizeEntryZonePair('4136', '38'), {
+    low: 4136,
+    high: 4138,
+    first: 4136,
+    last: 4138,
+  })
 })
 
 test('extractBarePriceRangeZone skips pip risk ranges', () => {
   assert.equal(extractBarePriceRangeZone('SL: 4085 | Risk: 80-110 Pips'), null)
-  assert.deepEqual(extractBarePriceRangeZone('ENTRY 4061-59'), { low: 4059, high: 4061 })
+  assert.deepEqual(extractBarePriceRangeZone('ENTRY 4061-59'), {
+    low: 4059,
+    high: 4061,
+    first: 4061,
+    last: 4059,
+  })
 })

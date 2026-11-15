@@ -183,10 +183,19 @@ export function describeChannelConfiguration(
       { label: cm.risk.useSignalEntryPrice, value: onOff(row.use_signal_entry_price === true, copy) },
     )
     if (row.use_signal_entry_price === true) {
-      riskRows.push({
-        label: cm.risk.pipToleranceLegacy,
-        value: formatSettingNumber(finiteNumber(row.signal_entry_pip_tolerance, 10)),
-      })
+      riskRows.push(
+        {
+          label: cm.risk.signalEntryPrefer,
+          value:
+            row.signal_entry_prefer === 'last_price'
+              ? cm.risk.signalEntryPreferLast
+              : cm.risk.signalEntryPreferFirst,
+        },
+        {
+          label: cm.risk.pipToleranceLegacy,
+          value: formatSettingNumber(finiteNumber(row.signal_entry_pip_tolerance, 10)),
+        },
+      )
     }
   }
 

@@ -226,19 +226,23 @@ function priceTokenIntDigitLen(raw: string): number {
 
 /**
  * Expand channel shorthand entry zones like "4061-59" → 4059–4061 (second token drops leading digits).
+ * `first` / `last` preserve text order (rawA then rawB) after any shorthand expansion.
  */
-export function normalizeEntryZonePair(rawA: string, rawB: string): { low: number; high: number } | null {
-  const a = parseSignalPriceToken(rawA)
-  const b = parseSignalPriceToken(rawB)
-  if (a == null || b == null) return null
+export function normalizeEntryZonePair(
+  rawA: string,
+  rawB: string,
+): { low: number; high: number; first: number; last: number } | null {
+  let first = parseSignalPriceToken(rawA)
+  let last = parseSignalPriceToken(rawB)
+  if (first == null || last == null) return null
 
-  let lo = Math.min(a, b)
-  let hi = Math.max(a, b)
+  let lo = Math.min(first, last)
+  let hi = Math.max(first, last)
 
   const rawFull = priceTokenIntDigitLen(rawA) >= priceTokenIntDigitLen(rawB) ? rawA : rawB
   const rawShort = priceTokenIntDigitLen(rawA) < priceTokenIntDigitLen(rawB) ? rawA : rawB
   const full = parseSignalPriceToken(rawFull)
-  if (full == null) return { low: lo, high: hi }
+  if (full == null) return { low: lo, high: hi, first, last }
 
   const shortInt = String(rawShort).replace(/,/g, '').trim().split('.')[0] ?? ''
   const fullStr = String(full).replace(/,/g, '')
@@ -250,12 +254,19 @@ export function normalizeEntryZonePair(rawA: string, rawB: string): { low: numbe
     const expandedInt = prefix + shortInt
     const expanded = parseSignalPriceToken(decFull ? `${expandedInt}.${decFull}` : expandedInt)
     if (expanded != null && Math.abs(expanded - full) < 500) {
-      lo = Math.min(full, expanded)
-      hi = Math.max(full, expanded)
+      if (priceTokenIntDigitLen(rawA) >= priceTokenIntDigitLen(rawB)) {
+        first = full
+        last = expanded
+      } else {
+        first = expanded
+        last = full
+      }
+      lo = Math.min(first, last)
+      hi = Math.max(first, last)
     }
   }
 
-  return { low: lo, high: hi }
+  return { low: lo, high: hi, first, last }
 }
 
 function isPipOrRiskRangeMatch(text: string, start: number, matchLen: number): boolean {
@@ -270,7 +281,9 @@ function isPipOrRiskRangeMatch(text: string, start: number, matchLen: number): b
  * FX Culture / ICT style bare range on its own line: "4282.0-4287.0", "4282 / 4287".
  * Must appear as a two-price range, not a single labeled SL/TP value.
  */
-export function extractBarePriceRangeZone(message: string): { low: number; high: number } | null {
+export function extractBarePriceRangeZone(
+  message: string,
+): { low: number; high: number; first: number; last: number } | null {
   const collapsed = String(message ?? '').replace(/\s+/g, ' ').trim()
   const zoneRx = new RegExp(
     `(?:^|\\s)(${SIGNAL_PRICE_NUM})\\s*(?:-|–)\\s*(${SIGNAL_PRICE_NUM})(?:\\.|\\s|$)`,

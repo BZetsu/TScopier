@@ -50,6 +50,7 @@ export const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
   close_worse_entries_pips: 30,
   reverse_signal: false,
   use_signal_entry_price: false,
+  signal_entry_prefer: 'first_price',
   signal_entry_pip_tolerance: 10,
   use_predefined_sl_pips: false,
   predefined_sl_pips: 30,

@@ -619,6 +619,10 @@ function normalizeManualSettings(
     close_worse_entries_pips: closeWorseEntriesPips,
     single_tp_target: singleTpTarget,
     use_signal_entry_price: (j as Record<string, unknown>).use_signal_entry_price === true,
+    signal_entry_prefer:
+      String((j as Record<string, unknown>).signal_entry_prefer ?? 'first_price').toLowerCase() === 'last_price'
+        ? 'last_price'
+        : 'first_price',
     signal_entry_pip_tolerance: Math.max(0, readNumber('signal_entry_pip_tolerance', DEFAULT_MANUAL_SETTINGS.signal_entry_pip_tolerance ?? 10)),
     symbol_mapping: Object.fromEntries(Object.entries(map).map(([k, v]) => [String(k).toUpperCase(), String(v).toUpperCase()])),
     symbol_prefix: '',
@@ -3746,6 +3750,21 @@ export function AccountConfigPage() {
                                   </div>
                                   {channelManualSettings.use_signal_entry_price && (
                                     <div className="border-t border-neutral-200/65 dark:border-neutral-800/55 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-2">
+                                      <ConfigureSelect
+                                        label={cm.risk.signalEntryPrefer}
+                                        hint={cm.risk.signalEntryPreferHint}
+                                        value={channelManualSettings.signal_entry_prefer ?? 'first_price'}
+                                        onChange={e =>
+                                          setManual({
+                                            signal_entry_prefer:
+                                              e.target.value === 'last_price' ? 'last_price' : 'first_price',
+                                          })
+                                        }
+                                        options={[
+                                          { value: 'first_price', label: cm.risk.signalEntryPreferFirst },
+                                          { value: 'last_price', label: cm.risk.signalEntryPreferLast },
+                                        ]}
+                                      />
                                       <ConfigureInput
                                         label={cm.risk.pipToleranceLegacy}
                                         hint={cm.risk.pipToleranceHint}

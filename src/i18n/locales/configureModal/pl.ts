@@ -222,6 +222,11 @@ export const configureModalPl: ConfigureModalTranslations = {
     signalEntryTitle: 'Wykonanie wejścia sygnału',
     signalEntryBody: 'Użyj sygnału Cena wejścia ma zastosowanie tylko w trybie pojedynczego handlu. Po włączeniu sygnał musi zawierać jawnie przeanalizowany wpis (cena, strefa, cena @ lub etykiety takie jak „Cena wejściowa:”). Po jakimkolwiek opóźnieniu kanału pracownik porównuje aktualną wycenę z tym wpisem: Kupuj na rynku tylko wtedy, gdy zapytanie jest na poziomie wpisu lub poniżej; w przeciwnym razie ustanawia limit kupna na wejściu. Sprzedaż jest odwrotnością. Broker typu take-profit celuje w ostatnią przeanalizowaną TP, jeśli masz kilka celów, z opcjonalnymi częściowymi zamknięciami z drabiny TP. Copier śledzi każdy oczekujący wpis, więc wypełnienia są synchronizowane z Twoją listą handlową; oczekujące są anulowane, gdy koszyk jest płaski. Same wiadomości typu „kup teraz” bez wpisu są pomijane.',
     useSignalEntryPrice: 'Użyj ceny wejściowej sygnału',
+    signalEntryPrefer: 'Cena wejścia',
+    signalEntryPreferHint:
+      'Gdy sygnał podaje dwie ceny wejścia (zakres), wybierz pierwszą lub ostatnią cenę tak, jak zapisano. Tolerancja pipsów dotyczy wtedy tej jednej ceny.',
+    signalEntryPreferFirst: 'Pierwsza cena',
+    signalEntryPreferLast: 'Ostatnia cena',
     pipToleranceLegacy: 'Tolerancja pipsów (starsza wersja)',
     pipToleranceHint: 'Nieużywane do ścisłego wyznaczania tras wejściowych; przechowywane w celu zapewnienia kompatybilności wstecznej z zapisanymi ustawieniami.',
     multiIntro: 'Range Trading dzieli Twoją stałą partię na wiele mniejszych zleceń (np. 1,0 lota przy 5%/nogę = 20 transakcji po 0,05). Nogi są rozdzielane na TP sygnału przy użyciu poniższych wierszy procentowych. Jeśli rozmiar na nogę spadnie poniżej minimalnego symbolu brokera, planista wraca do pojedynczej pełnowymiarowej transakcji i rejestruje przyczynę.',

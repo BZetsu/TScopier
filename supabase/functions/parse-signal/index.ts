@@ -49,6 +49,8 @@ interface ParsedSignal {
   entry_price: number | null
   entry_zone_low: number | null
   entry_zone_high: number | null
+  entry_zone_first?: number | null
+  entry_zone_last?: number | null
   sl: number | null
   tp: number[]
   tp_unit?: 'price' | 'pips'
@@ -755,7 +757,13 @@ function parseDeterministicManagement(
 function extractOptionalEntryAnchor(
   message: string,
   channelKeywords: ChannelKeywords,
-): { entry_price: number | null; entry_zone_low: number | null; entry_zone_high: number | null } {
+): {
+  entry_price: number | null
+  entry_zone_low: number | null
+  entry_zone_high: number | null
+  entry_zone_first: number | null
+  entry_zone_last: number | null
+} {
   const text = message.replace(/\s+/g, " ").trim()
   const delim = channelKeywords.additional.delimiters
   const zone = text.match(
@@ -763,14 +771,20 @@ function extractOptionalEntryAnchor(
   )
   let entry_zone_low: number | null = null
   let entry_zone_high: number | null = null
+  let entry_zone_first: number | null = null
+  let entry_zone_last: number | null = null
   let entry_price: number | null = null
+  const applyPair = (rawA: string, rawB: string) => {
+    const a = parseSignalPriceToken(rawA)
+    const b = parseSignalPriceToken(rawB)
+    if (a == null || b == null) return
+    entry_zone_low = Math.min(a, b)
+    entry_zone_high = Math.max(a, b)
+    entry_zone_first = a
+    entry_zone_last = b
+  }
   if (zone?.[1] && zone?.[2]) {
-    const a = parseSignalPriceToken(zone[1])
-    const b = parseSignalPriceToken(zone[2])
-    if (a != null && b != null) {
-      entry_zone_low = Math.min(a, b)
-      entry_zone_high = Math.max(a, b)
-    }
+    applyPair(zone[1], zone[2])
   } else {
     const znZone = text.match(
       new RegExp(
@@ -778,8 +792,23 @@ function extractOptionalEntryAnchor(
         'i',
       ),
     )
+    const nowParenZone = text.match(
+      new RegExp(
+        `\\b(?:now|instant|market|mkt)\\s*:?\\s*\\(?\\s*(${SIGNAL_PRICE_NUM})\\s*\\)?\\s+[\\(/]?\\s*(${SIGNAL_PRICE_NUM})\\s*\\)?`,
+        'i',
+      ),
+    )
     const nowZone = text.match(
-      new RegExp(`\\b(?:now|instant|market|mkt)\\s+(${SIGNAL_PRICE_NUM})\\s*(?:-|–|to)\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'),
+      new RegExp(
+        `\\b(?:now|instant|market|mkt)\\s*:?\\s*(${SIGNAL_PRICE_NUM})\\s*(?:-|–|to|/)\\s*(${SIGNAL_PRICE_NUM})\\b`,
+        'i',
+      ),
+    )
+    const buyNowSlashZone = text.match(
+      new RegExp(
+        `\\b(?:buy|sell|long|short)\\s+(?:now|instant|market|mkt)\\s*:?\\s*\\(?\\s*(${SIGNAL_PRICE_NUM})\\s*\\)?\\s*(?:\\/|-|–|to|\\s+)\\s*\\(?\\s*(${SIGNAL_PRICE_NUM})\\s*\\)?`,
+        'i',
+      ),
     )
     const reentryZone = text.match(
       new RegExp(
@@ -787,14 +816,9 @@ function extractOptionalEntryAnchor(
         'i',
       ),
     )
-    const zoneMatch = znZone ?? nowZone ?? reentryZone
+    const zoneMatch = znZone ?? nowParenZone ?? nowZone ?? buyNowSlashZone ?? reentryZone
     if (zoneMatch?.[1] && zoneMatch?.[2]) {
-      const a = parseSignalPriceToken(zoneMatch[1])
-      const b = parseSignalPriceToken(zoneMatch[2])
-      if (a != null && b != null) {
-        entry_zone_low = Math.min(a, b)
-        entry_zone_high = Math.max(a, b)
-      }
+      applyPair(zoneMatch[1], zoneMatch[2])
     } else {
       const entrySlashZone = text.match(
         new RegExp(
@@ -803,17 +827,14 @@ function extractOptionalEntryAnchor(
         ),
       )
       if (entrySlashZone?.[1] && entrySlashZone?.[2]) {
-        const a = parseSignalPriceToken(entrySlashZone[1])
-        const b = parseSignalPriceToken(entrySlashZone[2])
-        if (a != null && b != null) {
-          entry_zone_low = Math.min(a, b)
-          entry_zone_high = Math.max(a, b)
-        }
+        applyPair(entrySlashZone[1], entrySlashZone[2])
       } else {
       const bareZone = extractBarePriceRangeZone(message)
       if (bareZone) {
         entry_zone_low = bareZone.low
         entry_zone_high = bareZone.high
+        entry_zone_first = bareZone.first
+        entry_zone_last = bareZone.last
       }
       if (entry_zone_low == null) {
     const entryLevel = text.match(new RegExp(`\\bentry\\s+level\\s*[:=]?\\s*(${SIGNAL_PRICE_NUM})\\b`, 'i'))
@@ -867,7 +888,7 @@ function extractOptionalEntryAnchor(
       }
     }
   }
-  return { entry_price, entry_zone_low, entry_zone_high }
+  return { entry_price, entry_zone_low, entry_zone_high, entry_zone_first, entry_zone_last }
 }
 
 function extractSlFromMessage(
@@ -939,7 +960,13 @@ function parseChannelParameterFollowUp(
   const sl = extractSlFromMessage(message, channelKeywords)
   const tpExtract = extractTpLevels(message, extraTp)
   const tp = tpExtract.values
-  const { entry_price, entry_zone_low, entry_zone_high } = extractOptionalEntryAnchor(message, channelKeywords)
+  const {
+    entry_price,
+    entry_zone_low,
+    entry_zone_high,
+    entry_zone_first,
+    entry_zone_last,
+  } = extractOptionalEntryAnchor(message, channelKeywords)
   const reEnter = detectReEnterIntent(message)
 
   if (reEnter) {
@@ -949,9 +976,11 @@ function parseChannelParameterFollowUp(
       action: side,
       symbol: null,
       entry_price,
-      entry_zone_low,
-      entry_zone_high,
-      sl,
+    entry_zone_low,
+    entry_zone_high,
+    entry_zone_first,
+    entry_zone_last,
+    sl,
       tp,
       ...(tpExtract.explicitPips ? { tp_unit: 'pips' as const } : {}),
       lot_size: null,
@@ -968,6 +997,8 @@ function parseChannelParameterFollowUp(
     entry_price,
     entry_zone_low,
     entry_zone_high,
+    entry_zone_first,
+    entry_zone_last,
     sl,
     tp,
     ...(tpExtract.explicitPips ? { tp_unit: 'pips' as const } : {}),
@@ -1095,7 +1126,13 @@ function parseSimpleSignal(
   ]
   const tpExtract = extractTpLevels(message, extraTp)
   const tp = tpExtract.values
-  const { entry_price, entry_zone_low, entry_zone_high } = entryAnchor
+  const {
+    entry_price,
+    entry_zone_low,
+    entry_zone_high,
+    entry_zone_first,
+    entry_zone_last,
+  } = entryAnchor
 
   return {
     action: side,
@@ -1103,6 +1140,8 @@ function parseSimpleSignal(
     entry_price,
     entry_zone_low,
     entry_zone_high,
+    entry_zone_first,
+    entry_zone_last,
     sl,
     tp,
     ...(tpExtract.explicitPips ? { tp_unit: 'pips' as const } : {}),
@@ -1181,7 +1220,13 @@ function parseEntryFromKeywords(
 
   if (!hasPriceEvidence) return null
 
-  const { entry_price, entry_zone_low, entry_zone_high } = extractOptionalEntryAnchor(message, channelKeywords)
+  const {
+    entry_price,
+    entry_zone_low,
+    entry_zone_high,
+    entry_zone_first,
+    entry_zone_last,
+  } = extractOptionalEntryAnchor(message, channelKeywords)
 
   return {
     action: isBuy ? "buy" : "sell",
@@ -1189,6 +1234,8 @@ function parseEntryFromKeywords(
     entry_price,
     entry_zone_low,
     entry_zone_high,
+    entry_zone_first,
+    entry_zone_last,
     sl,
     tp,
     ...(tpExtract.explicitPips ? { tp_unit: 'pips' as const } : {}),
