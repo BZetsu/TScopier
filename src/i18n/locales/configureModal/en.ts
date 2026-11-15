@@ -677,9 +677,9 @@ export const configureModalEn: ConfigureModalTranslations = {
     analyzingExamples: 'Analyzing your signal format…',
     analyzingJsonFormat: 'Analyzing your TradingView JSON format…',
     analyzeRequest:
-      'Here are my signal examples (entry and update/modify/close when present). Please analyze entry style (single price vs range/zone), how the channel sends modify/close management, consider my account size, and give a clear helpful summary of lot size, trade style, targets, and management. Ask me anything you still need, then propose settings when ready.',
+      'Analyze the signal examples I just loaded (also listed below and in context). Classify entry style (single price vs range/zone / teaser→params), how the channel sends modify/close, consider my account size, summarize lot size, trade style, targets, and management, then call propose_settings now with a full draft. Ask only if something critical is missing.',
     analyzeRequestTradingView:
-      'Here is my TradingView alert JSON format. Please analyze the payload shape (entry, SL, TPs), consider my account size, and propose lot size, trade style, targets, and management. Ask me anything you still need, then propose settings when ready.',
+      'Analyze the TradingView alert JSON format I just loaded (also listed below and in context). Classify the payload shape (entry, SL, TPs), consider my account size, propose lot size, trade style, targets, and management, then call propose_settings now. Ask only if something critical is missing.',
     applyToForm: 'Apply Settings',
     applySettings: 'Apply settings',
     applySettingsHint: 'This will apply the settings to the configuration.',

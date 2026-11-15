@@ -95,7 +95,7 @@ function toApiMessages(items: ChatItem[]): ConfigureWithAiChatMessage[] {
 }
 
 const DEFAULT_ANALYZE_REQUEST =
-  'Here are my signal examples (entry and update/modify/close when present). Please analyze entry style (single price vs range/zone), how the channel sends modify/close management, consider my account size, and give a clear helpful summary of lot size, trade style, targets, and management. Ask me anything you still need, then propose settings when ready.'
+  'Analyze the signal examples I just loaded (also listed below and in context). Classify entry style (single price vs range/zone / teaser→params), how the channel sends modify/close, consider my account size, summarize lot size, trade style, targets, and management, then call propose_settings now with a full draft. Ask only if something critical is missing.'
 
 export function ConfigureWithAiModal({
   open,
@@ -290,6 +290,8 @@ export function ConfigureWithAiModal({
       setPasteOpen(false)
 
       const heading = interpolate(examplesLoadedTpl, { count: String(mapped.length) })
+      // Keep examples on a user turn (not assistant) so the model treats them as
+      // the user's input — assistant-role samples were ignored as "no additional input".
       const examplesItem: ChatItem = {
         role: 'assistant',
         content: `${examplesHeading} · ${heading}`,
@@ -298,6 +300,7 @@ export function ConfigureWithAiModal({
       const analyzeItem: ChatItem = {
         role: 'user',
         content: analyzeRequest,
+        examples: mapped,
       }
       const nextItems: ChatItem[] = [
         { role: 'assistant', content: welcome },
