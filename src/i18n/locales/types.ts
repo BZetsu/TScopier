@@ -202,6 +202,14 @@ export interface NavTranslations {
       reportStatusOpen: string
       reportStatusResolved: string
     }
+    csvCard: {
+      title: string
+      ready: string
+      empty: string
+      download: string
+      countLabel: string
+      exportFailed: string
+    }
     broker: {
       title: string
       hint: string
@@ -694,6 +702,11 @@ export interface CopierLogsTranslations {
     receivedAt: string
     closedAt: string
     explainWithAi: string
+    /** Auto-sent to the assistant; asks for a clear explanation in the UI language. */
+    explainSignalPrompt: string
+    /** Auto-sent for structured broker failure explain; reply in the UI language. */
+    explainFailurePrompt: string
+    askAiAboutIssue: string
   }
 }
 

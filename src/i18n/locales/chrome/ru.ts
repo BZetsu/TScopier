@@ -207,6 +207,14 @@ export const chromeRu: AppChromeTranslations = {
         reportStatusOpen: 'Открыто',
         reportStatusResolved: 'Решено',
       },
+      csvCard: {
+        title: 'Экспорт CSV',
+        ready: 'CSV со сделками счёта готов.',
+        empty: 'Сделок счёта за этот день не найдено.',
+        download: 'Скачать CSV',
+        countLabel: '{count} сделок',
+        exportFailed: 'Не удалось экспортировать сделки. Откройте «Сделки счёта» в приложении.',
+      },
 
     },
 

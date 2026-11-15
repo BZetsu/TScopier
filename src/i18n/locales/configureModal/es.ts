@@ -641,4 +641,56 @@ export const configureModalEs: ConfigureModalTranslations = {
     warning: '¡Advertencia! Su capital está en riesgo. Copie solo proveedores de señales en los que confíe.',
     fullLink: 'Ver aviso de riesgo completo',
   },
+  configureWithAi: {
+    button: 'Configurar con IA',
+    title: 'Configurar con IA',
+    subtitle:
+      'Describe cómo quieres operar — o carga el formato de señales de este canal para ajustes a medida.',
+    close: 'Cerrar',
+    placeholder: 'p. ej. Pon el break even en TP2, o usa 1 % de riesgo…',
+    send: 'Enviar',
+    thinking: 'Pensando…',
+    welcome:
+      'Pide cualquier ajuste (p. ej. break even en TP2), o carga el formato de señales de este canal para una configuración completa.',
+    needChannel: 'Selecciona un canal primero para configurar con IA.',
+    loadFromChannel: 'Cargar del canal',
+    loadJsonFormat: 'Cargar formato JSON',
+    loadingExamples: 'Cargando señales de este canal…',
+    loadingJsonFormat: 'Cargando formato JSON de TradingView…',
+    examplesLoaded: 'Se cargaron {count} ejemplo(s) de señal.',
+    examplesEmpty:
+      'Aún no hay señales recientes en este canal — pega algunas de muestra abajo, o espera nuevos mensajes.',
+    examplesEmptyTradingView:
+      'Aún no hay JSON de alerta de TradingView — pega un ejemplo abajo, o configura la plantilla de alerta en el canal.',
+    pasteLabel: 'Pegar formato de señal',
+    pastePlaceholder: 'Pega una o más señales de muestra del canal…',
+    pastePlaceholderTradingView: 'Pega uno o más JSON de alerta de TradingView…',
+    usePaste: 'Usar señales pegadas',
+    clearPaste: 'Borrar pegado',
+    examplesCount: '{count} ejemplo(s) en contexto',
+    examplesHeading: 'Ejemplos de señales',
+    examplesHeadingTradingView: 'Formato JSON de TradingView',
+    exampleLabelEntry: 'Entrada',
+    exampleLabelUpdate: 'Actualización',
+    exampleLabelIgnore: 'Ignorar',
+    analyzingExamples: 'Analizando el formato de señales…',
+    analyzingJsonFormat: 'Analizando tu formato JSON de TradingView…',
+    analyzeRequest:
+      'Aquí están mis ejemplos de señales (entrada y actualización/modify/close si hay). Analiza el estilo de entrada (precio único vs rango/zona), cómo el canal gestiona modify/close, considera el tamaño de mi cuenta y dame un resumen claro de lote, estilo, objetivos y gestión. Pregúntame lo que falte y luego propón ajustes.',
+    analyzeRequestTradingView:
+      'Aquí está mi formato JSON de alerta de TradingView. Analiza la forma del payload (entrada, SL, TP), considera el tamaño de mi cuenta y propone lote, estilo, objetivos y gestión. Pregúntame lo que falte y luego propón ajustes.',
+    applyToForm: 'Aplicar ajustes',
+    applySettings: 'Aplicar ajustes',
+    applySettingsHint: 'Esto aplicará los ajustes a la configuración.',
+    somethingElsePill: 'Otra cosa',
+    dismissProposal: 'Descartar',
+    proposalTitle: 'Ajustes propuestos',
+    proposalApplied:
+      'Aplicado al formulario — pulsa Guardar en Configurar trading cuando quieras.',
+    proposalRationale: 'Por qué',
+    proposalWarnings: 'Notas',
+    errorFallback: 'Algo salió mal. Inténtalo de nuevo.',
+    trainHint:
+      'También puedes entrenar Ejemplos de señales en el acordeón de Configurar para actualizar las muestras del canal.',
+  },
 }

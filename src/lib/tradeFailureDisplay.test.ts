@@ -83,7 +83,21 @@ describe('buildTradeFailureAssistantPrompt', () => {
     assert.match(prompt, /Reason code: BROKER_SYMBOL_NOT_FOUND/)
     assert.match(prompt, /Do not override the reason code/)
     assert.match(prompt, /XAUUSD/)
+    assert.match(prompt, /Reply in English/)
     assert.doesNotMatch(prompt, /secret|rawSignalText|brokerPassword|GOLD BUY/)
+  })
+
+  it('uses a localized instruction when provided', () => {
+    const display = resolveTradeFailureDisplay({
+      reasonCode: 'BROKER_SYMBOL_NOT_FOUND',
+      safeContext: { requestedSymbol: 'XAUUSD' },
+    })
+    assert.ok(display)
+    const prompt = buildTradeFailureAssistantPrompt(display!, {
+      instruction: 'Explique ce problème. Réponds en français.',
+    })
+    assert.match(prompt, /Réponds en français/)
+    assert.doesNotMatch(prompt, /^Please explain this trade copy issue/m)
   })
 
   it('tells the user the stop could not be read when the message stated one', () => {

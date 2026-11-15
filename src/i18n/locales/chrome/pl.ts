@@ -207,6 +207,14 @@ export const chromePl: AppChromeTranslations = {
         reportStatusOpen: 'Otwarte',
         reportStatusResolved: 'Rozwiązane',
       },
+      csvCard: {
+        title: 'Eksport CSV',
+        ready: 'Twój CSV z transakcjami konta jest gotowy.',
+        empty: 'Brak transakcji konta dla tego dnia.',
+        download: 'Pobierz CSV',
+        countLabel: '{count} transakcji',
+        exportFailed: 'Nie udało się wyeksportować transakcji. Spróbuj Transakcje konta w aplikacji.',
+      },
 
     },
 

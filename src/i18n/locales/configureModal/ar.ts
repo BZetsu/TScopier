@@ -590,6 +590,58 @@ export const configureModalAr: ConfigureModalTranslations = {
   },
   riskDisclaimer: {
     warning: 'تحذير! رأس مالك معرّض للخطر. انسخ فقط من مزودي إشارات تثق بهم.',
-    fullLink: 'عرض إخلاء المسؤولية الكامل عن المخاطر'
-  }
+    fullLink: 'عرض إخلاء المسؤولية الكامل عن المخاطر',
+  },
+  configureWithAi: {
+    button: 'تهيئة بالذكاء الاصطناعي',
+    title: 'تهيئة بالذكاء الاصطناعي',
+    subtitle:
+      'صف كيف تريد التداول — أو حمّل تنسيق إشارات هذه القناة لإعدادات مخصّصة.',
+    close: 'إغلاق',
+    placeholder: 'مثال: اضبط التعادل على TP2، أو استخدم مخاطرة 1٪…',
+    send: 'إرسال',
+    thinking: 'جارٍ التفكير…',
+    welcome:
+      'اطلب أي إعداد (مثال: التعادل عند TP2)، أو حمّل تنسيق إشارات هذه القناة لإعداد كامل.',
+    needChannel: 'اختر قناة أولاً للتهيئة بالذكاء الاصطناعي.',
+    loadFromChannel: 'تحميل من القناة',
+    loadJsonFormat: 'تحميل تنسيق JSON',
+    loadingExamples: 'جارٍ تحميل الإشارات من هذه القناة…',
+    loadingJsonFormat: 'جارٍ تحميل تنسيق JSON لـ TradingView…',
+    examplesLoaded: 'تم تحميل {count} مثال/أمثلة إشارة.',
+    examplesEmpty:
+      'لا توجد إشارات حديثة على هذه القناة بعد — الصق بعض العينات أدناه، أو انتظر رسائل جديدة.',
+    examplesEmptyTradingView:
+      'لم يُعثر بعد على JSON تنبيه TradingView — الصق عينة أدناه، أو اضبط قالب التنبيه على القناة.',
+    pasteLabel: 'لصق تنسيق الإشارة',
+    pastePlaceholder: 'الصق إشارة قناة واحدة أو أكثر كعينة…',
+    pastePlaceholderTradingView: 'الصق حمولة JSON واحدة أو أكثر لتنبيه TradingView…',
+    usePaste: 'استخدام الإشارات الملصقة',
+    clearPaste: 'مسح اللصق',
+    examplesCount: '{count} مثال/أمثلة في السياق',
+    examplesHeading: 'أمثلة الإشارات',
+    examplesHeadingTradingView: 'تنسيق JSON لـ TradingView',
+    exampleLabelEntry: 'دخول',
+    exampleLabelUpdate: 'تحديث',
+    exampleLabelIgnore: 'تجاهل',
+    analyzingExamples: 'جارٍ تحليل تنسيق إشاراتك…',
+    analyzingJsonFormat: 'جارٍ تحليل تنسيق JSON لـ TradingView…',
+    analyzeRequest:
+      'هذه أمثلة إشاراتي (الدخول وتحديث/modify/close إن وُجدت). حلّل أسلوب الدخول (سعر واحد مقابل نطاق/منطقة)، وكيف ترسل القناة إدارة modify/close، وراعِ حجم حسابي، وقدّم ملخصًا واضحًا لحجم الصفقة والأسلوب والأهداف والإدارة. اسأل عما ينقصك ثم اقترح الإعدادات.',
+    analyzeRequestTradingView:
+      'هذا تنسيق JSON لتنبيه TradingView. حلّل شكل الحمولة (دخول، SL، TP)، وراعِ حجم حسابي، واقترح حجم الصفقة والأسلوب والأهداف والإدارة. اسأل عما ينقصك ثم اقترح الإعدادات.',
+    applyToForm: 'تطبيق الإعدادات',
+    applySettings: 'تطبيق الإعدادات',
+    applySettingsHint: 'سيؤدي هذا إلى تطبيق الإعدادات على التكوين.',
+    somethingElsePill: 'شيء آخر',
+    dismissProposal: 'تجاهل',
+    proposalTitle: 'الإعدادات المقترحة',
+    proposalApplied:
+      'طُبّقت على النموذج — انقر حفظ في تهيئة التداول عندما تكون جاهزًا.',
+    proposalRationale: 'لماذا',
+    proposalWarnings: 'ملاحظات',
+    errorFallback: 'حدث خطأ ما. حاول مرة أخرى.',
+    trainHint:
+      'يمكنك أيضًا تدريب أمثلة الإشارات في أكورديون التهيئة لتحديث عينات القناة.',
+  },
 }

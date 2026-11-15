@@ -590,6 +590,58 @@ export const configureModalPl: ConfigureModalTranslations = {
   },
   riskDisclaimer: {
     warning: 'Ostrzeżenie! Twój kapitał jest zagrożony. Kopiuj tylko dostawców sygnału, którym ufasz.',
-    fullLink: 'Zobacz pełne zastrzeżenie dotyczące ryzyka'
-  }
+    fullLink: 'Zobacz pełne zastrzeżenie dotyczące ryzyka',
+  },
+  configureWithAi: {
+    button: 'Konfiguruj z AI',
+    title: 'Konfiguruj z AI',
+    subtitle:
+      'Opisz, jak chcesz handlować — lub wczytaj format sygnałów tego kanału, by dopasować ustawienia.',
+    close: 'Zamknij',
+    placeholder: 'np. Ustaw break even na TP2 albo użyj 1% ryzyka…',
+    send: 'Wyślij',
+    thinking: 'Myślę…',
+    welcome:
+      'Poproś o dowolne ustawienie (np. break even na TP2) albo wczytaj format sygnałów tego kanału, by zrobić pełną konfigurację.',
+    needChannel: 'Najpierw wybierz kanał, aby konfigurować z AI.',
+    loadFromChannel: 'Wczytaj z kanału',
+    loadJsonFormat: 'Wczytaj format JSON',
+    loadingExamples: 'Wczytywanie sygnałów z tego kanału…',
+    loadingJsonFormat: 'Wczytywanie formatu JSON TradingView…',
+    examplesLoaded: 'Wczytano {count} przykład(ów) sygnału.',
+    examplesEmpty:
+      'Brak ostatnich sygnałów na tym kanale — wklej kilka przykładów poniżej albo poczekaj na nowe wiadomości.',
+    examplesEmptyTradingView:
+      'Nie znaleziono jeszcze JSON alertu TradingView — wklej przykładowy JSON poniżej albo skonfiguruj szablon alertu na kanale.',
+    pasteLabel: 'Wklej format sygnału',
+    pastePlaceholder: 'Wklej jeden lub więcej przykładowych sygnałów kanału…',
+    pastePlaceholderTradingView: 'Wklej jeden lub więcej payloadów JSON alertu TradingView…',
+    usePaste: 'Użyj wklejonych sygnałów',
+    clearPaste: 'Wyczyść wklejenie',
+    examplesCount: '{count} przykład(ów) w kontekście',
+    examplesHeading: 'Przykłady sygnałów',
+    examplesHeadingTradingView: 'Format JSON TradingView',
+    exampleLabelEntry: 'Wejście',
+    exampleLabelUpdate: 'Aktualizacja',
+    exampleLabelIgnore: 'Ignoruj',
+    analyzingExamples: 'Analizuję format sygnałów…',
+    analyzingJsonFormat: 'Analizuję Twój format JSON TradingView…',
+    analyzeRequest:
+      'Oto moje przykłady sygnałów (wejście oraz update/modify/close, jeśli są). Przeanalizuj styl wejścia (pojedyncza cena vs range/strefa), jak kanał wysyła zarządzanie modify/close, uwzględnij wielkość mojego konta i podaj jasne podsumowanie lotu, stylu, celów i zarządzania. Zapytaj o brakujące rzeczy, a potem zaproponuj ustawienia.',
+    analyzeRequestTradingView:
+      'Oto mój format JSON alertu TradingView. Przeanalizuj kształt payloadu (wejście, SL, TP), uwzględnij wielkość mojego konta i zaproponuj lot, styl, cele oraz zarządzanie. Zapytaj o brakujące rzeczy, a potem zaproponuj ustawienia.',
+    applyToForm: 'Zastosuj ustawienia',
+    applySettings: 'Zastosuj ustawienia',
+    applySettingsHint: 'Spowoduje to zastosowanie ustawień do konfiguracji.',
+    somethingElsePill: 'Coś innego',
+    dismissProposal: 'Odrzuć',
+    proposalTitle: 'Proponowane ustawienia',
+    proposalApplied:
+      'Zastosowano w formularzu — kliknij Zapisz w Konfiguruj trading, gdy będziesz gotowy.',
+    proposalRationale: 'Dlaczego',
+    proposalWarnings: 'Uwagi',
+    errorFallback: 'Coś poszło nie tak. Spróbuj ponownie.',
+    trainHint:
+      'Możesz też trenować Przykłady sygnałów w akordeonie Konfiguruj, aby odświeżyć próbki kanału.',
+  },
 }

@@ -17,9 +17,10 @@
  * it turns that jsonb into a validated, defaulted shape the plan uses.
  *
  * Fail-closed rules:
- *  - A sizing mode this engine does not implement yet (balance/equity ratio,
- *    percent/cash risk, stop distance) becomes 'unsupported', so the plan refuses
- *    to size and no order is sent.
+ *  - A sizing mode this engine does not implement yet (percent/cash risk, stop
+ *    distance) becomes 'unsupported', so the plan refuses to size and no order is sent.
+ *  - balance_ratio / equity_ratio are supported (proportional copy); volume needs
+ *    live source/destination balance or equity at open time.
  *  - Safety controls the app writes (emergency stop, pause-new, require-stop, source
  *    volume filters) are surfaced so the plan can refuse to copy while they block.
  *
@@ -40,7 +41,12 @@ export const MIRROR_CLOSE_REASON = {
 
 export type MirrorCloseReason = (typeof MIRROR_CLOSE_REASON)[keyof typeof MIRROR_CLOSE_REASON]
 
-export type MirrorCopySizingMode = 'fixed_lot' | 'lot_multiplier' | 'unsupported'
+export type MirrorCopySizingMode =
+  | 'fixed_lot'
+  | 'lot_multiplier'
+  | 'balance_ratio'
+  | 'equity_ratio'
+  | 'unsupported'
 export type MirrorCopyDirectionFilter = 'both' | 'buy' | 'sell'
 export type MirrorCopyOrderType = 'market' | 'limit' | 'stop'
 
@@ -49,6 +55,10 @@ export interface MirrorCopySettings {
   sizingMode: MirrorCopySizingMode
   /** Multiplier applied to the source volume in 'lot_multiplier' mode. */
   lotMultiplier: number
+  /** Extra scale on (dest/source) balance for 'balance_ratio' (UI proportional). */
+  balanceMultiplier: number
+  /** Extra scale on (dest/source) equity for 'equity_ratio'. */
+  equityMultiplier: number
   /** Absolute lot size used in 'fixed_lot' mode; null when invalid or absent. */
   fixedLot: number | null
   /** Hard ceiling on any single copied position; null means the user set no cap. */
@@ -82,6 +92,8 @@ export interface MirrorCopySettings {
 export const DEFAULT_MIRROR_COPY_SETTINGS: MirrorCopySettings = {
   sizingMode: 'unsupported',
   lotMultiplier: 1,
+  balanceMultiplier: 1,
+  equityMultiplier: 1,
   fixedLot: null,
   maxLot: null,
   symbolOverrides: {},
@@ -166,9 +178,21 @@ function parseSymbolOverrides(raw: unknown): Record<string, number> {
 function parseSizing(
   sizing: Record<string, unknown>,
   row: Record<string, unknown>,
-): Pick<MirrorCopySettings, 'sizingMode' | 'lotMultiplier' | 'fixedLot' | 'maxLot' | 'symbolOverrides'> {
-  const result: Pick<MirrorCopySettings, 'sizingMode' | 'lotMultiplier' | 'fixedLot' | 'maxLot' | 'symbolOverrides'> = {
-    sizingMode: 'unsupported', lotMultiplier: 1, fixedLot: null, maxLot: null, symbolOverrides: {},
+): Pick<
+  MirrorCopySettings,
+  'sizingMode' | 'lotMultiplier' | 'balanceMultiplier' | 'equityMultiplier' | 'fixedLot' | 'maxLot' | 'symbolOverrides'
+> {
+  const result: Pick<
+    MirrorCopySettings,
+    'sizingMode' | 'lotMultiplier' | 'balanceMultiplier' | 'equityMultiplier' | 'fixedLot' | 'maxLot' | 'symbolOverrides'
+  > = {
+    sizingMode: 'unsupported',
+    lotMultiplier: 1,
+    balanceMultiplier: 1,
+    equityMultiplier: 1,
+    fixedLot: null,
+    maxLot: null,
+    symbolOverrides: {},
   }
 
   const mode = readString(sizing, ['mode'])
@@ -185,18 +209,34 @@ function parseSizing(
       result.lotMultiplier = Math.min(multiplier, 100)
     }
     // A zero or negative multiplier stays unsupported -> fail closed.
+  } else if (mode === 'balance_ratio') {
+    const multiplier = readNumber(sizing, ['balance_multiplier'])
+    if (multiplier == null || multiplier > 0) {
+      result.sizingMode = 'balance_ratio'
+      result.balanceMultiplier = Math.min(multiplier == null || multiplier <= 0 ? 1 : multiplier, 100)
+    }
+  } else if (mode === 'equity_ratio') {
+    const multiplier = readNumber(sizing, ['equity_multiplier'])
+    if (multiplier == null || multiplier > 0) {
+      result.sizingMode = 'equity_ratio'
+      result.equityMultiplier = Math.min(multiplier == null || multiplier <= 0 ? 1 : multiplier, 100)
+    }
   } else if (mode != null) {
-    // balance_ratio | equity_ratio | percent_risk | cash_risk | stop_distance: not implemented yet.
+    // percent_risk | cash_risk | stop_distance: not implemented yet.
     result.sizingMode = 'unsupported'
   } else {
     // No copy_risk sizing: fall back to the legacy top-level mirror of the sizing fields.
     const legacyMode = readString(row, ['risk_mode'])
     const legacyFixed = readPositive(row, ['fixed_lot'])
+    const legacyDynamic = readPositive(row, ['dynamic_balance_percent'])
     if (legacyMode === 'fixed_lot' && legacyFixed != null) {
       result.sizingMode = 'fixed_lot'
       result.fixedLot = legacyFixed
+    } else if (legacyMode === 'dynamic_balance_percent') {
+      // App maps balance/equity proportional copy to this legacy column.
+      result.sizingMode = 'balance_ratio'
+      result.balanceMultiplier = Math.min(legacyDynamic ?? 1, 100)
     }
-    // 'dynamic_balance_percent' or nothing configured -> unsupported.
   }
 
   result.maxLot = readPositive(sizing, ['max_lot'])

@@ -81,7 +81,10 @@ export function SignalReviewDetailModal({ signal, onClose }: SignalReviewDetailM
       signal?.skip_reason ? `Skip reason: ${signal.skip_reason}` : '',
       rawMessage ? `\nOriginal Telegram message:\n${rawMessage}` : '',
     ].filter(Boolean).join('\n')
-    assistant.setPendingAutoSend(`Please explain what happened with this trade signal in plain English.\n\n${context}`)
+    const dm = t.copierLogs.detailModal
+    assistant.setPendingAutoSend(
+      `${dm?.explainSignalPrompt ?? 'Please explain what happened with this trade signal in clear, everyday language.'}\n\n${context}`,
+    )
     assistant.openAssistant()
   }
 

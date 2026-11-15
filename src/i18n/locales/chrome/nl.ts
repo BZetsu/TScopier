@@ -206,6 +206,14 @@ export const chromeNl: AppChromeTranslations = {
         reportStatusOpen: 'Open',
         reportStatusResolved: 'Opgelost',
       },
+      csvCard: {
+        title: 'CSV-export',
+        ready: 'Je CSV met accounttrades is klaar.',
+        empty: 'Geen accounttrades gevonden voor die dag.',
+        download: 'CSV downloaden',
+        countLabel: '{count} trades',
+        exportFailed: 'Accounttrades exporteren mislukt. Probeer Accounttrades in de app.',
+      },
 
     },
 
