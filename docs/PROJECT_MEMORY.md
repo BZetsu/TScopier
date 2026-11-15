@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-15 — Single + Use Signal Entry Price: split limit pendings by TP %
+
+- **Context:** With Use Signal Entry Price (First/Last Price), when live price was away from entry the worker deferred to one SellLimit/BuyLimit for the **full lot** (`:strictEntryAgg`) instead of one pending per Targets % leg. Seen on Migration `4c92e903` (Demo 5.0 SellLimit @ 64950).
+- **Plain English:** Waiting for the signal entry price now places a separate pending for each TP share (e.g. 50/30/20), each with its own take-profit — not one big order.
+- **Root cause (technical):** [`strictEntryPending.ts`](worker/src/tradeExecutor/strictEntryPending.ts) always summed `capped` volumes into one pending when `capped.length > 1`.
+- **Fix (files):** Percent-split baskets (`isTpPercentSplitBasket`) place one Limit per plan order (volume + TP + `:tpN`); classic multi still aggregates. Persist `next_tp_index`.
+- **Tests/verification:** `strictEntryPending.test.ts` — 3 pendings 2.5/1.5/1.0 vs multi aggregate.
+- **Deploy state:** Worker local — redeploy trade worker.
+- **Follow-ups:** Redeploy worker; cancel any existing full-lot `:strictEntryAgg` pendings manually if still open.
+
 ### 2026-11-15 — Single teaser follow-up: TP by `:tpN`, not open time
 
 - **Context:** FOREX KING “Btc sell now” then TP/SL follow-up on Migration (`1df27fc2` / Demo BTCUSDm). Lots opened correctly 2.5/1.5/1.0 with `:tp1/:tp2/:tp3`, but follow-up attached 65200/65000/64900 by `opened_at` — so the 1-lot `:tp3` got TP1 and closed first.
