@@ -1527,6 +1527,71 @@ test('planManualOrders: single trade + 3 lots + 50/30/20 → 1.5 / 0.9 / 0.6', (
   assert.equal(plan.partialTps?.length ?? 0, 0)
 })
 
+test('planManualOrders: single teaser (no TP prices) + 50/30/20 still splits lots naked', () => {
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      action: 'buy',
+      entry_price: null,
+      sl: null,
+      tp: [],
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      ...baseManual,
+      trade_style: 'single',
+      range_trading: false,
+      add_new_trades_to_existing: true,
+      tp_lots: [
+        { label: 'TP1', lot: 0.01, percent: 50, enabled: true },
+        { label: 'TP2', lot: 0.01, percent: 30, enabled: true },
+        { label: 'TP3', lot: 0.01, percent: 20, enabled: true },
+      ],
+    },
+    channelKeywords: null,
+    manualLot: 3.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  assert.equal(plan.orders.length, 3)
+  assert.equal(plan.orders[0]!.volume, 1.5)
+  assert.equal(plan.orders[1]!.volume, 0.9)
+  assert.equal(plan.orders[2]!.volume, 0.6)
+  assert.equal(plan.orders[0]!.takeprofit, 0)
+  assert.equal(plan.orders[1]!.takeprofit, 0)
+  assert.equal(plan.orders[2]!.takeprofit, 0)
+  assert.equal(plan.partialTps?.length ?? 0, 0)
+  assert.ok(String(plan.fallback_reason ?? '').includes('open_tp_split'))
+})
+
+test('planManualOrders: single teaser with one Targets % row stays one full lot', () => {
+  const plan = planManualOrders({
+    parsed: {
+      ...baseParsed,
+      action: 'buy',
+      entry_price: null,
+      sl: null,
+      tp: [],
+    },
+    resolvedSymbol: 'XAUUSD',
+    baseOperation: 'Buy',
+    manual: {
+      ...baseManual,
+      trade_style: 'single',
+      range_trading: false,
+      tp_lots: [{ label: 'TP1', lot: 0.01, percent: 100, enabled: true }],
+    },
+    channelKeywords: null,
+    manualLot: 1.0,
+    ctx: baseCtx,
+    commentPrefix: 'TScopier:abc',
+  })
+  assert.equal(plan.orders.length, 1)
+  assert.equal(plan.orders[0]!.volume, 1.0)
+  assert.equal(plan.orders[0]!.takeprofit, 0)
+})
+
 // ── planSinglePartialTps ───────────────────────────────────────────────────
 // The pure helper that turns the user's percent rows (50 / 30 / 20) into a
 // concrete partial-close schedule for single-mode trades. Verifies that the

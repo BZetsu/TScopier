@@ -478,15 +478,12 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     if (!percentSplitBasket && manual.trade_style !== 'multi' && singleBrokerTp != null) {
       perLegTargets = perLegTargets.map(target => ({ ...target, takeprofit: singleBrokerTp }))
     }
-    // Multi (non-range, non-bundle path): after a TP hit, do not count-weight
-    // redistrib survivors onto nearer levels (classic "all TPs → TP1"). Explicit
-    // same-signal message revisions still reladder.
+    // After a TP hit (closed leg / TP-touch), freeze open-leg take-profits for
+    // Range and classic Multi alike. buildRangeBasketTpTargets / count-weighted
+    // redistrib would otherwise repaint survivors onto nearer levels (often all
+    // onto TP1). Explicit same-signal message revisions still reladder.
     let multiTpFrozen = false
-    if (
-      manual.range_trading !== true
-      && sameSignalRefresh !== true
-      && familyTrades.length > 0
-    ) {
+    if (sameSignalRefresh !== true && familyTrades.length > 0) {
       const [hasClosedLegs, tpTouched] = await Promise.all([
         hasClosedBasketLegs(ctx.supabase, broker.id, anchorSignalId),
         hasTpTouchedLock(ctx.supabase, {

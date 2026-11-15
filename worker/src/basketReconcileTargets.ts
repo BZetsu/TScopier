@@ -18,8 +18,7 @@ import {
 } from './basketEffectiveStops'
 import { parseUserOverride } from './signalOverride'
 import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistribution'
-import { bundleSteadyLegTps } from './manualPlanning/tpBundleIdentity'
-import { isTpBundleEnabled } from './manualPlanning/tpBundleRollout'
+import { bundleSteadyLegTps, isTpPercentSplitBasket } from './manualPlanning/tpBundleIdentity'
 import type { ManualTpLot } from './manualPlanning/types'
 import {
   resolveChosenTakeProfit,
@@ -236,9 +235,9 @@ export async function resolveFreshBasketReconcileTargets(
     const freezeMultiTp = hasClosedLegs || tpTouched
     const isBuy = args.direction === 'buy'
 
-    if (isTpBundleEnabled() && args.manual.trade_style === 'multi') {
-      // Bundled baskets: steady state — legs keep their own TP; naked legs are
-      // backfilled positionally from the ladder. Never count-weighted (D3).
+    if (isTpPercentSplitBasket(args.manual)) {
+      // Single percent-split + bundled multi: each leg keeps its own broker TP.
+      // Never pin to single_tp_target / farthest (that rewrote all legs to last TP).
       const ladder = signalTps.length
         ? signalTps
         : stored.map(t => t.takeprofit).filter(tp => typeof tp === 'number' && tp > 0)
@@ -669,7 +668,7 @@ export async function sweepOpenBasketsForReconcileDrift(
       nImmCwe: 0,
       overrideTp: null,
       lastError: 'Drift sweep: open legs out of sync with channel SL/TP ladder',
-      bundleIdentity: manual.range_trading !== true && manual.trade_style === 'multi',
+      bundleIdentity: isTpPercentSplitBasket(manual),
     })
 
     if (jobId) {

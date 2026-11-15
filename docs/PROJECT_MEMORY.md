@@ -2,6 +2,44 @@
 
 ## Changelog
 
+### 2026-11-15 — Single teaser: split lots by Targets % before TP prices arrive
+
+- **Context:** Bare “buy now” teasers on Single Entry opened one full-lot trade; lots only split when the follow-up brought TP/SL prices.
+- **Plain English:** If Targets % has two or more enabled rows (e.g. 50/30/20), Single opens those sized legs immediately on the teaser (naked TPs). The later TP/SL message fills in the prices.
+- **Root cause (technical):** [`planTpPercentSplitOrders.ts`](worker/src/manualPlanning/planTpPercentSplitOrders.ts) returned one full-lot `_open_tp` when `finalTps` was empty.
+- **Fix (files):** Empty-ladder path builds buckets from enabled `tp_lots` and emits the percent split with `takeprofit: 0` (`*_open_tp_split`).
+- **Tests/verification:** `manualPlanner.test.ts` teaser 3.0 → 1.5/0.9/0.6 naked; single-row teaser stays 1×full.
+- **Deploy state:** Worker local — redeploy for live teasers.
+- **Follow-ups:** Deploy trade worker.
+
+### 2026-11-15 — Range/Multi merge refresh froze survivor TPs (FOREX KING Demo)
+
+- **Context:** FOREX KING BACKUP → Demo BTC buy `7f546323…` opened 20 legs; after TP follow-up (65400/65800/66100) and TP1 hits, survivors were rewritten to **65400 only**.
+- **Plain English:** When some take-profits filled, the remaining trades should have kept TP2/TP3. Merge/refresh was rebuilding Range targets without the freeze gate, so survivors got shoved onto TP1. Management modify could also pin multi-leg baskets to the first TP if it read account Single instead of channel Multi/Range.
+- **Root cause (technical):** [`slTpRefresh.ts`](worker/src/tradeExecutor/basketMerge/slTpRefresh.ts) skipped TP-hit freeze when `range_trading === true`; [`managementModifyBaskets.ts`](worker/src/managementModifyBaskets.ts) used account `manual_settings` + `parsedTpLevels[0]` for non-multi baskets.
+- **Fix (files):** Apply `preserveOpenLegTakeProfits` after TP hit for Range and Multi in slTpRefresh; resolve per-channel manual settings; distribute TPs for any multi-leg basket instead of pinning to TP1.
+- **Tests/verification:** `rangeBasketTpSync.test.ts` closed-leg freeze + preserve survivors regression.
+- **Deploy state:** Worker local — redeploy required.
+- **Follow-ups:** Deploy trade worker. Demo FOREX KING channel config currently shows `trade_style=single` / `range_trading=false` (verify Configure if Range is intended).
+
+### 2026-11-15 — Reconciler smashed Single percent-split TPs to farthest
+
+- **Context:** Migration BTC sell `1a11e460…` opened correctly as 65400/65200/65000 (50/30/20), then ~90s later Demo legs were all `basket_leg_modify`’d to `target_tp: 65000`.
+- **Plain English:** After Single started opening one trade per TP, the background reconciler still treated Single like “one target = farthest” and rewrote every leg to the last TP.
+- **Root cause (technical):** `shouldApplySingleTakeProfitTarget` + `expandPerLegTargetsToCount({ chosenTp })` in [`basketReconcileTargets.ts`](worker/src/basketReconcileTargets.ts); steady/identity path only for multi+bundle, not `isTpPercentSplitBasket`.
+- **Fix (files):** Disable single_tp_target pin; use `isTpPercentSplitBasket` + `bundleSteadyLegTps` for Single; harden [`basketSlTpReconcile.ts`](worker/src/basketSlTpReconcile.ts) `bundleIdentity` path (no `isTpBundleEnabled` gate / no farthest pin).
+- **Tests/verification:** `singleTakeProfitTarget.test.ts` updated; evidence in `trade_execution_logs` for signal `1a11e460`.
+- **Deploy state:** Worker local only — **must redeploy trade worker** or live Single baskets will keep getting smashed.
+- **Follow-ups:** Deploy worker; existing smashed baskets need manual broker TP restore if still open.
+
+### 2026-11-15 — Configure with AI: Single TP-split knowledge → Migration + Prod
+
+- **Context:** Deploy Single Entry percent-split broker-leg knowledge (no partial closes / omit `single_tp_target`) after the Single TP split change.
+- **Plain English:** Configure with AI on Migration and production now describes Single as one broker trade per TP %.
+- **Fix (files):** Redeployed [`configure-with-ai`](supabase/functions/configure-with-ai/index.ts) (+ shared knowledge) to Migration `supmsgcubipmmowrzoub` and production `sxkpcovbyaficvtkpsdo`.
+- **Deploy state:** Migration + production.
+- **Follow-ups:** Worker + frontend still need deploy for execution/UI of the Single split itself.
+
 ### 2026-11-15 — Single trade: split lots across broker TPs
 
 - **Context:** Single Entry used one full-lot order plus worker `partial_tp` closes at earlier Targets % levels; users wanted each TP visible as its own broker trade.
@@ -9,8 +47,8 @@
 - **Root cause (technical):** N/A — product behavior change.
 - **Fix (files):** Shared [`planTpPercentSplitOrders.ts`](worker/src/manualPlanning/planTpPercentSplitOrders.ts); Single via [`planSingleManualOrders.ts`](worker/src/manualPlanning/planSingleManualOrders.ts); `isTpPercentSplitBasket` + remove `single_style_multi_leg_blocked`; UI/i18n + [`singleTpLotBreakdown.ts`](src/lib/singleTpLotBreakdown.ts); Configure with AI knowledge omits `single_tp_target` / partial-close copy.
 - **Tests/verification:** `manualPlanner.test.ts` (3-leg / 1-TP / 3.0 lot); `singleTpLotBreakdown.test.ts`; `singleStyleHardBlock.test.ts`.
-- **Deploy state:** Local only — worker + frontend + edge knowledge need deploy; plan says deploy `configure-with-ai` when asked.
-- **Follow-ups:** Deploy worker; redeploy `configure-with-ai` to Migration (and production if asked).
+- **Deploy state:** `configure-with-ai` → Migration + production (see entry above). Worker + frontend still local.
+- **Follow-ups:** Deploy worker + frontend for live Single split behavior.
 
 ### 2026-11-15 — Configure with AI: First / Last entry price
 
