@@ -163,3 +163,30 @@ passing: `worker/src/perAccountConcurrency.test.ts`,
 Known-red status unchanged: `managementClose.test.ts` still fails to compile
 (mock missing `OrderResult.ticket`, repair **I2** parked in `stash@{1}`) — documented
 in §7, not new fallout from this merge. No repair applied without owner sign-off.
+
+## 10. Main-push batch 2026-11-14 (PRs #221–#223) — checks added 2026-11-14 (evening pull)
+
+Second same-day pull from `main`: 20 commits (trade-closure fixes, signal-override
+background apply, logging, configure-trading UI, marketing/UI redesign, build guard).
+Conflicts: **one file** (`docs/PROJECT_MEMORY.md`) — his entries moved to
+`PROJECT_MEMORY-MARTINS.md`; the file also had **33 duplicate entries** from earlier
+pulls, now removed (first occurrence kept).
+
+**11 new script checks (script now 74/74):**
+`forceApply` resend path in `worker/src/applySignalOverride.ts`; `signal-override`
+and `force-close-trades` edge functions (exist + `background worker apply` +
+`SUPPORTED_PROVIDERS`); force-close provider-session columns in
+`worker/src/forceCloseSignalTrades.ts`; `worker/src/tradeBrokerDrift.ts` (module +
+`broker_drift` fingerprint); the 429/5xx retry classifier in
+`worker/src/tradeSignalPush.ts`; `isInternalRebalancePayload` guard in
+`src/lib/channelWorkerLogMessage.ts`; `src/lib/copierLogDetail.ts` module.
+
+**Paired behaviour checks — his tests touched by this batch:**
+`worker/src/applySignalOverride.test.ts`, `worker/src/tradeBrokerDrift.test.ts`,
+`src/lib/channelWorkerLogMessage.test.ts`, `src/lib/copierLogDetail.test.ts`,
+`src/lib/brokerOpenBook.test.ts`, `src/lib/telegramChannelIdentity.test.ts`,
+`src/lib/tradeActivities.test.ts`, `src/lib/dashboardLiveOpenMetrics.test.ts`,
+`src/i18n/locales/merge.test.ts`.
+
+Known-red status unchanged (11 total, §7) — measured across the three-chunk worker
+run 2026-11-14: **3,244 / 3,255 pass**, failures exactly §7's list, zero unexplained.

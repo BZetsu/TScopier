@@ -94,6 +94,19 @@ exists "fxsocket stream parse module"          src/lib/fxsocketStreamParse.ts
 must "TV ingest host default (tl.unicopier)"   src/components/dashboard/TradingViewSourcePanel.tsx 'tl\.unicopier\.com'
 must "plot-based alert template"               src/lib/tradingViewAlertTemplate.ts '\{\{plot\('
 
+# ---- Main push batch 2026-11-14 (PRs #221-#223) ---------------------------
+must "resend-parameters forceApply"          worker/src/applySignalOverride.ts  'forceApply'
+exists "signal override edge fn"             supabase/functions/signal-override/index.ts
+must "override edge background apply"        supabase/functions/signal-override/index.ts 'background worker apply'
+exists "force-close edge fn"                 supabase/functions/force-close-trades/index.ts
+must "force-close multi-provider set"        supabase/functions/force-close-trades/index.ts 'SUPPORTED_PROVIDERS'
+must "force-close provider session columns"  worker/src/forceCloseSignalTrades.ts 'provider session for force-close'
+exists "broker drift module"                 worker/src/tradeBrokerDrift.ts
+must "broker drift fingerprint"              worker/src/tradeBrokerDrift.ts    'broker_drift'
+must "push retryable classifier (429/5xx)"   worker/src/tradeSignalPush.ts     'status === 429'
+must "internal rebalance payload guard"      src/lib/channelWorkerLogMessage.ts 'isInternalRebalancePayload'
+exists "copier log detail module"            src/lib/copierLogDetail.ts
+
 echo "----------------------------------------"
 echo "code-preservation: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

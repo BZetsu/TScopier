@@ -2,6 +2,41 @@
 
 ## Changelog
 
+### 2026-11-14 (second pull) — Merged main again: Martins's PRs #221–#223 into staging (one conflict; his 27 new entries moved to his file; checklist 63 → 74)
+
+- **Context:** after the morning merge (PRs #217–#220) Martins kept pushing: `main` moved another **20 commits** through PRs **#221–#223** during the day. Owner asked to pull them in so the staging → main promotion PR stays mergeable, to document each push, to bring his written entries into his own memory file, and to extend the protection checklist.
+- **Plain English:** We brought the day's second batch of his work into our staging branch. Only the shared project-memory file needed a decision — everything else merged on its own. His 27 written change notes were moved into his personal memory file (where they belong), and while there we removed **33 entries that earlier pulls had copied twice**, so his file now lists every change exactly once. The protection checklist grew to **74 checks**, all passing, and the full test gates are green with only the already-documented 11 known failures — nothing new broke.
+- **The 20 commits pulled in (each documented in detail in `PROJECT_MEMORY-MARTINS.md`):**
+
+| Commit | What it does |
+|---|---|
+| `bcf10815` | Copier Log localization and action display fixes |
+| `bf33aea5` | Welcome/onboarding modal redesign + localization |
+| `c6765da8` | Hero Dashboard matches soft-shell UI + localization |
+| `86b09ab4` | UniCopier dark/light image assets updated |
+| `34047076` | App header + showcase cards unified soft-shell styling |
+| `974180d0` | Landing page scroll animations |
+| `8bd51fae` | Marketing header avatar for signed-in users |
+| `72a77cd6` | Feature-card scroll hijack |
+| `e5aa86cb` | Marketing footer social links |
+| `49b5bdb6` | Merge PR #221 |
+| `c92ca1ab` | Dashboard SL/TP parameter handling + real-time trade updates |
+| `a5e01a84` | Dispatch push logging and error handling |
+| `76900a9c` | "Order Skipped" noise removed for live fills |
+| `e45029ea` | Signal-override SL/TP moves to background apply + closable modal UI |
+| `3e968b02` | cTrader close-trade fix ("trade service did not answer") |
+| `c71962af` | Demo close-all fix (live snapshot miss) + management execution |
+| `a6d381f9` | Configure-trading modal UI + localization |
+| `519a413d` | Merge PR #222 |
+| `fe7f732e` | `isInternalRebalancePayload` build guard (Netlify tsc) |
+| `98aad25a` | Merge PR #223 |
+
+- **Conflict record:** exactly **one file — `docs/PROJECT_MEMORY.md`** (both sides appended entries). His block held 77 headings; **27 were new** and went to `PROJECT_MEMORY-MARTINS.md`, **50 were whole-entry duplicates** already moved earlier and were skipped entirely (headings *and* bodies this time). While auditing that, **33 historical duplicate entries** committed by earlier pulls were removed from his file (first occurrence kept; verified 0 duplicate headings after). Everything else — 116 changed files including `worker/src/tradeExecutor/managementExecutor.ts`, `worker/src/tradeSignalPush.ts`, `applySignalOverride.ts`, `tradeBrokerDrift.ts`, `basketSlTpReconcileMonitor.ts`, `forceCloseSignalTrades.ts`, both `force-close-trades`/`signal-override` edge functions — auto-merged.
+- **Checklist upgrade (63 → 74, all passing):** `forceApply` resend path (manual "Resend Parameters" must hit the broker even when the DB already matches), `signal-override` edge (`background worker apply`), `force-close-trades` edge (`SUPPORTED_PROVIDERS` set), force-close provider-session columns, `tradeBrokerDrift` module + `broker_drift` fingerprint, the 429/5xx retry classifier in `tradeSignalPush.ts`, `isInternalRebalancePayload` guard, `copierLogDetail` module. Checklist §10 lists his nine paired test files.
+- **Gates:** protection script **74/74**; `npx tsc -b` clean; frontend `npm test` **627/627 exit 0**; worker build clean; **worker suite 3,244 / 3,255 pass** — the 11 failures are **exactly the documented §7 known-reds** (managementClose + socialCopyMonitor compile, deferredOnlyRangePlan ×3, VirtualPendingMonitor ×4, providerScope ×1, replyScope ×1), **zero unexplained**. Note: a full worker run takes ~36 minutes here; detached background runs are killed when the tool session is interrupted, so the suite was run in three sequential chunks (~11–17 min each) — same files, same totals.
+- **Deploy state:** local only — merge commit `53176605` plus this docs commit on `staging-merge`, **not pushed**. Branch matches `main` as of `98aad25a`.
+- **Follow-ups:** `upstream/migration` already has **2 newer commits** (CSV export for account trades, assistant language handling) not yet merged into `main` — if Martins merges PR #224 before the promotion PR opens, one more pull is needed. Owner still opens/pushes the PR; the parked known-red repairs (I1–I4) remain untouched by instruction; the 16 staging-only migrations still need registration reconciliation on prod at promotion time.
+
 ### 2026-01-14 — Merged upstream/main (Martins's PRs #217–#220) into staging for the promotion PR; preservation list upgraded 46 → 63 checks
 
 - **Context:** the owner is preparing a **staging → main PR**. Since the split point (`6a4033d6`, ~Nov 10) main had moved **109 commits (80 authored by Martins)** while staging carried **83 of its own** — the same feature areas developed on both lines produced **25 merge conflicts**, three of them add/add (both sides independently created `tradingViewAlertTemplate.ts`, `worker/tradingViewAlert.ts` and its test). Owner instruction: **pull his side in**, and remember his entries belong in his own memory file.
