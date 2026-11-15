@@ -1,5 +1,5 @@
 /**
- * Preview how a Single Entry fixed lot opens as separate broker trades
+ * Preview how a Single Entries fixed lot opens as separate broker trades
  * (one per Targets % TP). Mirrors worker planTpPercentSplitOrders sizing.
  */
 

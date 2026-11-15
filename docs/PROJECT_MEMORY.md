@@ -2,6 +2,24 @@
 
 ## Changelog
 
+### 2026-11-15 — Single teaser follow-up: TP by `:tpN`, not open time
+
+- **Context:** FOREX KING “Btc sell now” then TP/SL follow-up on Migration (`1df27fc2` / Demo BTCUSDm). Lots opened correctly 2.5/1.5/1.0 with `:tp1/:tp2/:tp3`, but follow-up attached 65200/65000/64900 by `opened_at` — so the 1-lot `:tp3` got TP1 and closed first.
+- **Plain English:** After a teaser, take-profit prices now stick to the planned TP1/TP2/TP3 legs (by order comment, saved index, or lot size), not whichever order the broker filled first.
+- **Root cause (technical):** `bundleSteadyLegTps` backfilled naked legs as `ladder[i]` on `opened_at` order; parallel OrderSend completion order ≠ planned TP index.
+- **Fix (files):** `parseOrderCommentTpIndex` + `resolveBundleLegTpIndexes` in `tpBundleIdentity.ts` / `tradeComment.ts`; wire through `buildPerLegStopTargets`, `slTpRefresh`, reconcile, mgmt modify; persist `next_tp_index` at open; v2 distribute also for Single percent-split.
+- **Tests/verification:** `tpBundleIdentity.test.ts` (comment + volume + default-1 ignore); `tradeComment.test.ts`.
+- **Deploy state:** Worker local — redeploy trade worker for live teaser baskets.
+- **Follow-ups:** Redeploy worker.
+
+### 2026-11-15 — Edge functions → production
+
+- **Context:** Deploy weekend-touched edge functions to production after Migration work.
+- **Plain English:** Production now has the latest Configure with AI, assistant, parse-signal, signal-override, and force-close-trades.
+- **Fix (files):** Deployed `configure-with-ai`, `assistant-chat`, `force-close-trades`, `parse-signal`, `signal-override` to `sxkpcovbyaficvtkpsdo`.
+- **Deploy state:** Production only (this deploy).
+- **Follow-ups:** Worker redeploy still needed for Single/Range TP trading fixes.
+
 ### 2026-11-15 — Single teaser: split lots by Targets % before TP prices arrive
 
 - **Context:** Bare “buy now” teasers on Single Entry opened one full-lot trade; lots only split when the follow-up brought TP/SL prices.

@@ -702,6 +702,9 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
     // Broker echoes sometimes return lots=0 on LIMIT/STOP accept; keep the
     // requested volume so the row is not stored as a zero-lot phantom.
     const filledLots = Number(result.lots) > 0 ? Number(result.lots) : sendArgs.volume
+    const plannedTpIndex = typeof leg.plannedTpIndex === 'number' && leg.plannedTpIndex >= 0
+      ? Math.floor(leg.plannedTpIndex)
+      : null
     const tradeRowPayload = {
       user_id: signal.user_id,
       signal_id: signal.id,
@@ -717,6 +720,8 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       status: sendArgs.operation.includes('Limit') || sendArgs.operation.includes('Stop') ? 'pending' : 'open',
       opened_at: new Date().toISOString(),
       cwe_close_price: leg.cweClosePrice ?? null,
+      // Persist planned TP level so teaser follow-ups don't rely on opened_at order.
+      next_tp_index: plannedTpIndex != null ? plannedTpIndex + 1 : 1,
       ...trailCols,
       ...autoBeCols,
     }

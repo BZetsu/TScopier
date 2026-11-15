@@ -167,6 +167,8 @@ export interface Leg {
   partialTps?: import('../manualPlanner').PlannerPartialTp[]
   /** Absolute Move-SL-on-TP-hit trigger from the plan's TP ladder. */
   autoBeTpHitTriggerPrice?: number | null
+  /** 0-based planned TP level for Single percent-split / bundled multi. */
+  plannedTpIndex?: number | null
 }
 
 /**

@@ -13,6 +13,8 @@ import { takeProfitForSplitBasketLeg } from './manualPlanning/tpBucketDistributi
 import {
   bundleSteadyLegTps,
   remapBundleLegTpsByTpOrder,
+  resolveBundleLegTpIndexes,
+  type BundleLegIdentity,
 } from './manualPlanning/tpBundleIdentity'
 import { isTpBundleEnabled } from './manualPlanning/tpBundleRollout'
 import type { ManualTpLot } from './manualPlanning/types'
@@ -112,10 +114,11 @@ export function buildPerLegStopTargets(args: {
   tpLots?: ManualTpLot[] | null
   /**
    * Bundled multi baskets (TP_BUNDLE_ENABLED): each leg's own TP, with naked
-   * legs backfilled positionally — never a count-weighted re-derivation.
-   * Positional with the open legs (oldest → newest).
+   * legs backfilled by planned TP identity — never a count-weighted re-derivation.
    */
   currentLegTps?: Array<number | null | undefined>
+  /** Comment / next_tp_index / lot metadata aligned with currentLegTps. */
+  legIdentities?: ReadonlyArray<BundleLegIdentity>
   /** Bundled basket receiving an explicit TP change — 1:1 remap by TP order. */
   bundleReladder?: boolean
   /**
@@ -155,8 +158,7 @@ export function buildPerLegStopTargets(args: {
   const rangeCount = Math.max(0, total - immCount)
 
   // Percent-split / bundled (non-range) baskets: identity rules, never count
-  // weights. The plan ladder (one order per level) wins when it covers every
-  // leg; otherwise the parsed ladder is used positionally (leg i ↔ level i).
+  // weights. Prefer planned `:tpN` / next_tp_index over opened_at position.
   if (
     (isTpBundleEnabled() || args.forceSteadyTps === true)
     && args.currentLegTps != null
@@ -165,13 +167,25 @@ export function buildPerLegStopTargets(args: {
   ) {
     const planLadder = fromPlan.map(o => o.takeprofit).filter(tp => tp > 0)
     const ladder = finalTps.length ? finalTps : planLadder
+    const identities = (args.legIdentities ?? []).slice(0, n)
+    while (identities.length < n) identities.push({})
+    const legTpIndexes = resolveBundleLegTpIndexes({
+      legs: identities,
+      ladderLength: ladder.length,
+      tpLots,
+    })
     const tps = args.bundleReladder === true
       ? remapBundleLegTpsByTpOrder({
         legs: args.currentLegTps.slice(0, n),
         ladder,
         isBuy: args.isBuy ?? plan.isBuy !== false,
+        legTpIndexes,
       })
-      : bundleSteadyLegTps({ currentTps: args.currentLegTps.slice(0, n), ladder })
+      : bundleSteadyLegTps({
+        currentTps: args.currentLegTps.slice(0, n),
+        ladder,
+        legTpIndexes,
+      })
     return tps.map(tp => ({ stoploss: sl, takeprofit: tp }))
   }
 

@@ -56,7 +56,7 @@ import {
   shouldPreferParsedStopsOnEntry,
   type ChannelActiveTradeParams,
 } from '../channelActiveTradeParams'
-import { resolveTscopierCommentPrefix } from '../tradeComment'
+import { parseOrderCommentTpIndex, resolveTscopierCommentPrefix } from '../tradeComment'
 import { writeExecutionLog } from '../observability/executionLog'
 import type { TradeExecutorContext } from './context'
 import { applySymbolMapping, computeLot, isBuySideOp, isExcluded, isMt5OnlyOperation, roundLot, triggerPriceFor, brokerSessionUuid, type Leg } from './helpers'
@@ -1198,14 +1198,22 @@ export async function prepareEntryExecution(
   // `capped.length === 1` (single mode → one order). We attach it to that
   // single leg so the post-INSERT path can fan out the partials.
   const volumeRounded = effectiveCapped.map(o => ({ ...o, volume: roundLot(o.volume, params) }))
-  const legs: Leg[] = volumeRounded.map((args, idx) => ({
-    args,
-    idx,
-    ...(idx === 0 && plan.partialTps?.length ? { partialTps: plan.partialTps } : {}),
-    ...(plan.autoBeTpHitTriggerPrice != null
-      ? { autoBeTpHitTriggerPrice: plan.autoBeTpHitTriggerPrice }
-      : {}),
-  }))
+  const singlePercentSplit = manual.trade_style !== 'multi'
+    && manual.range_trading !== true
+    && volumeRounded.length > 1
+  const legs: Leg[] = volumeRounded.map((args, idx) => {
+    const plannedTpIndex = parseOrderCommentTpIndex(args.comment)
+      ?? (singlePercentSplit ? idx : null)
+    return {
+      args,
+      idx,
+      ...(plannedTpIndex != null ? { plannedTpIndex } : {}),
+      ...(idx === 0 && plan.partialTps?.length ? { partialTps: plan.partialTps } : {}),
+      ...(plan.autoBeTpHitTriggerPrice != null
+        ? { autoBeTpHitTriggerPrice: plan.autoBeTpHitTriggerPrice }
+        : {}),
+    }
+  })
 
   // Single trade style may emit multiple immediates (one per Targets % TP).
   // Legacy hard-block removed — percent-split Single is intentional.
