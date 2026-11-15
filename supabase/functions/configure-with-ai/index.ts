@@ -974,9 +974,10 @@ function buildContextSystemBlock(ctx: ConfigureContext): string {
     signal_examples: compactExamples,
     signal_example_count: examples.length,
     instructions: [
-      "Signal samples are optional. Concrete user requests (breakeven, trailing, lot/risk, style, etc.) → propose_settings immediately; never refuse only because signal_example_count is 0.",
+      "Signal samples are optional for narrow edits. Concrete user requests (breakeven, trailing, lot/risk, style, etc.) → propose_settings immediately; never refuse only because signal_example_count is 0.",
+      "If signal_example_count > 0 OR the user asks to analyze/propose from signals: the samples ARE the input — never say they provided no input. Call analyze_signal_format then propose_settings in this turn.",
       "Break even at TP N → move_sl_to_entry_after_mode=tp_hit + move_sl_to_entry_tp_index=N.",
-      "When samples exist, classify single_price vs range_zone before a full package. When absent, still apply the asked settings.",
+      "When samples exist, classify single_price vs range_zone / teaser_then_params before a full package. When absent, still apply the asked settings.",
       "Size lots/risk from account_size.sizing_basis / size_tier when the request needs sizing; ask if unknown.",
       "Full-package rationales cite entry type + account size when known; single-setting patches may cite the user request instead.",
       "Never invent a Total Lot Size or 0.01-per-TP bullet. TP rows are percent shares only; dynamic_balance_percent sizes the whole basket (balance×pct/100/1000), not 0.01 per TP.",
@@ -1041,6 +1042,17 @@ function messageLooksLikeProposal(text: string): boolean {
     /\badd\s+new\s+trades\s+to\s+existing\b/,
   ].filter((re) => re.test(t)).length;
   return settingHits >= 2;
+}
+
+/** Model sometimes ignores loaded samples and claims the user sent nothing. */
+function messageLooksLikeNoInputStall(text: string): boolean {
+  const t = text.toLowerCase();
+  if (!t.trim()) return true;
+  return (
+    /didn'?t provide|did not provide|no (?:additional )?input|provide any (?:additional )?input|no signal examples|share (?:a couple of )?sample|could you please share/.test(
+      t,
+    )
+  );
 }
 
 Deno.serve(async (req: Request) => {
@@ -1161,12 +1173,96 @@ Deno.serve(async (req: Request) => {
       finalMessage = typeof msg?.content === "string" ? msg.content.trim() : "";
     }
 
-    // Model often describes settings in prose without calling propose_settings — force it
-    // so the UI can show Apply pills under that reply.
+    const hasExamples =
+      Array.isArray(ctx.signal_examples) && ctx.signal_examples.length > 0;
     const hasPriorPending =
       ctx.pending_settings_patch?.settings &&
       typeof ctx.pending_settings_patch.settings === "object" &&
       Object.keys(ctx.pending_settings_patch.settings).length > 0;
+
+    // Samples loaded but model stalled with "no input" — force analyze + propose.
+    if (
+      hasExamples &&
+      !pendingSettingsPatch &&
+      !hasPriorPending &&
+      messageLooksLikeNoInputStall(finalMessage)
+    ) {
+      messages.push({
+        role: "assistant",
+        content: finalMessage || "Waiting for analysis.",
+      });
+      messages.push({
+        role: "user",
+        content:
+          "Signal examples ARE already in context (signal_example_count > 0). Call analyze_signal_format now, then propose_settings with a full draft. Do not ask for samples again.",
+      });
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        const data = await openaiChat(messages);
+        const msg = data.choices?.[0]?.message;
+        if (!msg) break;
+        const toolCalls = msg.tool_calls ?? [];
+        if (!toolCalls.length) {
+          const text = typeof msg.content === "string" ? msg.content.trim() : "";
+          if (text) finalMessage = text;
+          break;
+        }
+        messages.push({
+          role: "assistant",
+          content: msg.content ?? null,
+          tool_calls: toolCalls,
+        });
+        for (const call of toolCalls) {
+          const name = call.function?.name ?? "";
+          const args = sanitizeToolArgs(parseArgs(call.function?.arguments ?? "{}"));
+          const result = executeTool(name, args, ctx);
+          if (result.pendingSettingsPatch) {
+            pendingSettingsPatch = result.pendingSettingsPatch;
+          }
+          messages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: result.content.slice(0, 8000),
+          });
+        }
+      }
+      if (!pendingSettingsPatch) {
+        const forced = await openaiChat(messages, {
+          type: "function",
+          function: { name: "propose_settings" },
+        });
+        const forcedMsg = forced.choices?.[0]?.message;
+        const forcedCalls = forcedMsg?.tool_calls ?? [];
+        if (forcedCalls.length) {
+          messages.push({
+            role: "assistant",
+            content: forcedMsg?.content ?? null,
+            tool_calls: forcedCalls,
+          });
+          for (const call of forcedCalls) {
+            const name = call.function?.name ?? "";
+            const args = sanitizeToolArgs(parseArgs(call.function?.arguments ?? "{}"));
+            const result = executeTool(name, args, ctx);
+            if (result.pendingSettingsPatch) {
+              pendingSettingsPatch = result.pendingSettingsPatch;
+            }
+            messages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: result.content.slice(0, 8000),
+            });
+          }
+          const after = await openaiChat(messages);
+          const afterText =
+            typeof after.choices?.[0]?.message?.content === "string"
+              ? after.choices[0].message!.content!.trim()
+              : "";
+          if (afterText) finalMessage = afterText;
+        }
+      }
+    }
+
+    // Model often describes settings in prose without calling propose_settings — force it
+    // so the UI can show Apply pills under that reply.
     if (
       !pendingSettingsPatch &&
       !hasPriorPending &&

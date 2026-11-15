@@ -2,6 +2,23 @@
 
 ## Changelog
 
+### 2026-11-15 — Configure with AI: fix “no input” after Load from channel
+
+- **Context:** On production, after loading UPDATE/ENTRY samples the model replied that the user provided no input.
+- **Plain English:** Loaded signals are treated as real user input again; Load → analyze → propose works without a fake “no input” stall.
+- **Root cause (technical):** Samples lived mainly on an assistant-role chat bubble; the model ignored them. Knowledge also under-emphasized “samples present = proceed.”
+- **Fix (files):** User-turn examples + clearer analyze prompt in [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx); knowledge §0b + no-input stall recovery in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) / [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); en analyze copy.
+- **Deploy state:** Deploying to production (and Migration).
+- **Follow-ups:** Frontend rebuild for modal change on app.tscopier.ai.
+
+### 2026-11-15 — Configure with AI: production edge redeploy
+
+- **Context:** User asked to deploy the latest Configure with AI edge (no-samples requests, BE keys, Range label, pip-tolerance rules, etc.) to production.
+- **Plain English:** Production Configure with AI matches the current Migration build.
+- **Fix (files):** Redeployed [`configure-with-ai`](supabase/functions/configure-with-ai/index.ts) to `sxkpcovbyaficvtkpsdo`.
+- **Deploy state:** production.
+- **Follow-ups:** Frontend i18n/modal still needs Netlify if not already shipped.
+
 ### 2026-11-15 — Configure with AI: i18n for all locales
 
 - **Context:** Configure with AI modal copy was English (or partial) in fr/es/nl/pl/sv/ru/ja/ar.
