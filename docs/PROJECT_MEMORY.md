@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-16 — Main moved again (PRs #234–#238, 11 commits) merged into staging; support-translation migration pending on both databases
+
+- **Context:** after the promotion branch was last pushed, `main` advanced by 11 commits: multi-leg TP backfill fix for pending orders (#234), Demo strict-entry pending handling after signal edits (#235/#236), Copier Log partial-close + TP N handling (#237), and support chat/ticket translation with locale detection (#238).
+- **Plain English:** the usual single memory-file conflict was resolved (his three notes went to his file) and everything else merged automatically. His batch adds a translation cache for support messages (customer locale, source locale, cached translations) with a new `support-translate` edge function, and fixes how pending/limit orders are cleaned up when a signal is edited.
+- **Technical:** worker changes in `basketSlTpReconcile.ts`, `channelStopApply.ts`, `managementScope.ts`, `multiTradeMerge.ts`, `basketMerge/mergeRouting.ts`, `basketMerge/slTpRefresh.ts`; frontend `SupportWidget`, `supportChat`, `copierLogLifecycle` (+ his updated test), `i18n/locales/logs/*`; new edge `support-translate` plus updates to `support-chat`, `support-tickets`, `support-ticket-inbound`; migration `20261116090000_support_message_translations.sql` (locale + translations columns and their CHECK constraints on support conversations/tickets/messages).
+- **Gates after the merge:** worker build clean; frontend `tsc -b` clean; frontend tests **637/637** node and **569/569** component; targeted worker merge/close tests **120/120**; protection audit **85/85**.
+- **Database state (read-only):** migration `20261116090000` is **not registered on either database**; staging is missing the columns, production already has a translation column applied manually. The apply file `docs/scratchpads/apply-support-translations-2026-11-16.sql` (DDL + registration, re-runnable) covers both.
+- **Deploy state:** merge `cfe15cf5` pushed to `upstream/staging` and `bzetu/staging`; branch current with `main` at `495a2488`.
+- **Follow-ups:** apply the support-translation migration on staging and production; deploy the new/updated support edge functions with the promotion; `TP_BUNDLE_ENABLED` still pending on Railway.
+
 ### 2026-11-15 (database verification) — staging index migration confirmed; the 16-row registration block landed on staging instead of production
 
 - **Verified read-only:** staging now has `signal_entry_pending_orders_active_ticket_unique` and the `20261115162000` row ✓. Production has the same index plus its registration to the `20261115162000` row (and a duplicate-name row `20261115162234` created by the dev account, which is harmless).
