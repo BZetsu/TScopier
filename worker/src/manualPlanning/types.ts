@@ -14,6 +14,8 @@ export interface ParsedSignal {
   entry_zone_first?: number | null
   /** Last entry price as written in the signal (before min/max sort). */
   entry_zone_last?: number | null
+  /** Discrete BUY/SELL ZONES bulletin levels (ordered as written). */
+  entry_zone_levels?: number[] | null
   /** Explicit provider instruction; absent/null retains legacy inferred routing. */
   entry_order_type?: EntryOrderType | null
   sl: number | null

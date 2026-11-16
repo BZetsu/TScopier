@@ -8,7 +8,9 @@ import {
   detectReEnterIntent,
   entryReferenceFromParsed,
   extractBarePriceRangeZone,
+  extractBuySellZonesBulletin,
   extractUnlabeledPrices,
+  looksLikeBuySellZonesBulletin,
   normalizeEntryZonePair,
   type TradeDirection,
 } from './signalPriceInference'
@@ -78,6 +80,11 @@ export interface ChannelParsedSignal {
   entry_zone_first?: number | null
   /** Last entry price as written (before min/max sort). */
   entry_zone_last?: number | null
+  /**
+   * Discrete zone levels from a BUY/SELL ZONES bulletin (ordered as written).
+   * Used to collapse wide lists to the nearest actionable level at plan/prepare.
+   */
+  entry_zone_levels?: number[] | null
   /** Explicit provider instruction; null when the signal did not name an order type. */
   entry_order_type?: EntryOrderType | null
   sl: number | null
@@ -819,6 +826,19 @@ function normalizeParsedFromModel(raw: unknown, fallbackText: string): ChannelPa
   const sl_unit: PriceUnit | undefined =
     slUnitRaw === 'pips' || slUnitRaw === 'price' ? (slUnitRaw as PriceUnit) : undefined
 
+  let entry_zone_levels: number[] | undefined
+  if (Array.isArray(j.entry_zone_levels)) {
+    const levels: number[] = []
+    const seen = new Set<number>()
+    for (const x of j.entry_zone_levels) {
+      const n = Number(x)
+      if (!Number.isFinite(n) || n <= 0 || seen.has(n)) continue
+      seen.add(n)
+      levels.push(n)
+    }
+    if (levels.length) entry_zone_levels = levels
+  }
+
   return {
     action,
     symbol,
@@ -827,6 +847,7 @@ function normalizeParsedFromModel(raw: unknown, fallbackText: string): ChannelPa
     entry_zone_high: numOrNull(j.entry_zone_high),
     entry_zone_first: numOrNull(j.entry_zone_first),
     entry_zone_last: numOrNull(j.entry_zone_last),
+    ...(entry_zone_levels ? { entry_zone_levels } : {}),
     sl: numOrNull(j.sl),
     tp,
     ...(tp_unit ? { tp_unit } : {}),
@@ -1592,6 +1613,10 @@ function applyDirectionalPriceInference(
 ): ChannelParsedSignal {
   const action = String(parsed.action ?? '').toLowerCase()
   if (action !== 'buy' && action !== 'sell') return parsed
+  // Zone bulletins list entry levels only — never invent SL/TP from those prices.
+  if (looksLikeBuySellZonesBulletin(rawMessage) || (parsed.entry_zone_levels?.length ?? 0) > 0) {
+    return parsed
+  }
   // Pip-offset ladders must not be reclassified as absolute SL/TP prices.
   if (parsed.tp_unit === 'pips' || parsed.sl_unit === 'pips') return parsed
   if (tpClauseHasExplicitPips(rawMessage)) return parsed
@@ -1634,11 +1659,35 @@ function applyReEnterFlag(parsed: ChannelParsedSignal, rawMessage: string): Chan
   return { ...parsed, re_enter: true }
 }
 
+/** Deterministic Gen Wealth-style "GOLD SELL ZONES\\n3866\\n3874" parse (no SL/TP). */
+export function parseBuySellZonesBulletin(message: string): ChannelParsedSignal | null {
+  const bulletin = extractBuySellZonesBulletin(message)
+  if (!bulletin) return null
+  return {
+    action: bulletin.side,
+    symbol: bulletin.symbol,
+    entry_price: bulletin.levels.length === 1 ? bulletin.levels[0]! : null,
+    entry_zone_low: bulletin.levels.length === 1 ? null : bulletin.entry_zone_low,
+    entry_zone_high: bulletin.levels.length === 1 ? null : bulletin.entry_zone_high,
+    entry_zone_first: bulletin.entry_zone_first,
+    entry_zone_last: bulletin.entry_zone_last,
+    entry_zone_levels: bulletin.levels,
+    sl: null,
+    tp: [],
+    lot_size: null,
+    confidence: 0.95,
+    raw_instruction: message,
+    open_tp: false,
+  }
+}
+
 function parseSimpleSignal(
   message: string,
   lexicon: ChannelLexiconRow | null,
   channelKeywords: ChannelKeywords,
 ): ChannelParsedSignal | null {
+  const zonesBulletin = parseBuySellZonesBulletin(message)
+  if (zonesBulletin) return zonesBulletin
   if (looksLikeCasualNonTradeMessage(message)) return null
   const text = message.toLowerCase().replace(/\s+/g, " ").trim()
   if (!text) return null
@@ -2190,6 +2239,7 @@ export function parseChannelMessageSync(
     } satisfies ChannelParsedSignal
     : parseDeterministicManagement(message, lexicon, channelKeywords, true) ??
     parseChannelParameterFollowUp(message, lexicon, channelKeywords) ??
+    parseBuySellZonesBulletin(message) ??
     parseSimpleSignal(message, lexicon, channelKeywords) ??
     parseEntryFromKeywords(message, lexicon, channelKeywords))
 
@@ -2214,7 +2264,10 @@ export function parseChannelMessageSync(
   const dropped = !explicitIgnore && explicitProvider
     ? explicitProvider
     : enrichParsedKeywordMatch(rawParsed, message, channelKeywords)
-  if (entryMissingSlTpRequiresNow(dropped, message, channelKeywords)) {
+  // Zone bulletins wait for price (Range entry) with predefined stops — not market NOW.
+  const isZonesBulletin = looksLikeBuySellZonesBulletin(message)
+    || (Array.isArray(dropped.entry_zone_levels) && dropped.entry_zone_levels.length > 0)
+  if (!isZonesBulletin && entryMissingSlTpRequiresNow(dropped, message, channelKeywords)) {
     return {
       parsed: {
         ...dropped,
