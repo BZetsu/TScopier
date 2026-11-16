@@ -102,6 +102,11 @@ function tableFor(channel: Channel): string {
   return channel === "chat" ? "support_messages" : "support_ticket_messages";
 }
 
+/** Cheap script check — Cyrillic/CJK/Arabic often mean source_locale was wrongly defaulted to en. */
+export function looksNonEnglish(text: string): boolean {
+  return /[\u0400-\u04FF\u0600-\u06FF\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]/.test(text);
+}
+
 export async function ensureMessageTranslation(
   admin: SupabaseClient,
   params: {
@@ -129,13 +134,14 @@ export async function ensureMessageTranslation(
   }
 
   const body = String(row.body ?? "");
-  const sourceLocale = normalizeSupportLocale(row.source_locale as string);
+  let sourceLocale = normalizeSupportLocale(row.source_locale as string);
   const existing =
     row.translations && typeof row.translations === "object" && !Array.isArray(row.translations)
       ? ({ ...(row.translations as TranslationMap) } as TranslationMap)
       : ({} as TranslationMap);
 
-  if (sourceLocale === targetLocale) {
+  // Skip translating image-only placeholders
+  if (!body.trim() || body === "Shared an image") {
     return {
       text: body,
       source_locale: sourceLocale,
@@ -154,8 +160,20 @@ export async function ensureMessageTranslation(
     };
   }
 
-  // Skip translating image-only placeholders
-  if (!body.trim() || body === "Shared an image") {
+  // Old rows defaulted source_locale to "en" even for RU/ES/etc. Detect and correct.
+  if (sourceLocale === targetLocale || (sourceLocale === "en" && looksNonEnglish(body))) {
+    const detected = await detectLocaleWithOpenAI(body);
+    if (detected !== sourceLocale) {
+      sourceLocale = detected;
+      const { error: srcErr } = await admin
+        .from(table)
+        .update({ source_locale: sourceLocale })
+        .eq("id", params.messageId);
+      if (srcErr) console.error("source_locale correct failed", srcErr.message);
+    }
+  }
+
+  if (sourceLocale === targetLocale) {
     return {
       text: body,
       source_locale: sourceLocale,
@@ -173,7 +191,7 @@ export async function ensureMessageTranslation(
   const next: TranslationMap = { ...existing, [targetLocale]: translated };
   const { error: updErr } = await admin
     .from(table)
-    .update({ translations: next })
+    .update({ translations: next, source_locale: sourceLocale })
     .eq("id", params.messageId);
   if (updErr) {
     console.error("translation cache write failed", updErr.message);
