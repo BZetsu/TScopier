@@ -29,6 +29,7 @@ const labels: CopierLifecycleReasonLabels = {
     mirror_copy_closed: 'Mirror copy closed.',
     stop_loss: 'Due to stop loss.',
     take_profit: 'TP hit.',
+    take_profit_level: 'TP {n} hit.',
     unknown: 'Position closed.',
   },
 }
@@ -128,4 +129,74 @@ test('buildClosedCopierLogDraft builds synthetic Closed row', () => {
   assert.equal(draft.reason, 'TP hit.')
   assert.equal(draft.symbol, 'XAUUSD')
   assert.equal(draft.at, '2026-11-13T12:00:00.000Z')
+})
+
+test('formatCopierCloseReasonShort uses TP level for n>1 or preferTpLevel', () => {
+  assert.equal(
+    formatCopierCloseReasonShort(
+      {
+        close_reason: null,
+        sl: 2640,
+        tp: 2670,
+        close_price: 2670,
+        next_tp_index: 1,
+      },
+      labels.closeReasons,
+    ),
+    'TP hit.',
+  )
+  assert.equal(
+    formatCopierCloseReasonShort(
+      {
+        close_reason: null,
+        sl: 2640,
+        tp: 2670,
+        close_price: 2670,
+        next_tp_index: 1,
+      },
+      labels.closeReasons,
+      { preferTpLevel: true },
+    ),
+    'TP 1 hit.',
+  )
+  assert.equal(
+    formatCopierCloseReasonShort(
+      {
+        close_reason: 'partial_tp',
+        sl: null,
+        tp: 2680,
+        close_price: 2680,
+        next_tp_index: 2,
+      },
+      labels.closeReasons,
+    ),
+    'TP 2 hit.',
+  )
+})
+
+test('buildClosedCopierLogDraft marks Partial close when siblings still open', () => {
+  const draft = buildClosedCopierLogDraft(
+    {
+      id: 'tr-2',
+      signal_id: 'sig-basket',
+      telegram_channel_id: 'ch1',
+      symbol: 'BTCUSDm',
+      direction: 'sell',
+      closed_at: '2026-11-16T05:50:00.000Z',
+      close_reason: null,
+      sl: 70000,
+      tp: 65000,
+      close_price: 65000,
+      next_tp_index: 1,
+    },
+    labels,
+    {
+      openSignalIds: new Set(['sig-basket']),
+      messagePartialClose: 'Partial close {symbol}',
+    },
+  )
+  assert.equal(draft.status, 'partial')
+  assert.equal(draft.reason, 'TP 1 hit.')
+  assert.equal(draft.messageFull, 'Partial close BTCUSDm')
+  assert.equal(draft.messagePreview, 'Partial close BTCUSDm')
 })
