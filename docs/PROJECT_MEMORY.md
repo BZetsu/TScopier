@@ -9,8 +9,8 @@
 - **Root cause (technical):** No deterministic ZONES path; AI/`classifyPricesByDirection` folded bare prices into SL/TP; eligibility required invented stops; Liam was Single with waits off; wide N≥3 lists as min–max were too broad.
 - **Fix (files):** `extractBuySellZonesBulletin` / `parseBuySellZonesBulletin` in [`signalPriceInference.ts`](worker/src/signalPriceInference.ts) + [`parseSignal.ts`](worker/src/parseSignal.ts) (preserve `entry_zone_levels` in `normalizeParsedFromModel`); AI adapter clears SL/TP for ZONES; imperative + eligibility with manuals / `ENTRY_MISSING_PREDEFINED_STOPS`; [`collapseZonesLevelsToWaitBand`](worker/src/signalPriceInference.ts) + [`narrowRangeWaitToNearestZoneLevel`](worker/src/manualPlanning/signalEntryRange.ts) at plan/prepare; dispatch re-checks manuals. Prod config: Genwealth account + channel → `trade_style=multi`, `use_signal_entry_range=true`, `use_predefined_sl/tp_pips=true` (30 / 20·40·60 kept).
 - **Tests/verification:** `signalZonesBulletin.test.ts` + fixtures under `worker/fixtures/channels/gen-wealth-vip/`; eligibility suites green.
-- **Deploy state:** Prod **account config applied**; worker code local / needs **listener + trade** worker redeploy (no Railway token in this session) then confirm next `GOLD * ZONES` → `signal_range_entry_waits` (not `entry_price_moved_adverse`).
-- **Follow-ups:** Redeploy prod workers; out of scope: structured “Selling gold now” `entry_not_opened`, multi-limit-per-level ladder.
+- **Deploy state:** Prod **account config applied** (broker + `broker_channel_trading_configs` + embedded channel map). Worker commit `781e7d85` on `origin/migration` (1 ahead of `main`); Railway redeploy blocked here (no token / `gh pr` Forbidden). After prod listener+trade redeploy, confirm next `GOLD * ZONES` → `signal_range_entry_waits` (not `entry_price_moved_adverse`).
+- **Follow-ups:** Merge/redeploy prod workers from `781e7d85`; out of scope: structured “Selling gold now” `entry_not_opened`, multi-limit-per-level ladder.
 
 ### 2026-11-16 — Copier Log: Partial close + TP N hit
 
