@@ -17,7 +17,7 @@ import { createSupportTicket } from '../../lib/supportTickets'
 import clsx from 'clsx'
 import { AssistantMessageContent } from '../assistant/AssistantMessageContent'
 import { useAuth } from '../../context/AuthContext'
-import { useT } from '../../context/LocaleContext'
+import { useLocale, useT } from '../../context/LocaleContext'
 import { useOptionalUserProfile } from '../../context/UserProfileContext'
 import type { SupportWidgetTranslations } from '../../i18n/supportWidget/types'
 import { playSupportNotificationSound } from '../../lib/notificationSound'
@@ -34,6 +34,8 @@ import {
   listSupportMessages,
   loginUrlForSupportReturn,
   readSupportGuestSession,
+  ensureSupportTranslation,
+  resolveSupportMessageText,
   sendSupportMessage,
   SUPPORT_MAX_IMAGES,
   uploadSupportImages,
@@ -262,9 +264,11 @@ export function SupportWidget({
   headerAvatars,
 }: SupportWidgetProps) {
   const translations = useT()
+  const { locale } = useLocale()
   const t = translations.supportWidget
   const { user, loading: authLoading } = useAuth()
   const profile = useOptionalUserProfile()?.profile
+  const [showOriginalIds, setShowOriginalIds] = useState<Record<string, boolean>>({})
   const [tab, setTab] = useState<Tab>('home')
   const [conversations, setConversations] = useState<SupportConversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -394,6 +398,7 @@ export function SupportWidget({
         const { conversation, messages: rows } = await listGuestSupportMessages({
           guestToken: token,
           conversationId,
+          locale,
         })
         ingestConversationMessages(rows, conversation.id)
         setMessages(rows)
@@ -415,7 +420,7 @@ export function SupportWidget({
         setLoadingThread(false)
       }
     },
-    [user, guestSession, ingestConversationMessages, t.errorLoadMessages],
+    [user, guestSession, ingestConversationMessages, t.errorLoadMessages, locale],
   )
 
   useEffect(() => {
@@ -500,6 +505,7 @@ export function SupportWidget({
         const { conversation, messages: rows } = await listGuestSupportMessages({
           guestToken: token,
           conversationId,
+          locale,
         })
         ingestConversationMessages(rows, conversation.id)
         const view = viewStateRef.current
@@ -527,7 +533,55 @@ export function SupportWidget({
     void poll()
     const id = window.setInterval(() => void poll(), 4000)
     return () => window.clearInterval(id)
-  }, [user, guestSession, activeId, ingestConversationMessages])
+  }, [user, guestSession, activeId, ingestConversationMessages, locale])
+
+  // Ensure inbound (ai/agent) messages are shown in the customer's UniCopier locale.
+  useEffect(() => {
+    if (!open || !activeId || !messages.length) return
+    let cancelled = false
+    const missing = messages.filter(m => {
+      if (m.sender_type === 'user' || m.sender_type === 'system') return false
+      if (!m.body || m.body === 'Shared an image') return false
+      const source = (m.source_locale || 'en').toLowerCase()
+      if (source === locale) return false
+      return !m.translations?.[locale]
+    })
+    if (!missing.length) return
+
+    const run = async () => {
+      for (const m of missing) {
+        if (cancelled) return
+        try {
+          const result = await ensureSupportTranslation({
+            channel: 'chat',
+            messageId: m.id,
+            targetLocale: locale,
+            guestToken: guestSession?.token ?? null,
+          })
+          if (cancelled) return
+          setMessages(prev =>
+            prev.map(row =>
+              row.id === m.id
+                ? {
+                    ...row,
+                    translations: result.translations ?? {
+                      ...(row.translations ?? {}),
+                      [locale]: result.text,
+                    },
+                  }
+                : row,
+            ),
+          )
+        } catch {
+          /* non-blocking */
+        }
+      }
+    }
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [open, activeId, messages, locale, guestSession?.token])
 
   // Authenticated realtime — listen even when minimized for launcher badge + sound
   useEffect(() => {
@@ -627,6 +681,7 @@ export function SupportWidget({
       const result = await createSupportTicket({
         subject,
         message,
+        locale,
         guest: guestPayload,
       })
       if (!user && result.guest_token) {
@@ -726,7 +781,7 @@ export function SupportWidget({
     try {
       if (user) {
         const conversationId =
-          activeId ?? (await ensureOpenSupportConversation(user.id))
+          activeId ?? (await ensureOpenSupportConversation(user.id, locale))
         const uploaded =
           imagesSnapshot.length > 0
             ? await uploadSupportImages({
@@ -739,6 +794,7 @@ export function SupportWidget({
           message: text,
           conversationId,
           images: uploaded,
+          locale,
         })
         setActiveId(result.conversation_id)
         const appended = [result.user_message, result.ai_message].filter(Boolean) as SupportMessage[]
@@ -763,6 +819,7 @@ export function SupportWidget({
         message: text,
         conversationId: activeId,
         imageDataUrls: imagesSnapshot.length > 0 ? imagesSnapshot : undefined,
+        locale,
         guest,
       })
       const token = result.guest_token ?? guest.token
@@ -821,7 +878,7 @@ export function SupportWidget({
     try {
       const guestEscalate =
         !user && guestSession?.token ? { token: guestSession.token } : null
-      await escalateSupportConversation(activeId, guestEscalate)
+      await escalateSupportConversation(activeId, guestEscalate, locale)
       if (user) await refreshConversations()
       await loadThread(activeId)
     } catch (err) {
@@ -1252,6 +1309,9 @@ export function SupportWidget({
                             const agentName =
                               agent?.display_name ||
                               (isAi ? t.aiName : t.supportName)
+                            const showOriginal = Boolean(showOriginalIds[m.id])
+                            const resolved = resolveSupportMessageText(m, locale)
+                            const displayText = showOriginal ? m.body : resolved.text
 
                             return (
                               <div key={m.id} className="flex max-w-[92%] items-end gap-2">
@@ -1268,16 +1328,32 @@ export function SupportWidget({
                                       {agentName}
                                     </p>
                                   ) : null}
-                                  {m.body &&
+                                  {displayText &&
                                   !(m.images?.length && m.body === 'Shared an image')
                                     ? (
-                                      <AssistantMessageContent text={m.body} variant="assistant" />
+                                      <AssistantMessageContent text={displayText} variant="assistant" />
                                     )
                                     : null}
                                   <MessageImages images={m.images} />
-                                  <span className="mt-1 block text-[10px] text-neutral-400">
-                                    {formatTime(m.created_at)}
-                                  </span>
+                                  <div className="mt-1 flex items-center justify-between gap-2">
+                                    <span className="text-[10px] text-neutral-400">
+                                      {formatTime(m.created_at)}
+                                    </span>
+                                    {resolved.isTranslated ? (
+                                      <button
+                                        type="button"
+                                        className="text-[10px] font-medium text-neutral-500 underline-offset-2 hover:underline dark:text-neutral-400"
+                                        onClick={() =>
+                                          setShowOriginalIds(prev => ({
+                                            ...prev,
+                                            [m.id]: !prev[m.id],
+                                          }))
+                                        }
+                                      >
+                                        {showOriginal ? 'Show translation' : 'Show original'}
+                                      </button>
+                                    ) : null}
+                                  </div>
                                 </div>
                               </div>
                             )

@@ -12,6 +12,13 @@ import {
   parseTicketIdFromRecipient,
   sendTicketAckEmail,
 } from "../_shared/supportTicketEmail.ts";
+import { normalizeSupportLocale } from "../_shared/supportLocales.ts";
+import {
+  detectLocaleWithOpenAI,
+  eagerEnsureTranslation,
+} from "../_shared/supportTranslate.ts";
+
+const DESK_LOCALE = "en";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -217,7 +224,7 @@ async function appendToTicket(
 ): Promise<Response> {
   const { data: ticket } = await admin
     .from("support_tickets")
-    .select("id, status")
+    .select("id, status, customer_locale")
     .eq("id", ticketId)
     .maybeSingle();
   if (!ticket) {
@@ -237,17 +244,46 @@ async function appendToTicket(
     }
   }
 
-  const { error: insertErr } = await admin.from("support_ticket_messages").insert({
-    ticket_id: ticketId,
-    sender_type: "email_inbound",
-    sender_user_id: null,
-    body: bodyText || "(empty inbound email)",
-    images: [],
-    email_message_id: emailMessageId,
-  });
+  const text = bodyText || "(empty inbound email)";
+  const sourceLocale = await detectLocaleWithOpenAI(text);
+  const customerLocale = normalizeSupportLocale(
+    String(ticket.customer_locale ?? DESK_LOCALE),
+  );
+
+  const { data: inserted, error: insertErr } = await admin
+    .from("support_ticket_messages")
+    .insert({
+      ticket_id: ticketId,
+      sender_type: "email_inbound",
+      sender_user_id: null,
+      body: text,
+      images: [],
+      email_message_id: emailMessageId,
+      source_locale: sourceLocale,
+      translations: {},
+    })
+    .select("id")
+    .single();
   if (insertErr) {
     console.error("[support-ticket-inbound] insert failed", insertErr);
     return bad(500, insertErr.message);
+  }
+
+  if (inserted) {
+    if (sourceLocale !== DESK_LOCALE) {
+      await eagerEnsureTranslation(admin, {
+        channel: "ticket",
+        messageId: inserted.id as string,
+        targetLocale: DESK_LOCALE,
+      });
+    }
+    if (customerLocale !== sourceLocale && customerLocale !== DESK_LOCALE) {
+      await eagerEnsureTranslation(admin, {
+        channel: "ticket",
+        messageId: inserted.id as string,
+        targetLocale: customerLocale,
+      });
+    }
   }
 
   if (ticket.status === "pending" || ticket.status === "resolved" || ticket.status === "closed") {
@@ -286,6 +322,7 @@ async function createTicketFromEmail(
     (opts.subject || "Email to support").trim().slice(0, 200) || "Email to support";
   const body =
     opts.bodyText.trim().slice(0, 20000) || "(empty inbound email)";
+  const sourceLocale = await detectLocaleWithOpenAI(body);
 
   const { data: ticket, error } = await admin
     .from("support_tickets")
@@ -297,8 +334,9 @@ async function createTicketFromEmail(
       subject,
       status: "open",
       priority: "normal",
+      customer_locale: sourceLocale,
     })
-    .select("id, number, subject, guest_name, guest_email")
+    .select("id, number, subject, guest_name, guest_email, customer_locale")
     .single();
 
   if (error || !ticket) {
@@ -306,14 +344,28 @@ async function createTicketFromEmail(
     return bad(500, error?.message ?? "Failed to create ticket");
   }
 
-  await admin.from("support_ticket_messages").insert({
-    ticket_id: ticket.id,
-    sender_type: "email_inbound",
-    sender_user_id: null,
-    body,
-    images: [],
-    email_message_id: opts.emailMessageId,
-  });
+  const { data: inboundMsg } = await admin
+    .from("support_ticket_messages")
+    .insert({
+      ticket_id: ticket.id,
+      sender_type: "email_inbound",
+      sender_user_id: null,
+      body,
+      images: [],
+      email_message_id: opts.emailMessageId,
+      source_locale: sourceLocale,
+      translations: {},
+    })
+    .select("id")
+    .single();
+
+  if (inboundMsg && sourceLocale !== DESK_LOCALE) {
+    await eagerEnsureTranslation(admin, {
+      channel: "ticket",
+      messageId: inboundMsg.id as string,
+      targetLocale: DESK_LOCALE,
+    });
+  }
 
   await admin.from("support_ticket_messages").insert({
     ticket_id: ticket.id,

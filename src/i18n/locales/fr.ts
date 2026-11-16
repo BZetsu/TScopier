@@ -1438,6 +1438,7 @@ export const fr: Translations = {
     statusExecuted: 'Exécuté',
     statusOpen: 'Ouvert',
     statusClosed: 'Clôturé',
+    statusPartialClose: 'Clôture partielle',
     statusSkipped: 'Ignoré',
     statusFailed: 'Échoué',
     statusPending: 'En attente',
@@ -1446,6 +1447,7 @@ export const fr: Translations = {
     reasonExecuted: 'Ordre placé chez le courtier.',
     reasonOpen: 'Suite à un signal de trading Telegram.',
     reasonFallback: 'Voir les détails du signal pour plus d’informations.',
+    messagePartialClose: 'Clôture partielle {symbol}',
     closeReasons: {
       news_pre_close: 'Clôturé avant les news.',
       signal_close: 'Clôturé par signal.',
@@ -1461,6 +1463,7 @@ export const fr: Translations = {
       mirror_copy_closed: 'Copie miroir clôturée.',
       stop_loss: 'En raison du stop loss.',
       take_profit: 'TP atteint.',
+      take_profit_level: 'TP {n} atteint.',
       unknown: 'Position clôturée.',
     },
     retry: 'Réessayer',

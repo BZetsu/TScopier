@@ -12,6 +12,11 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import {
+  normalizeSupportLocale,
+  supportReplyLanguageAddon,
+} from "../_shared/supportLocales.ts";
+import { eagerEnsureTranslation } from "../_shared/supportTranslate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,9 +30,10 @@ const MODEL = Deno.env.get("SUPPORT_OPENAI_MODEL")?.trim() || "gpt-4o-mini";
 const MAX_HISTORY = 24;
 const MAX_IMAGES = 3;
 const MESSAGE_SELECT =
-  "id, conversation_id, sender_type, sender_user_id, body, images, created_at";
+  "id, conversation_id, sender_type, sender_user_id, body, images, source_locale, translations, created_at";
 const CONVO_SELECT =
-  "id, user_id, status, assignee_id, subject, last_message_at, created_at, updated_at, guest_name, guest_email, guest_token";
+  "id, user_id, status, assignee_id, subject, last_message_at, created_at, updated_at, guest_name, guest_email, guest_token, customer_locale";
+const DESK_LOCALE = "en";
 
 const SUPPORT_SYSTEM_PROMPT = `You are UniCopier Support — a helpful, concise support agent for UniCopier (Telegram/Discord/TradingView trade-copying to MetaTrader and other brokers).
 
@@ -223,15 +229,34 @@ Deno.serve(async (req: Request) => {
   return await handleSend(admin, actor, body);
 });
 
+async function stampCustomerLocale(
+  admin: SupabaseClient,
+  convo: Record<string, unknown>,
+  localeRaw?: string | null,
+): Promise<Record<string, unknown>> {
+  const locale = normalizeSupportLocale(localeRaw);
+  if (String(convo.customer_locale ?? "en") === locale) return convo;
+  const { data } = await admin
+    .from("support_conversations")
+    .update({ customer_locale: locale })
+    .eq("id", convo.id as string)
+    .select(CONVO_SELECT)
+    .maybeSingle();
+  return data ?? { ...convo, customer_locale: locale };
+}
+
 async function resolveConversation(
   admin: SupabaseClient,
   actor: Actor,
   conversationId: string | null,
   createIfMissing: boolean,
+  localeRaw?: string | null,
 ): Promise<
   | { ok: true; convo: Record<string, unknown> }
   | { ok: false; status: number; error: string }
 > {
+  const locale = normalizeSupportLocale(localeRaw);
+
   if (conversationId) {
     const { data: convo } = await admin
       .from("support_conversations")
@@ -246,7 +271,7 @@ async function resolveConversation(
     } else if (!actor.token || convo.guest_token !== actor.token) {
       return { ok: false, status: 404, error: "Conversation not found" };
     }
-    return { ok: true, convo };
+    return { ok: true, convo: await stampCustomerLocale(admin, convo, locale) };
   }
 
   if (actor.kind === "user") {
@@ -258,11 +283,13 @@ async function resolveConversation(
       .order("last_message_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (existing) return { ok: true, convo: existing };
+    if (existing) {
+      return { ok: true, convo: await stampCustomerLocale(admin, existing, locale) };
+    }
     if (!createIfMissing) return { ok: false, status: 404, error: "No open conversation" };
     const { data: created, error } = await admin
       .from("support_conversations")
-      .insert({ user_id: actor.userId, status: "ai" })
+      .insert({ user_id: actor.userId, status: "ai", customer_locale: locale })
       .select(CONVO_SELECT)
       .single();
     if (error || !created) {
@@ -281,7 +308,9 @@ async function resolveConversation(
       .order("last_message_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (byToken) return { ok: true, convo: byToken };
+    if (byToken) {
+      return { ok: true, convo: await stampCustomerLocale(admin, byToken, locale) };
+    }
   }
 
   if (!createIfMissing) return { ok: false, status: 404, error: "No open conversation" };
@@ -298,6 +327,7 @@ async function resolveConversation(
       guest_email: actor.email,
       guest_token: crypto.randomUUID(),
       subject: `${actor.name} (guest)`,
+      customer_locale: locale,
     })
     .select(CONVO_SELECT)
     .single();
@@ -313,7 +343,8 @@ async function handleList(
   body: Record<string, unknown>,
 ) {
   const conversationId = String(body.conversation_id ?? "").trim() || null;
-  const resolved = await resolveConversation(admin, actor, conversationId, false);
+  const locale = normalizeSupportLocale(String(body.locale ?? ""));
+  const resolved = await resolveConversation(admin, actor, conversationId, false, locale);
   if (!resolved.ok) return bad(resolved.status, resolved.error);
   const convo = resolved.convo;
   const { data: messages, error } = await admin
@@ -331,6 +362,7 @@ async function handleList(
         guest_name: convo.guest_name,
         guest_email: convo.guest_email,
         last_message_at: convo.last_message_at,
+        customer_locale: convo.customer_locale ?? "en",
       },
       messages: messages ?? [],
     },
@@ -344,7 +376,8 @@ async function handleEscalate(
   body: Record<string, unknown>,
 ) {
   const conversationId = String(body.conversation_id ?? "").trim() || null;
-  const resolved = await resolveConversation(admin, actor, conversationId, false);
+  const locale = normalizeSupportLocale(String(body.locale ?? ""));
+  const resolved = await resolveConversation(admin, actor, conversationId, false, locale);
   if (!resolved.ok) return bad(resolved.status, resolved.error);
   const convo = resolved.convo;
   const id = convo.id as string;
@@ -393,10 +426,20 @@ async function handleSend(
   }
 
   const conversationId = String(body.conversation_id ?? "").trim() || null;
-  const resolved = await resolveConversation(admin, actor, conversationId, true);
+  const customerLocale = normalizeSupportLocale(String(body.locale ?? "en"));
+  const resolved = await resolveConversation(
+    admin,
+    actor,
+    conversationId,
+    true,
+    customerLocale,
+  );
   if (!resolved.ok) return bad(resolved.status, resolved.error);
   const convo = resolved.convo;
   const id = convo.id as string;
+  const locale = normalizeSupportLocale(
+    String(convo.customer_locale ?? customerLocale),
+  );
 
   if (convo.status === "resolved") {
     return bad(400, "Conversation is resolved — start a new message from Home");
@@ -421,6 +464,8 @@ async function handleSend(
       sender_user_id: actor.kind === "user" ? actor.userId : null,
       body: persistBody,
       images,
+      source_locale: locale,
+      translations: {},
     })
     .select(MESSAGE_SELECT)
     .single();
@@ -429,12 +474,22 @@ async function handleSend(
     return bad(500, userMsgErr?.message ?? "Failed to save message");
   }
 
+  // Desk default so agents see English quickly; other agent locales fill on demand.
+  if (locale !== DESK_LOCALE) {
+    await eagerEnsureTranslation(admin, {
+      channel: "chat",
+      messageId: userMsg.id as string,
+      targetLocale: DESK_LOCALE,
+    });
+  }
+
   if (convo.status === "queued" || convo.status === "active") {
     return Response.json(
       {
         conversation_id: id,
         status: convo.status,
         guest_token: convo.guest_token,
+        customer_locale: locale,
         user_message: userMsg,
         ai_message: null,
         escalated: false,
@@ -453,15 +508,26 @@ async function handleSend(
         body:
           "Thanks for reaching out. Our AI assistant is temporarily unavailable — tap Request human agent and a teammate will help shortly.",
         images: [],
+        source_locale: "en",
+        translations: {},
       })
       .select(MESSAGE_SELECT)
       .single();
+
+    if (fallback && locale !== "en") {
+      await eagerEnsureTranslation(admin, {
+        channel: "chat",
+        messageId: fallback.id as string,
+        targetLocale: locale,
+      });
+    }
 
     return Response.json(
       {
         conversation_id: id,
         status: "ai",
         guest_token: convo.guest_token,
+        customer_locale: locale,
         user_message: userMsg,
         ai_message: fallback,
         escalated: false,
@@ -477,7 +543,9 @@ async function handleSend(
     .order("created_at", { ascending: true })
     .limit(MAX_HISTORY);
 
-  const history: ChatMessage[] = [{ role: "system", content: SUPPORT_SYSTEM_PROMPT }];
+  const history: ChatMessage[] = [
+    { role: "system", content: SUPPORT_SYSTEM_PROMPT + supportReplyLanguageAddon(locale) },
+  ];
   for (const row of historyRows ?? []) {
     const imgs = normalizeHttpImageUrls(row.images);
     if (row.sender_type === "user") {
@@ -596,14 +664,24 @@ async function handleSend(
       sender_user_id: null,
       body: assistantText,
       images: [],
+      source_locale: locale,
+      translations: {},
     })
     .select(MESSAGE_SELECT)
     .single();
   if (aiErr) console.error("support-chat AI persist error", aiErr);
 
+  if (aiMsg && locale !== DESK_LOCALE) {
+    await eagerEnsureTranslation(admin, {
+      channel: "chat",
+      messageId: aiMsg.id as string,
+      targetLocale: DESK_LOCALE,
+    });
+  }
+
   const { data: latestConvo } = await admin
     .from("support_conversations")
-    .select("status, guest_token")
+    .select("status, guest_token, customer_locale")
     .eq("id", id)
     .maybeSingle();
 
@@ -612,6 +690,7 @@ async function handleSend(
       conversation_id: id,
       status: latestConvo?.status ?? (escalated ? "queued" : "ai"),
       guest_token: latestConvo?.guest_token ?? convo.guest_token,
+      customer_locale: latestConvo?.customer_locale ?? locale,
       user_message: userMsg,
       ai_message: aiMsg ?? null,
       escalated,

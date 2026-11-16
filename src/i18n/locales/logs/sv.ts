@@ -25,6 +25,7 @@ export const logsSv: LogsBundleTranslations = {
     statusExecuted: 'Utförda',
     statusOpen: 'Öppen',
     statusClosed: 'Stängd',
+    statusPartialClose: 'Partiell stängning',
     statusSkipped: 'Överhoppade',
     statusFailed: 'Misslyckade',
     statusPending: 'Väntande',
@@ -33,6 +34,7 @@ export const logsSv: LogsBundleTranslations = {
     reasonExecuted: 'Order skickad till mäklaren.',
     reasonOpen: 'På grund av en tradingssignal från Telegram.',
     reasonFallback: 'Se signaldetaljer för mer information.',
+    messagePartialClose: 'Partiell stängning {symbol}',
     closeReasons: {
       news_pre_close: 'Closed ahead of news.',
       signal_close: 'Closed by signal.',
@@ -48,6 +50,7 @@ export const logsSv: LogsBundleTranslations = {
       mirror_copy_closed: 'Mirror copy closed.',
       stop_loss: 'På grund av stop loss.',
       take_profit: 'TP träffad.',
+      take_profit_level: 'TP {n} träffad.',
       unknown: 'Position closed.',
     },
     retry: 'Försök igen',

@@ -25,6 +25,7 @@ export const logsJa: LogsBundleTranslations = {
     statusExecuted: '実行済み',
     statusOpen: 'オープン',
     statusClosed: 'クローズ',
+    statusPartialClose: '部分クローズ',
     statusSkipped: 'スキップ',
     statusFailed: '失敗',
     statusPending: '保留中',
@@ -33,6 +34,7 @@ export const logsJa: LogsBundleTranslations = {
     reasonExecuted: 'ブローカーに注文を発注しました。',
     reasonOpen: 'Telegramのトレーディングシグナルによるものです。',
     reasonFallback: '詳細はシグナル詳細を確認してください。',
+    messagePartialClose: '部分クローズ {symbol}',
     closeReasons: {
       news_pre_close: 'Closed ahead of news.',
       signal_close: 'Closed by signal.',
@@ -48,6 +50,7 @@ export const logsJa: LogsBundleTranslations = {
       mirror_copy_closed: 'Mirror copy closed.',
       stop_loss: 'ストップロスによる決済。',
       take_profit: 'TP到達。',
+      take_profit_level: 'TP{n}到達。',
       unknown: 'Position closed.',
     },
     retry: '再試行',

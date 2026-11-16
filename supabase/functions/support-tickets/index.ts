@@ -10,6 +10,12 @@ import {
   sendTicketAckEmail,
   sendTicketAgentReplyEmail,
 } from "../_shared/supportTicketEmail.ts";
+import { normalizeSupportLocale } from "../_shared/supportLocales.ts";
+import {
+  eagerEnsureTranslation,
+  ensureMessageTranslation,
+  translateTextWithOpenAI,
+} from "../_shared/supportTranslate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -19,9 +25,10 @@ const corsHeaders = {
 };
 
 const TICKET_SELECT =
-  "id, number, user_id, guest_name, guest_email, guest_token, subject, status, priority, assignee_id, last_message_at, created_at, updated_at";
+  "id, number, user_id, guest_name, guest_email, guest_token, subject, status, priority, assignee_id, last_message_at, created_at, updated_at, customer_locale";
 const MSG_SELECT =
-  "id, ticket_id, sender_type, sender_user_id, body, images, resend_id, email_message_id, created_at";
+  "id, ticket_id, sender_type, sender_user_id, body, images, resend_id, email_message_id, source_locale, translations, created_at";
+const DESK_LOCALE = "en";
 
 function bad(status: number, message: string) {
   return Response.json({ error: message }, { status, headers: corsHeaders });
@@ -137,11 +144,13 @@ async function createTicket(
   const subject = String(body.subject ?? "").trim().slice(0, 200);
   const message = String(body.message ?? body.body ?? "").trim().slice(0, 20000);
   if (!subject || !message) return bad(400, "subject and message required");
+  const locale = normalizeSupportLocale(String(body.locale ?? "en"));
 
   const insert: Record<string, unknown> = {
     subject,
     status: "open",
     priority: "normal",
+    customer_locale: locale,
   };
 
   if (actor.kind === "user") {
@@ -171,10 +180,20 @@ async function createTicket(
       sender_user_id: actor.kind === "user" ? actor.userId : null,
       body: message,
       images: [],
+      source_locale: locale,
+      translations: {},
     })
     .select(MSG_SELECT)
     .single();
   if (msgErr) console.error("ticket first message failed", msgErr);
+
+  if (msg && locale !== DESK_LOCALE) {
+    await eagerEnsureTranslation(admin, {
+      channel: "ticket",
+      messageId: msg.id as string,
+      targetLocale: DESK_LOCALE,
+    });
+  }
 
   await admin.from("support_ticket_messages").insert({
     ticket_id: ticket.id,
@@ -356,6 +375,7 @@ async function agentReply(
   const ticketId = String(body.ticket_id ?? "").trim();
   const message = String(body.message ?? body.body ?? "").trim().slice(0, 20000);
   if (!ticketId || !message) return bad(400, "ticket_id and message required");
+  const agentLocale = normalizeSupportLocale(String(body.source_locale ?? DESK_LOCALE));
 
   const { data: ticket, error } = await admin
     .from("support_tickets")
@@ -363,6 +383,10 @@ async function agentReply(
     .eq("id", ticketId)
     .maybeSingle();
   if (error || !ticket) return bad(404, "Ticket not found");
+
+  const customerLocale = normalizeSupportLocale(
+    String(ticket.customer_locale ?? DESK_LOCALE),
+  );
 
   // Ensure claimed
   if (!ticket.assignee_id) {
@@ -379,6 +403,21 @@ async function agentReply(
       : null;
   if (!toEmail) return bad(400, "Ticket has no recipient email");
 
+  // Email the customer in their language; store the agent's original as body.
+  let emailBody = message;
+  if (agentLocale !== customerLocale) {
+    try {
+      emailBody = await translateTextWithOpenAI({
+        text: message,
+        sourceLocale: agentLocale,
+        targetLocale: customerLocale,
+      });
+    } catch (err) {
+      console.error("agent reply translate for email failed", err);
+      emailBody = message;
+    }
+  }
+
   // Prior message-id for threading
   const { data: prior } = await admin
     .from("support_ticket_messages")
@@ -394,7 +433,7 @@ async function agentReply(
     ticketId: String(ticket.id),
     ticketNumber: ticket.number as number,
     subject: String(ticket.subject),
-    body: message,
+    body: emailBody,
     resendApiKey: resendKey,
     inReplyTo: prior?.email_message_id ?? null,
     references: prior?.email_message_id ?? null,
@@ -403,6 +442,11 @@ async function agentReply(
   const syntheticMsgId = send.resendId
     ? `<${send.resendId}@unicopier.resend>`
     : null;
+
+  const translations =
+    agentLocale !== customerLocale && emailBody !== message
+      ? { [customerLocale]: emailBody }
+      : {};
 
   const { data: msg, error: msgErr } = await admin
     .from("support_ticket_messages")
@@ -414,10 +458,33 @@ async function agentReply(
       images: [],
       resend_id: send.resendId ?? null,
       email_message_id: syntheticMsgId,
+      source_locale: agentLocale,
+      translations,
     })
     .select(MSG_SELECT)
     .single();
   if (msgErr) return bad(500, msgErr.message);
+
+  if (msg && agentLocale !== DESK_LOCALE) {
+    await eagerEnsureTranslation(admin, {
+      channel: "ticket",
+      messageId: msg.id as string,
+      targetLocale: DESK_LOCALE,
+    });
+  }
+
+  // Refresh cache via ensure if translate-for-email path did not write customer locale
+  if (msg && agentLocale !== customerLocale && !translations[customerLocale]) {
+    try {
+      await ensureMessageTranslation(admin, {
+        channel: "ticket",
+        messageId: msg.id as string,
+        targetLocale: customerLocale,
+      });
+    } catch (err) {
+      console.error("agent reply ensure customer locale failed", err);
+    }
+  }
 
   await admin
     .from("support_tickets")
