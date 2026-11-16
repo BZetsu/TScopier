@@ -612,6 +612,8 @@ export interface CopierLogsTranslations {
   statusExecuted: string
   statusOpen: string
   statusClosed: string
+  /** One leg of a multi-TP basket closed; siblings still open. */
+  statusPartialClose: string
   statusSkipped: string
   statusFailed: string
   statusPending: string
@@ -620,6 +622,8 @@ export interface CopierLogsTranslations {
   reasonExecuted: string
   reasonOpen: string
   reasonFallback: string
+  /** Message for a synthetic partial-close row, e.g. "Partial close {symbol}". */
+  messagePartialClose: string
   closeReasons: {
     news_pre_close: string
     signal_close: string
@@ -635,6 +639,8 @@ export interface CopierLogsTranslations {
     mirror_copy_closed: string
     stop_loss: string
     take_profit: string
+    /** e.g. "TP {n} hit." */
+    take_profit_level: string
     unknown: string
   }
   retry: string
