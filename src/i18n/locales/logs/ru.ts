@@ -25,6 +25,7 @@ export const logsRu: LogsBundleTranslations = {
     statusExecuted: 'Исполнено',
     statusOpen: 'Открыт',
     statusClosed: 'Закрыт',
+    statusPartialClose: 'Частичное закрытие',
     statusSkipped: 'Пропущено',
     statusFailed: 'Не выполнено',
     statusPending: 'В ожидании',
@@ -33,6 +34,7 @@ export const logsRu: LogsBundleTranslations = {
     reasonExecuted: 'Ордер отправлен брокеру.',
     reasonOpen: 'Из‑за торгового сигнала из Telegram.',
     reasonFallback: 'Подробности смотрите в карточке сигнала.',
+    messagePartialClose: 'Частичное закрытие {symbol}',
     closeReasons: {
       news_pre_close: 'Closed ahead of news.',
       signal_close: 'Closed by signal.',
@@ -48,6 +50,7 @@ export const logsRu: LogsBundleTranslations = {
       mirror_copy_closed: 'Mirror copy closed.',
       stop_loss: 'Из‑за стоп‑лосса.',
       take_profit: 'TP достигнут.',
+      take_profit_level: 'TP {n} достигнут.',
       unknown: 'Position closed.',
     },
     retry: 'Повторить',

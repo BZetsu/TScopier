@@ -1438,6 +1438,7 @@ export const es: Translations = {
     statusExecuted: 'Ejecutada',
     statusOpen: 'Abierta',
     statusClosed: 'Cerrada',
+    statusPartialClose: 'Cierre parcial',
     statusSkipped: 'Omitida',
     statusFailed: 'Fallida',
     statusPending: 'Pendiente',
@@ -1446,6 +1447,7 @@ export const es: Translations = {
     reasonExecuted: 'Orden enviada al bróker.',
     reasonOpen: 'Debido a una señal de trading de Telegram.',
     reasonFallback: 'Consulta los detalles de la señal para más información.',
+    messagePartialClose: 'Cierre parcial {symbol}',
     closeReasons: {
       news_pre_close: 'Cerrada antes de noticias.',
       signal_close: 'Cerrada por señal.',
@@ -1461,6 +1463,7 @@ export const es: Translations = {
       mirror_copy_closed: 'Copia espejo cerrada.',
       stop_loss: 'Debido al stop loss.',
       take_profit: 'TP alcanzado.',
+      take_profit_level: 'TP {n} alcanzado.',
       unknown: 'Posición cerrada.',
     },
     retry: 'Reintentar',

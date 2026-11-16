@@ -25,6 +25,7 @@ export const logsNl: LogsBundleTranslations = {
     statusExecuted: 'Uitgevoerd',
     statusOpen: 'Open',
     statusClosed: 'Gesloten',
+    statusPartialClose: 'Gedeeltelijke sluiting',
     statusSkipped: 'Overgeslagen',
     statusFailed: 'Mislukt',
     statusPending: 'In afwachting',
@@ -33,6 +34,7 @@ export const logsNl: LogsBundleTranslations = {
     reasonExecuted: 'Order geplaatst bij broker.',
     reasonOpen: 'Vanwege een tradingsignaal van Telegram.',
     reasonFallback: 'Zie signaaldetails voor meer informatie.',
+    messagePartialClose: 'Gedeeltelijke sluiting {symbol}',
     closeReasons: {
       news_pre_close: 'Gesloten vóór nieuws.',
       signal_close: 'Gesloten door signaal.',
@@ -48,6 +50,7 @@ export const logsNl: LogsBundleTranslations = {
       mirror_copy_closed: 'Spiegelkopie gesloten.',
       stop_loss: 'Vanwege stop loss.',
       take_profit: 'TP geraakt.',
+      take_profit_level: 'TP {n} geraakt.',
       unknown: 'Positie gesloten.',
     },
     retry: 'Opnieuw proberen',

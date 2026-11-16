@@ -4,6 +4,7 @@ import {
 } from './tradeCloseReason'
 import { formatCopierSkipReasonShort } from './copierLogDetail'
 import { resolveSignalOpenStatus, type SignalOpenStatusContext } from './signalOverride'
+import { interpolate } from '../i18n/interpolate'
 import type { CopierLogsTranslations } from '../i18n/locales/types'
 import type { Signal } from '../types/database'
 
@@ -16,6 +17,7 @@ export type CopierDisplayStatus =
   | 'failed'
   | 'pending'
   | 'closed'
+  | 'partial'
 
 export type CopierLifecycleReasonLabels = {
   reasonParsed: string
@@ -40,6 +42,8 @@ export type CopierCloseReasonLabels = {
   mirror_copy_closed: string
   stop_loss: string
   take_profit: string
+  /** e.g. "TP {n} hit." — used for percent-split / multi-leg baskets. */
+  take_profit_level?: string
   unknown: string
 }
 
@@ -54,12 +58,15 @@ export type ClosedTradeForCopierLog = {
   sl: number | null
   tp: number | null
   close_price?: number | null
+  /** 1-based planned TP level when this leg was opened (Single percent-split). */
+  next_tp_index?: number | null
 }
 
 export type CopierClosedLogDraft = {
   key: string
   at: string
-  status: 'closed'
+  /** `partial` = this leg closed but sibling legs on the signal are still open/pending. */
+  status: 'closed' | 'partial'
   symbol: string
   action: string | null
   reason: string
@@ -67,6 +74,15 @@ export type CopierClosedLogDraft = {
   channelId: string | null
   messagePreview: string
   messageFull: string
+}
+
+export type BuildClosedCopierLogOptions = {
+  /** Signal IDs that still have open or pending trades. */
+  openSignalIds?: ReadonlySet<string>
+  /** Status badge label for a partial basket close (default English). */
+  statusPartialClose?: string
+  /** Message template when only part of the basket closed, e.g. "Partial close {symbol}". */
+  messagePartialClose?: string
 }
 
 const SIGNAL_STATUSES = new Set<string>([
@@ -95,16 +111,40 @@ export function resolveCopierDisplayStatus(
   return (raw || 'pending') as CopierDisplayStatus
 }
 
+/** 1-based TP level from `next_tp_index` when it looks like a real ladder index. */
+export function resolveClosedTradeTpLevel(
+  trade: Pick<ClosedTradeForCopierLog, 'next_tp_index'>,
+): number | null {
+  const n = Number(trade.next_tp_index)
+  if (!Number.isFinite(n) || n < 1 || n > 50) return null
+  return Math.floor(n)
+}
+
 /** Short Copier Log reason for a closed trade (SL/TP inference included). */
 export function formatCopierCloseReasonShort(
-  trade: Pick<ClosedTradeForCopierLog, 'close_reason' | 'sl' | 'tp' | 'close_price'>,
+  trade: Pick<ClosedTradeForCopierLog, 'close_reason' | 'sl' | 'tp' | 'close_price' | 'next_tp_index'>,
   labels: CopierCloseReasonLabels,
+  opts?: {
+    /**
+     * When true (partial basket close), show "TP {n} hit." even for level 1.
+     * Otherwise level is only shown for n > 1 — `next_tp_index` defaults to 1
+     * on every trade row, so bare TP1 would otherwise relabel every TP close.
+     */
+    preferTpLevel?: boolean
+  },
 ): string {
   const code = resolveTradeCloseReason(trade.close_reason, {
     sl: trade.sl,
     tp: trade.tp,
     close_price: trade.close_price ?? null,
   })
+  if (code === 'take_profit' || code === 'partial_tp') {
+    const level = resolveClosedTradeTpLevel(trade)
+    const levelTpl = labels.take_profit_level?.trim()
+    if (level != null && levelTpl && (opts?.preferTpLevel || level > 1)) {
+      return interpolate(levelTpl, { n: level })
+    }
+  }
   return labels[code] ?? labels.unknown
 }
 
@@ -139,24 +179,36 @@ export function resolveCopierDisplayReason(
   }
 }
 
-/** Build one synthetic Closed Copier Log row from a closed trade. */
+/** Build one synthetic Closed / Partial Copier Log row from a closed trade. */
 export function buildClosedCopierLogDraft(
   trade: ClosedTradeForCopierLog,
   labels: CopierLifecycleReasonLabels,
+  opts?: BuildClosedCopierLogOptions,
 ): CopierClosedLogDraft {
-  const reason = formatCopierCloseReasonShort(trade, labels.closeReasons)
   const side = String(trade.direction ?? '').trim().toLowerCase()
   const action = side === 'buy' || side === 'sell' ? side : 'close'
   const symbol = trade.symbol?.trim() || '—'
-  const message = `Closed ${symbol}`
+  const signalId = trade.signal_id
+  const stillOpen = Boolean(
+    signalId
+    && opts?.openSignalIds
+    && opts.openSignalIds.has(signalId),
+  )
+  const reason = formatCopierCloseReasonShort(trade, labels.closeReasons, {
+    preferTpLevel: stillOpen,
+  })
+  const status: CopierClosedLogDraft['status'] = stillOpen ? 'partial' : 'closed'
+  const message = stillOpen
+    ? interpolate(opts?.messagePartialClose ?? 'Partial close {symbol}', { symbol })
+    : `Closed ${symbol}`
   return {
     key: `trade-close:${trade.id}`,
     at: trade.closed_at,
-    status: 'closed',
+    status,
     symbol,
     action,
     reason,
-    signalId: trade.signal_id,
+    signalId,
     channelId: trade.telegram_channel_id ?? null,
     messagePreview: message,
     messageFull: message,
@@ -166,10 +218,11 @@ export function buildClosedCopierLogDraft(
 export function buildClosedCopierLogDrafts(
   trades: ReadonlyArray<ClosedTradeForCopierLog>,
   labels: CopierLifecycleReasonLabels,
+  opts?: BuildClosedCopierLogOptions,
 ): CopierClosedLogDraft[] {
   return trades
     .filter(t => Boolean(t.closed_at))
-    .map(t => buildClosedCopierLogDraft(t, labels))
+    .map(t => buildClosedCopierLogDraft(t, labels, opts))
     .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
 }
 

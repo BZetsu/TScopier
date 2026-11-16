@@ -25,6 +25,7 @@ export const logsAr: LogsBundleTranslations = {
     statusExecuted: 'منفّذة',
     statusOpen: 'مفتوحة',
     statusClosed: 'مغلقة',
+    statusPartialClose: 'إغلاق جزئي',
     statusSkipped: 'متخطاة',
     statusFailed: 'فاشلة',
     statusPending: 'معلقة',
@@ -33,6 +34,7 @@ export const logsAr: LogsBundleTranslations = {
     reasonExecuted: 'تم إرسال الأمر إلى الوسيط.',
     reasonOpen: 'بسبب إشارة تداول من Telegram.',
     reasonFallback: 'راجع تفاصيل الإشارة لمزيد من المعلومات.',
+    messagePartialClose: 'إغلاق جزئي {symbol}',
     closeReasons: {
       news_pre_close: 'Closed ahead of news.',
       signal_close: 'Closed by signal.',
@@ -48,6 +50,7 @@ export const logsAr: LogsBundleTranslations = {
       mirror_copy_closed: 'Mirror copy closed.',
       stop_loss: 'بسبب وقف الخسارة.',
       take_profit: 'تحقق جني الربح.',
+      take_profit_level: 'تحقق جني الربح {n}.',
       unknown: 'Position closed.',
     },
     retry: 'إعادة المحاولة',

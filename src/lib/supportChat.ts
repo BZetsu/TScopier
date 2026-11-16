@@ -33,6 +33,7 @@ export type SupportConversation = {
   guest_name?: string | null
   guest_email?: string | null
   guest_token?: string | null
+  customer_locale?: string | null
 }
 
 export type SupportMessage = {
@@ -42,6 +43,8 @@ export type SupportMessage = {
   sender_user_id: string | null
   body: string
   images: string[]
+  source_locale?: string | null
+  translations?: Record<string, string> | null
   created_at: string
 }
 
@@ -85,6 +88,56 @@ function normalizeMessage(row: SupportMessage): SupportMessage {
   return {
     ...row,
     images: Array.isArray(row.images) ? row.images.filter(Boolean) : [],
+    source_locale: row.source_locale ?? 'en',
+    translations:
+      row.translations && typeof row.translations === 'object' && !Array.isArray(row.translations)
+        ? row.translations
+        : {},
+  }
+}
+
+export function resolveSupportMessageText(
+  message: Pick<SupportMessage, 'body' | 'source_locale' | 'translations'>,
+  viewerLocale: string,
+): { text: string; isTranslated: boolean } {
+  const source = (message.source_locale || 'en').toLowerCase()
+  const viewer = (viewerLocale || 'en').toLowerCase()
+  if (source === viewer) return { text: message.body, isTranslated: false }
+  const cached = message.translations?.[viewer]
+  if (typeof cached === 'string' && cached.trim()) {
+    return { text: cached, isTranslated: true }
+  }
+  return { text: message.body, isTranslated: false }
+}
+
+export async function ensureSupportTranslation(params: {
+  channel: 'chat' | 'ticket'
+  messageId: string
+  targetLocale: string
+  guestToken?: string | null
+}): Promise<{ text: string; translations?: Record<string, string> }> {
+  const headers = params.guestToken ? anonHeaders() : await authOrAnonHeaders()
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/support-translate`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      action: 'ensure',
+      channel: params.channel,
+      message_id: params.messageId,
+      target_locale: params.targetLocale,
+      guest_token: params.guestToken ?? undefined,
+    }),
+  })
+  const data = (await res.json().catch(() => ({}))) as {
+    text?: string
+    translations?: Record<string, string>
+    error?: string
+  }
+  if (!res.ok) throw new Error(data.error || `Translate failed (${res.status})`)
+  return {
+    text: data.text ?? '',
+    translations: data.translations,
   }
 }
 
@@ -158,6 +211,7 @@ export async function listSupportMessages(conversationId: string): Promise<Suppo
 export async function listGuestSupportMessages(params: {
   guestToken: string
   conversationId?: string | null
+  locale?: string | null
 }): Promise<{ conversation: SupportConversation; messages: SupportMessage[] }> {
   const headers = anonHeaders()
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/support-chat`
@@ -168,6 +222,7 @@ export async function listGuestSupportMessages(params: {
       action: 'list',
       guest_token: params.guestToken,
       conversation_id: params.conversationId ?? undefined,
+      locale: params.locale ?? undefined,
     }),
   })
   const data = (await res.json().catch(() => ({}))) as {
@@ -182,21 +237,33 @@ export async function listGuestSupportMessages(params: {
   }
 }
 
-export async function ensureOpenSupportConversation(userId: string): Promise<string> {
+export async function ensureOpenSupportConversation(
+  userId: string,
+  locale?: string | null,
+): Promise<string> {
+  const customerLocale = (locale || 'en').toLowerCase()
   const { data: existing, error: existingErr } = await supabase
     .from('support_conversations')
-    .select('id')
+    .select('id, customer_locale')
     .eq('user_id', userId)
     .in('status', ['ai', 'queued', 'active'])
     .order('last_message_at', { ascending: false })
     .limit(1)
     .maybeSingle()
   if (existingErr) throw new Error(existingErr.message)
-  if (existing?.id) return existing.id as string
+  if (existing?.id) {
+    if (existing.customer_locale !== customerLocale) {
+      await supabase
+        .from('support_conversations')
+        .update({ customer_locale: customerLocale })
+        .eq('id', existing.id)
+    }
+    return existing.id as string
+  }
 
   const { data: created, error: createErr } = await supabase
     .from('support_conversations')
-    .insert({ user_id: userId, status: 'ai' })
+    .insert({ user_id: userId, status: 'ai', customer_locale: customerLocale })
     .select('id')
     .single()
   if (createErr || !created) throw new Error(createErr?.message ?? 'Failed to start conversation')
@@ -255,6 +322,7 @@ export async function sendSupportMessage(params: {
   conversationId?: string | null
   images?: string[]
   imageDataUrls?: string[]
+  locale?: string | null
   guest?: { name: string; email: string; token?: string | null } | null
 }): Promise<SupportChatSendResult> {
   const headers = params.guest ? anonHeaders() : await authOrAnonHeaders()
@@ -268,6 +336,7 @@ export async function sendSupportMessage(params: {
       conversation_id: params.conversationId ?? undefined,
       images: params.images?.length ? params.images : undefined,
       image_data_urls: params.imageDataUrls?.length ? params.imageDataUrls : undefined,
+      locale: params.locale ?? undefined,
       guest_name: params.guest?.name,
       guest_email: params.guest?.email,
       guest_token: params.guest?.token ?? undefined,
@@ -285,6 +354,7 @@ export async function sendSupportMessage(params: {
 export async function escalateSupportConversation(
   conversationId: string,
   guest?: { token: string } | null,
+  locale?: string | null,
 ): Promise<void> {
   if (!guest) {
     const { error } = await supabase.rpc('support_escalate_conversation', {
@@ -302,6 +372,7 @@ export async function escalateSupportConversation(
       action: 'escalate',
       conversation_id: conversationId,
       guest_token: guest?.token,
+      locale: locale ?? undefined,
     }),
   })
   const data = (await res.json().catch(() => ({}))) as { error?: string }

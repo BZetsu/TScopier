@@ -1493,7 +1493,7 @@ export function DashboardPage() {
       ? [{
           key: recentClosedCopierDraft.key,
           at: recentClosedCopierDraft.at,
-          status: 'closed',
+          status: recentClosedCopierDraft.status,
           channelName: recentClosedCopierDraft.channelId
             ? (channelDisplayNames[recentClosedCopierDraft.channelId] ?? 'Channel')
             : 'Channel',
@@ -1567,6 +1567,7 @@ export function DashboardPage() {
       reason: closed.reason,
       destinations: copierLogDetail.destinations,
       closedAt: closed.at,
+      isPartial: closed.status === 'partial',
     }
   }, [copierLogDetail, closedCopierDetailSignal, user?.id])
 
@@ -1690,7 +1691,7 @@ export function DashboardPage() {
         .in('status', ['open', 'pending']),
       supabase
         .from('trades')
-        .select('id,signal_id,telegram_channel_id,symbol,direction,closed_at,close_reason,sl,tp,close_price')
+        .select('id,signal_id,telegram_channel_id,symbol,direction,closed_at,close_reason,sl,tp,close_price,next_tp_index')
         .eq('user_id', user!.id)
         .eq('status', 'closed')
         .not('closed_at', 'is', null)
@@ -1701,9 +1702,10 @@ export function DashboardPage() {
     const logs = ((logsRes.data ?? []) as Signal[]).filter(s => !isNonTradeSkipReason(s.skip_reason))
 
     const allTrades = (tradesRes.data ?? []) as Trade[]
-    setOpenCopierLogSignalIds(
-      buildOpenSignalIdSet((openTradesForLogRes.data ?? []) as { signal_id?: string | null }[]),
+    const openIdsForLog = buildOpenSignalIdSet(
+      (openTradesForLogRes.data ?? []) as { signal_id?: string | null }[],
     )
+    setOpenCopierLogSignalIds(openIdsForLog)
     const lifecycle = copierLifecycleLabelsFromCopierLogs(t.copierLogs)
     const newestClosed = ((newestClosedRes.data ?? []) as Trade[])[0]
     setRecentClosedCopierDraft(
@@ -1720,8 +1722,13 @@ export function DashboardPage() {
             sl: newestClosed.sl,
             tp: newestClosed.tp,
             close_price: newestClosed.close_price ?? null,
+            next_tp_index: (newestClosed as { next_tp_index?: number | null }).next_tp_index ?? null,
           },
           lifecycle,
+          {
+            openSignalIds: openIdsForLog,
+            messagePartialClose: t.copierLogs.messagePartialClose,
+          },
         )
         : null,
     )
@@ -3561,8 +3568,13 @@ export function DashboardPage() {
           sourceKind={closedCopierDetailDisplay.sourceKind}
           symbol={closedCopierDetailDisplay.symbol}
           status={{
-            variant: 'neutral',
-            label: t.copierLogs.statusClosed,
+            variant: closedCopierDetailDisplay.isPartial ? 'warning' : 'neutral',
+            label: closedCopierDetailDisplay.isPartial
+              ? t.copierLogs.statusPartialClose
+              : t.copierLogs.statusClosed,
+            className: closedCopierDetailDisplay.isPartial
+              ? 'bg-amber-100 text-amber-950 dark:bg-amber-900/40 dark:text-amber-100'
+              : undefined,
           }}
           displayReason={closedCopierDetailDisplay.reason}
           destinations={closedCopierDetailDisplay.destinations}
@@ -3720,6 +3732,11 @@ function copierLogStatusConfig(
       className: 'bg-teal-100 text-teal-900 dark:bg-teal-900/50 dark:text-teal-200',
     },
     closed: { variant: 'neutral', label: t.copierLogs.statusClosed },
+    partial: {
+      variant: 'warning',
+      label: t.copierLogs.statusPartialClose,
+      className: 'bg-amber-100 text-amber-950 dark:bg-amber-900/40 dark:text-amber-100',
+    },
     skipped: { variant: 'warning', label: t.copierLogs.statusSkipped },
     failed: { variant: 'error', label: t.copierLogs.statusFailed },
     pending: { variant: 'neutral', label: t.copierLogs.statusPending },

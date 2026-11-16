@@ -137,12 +137,15 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     const useV2BasketRefresh = isV2({ brokerAccountId: broker.id, userId: signal.user_id, provider: broker.provider })
 
     const loadFamilyTrades = async (): Promise<BasketOpenLeg[]> => {
+      // Include resting strict-entry BuyLimit/SellLimit rows (`pending`). A
+      // Telegram message edit must refresh their SL/TP too — loading only
+      // `open` skipped Demo pending baskets entirely (Migration 0b582d78).
       const { data: familyRows, error: famErr } = await ctx.supabase
         .from('trades')
-        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,next_tp_index')
+        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,next_tp_index,status')
         .eq('broker_account_id', broker.id)
         .eq('signal_id', anchorSignalId)
-        .eq('status', 'open')
+        .in('status', ['open', 'pending'])
         .order('opened_at', { ascending: true })
         .limit(500)
       if (famErr) {

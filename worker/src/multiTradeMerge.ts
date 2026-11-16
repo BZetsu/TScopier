@@ -313,7 +313,8 @@ const PARAMETER_FOLLOW_UP_ANCHOR_POLL_MS = 150
 
 /**
  * Same-signal revision re-parses the existing `signals` row — anchor SL/TP refresh
- * on that signal's open legs, not the newest unrelated basket on the channel.
+ * on that signal's open **or pending** legs (strict-entry BuyLimit/SellLimit),
+ * not the newest unrelated basket on the channel.
  */
 export async function resolveOpenBasketAnchorForSameSignal(
   supabase: SupabaseClient,
@@ -333,7 +334,7 @@ export async function resolveOpenBasketAnchorForSameSignal(
     .eq('user_id', args.userId)
     .eq('broker_account_id', args.brokerAccountId)
     .eq('signal_id', args.signalId)
-    .eq('status', 'open')
+    .in('status', ['open', 'pending'])
     .eq('direction', args.direction)
     .order('opened_at', { ascending: false })
     .limit(500)

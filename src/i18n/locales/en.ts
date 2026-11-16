@@ -1456,6 +1456,7 @@ export const en: Translations = {
     statusExecuted: 'Executed',
     statusOpen: 'Open',
     statusClosed: 'Closed',
+    statusPartialClose: 'Partial close',
     statusSkipped: 'Skipped',
     statusFailed: 'Failed',
     statusPending: 'Pending',
@@ -1464,6 +1465,7 @@ export const en: Translations = {
     reasonExecuted: 'Order placed on broker.',
     reasonOpen: 'Due to a trading signal from Telegram.',
     reasonFallback: 'See signal details for more information.',
+    messagePartialClose: 'Partial close {symbol}',
     closeReasons: {
       news_pre_close: 'Closed ahead of news.',
       signal_close: 'Closed by signal.',
@@ -1479,6 +1481,7 @@ export const en: Translations = {
       mirror_copy_closed: 'Mirror copy closed.',
       stop_loss: 'Due to stop loss.',
       take_profit: 'TP hit.',
+      take_profit_level: 'TP {n} hit.',
       unknown: 'Position closed.',
     },
     retry: 'Retry',

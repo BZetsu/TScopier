@@ -57,7 +57,7 @@ type Filter = 'all' | 'parsed' | 'executed' | 'open' | 'closed' | 'skipped' | 'f
 
 const CLOSED_TRADES_FETCH_LIMIT = 200
 const CLOSED_TRADE_SELECT =
-  'id,signal_id,telegram_channel_id,symbol,direction,closed_at,close_reason,sl,tp,close_price'
+  'id,signal_id,telegram_channel_id,symbol,direction,closed_at,close_reason,sl,tp,close_price,next_tp_index'
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50] as const
 type PageSizeOption = (typeof PAGE_SIZE_OPTIONS)[number]
@@ -204,9 +204,12 @@ function buildClosedLogView(
   const channelTitle = sourceKind
     ? `${SIGNAL_SOURCE_MARKS[sourceKind].label} · ${channelName}`
     : channelName
+  const statusKey = draft.status === 'partial' ? 'partial' : 'closed'
   return {
     symbol: draft.symbol,
-    status: statusConfig.closed ?? { variant: 'neutral' as const, label: 'Closed' },
+    status: statusConfig[statusKey]
+      ?? statusConfig.closed
+      ?? { variant: 'neutral' as const, label: draft.status === 'partial' ? 'Partial close' : 'Closed' },
     channelName,
     channelTitle,
     sourceKind,
@@ -735,7 +738,11 @@ export function CopierLogsPage() {
         (openTradesRes.data ?? []) as { signal_id?: string | null }[],
       )
       const closedTrades = (closedTradesRes.data ?? []) as ClosedTradeForCopierLog[]
-      const closedDrafts = buildClosedCopierLogDrafts(closedTrades, lifecycle)
+      const closedDrafts = buildClosedCopierLogDrafts(closedTrades, lifecycle, {
+        openSignalIds: nextOpenIds,
+        statusPartialClose: t.copierLogs.statusPartialClose,
+        messagePartialClose: t.copierLogs.messagePartialClose,
+      })
 
       const ledgerFilter = filter === 'open' || filter === 'closed' ? null : filter
       const visibleMirror = ledgerFilter === null || ledgerFilter === 'all'
@@ -901,6 +908,11 @@ export function CopierLogsPage() {
       executed: { variant: 'success', label: t.copierLogs.statusExecuted, className: 'bg-green-100 text-neutral-950 dark:bg-green-100 dark:text-neutral-950' },
       open: { variant: 'success', label: t.copierLogs.statusOpen, className: 'bg-teal-100 text-teal-900 dark:bg-teal-900/50 dark:text-teal-200' },
       closed: { variant: 'neutral', label: t.copierLogs.statusClosed },
+      partial: {
+        variant: 'warning',
+        label: t.copierLogs.statusPartialClose,
+        className: 'bg-amber-100 text-amber-950 dark:bg-amber-900/40 dark:text-amber-100',
+      },
       skipped: { variant: 'warning', label: t.copierLogs.statusSkipped },
       failed: { variant: 'error', label: t.copierLogs.statusFailed },
       pending: { variant: 'neutral', label: t.copierLogs.statusPending },
@@ -1064,7 +1076,10 @@ export function CopierLogsPage() {
       channelName,
       sourceKind,
       symbol: detailClosed.symbol,
-      status: statusConfig.closed ?? { variant: 'neutral' as const, label: t.copierLogs.statusClosed },
+      status: (detailClosed.status === 'partial'
+        ? statusConfig.partial
+        : statusConfig.closed)
+        ?? { variant: 'neutral' as const, label: t.copierLogs.statusClosed },
       reason: detailClosed.reason,
       destinations: detail?.view.destinations ?? copierLogDestinations(brokers, detailClosed.channelId),
       closedAt: detailClosed.at,

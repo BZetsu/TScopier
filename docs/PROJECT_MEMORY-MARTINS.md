@@ -5,6 +5,36 @@ Changelog entries authored / owned by Martins, kept separate from the main `PROJ
 
 ## Changelog
 
+### 2026-11-16 — Copier Log: Partial close + TP N hit
+
+- **Context:** Dashboard Copier preview showed “Closed / TP hit.” while sibling percent-split legs were still open (e.g. BTCUSDm FOREX KING).
+- **Plain English:** When only one TP leg closes and others remain open, the log now shows **Partial close** and **TP 1 hit.** (or TP 2/3…). Full closes stay Closed; bare single-leg TP still says “TP hit.”
+- **Root cause (technical):** Synthetic closed rows always used status `closed` + generic take_profit copy; UI hard-coded `statusConfig.closed` and ignored `draft.status` / `next_tp_index`.
+- **Fix (files):** [`copierLogLifecycle.ts`](src/lib/copierLogLifecycle.ts) — `status: partial` when `openSignalIds` still has the signal; `TP {n} hit.` via `next_tp_index` (prefer level on partial, or n>1); wire Dashboard + CopierLogsPage status badges/`CLOSED_TRADE_SELECT`; i18n `statusPartialClose` / `messagePartialClose` / `take_profit_level` (en + es/fr + logs ar/ja/nl/pl/ru/sv).
+- **Tests/verification:** `copierLogLifecycle.test.ts`; Netlify `tsc -b` failed until locale keys added — re-verify with `npm run build`.
+- **Deploy state:** Frontend only — ship with next Netlify deploy.
+- **Follow-ups:** None; older closed rows without distinct `next_tp_index` still show “TP hit.” until that column is set.
+
+### 2026-11-15 — Message edit left Demo strict-entry pendings on old SL/TP
+
+- **Context:** FOREX KING signal `0b582d78` on Migration Demo was edited (SL 65150→65100, TPs 64200/64000/63900→64500/64000/63500). Fusion open legs got `basket_leg_modify`; Demo SellLimits stayed on the old stops.
+- **Plain English:** Editing a signal updated filled trades but ignored waiting limit orders on Demo.
+- **Root cause (technical):** Same-signal revision anchor + family load filtered `status='open'` only, so Demo pending-only baskets never entered modify (`parameter_follow_up_no_open_basket` / empty family). Live-market SL guard would also mishandle pendings.
+- **Fix (files):** Include `pending` in [`resolveOpenBasketAnchorForSameSignal`](worker/src/multiTradeMerge.ts), mergeRouting leg probe, [`slTpRefresh`](worker/src/tradeExecutor/basketMerge/slTpRefresh.ts) family load, [`loadOpenBasketLegs`](worker/src/basketSlTpReconcile.ts); pending legs use entry as stop guard; sync `signal_entry_pending_orders` after modify.
+- **Tests/verification:** Migration logs 19:02Z Fusion modified; Demo SEP still 65150/64200… until worker redeploy + re-edit or manual sync.
+- **Deploy state:** Worker local — redeploy trade-migration.
+- **Follow-ups:** Redeploy; optionally OrderModify pending entry price when the edit changes the limit price.
+
+### 2026-11-15 — Pending/mgmt: stop farthest-TP backfill on percent-split legs
+
+- **Context:** User reported reconciler still pinning Pending Order trades to farthest TP on Migration.
+- **Plain English:** Demo Use-Signal-Entry pendings that placed after the multi-leg fix already had the right TPs (64200/64000/63900). The old smash was on **open** Demo legs (`1a11e460` → all 65000). A separate bug: channel SL/TP apply could still fill a naked pending with the **deepest** ladder TP because management rows lacked `next_tp_index`.
+- **Root cause (technical):** (1) Migration trade worker still needs redeploy for `shouldApplySingleTakeProfitTarget → false`. (2) `channelStopApply` freeze/naked path used `frozenDeepestTp`; `MGMT_TRADE_SELECT` omitted `next_tp_index`.
+- **Fix (files):** Load `next_tp_index` in [`managementScope.ts`](worker/src/managementScope.ts); percent-split identity/reladder (no deepest) in [`channelStopApply.ts`](worker/src/channelStopApply.ts).
+- **Tests/verification:** Migration SQL: `70c8bc9b` Demo pending place/fill kept distinct TPs; `1a11e460` Demo closed all at 65000 (pre-fix smash).
+- **Deploy state:** Worker local — redeploy trade-migration for live effect.
+- **Follow-ups:** Redeploy worker.
+
 ### 2026-11-15 — Configure/Assistant AI: answer questions, no “confusion” stalls
 
 - **Context:** Users asking clear how-tos (e.g. close trades when the signal post is deleted) got a vague “there might be some confusion… share specific requests” brush-off.

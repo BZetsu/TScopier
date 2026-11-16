@@ -134,3 +134,15 @@ verify_jwt = true
 
 [functions.billing-backfill]
 verify_jwt = false
+
+[functions.support-chat]
+verify_jwt = false
+
+[functions.support-tickets]
+verify_jwt = false
+
+[functions.support-ticket-inbound]
+verify_jwt = false
+
+[functions.support-translate]
+verify_jwt = false

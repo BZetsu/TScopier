@@ -25,6 +25,7 @@ export const logsPl: LogsBundleTranslations = {
     statusExecuted: 'Wykonane',
     statusOpen: 'Otwarte',
     statusClosed: 'Zamknięte',
+    statusPartialClose: 'Częściowe zamknięcie',
     statusSkipped: 'Pominięte',
     statusFailed: 'Nieudane',
     statusPending: 'Oczekujące',
@@ -33,6 +34,7 @@ export const logsPl: LogsBundleTranslations = {
     reasonExecuted: 'Zlecenie złożone u brokera.',
     reasonOpen: 'Z powodu sygnału tradingowego z Telegrama.',
     reasonFallback: 'Zobacz szczegóły sygnału, aby uzyskać więcej informacji.',
+    messagePartialClose: 'Częściowe zamknięcie {symbol}',
     closeReasons: {
       news_pre_close: 'Closed ahead of news.',
       signal_close: 'Closed by signal.',
@@ -48,6 +50,7 @@ export const logsPl: LogsBundleTranslations = {
       mirror_copy_closed: 'Mirror copy closed.',
       stop_loss: 'Z powodu stop loss.',
       take_profit: 'TP osiągnięty.',
+      take_profit_level: 'TP {n} osiągnięty.',
       unknown: 'Position closed.',
     },
     retry: 'Ponów',
