@@ -2,6 +2,7 @@ import type { ManualSettings, ParsedSignal, PlannerRangeEntryWait } from './type
 import { resolvedParsedEntryPrice, resolvedParsedEntryZone } from './parsedEntry'
 import { strictSignalEntryQuoteAllowsImmediate } from './executionShape'
 import { signalEntryRangeStrictEnabled } from './manualSettings'
+import { collapseZonesLevelsToWaitBand, type TradeDirection } from '../signalPriceInference'
 
 /** Far edge of the entry zone in the layering direction (buy → low, sell → high). */
 export function signalRangeBoundary(parsed: ParsedSignal, isBuy: boolean): number | null {
@@ -54,6 +55,65 @@ export function buildRangeEntryWait(args: {
     zoneHi: zone?.hi ?? null,
     tolerancePips: Math.max(0, Number(args.manual.signal_entry_pip_tolerance ?? 10)),
   }
+}
+
+/** Read discrete zone levels from parsed_data when present. */
+export function resolvedParsedEntryZoneLevels(parsed: ParsedSignal): number[] {
+  const raw = parsed.entry_zone_levels
+  if (!Array.isArray(raw) || raw.length === 0) return []
+  const out: number[] = []
+  const seen = new Set<number>()
+  for (const v of raw) {
+    const n = typeof v === 'number' ? v : Number(v)
+    if (!Number.isFinite(n) || n <= 0 || seen.has(n)) continue
+    seen.add(n)
+    out.push(n)
+  }
+  return out
+}
+
+/**
+ * When a ZONES bulletin listed many/wide levels, narrow the wait band to the
+ * nearest actionable level ± tolerance using the live quote.
+ */
+export function narrowRangeWaitToNearestZoneLevel(args: {
+  wait: PlannerRangeEntryWait
+  parsed: ParsedSignal
+  bid: number
+  ask: number
+  pipSize: number
+}): { wait: PlannerRangeEntryWait; parsed: ParsedSignal; collapsed: boolean } {
+  const levels = resolvedParsedEntryZoneLevels(args.parsed)
+  if (levels.length < 2) {
+    return { wait: args.wait, parsed: args.parsed, collapsed: false }
+  }
+  const side: TradeDirection = args.wait.isBuy ? 'buy' : 'sell'
+  const band = collapseZonesLevelsToWaitBand({
+    levels,
+    side,
+    bid: args.bid,
+    ask: args.ask,
+    tolerancePips: args.wait.tolerancePips,
+    pipSize: args.pipSize,
+  })
+  if (!band?.collapsed) {
+    return { wait: args.wait, parsed: args.parsed, collapsed: false }
+  }
+  const wait: PlannerRangeEntryWait = {
+    ...args.wait,
+    entryPrice: band.level,
+    zoneLo: band.zoneLo,
+    zoneHi: band.zoneHi,
+  }
+  const parsed: ParsedSignal = {
+    ...args.parsed,
+    entry_price: band.level,
+    entry_zone_low: band.zoneLo,
+    entry_zone_high: band.zoneHi,
+    entry_zone_first: band.level,
+    entry_zone_last: band.level,
+  }
+  return { wait, parsed, collapsed: true }
 }
 
 /**

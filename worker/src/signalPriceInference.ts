@@ -299,6 +299,151 @@ export function extractBarePriceRangeZone(
   return null
 }
 
+export type BuySellZonesBulletin = {
+  side: TradeDirection
+  symbol: string
+  /** Ordered levels as written (deduped). */
+  levels: number[]
+  entry_zone_low: number
+  entry_zone_high: number
+  entry_zone_first: number
+  entry_zone_last: number
+}
+
+const ZONES_HEADER_RE =
+  /^\s*(?:#?\s*)?(GOLD|XAUUSD|XAU|SILVER|XAGUSD|XAG|BTC(?:USD|USDT)?|BITCOIN|ETH(?:USD|USDT)?|ETHEREUM|EURUSD|GBPUSD|USDJPY|US30|NAS100|NASDAQ|USTEC)\s+(BUY|SELL)S?\s+ZONES?\b/im
+
+function zonesBulletinSymbol(raw: string): string {
+  const t = String(raw ?? '').trim().toUpperCase()
+  if (t === 'GOLD' || t === 'XAU') return 'XAUUSD'
+  if (t === 'SILVER' || t === 'XAG') return 'XAGUSD'
+  if (t === 'BITCOIN' || t === 'BTC') return 'BTCUSD'
+  if (t === 'BTCUSDT') return 'BTCUSD'
+  if (t === 'ETHEREUM' || t === 'ETH' || t === 'ETHUSDT') return 'ETHUSD'
+  if (t === 'NASDAQ' || t === 'USTEC') return 'NAS100'
+  return t
+}
+
+/** Collect bare price tokens from lines after a ZONES header (one level per line or slash-separated). */
+function collectZonesBulletinLevels(body: string): number[] {
+  const out: number[] = []
+  const seen = new Set<number>()
+  for (const line of String(body ?? '').split(/\r?\n/)) {
+    const cleaned = line.replace(/^[\s>*•\-–—]+/, '').trim()
+    if (!cleaned) continue
+    if (/^[A-Za-z]/.test(cleaned) && !new RegExp(`^${SIGNAL_PRICE_NUM}`).test(cleaned)) continue
+    const fromList = parseSignalPriceListBlock(cleaned.replace(/,/g, ''))
+    const candidates = fromList.length
+      ? fromList
+      : (() => {
+          const single = parseSignalPriceToken(cleaned.replace(/,/g, ''))
+          return single != null ? [single] : []
+        })()
+    for (const p of candidates) {
+      if (seen.has(p)) continue
+      seen.add(p)
+      out.push(p)
+    }
+  }
+  return out
+}
+
+/**
+ * Gen Wealth / ICT style zone bulletins:
+ *   GOLD SELL ZONES
+ *   3866
+ *   3874
+ * Returns side + symbol + levels without inventing SL/TP.
+ */
+export function extractBuySellZonesBulletin(message: string): BuySellZonesBulletin | null {
+  const raw = String(message ?? '').replace(/\r\n/g, '\n').trim()
+  if (!raw) return null
+  const header = raw.match(ZONES_HEADER_RE)
+  if (!header?.[1] || !header?.[2]) return null
+  const after = raw.slice((header.index ?? 0) + header[0].length)
+  const levels = collectZonesBulletinLevels(after)
+  if (levels.length < 1) return null
+  const first = levels[0]!
+  const last = levels[levels.length - 1]!
+  const lo = Math.min(...levels)
+  const hi = Math.max(...levels)
+  return {
+    side: header[2].toLowerCase() === 'buy' ? 'buy' : 'sell',
+    symbol: zonesBulletinSymbol(header[1]),
+    levels,
+    entry_zone_low: lo,
+    entry_zone_high: hi,
+    entry_zone_first: first,
+    entry_zone_last: last,
+  }
+}
+
+/** True when the message is a BUY/SELL ZONES bulletin (header present). */
+export function looksLikeBuySellZonesBulletin(message: string): boolean {
+  return ZONES_HEADER_RE.test(String(message ?? ''))
+}
+
+/**
+ * Collapse a wide multi-level zone list to the nearest actionable level ± tolerance.
+ * Two nearby levels (N&lt;3 and span ≤ maxSpanPips) keep min–max as the band.
+ */
+export function collapseZonesLevelsToWaitBand(args: {
+  levels: number[]
+  side: TradeDirection
+  bid: number
+  ask: number
+  tolerancePips: number
+  pipSize: number
+  /** Span (in pips) above which we collapse even for 2 levels. Default 40. */
+  maxSpanPips?: number
+}): { zoneLo: number; zoneHi: number; level: number; collapsed: boolean } | null {
+  const levels = uniquePrices(args.levels)
+  if (!levels.length) return null
+  const pip = Number(args.pipSize)
+  const tolPips = Math.max(0, Number(args.tolerancePips ?? 0))
+  const tolPx = tolPips > 0 && Number.isFinite(pip) && pip > 0 ? tolPips * pip : 0
+  const lo = Math.min(...levels)
+  const hi = Math.max(...levels)
+  const spanPips = Number.isFinite(pip) && pip > 0 ? Math.abs(hi - lo) / pip : Infinity
+  const maxSpan = Math.max(0, Number(args.maxSpanPips ?? 40))
+  // Two listed levels always form one wait band. Collapse only for 3+ levels
+  // (or an explicit maxSpan override with levels.length >= 3).
+  const shouldCollapse = levels.length >= 3 || (levels.length > 3 && spanPips > maxSpan)
+  if (!shouldCollapse) {
+    return { zoneLo: lo, zoneHi: hi, level: levels.length === 1 ? lo : (lo + hi) / 2, collapsed: false }
+  }
+
+  const bid = Number(args.bid)
+  const ask = Number(args.ask)
+  if (!Number.isFinite(bid) || !Number.isFinite(ask)) {
+    return { zoneLo: lo, zoneHi: hi, level: (lo + hi) / 2, collapsed: false }
+  }
+
+  let level: number
+  if (args.side === 'buy') {
+    const atOrBelow = levels.filter(p => p <= ask)
+    if (atOrBelow.length) {
+      level = Math.max(...atOrBelow)
+    } else {
+      level = Math.min(...levels)
+    }
+  } else {
+    const atOrAbove = levels.filter(p => p >= bid)
+    if (atOrAbove.length) {
+      level = Math.min(...atOrAbove)
+    } else {
+      level = Math.max(...levels)
+    }
+  }
+  const half = Math.max(tolPx, Number.isFinite(pip) && pip > 0 ? pip : 0)
+  return {
+    zoneLo: level - half,
+    zoneHi: level + half,
+    level,
+    collapsed: true,
+  }
+}
+
 export function entryReferenceFromParsed(parsed: {
   entry_price?: number | null
   entry_zone_low?: number | null
