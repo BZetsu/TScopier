@@ -20,6 +20,7 @@ export type SupportTicket = {
   last_message_at: string
   created_at: string
   updated_at: string
+  customer_locale?: string | null
 }
 
 export type SupportTicketMessage = {
@@ -31,6 +32,8 @@ export type SupportTicketMessage = {
   images: string[]
   resend_id: string | null
   email_message_id: string | null
+  source_locale?: string | null
+  translations?: Record<string, string> | null
   created_at: string
 }
 
@@ -73,6 +76,7 @@ async function postTickets(body: Record<string, unknown>, authed: boolean) {
 export async function createSupportTicket(params: {
   subject: string
   message: string
+  locale?: string | null
   guest?: { name: string; email: string; token?: string | null } | null
 }): Promise<{ ticket: SupportTicket; guest_token?: string | null }> {
   const data = await postTickets(
@@ -80,6 +84,7 @@ export async function createSupportTicket(params: {
       action: 'create',
       subject: params.subject,
       message: params.message,
+      locale: params.locale ?? undefined,
       guest_name: params.guest?.name,
       guest_email: params.guest?.email,
       guest_token: params.guest?.token ?? undefined,

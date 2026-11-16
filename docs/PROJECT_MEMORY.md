@@ -7,9 +7,9 @@
 - **Context:** Dashboard Copier preview showed “Closed / TP hit.” while sibling percent-split legs were still open (e.g. BTCUSDm FOREX KING).
 - **Plain English:** When only one TP leg closes and others remain open, the log now shows **Partial close** and **TP 1 hit.** (or TP 2/3…). Full closes stay Closed; bare single-leg TP still says “TP hit.”
 - **Root cause (technical):** Synthetic closed rows always used status `closed` + generic take_profit copy; UI hard-coded `statusConfig.closed` and ignored `draft.status` / `next_tp_index`.
-- **Fix (files):** [`copierLogLifecycle.ts`](src/lib/copierLogLifecycle.ts) — `status: partial` when `openSignalIds` still has the signal; `TP {n} hit.` via `next_tp_index` (prefer level on partial, or n>1); wire Dashboard + CopierLogsPage status badges/`CLOSED_TRADE_SELECT`; i18n `statusPartialClose` / `messagePartialClose` / `take_profit_level`.
-- **Tests/verification:** `copierLogLifecycle.test.ts` — partial draft + TP level preference.
-- **Deploy state:** Frontend only (local) — ship with next Netlify deploy.
+- **Fix (files):** [`copierLogLifecycle.ts`](src/lib/copierLogLifecycle.ts) — `status: partial` when `openSignalIds` still has the signal; `TP {n} hit.` via `next_tp_index` (prefer level on partial, or n>1); wire Dashboard + CopierLogsPage status badges/`CLOSED_TRADE_SELECT`; i18n `statusPartialClose` / `messagePartialClose` / `take_profit_level` (en + es/fr + logs ar/ja/nl/pl/ru/sv).
+- **Tests/verification:** `copierLogLifecycle.test.ts`; Netlify `tsc -b` failed until locale keys added — re-verify with `npm run build`.
+- **Deploy state:** Frontend only — ship with next Netlify deploy.
 - **Follow-ups:** None; older closed rows without distinct `next_tp_index` still show “TP hit.” until that column is set.
 
 ### 2026-11-15 — Message edit left Demo strict-entry pendings on old SL/TP
