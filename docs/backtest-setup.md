@@ -34,10 +34,13 @@ Each tradeable row needs **buy/sell**, a **valid symbol**, and **SL or TP**. Ent
 
 The worker must be running with:
 
+- **`TELEGRAM_API_ID` + `TELEGRAM_API_HASH`** on the Railway **Backtest** service (not only Listener, not Supabase Edge secrets)
 - Active `telegram_sessions` for the user
 - Channel in `telegram_channels` with `is_active = true`
 - `PARSE_SIGNAL_URL` (or `SUPABASE_URL` + `/functions/v1/parse-signal`)
 - `SUPABASE_SERVICE_ROLE_KEY` for parse auth and RPC upsert
+
+After setting Telegram API vars, **redeploy** the Backtest service. Confirm with `GET /health` → `telegram_api_configured: true`.
 
 **Telegram MTProto slot:** Only one active connection per session is allowed. Backtest signal sync always needs that slot briefly:
 

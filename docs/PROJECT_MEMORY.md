@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### 2026-11-17 — Backtest needs TELEGRAM_API_* on Railway Backtest service
+
+- **Context:** After pointing Edge at `backtest-migration`, sync failed with `TELEGRAM_API_ID / TELEGRAM_API_HASH must be set in env` despite vars in Supabase secrets and (claimed) Backtest worker.
+- **Plain English:** Those credentials must live on the **Railway Backtest** process. Edge/Supabase secrets never reach GramJS; Listener vars do not auto-copy to Backtest.
+- **Root cause (technical):** [`buildClient`](worker/src/telegramClient.ts) reads `process.env`; outdated [`railway-architecture.md`](docs/railway-architecture.md) wrongly said Backtest needs no API id/hash.
+- **Fix (files):** Docs corrected; env trim/unquote + clearer error; health `telegram_api_configured` boolean. Ops: set exact names on Backtest service → redeploy → `/health` true.
+- **Deploy state:** Local worker/docs; Backtest Railway redeploy needed for health flag.
+- **Follow-ups:** User verifies Railway Backtest Variables (service-scoped, not shared-unattached) then redeploys.
+
 ### 2026-11-17 — Backtest "Not found" = wrong worker URL
 
 - **Context:** Local Migration app (`.env` → `supmsgcubipmmowrzoub`) showed bare **"Not found"** when starting a backtest (Pull signals / sync).
