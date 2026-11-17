@@ -868,16 +868,35 @@ export async function handleSignal(ctx: TradeExecutorContext,
       if (isRangeWake && wakeBrokerId) {
         brokers = brokers.filter(b => b.id === wakeBrokerId)
       }
+      const brokerManuals = brokers.map(b => resolveChannelTradingConfig(b, row.channel_id).manual_settings)
       if (
         tradingViewSource
         && (action === 'buy' || action === 'sell')
-        && !tradingViewEntryStopsSatisfied(
-          parsed,
-          brokers.map(b => resolveChannelTradingConfig(b, row.channel_id).manual_settings),
-        )
+        && !tradingViewEntryStopsSatisfied(parsed, brokerManuals)
       ) {
         await ctx.logDispatchSkipped(row, TRADINGVIEW_MISSING_SL_TP_REASON)
         return
+      }
+      // Zone bulletins: re-check with broker manuals (Override SL+TP required).
+      if (!tradingViewSource && (action === 'buy' || action === 'sell') && brokers.length > 0) {
+        const rawForZones = String(
+          (row as { raw_message?: string | null }).raw_message
+            ?? parsed.raw_instruction
+            ?? '',
+        ).trim()
+        const zonesEligibility = evaluateParsedSignalExecutionEligibility(
+          parsed,
+          rawForZones,
+          undefined,
+          brokerManuals,
+        )
+        if (!zonesEligibility.eligible) {
+          await ctx.logDispatchSkipped(
+            row,
+            zonesEligibility.skipReason ?? 'entry_not_execution_eligible',
+          )
+          return
+        }
       }
       const signalSymbolForWarm = parsed.symbol?.trim() ?? ''
       if (liveFast && signalSymbolForWarm && brokers.length > 0) {

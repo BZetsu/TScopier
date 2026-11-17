@@ -2,6 +2,23 @@
 
 ## Changelog
 
+> Per-contributor logs: `docs/PROJECT_MEMORY-MARTINS.md` (Martins / Planmoni App) and
+> `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
+> in the entry itself; their own files remain the complete record of their work.
+
+### 2026-11-16 — Gen Wealth VIP: GOLD/BTC ZONES as range waits
+
+- **Context:** Liam Nicolas (`b23d53d4-…`) Gen Wealth VIP (`8d385907-…`) posted multiline `GOLD/BTC BUY|SELL ZONES` bulletins; worker treated them as market entries with invented SL/TP → `entry_price_moved_adverse`, 0 trades.
+- **Plain English:** Zone lists now parse as entry bands (no fake stops). With Multi + range wait + Override SL/TP, the copier waits for price to touch the nearest level, then uses his predefined pip stops.
+- **Root cause (technical):** No deterministic ZONES path; AI/`classifyPricesByDirection` folded bare prices into SL/TP; eligibility required invented stops; Liam was Single with waits off; wide N≥3 lists as min–max were too broad.
+- **Fix (files):** `extractBuySellZonesBulletin` / `parseBuySellZonesBulletin` in [`signalPriceInference.ts`](worker/src/signalPriceInference.ts) + [`parseSignal.ts`](worker/src/parseSignal.ts) (preserve `entry_zone_levels` in `normalizeParsedFromModel`); AI adapter clears SL/TP for ZONES; imperative + eligibility with manuals / `ENTRY_MISSING_PREDEFINED_STOPS`; [`collapseZonesLevelsToWaitBand`](worker/src/signalPriceInference.ts) + [`narrowRangeWaitToNearestZoneLevel`](worker/src/manualPlanning/signalEntryRange.ts) at plan/prepare; dispatch re-checks manuals. Prod config: Genwealth account + channel → `trade_style=multi`, `use_signal_entry_range=true`, `use_predefined_sl/tp_pips=true` (30 / 20·40·60 kept).
+- **Tests/verification:** `signalZonesBulletin.test.ts` + fixtures under `worker/fixtures/channels/gen-wealth-vip/`; eligibility suites green.
+- **Deploy state:** Prod **account config applied** (broker + `broker_channel_trading_configs` + embedded channel map). Worker commit `781e7d85` on `origin/migration` (1 ahead of `main`); Railway redeploy blocked here (no token / `gh pr` Forbidden). After prod listener+trade redeploy, confirm next `GOLD * ZONES` → `signal_range_entry_waits` (not `entry_price_moved_adverse`).
+- **Follow-ups:** Merge/redeploy prod workers from `781e7d85`; out of scope: structured “Selling gold now” `entry_not_opened`, multi-limit-per-level ladder.
+- **Author:** Martins (Planmoni App). 
+- **His full log:** `docs/PROJECT_MEMORY-MARTINS.md` holds every entry he authored; his code is the source of truth for the files it covers.
+
+
 ### 2026-11-17 — Support chat AI: grounded product map + read-only account tools
 
 - **Context:** a customer asked where to set risk, lot size and pips. The support chat answered with five different guessed paths ("Manage Trades", "Copier Process", "Account Configuration", "Copier Process or Copy Settings", "Account Configuration again"), the customer said "Nothing!!!" each time, and then escalated asking whether anyone would ever reply. Root cause: `support-chat` had an 11-line generic prompt and **no product knowledge at all**, plus a single tool (`escalate_to_human`) and therefore no way to look at the customer's account.

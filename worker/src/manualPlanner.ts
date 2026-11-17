@@ -39,6 +39,8 @@ export {
 export {
   buildRangeEntryWait,
   signalRangeEntryQuoteAllowsImmediate,
+  narrowRangeWaitToNearestZoneLevel,
+  resolvedParsedEntryZoneLevels,
 } from './manualPlanning/signalEntryRange'
 
 export { reverseSignalGateSatisfied } from './manualPlanning/manualStops'
