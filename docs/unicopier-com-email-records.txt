@@ -1,0 +1,38 @@
+; Cloudflare DNS — unicopier.com, records for Resend Forge (eu-west-1)
+;
+; Source of truth: Resend -> Domains -> unicopier.com (17 Nov 2026).
+; Forge uses CNAME records for sending, NOT MX and NOT TXT. A CNAME cannot
+; coexist with other record types at the same name, so every existing record at
+; "send" must be deleted before the CNAME can be added.
+;
+; ---------------------------------------------------------------------------
+; STEP 1 - DELETE these records (they block the "send" CNAME)
+; ---------------------------------------------------------------------------
+;   send   MX    send.forge.rmta.net                      (10)
+;   send   MX    feedback.forge.rmta.net                  (10)
+;   send   MX    feedback-smtp.us-east-1.amazonses.com    (10)   <- my mistake
+;   send   TXT   "v=spf1 ip4:52.3.252.119 ip4:44.222.39.36 ip4:199.249.231.0/24 ~all"
+;   send   TXT   "v=spf1 include:amazonses.com ~all"             <- my mistake
+;
+; Also delete this one, which I added and Resend does not ask for:
+;   @      TXT   "v=spf1 include:amazonses.com ~all"
+;
+; ---------------------------------------------------------------------------
+; STEP 2 - ADD this record
+; ---------------------------------------------------------------------------
+send.unicopier.com.		1	IN	CNAME	send.forge.rmta.net.
+
+; ---------------------------------------------------------------------------
+; STEP 3 - LEAVE THESE ALONE (already present and verified in Resend)
+; ---------------------------------------------------------------------------
+;   rsend        CNAME  rsend-euw1.forge.rmta.net     verified
+;   resend._domainkey TXT  p=MIGf...                  verified (DKIM)
+;   @            MX     receive-euw1.forge.rmta.net (10)   verified (receiving)
+;   _dmarc       TXT    "v=DMARC1; p=none; rua=mailto:report@unicopier.com"
+;
+; ---------------------------------------------------------------------------
+; STEP 4 - In Resend press Verify / Enable Sending. "partially verified" must
+; become fully verified for both sending and receiving. Resend said "Your
+; emails are still being sent" - meaning they are going through the legacy
+; path until Forge is enabled.
+; ---------------------------------------------------------------------------

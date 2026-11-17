@@ -41,6 +41,7 @@
  *   telegram_gap           { max_not_listening: number }     // paying subscribers only (active/trialing)
  *   openai_credits_exhausted { grace_seconds: number }
  *   openai_key_invalid      { grace_seconds: number }
+ *   support_notify_backlog  { max_wait_minutes: number }    // unsent support notifications
  *
  * OpenAI health is the one external dependency this evaluator probes
  * itself: every run makes a one-token request and writes the outcome to
@@ -98,6 +99,7 @@ const NEXT_ACTION: Record<string, string> = {
   telegram_gap: "Linked accounts without a listener are not being copied — check worker leases on the Systems Health page.",
   openai_credits_exhausted: "Add OpenAI credits now (Billing → Add credits). Until then AI parsing is refused and only the regex parser runs, so complex signals may be missed.",
   openai_key_invalid: "The OpenAI API key is invalid or was revoked — create a new key in the OpenAI dashboard and update OPENAI_API_KEY in Supabase edge secrets (and Railway for the worker). Until then AI parsing falls back to the regex parser and complex signals are skipped.",
+  support_notify_backlog: "Support notifications are stuck: new tickets and human requests are not reaching the team by email. The tickets are still in the desk; check the support-notify function (its key and logs) and the Resend sending domain. Nothing is lost — the waiting rows send once the cause is fixed.",
 };
 
 const EMAIL_BATCH_LIMIT = 25;
@@ -777,6 +779,47 @@ async function evalOpenAiKeyInvalid(sb: any, rule: RuleRow, nowMs: number): Prom
   return { kind: "ok", fired: false, value: 0, message: "" };
 }
 
+/**
+ * Support notifications that have stopped going out.
+ *
+ * support-notify queues every new ticket, reopened ticket and human request in
+ * support_notification_outbox and empties it on a one-minute schedule. If its
+ * key is wrong, the sender is rejected or the job stops, rows simply accumulate:
+ * no other signal exists, and the team believes nobody is writing. This rule is
+ * that signal. It only looks at unsent rows, so a healthy queue — including a
+ * deliberately deferred one — never fires, and it resolves by itself once the
+ * queue drains (the recovery email doubles as "notifications are working again").
+ */
+async function evalSupportNotifyBacklog(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutcome> {
+  const maxWaitMinutes = num(rule.threshold.max_wait_minutes, 30);
+  const { data, error } = await sb
+    .from("support_notification_outbox")
+    .select("created_at, last_error")
+    .is("sent_at", null)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  // A missing table (migration not applied) is a skip, never a page.
+  if (error) return { kind: "skip", reason: `support_notification_outbox unreadable: ${error.message}` };
+  if (!data) return { kind: "ok", fired: false, value: 0, message: "" };
+
+  const oldestMs = Date.parse(String(data.created_at));
+  if (!Number.isFinite(oldestMs)) return { kind: "skip", reason: "unreadable outbox timestamp" };
+  const ageMinutes = Math.floor((nowMs - oldestMs) / 60_000);
+  if (ageMinutes < maxWaitMinutes) {
+    return { kind: "ok", fired: false, value: ageMinutes, message: "" };
+  }
+
+  const waiting = await headCount(sb, "support_notification_outbox", q => q.is("sent_at", null));
+  const lastError = String(data.last_error ?? "").trim().slice(0, 120);
+  return {
+    kind: "ok",
+    fired: true,
+    value: waiting ?? 1,
+    message: `${waiting ?? "at least one"} support notification(s) not sent, oldest waiting ${ageMinutes} minutes${lastError ? `; last error: ${lastError}` : ""}`,
+  };
+}
+
 async function evaluate(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutcome> {
   switch (rule.code) {
     case "bridge_down": return evalBridgeDown(sb, rule, nowMs);
@@ -792,6 +835,7 @@ async function evaluate(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutc
     case "telegram_gap": return evalTelegramGap(sb, rule, nowMs);
     case "openai_credits_exhausted": return evalOpenAiCredits(sb, rule, nowMs);
     case "openai_key_invalid": return evalOpenAiKeyInvalid(sb, rule, nowMs);
+    case "support_notify_backlog": return evalSupportNotifyBacklog(sb, rule, nowMs);
     default:
       return { kind: "skip", reason: `no evaluator for rule ${rule.code}` };
   }
