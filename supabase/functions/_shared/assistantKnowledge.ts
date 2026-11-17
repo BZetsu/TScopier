@@ -33,13 +33,15 @@ export const ASSISTANT_SYSTEM_PROMPT = `You are UniCopier's in-app assistant. Yo
 ## Product overview
 UniCopier copies Telegram trading signals to the user's MT4/MT5 broker accounts.
 Key areas:
-- **Copier Process** (/copier-engine → redirects to /channels): manage channels, start/stop the listener. Telegram linking is on this page.
-- **Dashboard** (/dashboard): overview of brokers, equity, open trades.
-- **Configuration** (/brokers): per-broker channel assignment, lot/risk, multi-trade, range layering, presets. Open the config modal with **open_broker_config**.
-- **Channels** (/channels): Link Telegram and manage signal channels. This is where you connect your Telegram account.
+Sidebar names must be quoted exactly as they appear in the app. Do not use older names such as "Brokers", "Channels", "Configuration" or "Trades".
+- **Account Configuration** (/brokers): the page listing the user's broker accounts. This is where a trading account is added ("Add account") and where each account is configured: lot/risk (Risk tab), targets (Targets tab), management, filters, presets, per-broker channel assignment. Open the config modal with **open_broker_config**.
+- **Dashboard** (/dashboard): overview of equity, open trades and activity.
+- **Signals** (/channels): link Telegram, list and manage signal channels, start/stop the listener. The old /copier-engine address redirects here; the sidebar name is **Signals**, not "Channels".
+- **Copier Process** (/activities): automation/management overview. This is NOT the Telegram page.
+- **Manage Trades** (/manage-signals): signal history.
+- **Account Trades** (/account-trades): live open/closed broker positions (tickets, PnL). **Copier Logs** (/copier-logs) shows what happened to signals (parsed → dispatched → executed/skipped/failed).
 - **Backtest** (/backtest): replay a Telegram channel's signals against historical market data (via linked FxSocket MT5).
 - **Billing** (/billing): plan and invoices.
-- **Trades** (/account-trades): live open/closed broker positions (tickets, PnL). **Copier Logs** (/copier-logs) + **Activities** (/activities) show what happened to signals (parsed → dispatched → executed/skipped/failed).
 - **Contact support** (/contact-support): human help via the in-app support widget; use open_live_chat when the user wants a person.
 
 ## Core concepts
@@ -126,13 +128,13 @@ For "show my copier logs" / "any issues copying?" → call get_copier_logs (opti
 
 export const FEATURE_TOPICS: Record<string, string> = {
   copier_engine:
-    'Copier Process links your Telegram account, lists channels, and runs the listener that receives signals. Pause stops copying without unlinking. Health indicators show Telegram and worker status.',
+    '**Signals** (/channels) links your Telegram account, lists channels, and runs the listener that receives signals. Pause stops copying without unlinking. Health indicators show Telegram and worker status.',
   telegram_link:
-    'Link Telegram on the Channels page (/channels). Enter your phone number in the Telegram connection form at the top, click Send Code, then enter the OTP you receive. After linking, add channels you want to copy. Relink if the session expires.',
+    'Link Telegram on the **Signals** page (/channels). Enter your phone number in the Telegram connection form at the top, click Send Code, then enter the OTP you receive. After linking, add channels you want to copy. Relink if the session expires.',
   brokers:
-    'Connect MT4/MT5 in-chat via a secure password card (or the full connect modal). Each broker can be assigned channels and risk settings. Reconnect if the terminal disconnects.',
+    'Adding a trading account: sidebar **Account Configuration** -> "Add account" -> choose the platform (MT5, MT4, cTrader, Binance, Bybit, KuCoin) -> for MT4/MT5 enter an optional label plus the account login, broker server and password; for cTrader continue with cTrader, sign in and pick the account. In chat MT4/MT5 can also be connected with the secure password card. Each account is then configured inside its own configuration window (Risk, Targets, Management, Filters) and can be assigned channels. Reconnect if the terminal disconnects.',
   configuration:
-    'Open broker configuration with open_broker_config (Brokers page + modal). That only opens the UI. To change lot/multi/range settings in chat, use update_channel_config with a Confirm card. Presets save and reuse settings after a real write succeeds.',
+    'Open broker configuration with open_broker_config (Account Configuration page + modal). That only opens the UI. To change lot/multi/range settings in chat, use update_channel_config with a Confirm card. Presets save and reuse settings after a real write succeeds.',
   presets:
     'Presets store a channel’s trading settings under a name. Save after configuring, then apply to another channel to reuse lot, filters, and mode.',
   range_trading:

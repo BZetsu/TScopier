@@ -13,6 +13,8 @@ export type ResendSendResult = {
   resendId?: string
   /** SMTP Message-ID if Resend returns one in the response body (rare); callers may also synthesize. */
   emailMessageId?: string
+  /** Why the send failed, when Resend or the network said so. */
+  error?: string
 }
 
 export async function sendResendEmail(opts: {
@@ -29,7 +31,7 @@ export async function sendResendEmail(opts: {
 }): Promise<ResendSendResult> {
   if (!opts.resendApiKey) {
     console.error(`${opts.logPrefix} RESEND_API_KEY missing — email not sent`)
-    return { ok: false }
+    return { ok: false, error: "RESEND_API_KEY missing" }
   }
   try {
     const payload: Record<string, unknown> = {
@@ -51,15 +53,18 @@ export async function sendResendEmail(opts: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
+      // A hung request must not outlive an outbox claim lease; the caller
+      // retries on failure.
+      signal: AbortSignal.timeout(15_000),
     })
     const data = await res.json() as { id?: string; message?: string }
     if (!res.ok) {
       console.error(`${opts.logPrefix} Resend error:`, data)
-      return { ok: false }
+      return { ok: false, error: data.message ?? `HTTP ${res.status}` }
     }
     return { ok: true, resendId: data.id }
   } catch (err) {
     console.error(`${opts.logPrefix} send failed:`, err)
-    return { ok: false }
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
