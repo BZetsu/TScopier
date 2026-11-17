@@ -96,7 +96,7 @@ Open **Backtest** in the sidebar (`/backtest`).
 
 | Symptom | Check |
 |---------|--------|
-| `0 messages from Telegram` | User session active; channel access; worker online |
+| `0 messages from Telegram` | Session active; still in **that exact** channel (not a backup/mirror); date range; redeploy backtest worker. Prefer the channel that shows live Copier signals. |
 | `WORKER_URL not configured` | Edge secret set to reachable worker URL |
 | `FXSOCKET_API_KEY not configured` | Edge secret (not only worker `.env`) |
 | `Connect an MT5 broker in Brokers` | User needs linked FxSocket broker account |

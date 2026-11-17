@@ -1899,7 +1899,14 @@ export class UserListener {
     })
 
     if (collected.length === 0) {
-      errors.push('0 messages from Telegram — check session and channel access')
+      const label = (row as { display_name?: string | null }).display_name
+        || (row as { channel_username?: string | null }).channel_username
+        || channelRowId
+      errors.push(
+        `0 messages from Telegram for “${label}” in this date range. `
+        + 'Confirm you still have access to that exact channel (not a backup/mirror), '
+        + 'widen the dates, or pick the channel that is receiving live signals.',
+      )
     } else if (candidates.length === 0) {
       errors.push('No messages looked like trade signals in this range')
     } else if (imported === 0 && errors.length === 0) {
@@ -4427,18 +4434,27 @@ export class UserListener {
   ): Promise<MessageLike[]> {
     const fromSec = Math.floor(fromMs / 1000)
     const toSec = Math.floor(toMs / 1000)
+    const forBacktest = opts?.forBacktest === true
 
     let peer: unknown
     try {
       peer = await this.resolveChannelPeer(row)
-    } catch {
-      throw new Error('Failed to resolve Telegram channel entity')
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      throw new Error(
+        `Failed to resolve Telegram channel entity`
+        + (detail ? ` (${detail.slice(0, 160)})` : ''),
+      )
     }
 
     const collected: MessageLike[] = []
     let offsetId = 0
     const batchSize = 100
-    const heuristicCtx = await getChannelParseContext(this.supabase, row.id)
+    // Backtest candidate filtering happens in syncBacktestSignals — fetch must
+    // keep every non-empty text message or empty history looks like "no access".
+    const heuristicCtx = forBacktest ? null : await getChannelParseContext(this.supabase, row.id)
+    let batchesFetched = 0
+    let telegramMessagesSeen = 0
 
     while (collected.length < BACKFILL_PER_CHANNEL_CAP) {
       let batch: Array<MessageLike & { id: number | bigint; date?: number | Date | string }>
@@ -4447,10 +4463,21 @@ export class UserListener {
           limit: batchSize,
           offsetId,
         })) as unknown as Array<MessageLike & { id: number | bigint; date?: number | Date | string }>
-      } catch {
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err)
+        if (forBacktest) {
+          throw new Error(
+            `Telegram getMessages failed for channel ${row.display_name || row.id}: ${detail.slice(0, 200)}`,
+          )
+        }
+        console.warn(
+          `[userListener] getMessages failed user=${this.userId} channel=${row.id}: ${detail.slice(0, 200)}`,
+        )
         break
       }
       if (!batch.length) break
+      batchesFetched++
+      telegramMessagesSeen += batch.length
 
       let reachedOlderThanRange = false
       for (const m of batch) {
@@ -4464,11 +4491,8 @@ export class UserListener {
         }
         const raw = telegramMessageText(m)
         if (!raw) continue
-        const isReply = !!m.replyTo
-        const fetchAllForBacktest = process.env.BACKTEST_FETCH_ALL_MESSAGES === 'true'
-        if (!opts?.forBacktest) {
-          if (!looksLikeTradingSignal(raw, isReply, heuristicCtx)) continue
-        } else if (!fetchAllForBacktest) {
+        if (!forBacktest) {
+          const isReply = !!m.replyTo
           if (!looksLikeTradingSignal(raw, isReply, heuristicCtx)) continue
         }
         collected.push(m)
@@ -4477,6 +4501,14 @@ export class UserListener {
       offsetId = Number(batch[batch.length - 1].id)
       if (batch.length < batchSize || reachedOlderThanRange) break
       await new Promise(r => setTimeout(r, CATCHUP_BACKPRESSURE_MS))
+    }
+
+    if (forBacktest) {
+      console.log(
+        `[userListener] backtest fetch user=${this.userId} channel=${row.id}`
+        + ` batches=${batchesFetched} telegram_seen=${telegramMessagesSeen}`
+        + ` in_range_text=${collected.length} from=${fromSec} to=${toSec}`,
+      )
     }
 
     collected.sort((a, b) => Number(a.id) - Number(b.id))

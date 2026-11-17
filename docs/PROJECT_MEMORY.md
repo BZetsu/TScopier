@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### 2026-11-17 — Backtest “0 messages” on wrong FOREX KING + fetch filter
+
+- **Context:** Martins (`acb848d6-…`) Migration backtest on **FOREX KING 👑** (`1fbbf71b` / `@dstader1`) returned `0 messages from Telegram` after API env was fixed.
+- **Plain English:** Live copy traffic is on **FOREX KING BACKUP👑** (`be8d30df`), not the main `@dstader1` row. Also, backtest history fetch still dropped non-heuristic texts, so empty results looked like “no access.”
+- **Root cause (technical):** UI channel ≠ live signal channel; [`fetchMessagesBetween`](worker/src/userListener.ts) `forBacktest` path still applied `looksLikeTradingSignal` unless `BACKTEST_FETCH_ALL_MESSAGES`; `getMessages` errors were swallowed.
+- **Fix (files):** Backtest fetch keeps all text in range; surface getMessages/resolve errors; clearer empty-channel error. Ops: user should backtest **BACKUP** (or the channel with `last_live_at` / live signals).
+- **Deploy state:** Worker code local — redeploy **backtest-migration**.
+- **Follow-ups:** Redeploy backtest worker; retry Pull on FOREX KING BACKUP.
+
 ### 2026-11-17 — Backtest needs TELEGRAM_API_* on Railway Backtest service
 
 - **Context:** After pointing Edge at `backtest-migration`, sync failed with `TELEGRAM_API_ID / TELEGRAM_API_HASH must be set in env` despite vars in Supabase secrets and (claimed) Backtest worker.
