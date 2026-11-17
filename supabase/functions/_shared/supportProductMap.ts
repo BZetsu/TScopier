@@ -43,6 +43,22 @@ Sidebar sections and items:
 The sidebar item is called **Account Configuration** — not "Brokers", "Accounts", or
 "Channels". Do not use those older names.
 
+### Connecting a signal source (Telegram channels)
+1. Sidebar -> **Signals** (in the COPY group; the page title is "Signals").
+2. Under **Signal sources**, press **Connect** on the platform you use. Telegram is the
+   main one: enter your phone number, press Send Code, then enter the code Telegram sends
+   you.
+3. Once Telegram is linked, the channels your own Telegram account belongs to are listed.
+   Add the ones you want the copier to follow.
+4. Per-channel behaviour — lot override, filters, which account it copies to — is set from
+   that channel's own settings.
+
+Important: there is **no channel directory** in the app. You cannot browse, search or buy
+channels, and the old "Popular Channels" page was removed (that address now opens the
+Dashboard). Only channels your connected Telegram account can already see can be added.
+Never tell a customer to "browse available channels" or to "select channels to follow"
+as if from a catalogue.
+
 ### Risk, lot size, trade style, targets ("where do I set risk / pips / lot size?")
 1. Sidebar -> **Account Configuration**. This page lists the broker accounts.
 2. Click the broker account (or its configure button). A configuration window opens.
@@ -85,4 +101,8 @@ export const SUPPORT_UI_RULES = `
   the rest are sidebar items in their own right.
 - Name the tab only when the map names one (Risk, Targets, Management, Filters). Do not
   invent tab names.
+- Do not describe features that do not exist. In particular there is no channel directory,
+  no "browse channels" screen, and no way to buy a channel. If a customer asks for
+  something the map does not describe, say you are not sure and escalate rather than
+  inventing a plausible screen.
 `;
