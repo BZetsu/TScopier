@@ -62,9 +62,17 @@ Deploy/restart the worker after pulling changes (new route `POST /auth/backtest_
 
 | Secret | Purpose |
 |--------|---------|
-| `FXSOCKET_API_KEY` | FxSocket platform key — market data + broker API |
-| `WORKER_URL` | Base URL of the worker (no trailing slash) |
+| `FXSOCKET_API_KEY` | FxSocket platform key — market data + broker API (legacy; MTAPI path preferred) |
+| `WORKER_URL` / `BACKTEST_WORKER_URL` | Base URL of the listener / backtest worker (no trailing slash) |
 | `WORKER_INTERNAL_TOKEN` | Must match worker env |
+| `MTAPI_HISTORY_TIMEZONE_VERIFIED` | `true` — opens the fail-closed history clock gate |
+| `MTAPI_HISTORY_TIMESTAMP_MODE` | `server` (measured bridge labels) or `utc` |
+| `MTAPI_SERVER_TIMEZONE_UNIT_MT4` | `minutes` (MT4 `ServerTimezone` unit) |
+| `MTAPI_SERVER_TIMEZONE_UNIT_MT5` | `hours` (MT5 `ServerTimezone` unit) |
+| `MTAPI_SERVER_TIMEZONE_SIGN` | `server_minus_utc` |
+| `MTAPI_SERVER_TIMEZONE_DST` | `observed` (mixed fleet) or `none` (UTC-fixed only) |
+
+Without the `MTAPI_HISTORY_*` / `MTAPI_SERVER_TIMEZONE_*` set, `backtest-run` fails with **MTAPI server timezone unit/sign/DST policy has not been explicitly verified**. Staging/prod already use the measured policy above; Migration must match.
 
 ### 4. Linked broker (required)
 

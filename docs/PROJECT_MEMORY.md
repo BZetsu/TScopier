@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### 2026-11-17 — Migration backtest blocked: MTAPI clock secrets unset
+
+- **Context:** After signal sync progressed, Martins Migration backtest failed with `MTAPI server timezone unit/sign/DST policy has not been explicitly verified` (Demo Exness-MT5Trial10 / MTAPI).
+- **Plain English:** History bars need an explicit timezone policy. Staging/prod already have it; the Migration Edge project never got those secrets.
+- **Root cause (technical):** [`createMtapiClockResolver`](supabase/functions/_shared/backtest/mtapiMarketData.ts) requires `MTAPI_HISTORY_TIMEZONE_VERIFIED=true`, `MTAPI_HISTORY_TIMESTAMP_MODE`, unit/sign/DST; Migration `supmsgcubipmmowrzoub` missing them (same gate as 2026-11-02).
+- **Fix (files):** Document secrets in [`docs/backtest-setup.md`](docs/backtest-setup.md). Ops: set on Migration the measured fleet policy (`TIMESTAMP_MODE=server`, `UNIT_MT4=minutes`, `UNIT_MT5=hours`, `SIGN=server_minus_utc`, `DST=observed`).
+- **Deploy state:** Secrets apply immediately to Edge; no function redeploy required for env-only change.
+- **Follow-ups:** Confirm secrets on Migration dashboard/CLI; retry Run backtest.
+
 ### 2026-11-17 — Backtest “0 messages” on wrong FOREX KING + fetch filter
 
 - **Context:** Martins (`acb848d6-…`) Migration backtest on **FOREX KING 👑** (`1fbbf71b` / `@dstader1`) returned `0 messages from Telegram` after API env was fixed.
