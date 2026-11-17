@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-17 — Backtest "Not found" = wrong worker URL
+
+- **Context:** Local Migration app (`.env` → `supmsgcubipmmowrzoub`) showed bare **"Not found"** when starting a backtest (Pull signals / sync).
+- **Plain English:** Sync was calling a **trade** Railway service, which has no Telegram backtest route. The dedicated backtest worker already exists.
+- **Root cause (technical):** `POST /auth/backtest_sync_signals` on `trade-migration` (role `trade`) returns `{error:"Not found"}`. Route exists on `backtest-migration` (role `backtest`, 401 without token) and listener (but listener blocks sync by design). Edge `BACKTEST_WORKER_URL` / `WORKER_URL` was aimed at the trade host.
+- **Fix (files):** Clearer mapping in [`workerSync.ts`](supabase/functions/_shared/backtest/workerSync.ts). **Ops:** Migration Edge secret `BACKTEST_WORKER_URL=https://backtest-migration.up.railway.app` (prod: `https://tscopier-backtest-production.up.railway.app`); token must match that service.
+- **Tests/verification:** Probed hosts — trade → 404 Not found; backtest-migration → 401 on sync route.
+- **Deploy state:** Clearer error string in repo only (not redeployed). Secret fix is the unblock.
+- **Follow-ups:** Set Migration `BACKTEST_WORKER_URL`; redeploy `backtest-run` when convenient for clearer UI copy; spot-check prod Edge secrets the same way.
+
 ### 2026-11-16 — Gen Wealth VIP: GOLD/BTC ZONES as range waits
 
 - **Context:** Liam Nicolas (`b23d53d4-…`) Gen Wealth VIP (`8d385907-…`) posted multiline `GOLD/BTC BUY|SELL ZONES` bulletins; worker treated them as market entries with invented SL/TP → `entry_price_moved_adverse`, 0 trades.

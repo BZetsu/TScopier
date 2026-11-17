@@ -53,11 +53,20 @@ export async function syncBacktestSignalsViaWorker(
       })
       const data = await res.json().catch(() => ({})) as BacktestWorkerSyncResult & { error?: string }
       if (!res.ok) {
+        const raw = (data.error ?? `Telegram sync failed (${res.status})`).trim()
+        // Trade / listener-only workers return plain "Not found" for unknown routes.
+        const errors = [
+          raw === "Not found" || (res.status === 404 && /not found/i.test(raw))
+            ? "Backtest sync URL points at a worker without /auth/backtest_sync_signals "
+              + "(trade or wrong role). Set Edge secret BACKTEST_WORKER_URL to a "
+              + "WORKER_ROLE=backtest (or all) Railway service — see docs/backtest-setup.md."
+            : raw,
+        ]
         return {
           messages_scanned: 0,
           candidates: 0,
           imported: 0,
-          errors: [data.error ?? `Telegram sync failed (${res.status})`],
+          errors,
         }
       }
       return {
