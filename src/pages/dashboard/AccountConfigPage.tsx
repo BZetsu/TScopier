@@ -62,6 +62,11 @@ import {
   planContextForManualSettings,
 } from '../../lib/planLimits'
 import type { SubscriptionPlan } from '../../lib/planLimits'
+import {
+  isExtensionActive,
+  latestExtensionEndMs,
+  type SubscriptionExtensionGrant,
+} from '../../lib/subscriptionExtensions'
 import { PaywallErrorAlert } from '../../components/billing/PaywallErrorAlert'
 import { UpgradePrompt } from '../../components/billing/UpgradePrompt'
 import {
@@ -878,6 +883,19 @@ async function resolveLatestManualSettingsPlanContext(args: {
 
   const subscription = data as { plan?: SubscriptionPlan; status?: string | null } | null
   const effective = resolveEffectivePlan(subscription?.plan, subscription?.status ?? null)
+
+  // A live admin extension is an Advanced entitlement, exactly as the context,
+  // the edge functions and the trade worker treat it.
+  if (!effective) {
+    const { data: extRows } = await supabase
+      .from('subscription_extensions')
+      .select('days, granted_at')
+      .eq('user_id', args.userId)
+    if (isExtensionActive(latestExtensionEndMs(extRows as SubscriptionExtensionGrant[]))) {
+      return { plan: 'advanced', status: 'active', effectivePlan: 'advanced' }
+    }
+  }
+
   const planCtx = planContextForManualSettings(effective, subscription ?? null)
   return {
     ...planCtx,
@@ -4791,7 +4809,38 @@ export function AccountConfigPage() {
                         </section>
                               {!keywordFiltersEnabled ? (
                                 <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
-                                  <div className="pointer-events-auto w-full max-w-md">
+                                  <div className="pointer-events-auto w-full max-w-md space-y-2">
+                                    <div className="rounded-lg border border-neutral-200/70 dark:border-neutral-800/60 bg-neutral-50 dark:bg-neutral-900 px-3 py-2">
+                                      {(() => {
+                                        const applied = normalizeChannelFilters(
+                                          configDraft.channelConfigs[configDraft.selectedChannelId!]?.channelFilters
+                                            ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
+                                        )
+                                        const ignored = channelFilterCategories.filter(
+                                          c => applied[c.key] === 'ignore',
+                                        )
+                                        return ignored.length === 0 ? (
+                                          <p className="text-xs leading-snug text-neutral-900 dark:text-neutral-100">
+                                            No channel instructions are ignored for this channel. Every instruction
+                                            the channel sends is applied to your account.
+                                          </p>
+                                        ) : (
+                                          <>
+                                            <p className="text-xs leading-snug text-neutral-700 dark:text-neutral-300">
+                                              Your plan applies these channel instructions automatically as
+                                              <span className="font-semibold"> Ignore</span>:
+                                            </p>
+                                            <p className="mt-1 text-xs leading-snug text-neutral-900 dark:text-neutral-100">
+                                              {ignored.map(c => c.label).join(' · ')}
+                                            </p>
+                                            <p className="mt-1 text-[11px] leading-snug text-neutral-500 dark:text-neutral-400">
+                                              Entries from this channel still open normally. Only changes to trades
+                                              you already have open are skipped.
+                                            </p>
+                                          </>
+                                        )
+                                      })()}
+                                    </div>
                                     <UpgradePrompt reason={pw.advancedFeature} />
                                   </div>
                                 </div>

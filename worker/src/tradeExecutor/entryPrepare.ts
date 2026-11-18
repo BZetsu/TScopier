@@ -616,6 +616,11 @@ export async function prepareEntryExecution(
       liveEntryFast,
     })
     if (teaserOutcome.handled) {
+      // Carry the reason through so the pipeline records why, instead of falling back to the
+      // generic entry_not_opened that reads like a broker problem (incident 2026-11-18).
+      const teaserFailureCode = teaserOutcome.failureReason === 'basket_modify_skipped_by_channel_filter'
+        ? 'basket_modify_skipped_by_channel_filter'
+        : 'basket_modify_failed'
       return {
         ok: false,
         outcome: {
@@ -623,7 +628,7 @@ export async function prepareEntryExecution(
           ...(teaserOutcome.failureReason
             ? {
               failureReason: teaserOutcome.failureReason,
-              failureReasonCode: 'basket_modify_failed',
+              failureReasonCode: teaserFailureCode,
             }
             : {}),
         },
