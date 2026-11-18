@@ -167,15 +167,37 @@ export function normalizeManualSettingsForPlan<T extends Record<string, unknown>
   return next as T
 }
 
-export function manualSettingsUseAdvancedFeatures(settings: Record<string, unknown>): boolean {
-  if (settings.trade_style === 'multi') return true
-  if (settings.range_trading === true) return true
-  if (settings.reverse_signal === true) return true
-  if (settings.close_worse_entries === true) return true
+/**
+ * Advanced-only settings that a Basic account cannot run. The worker refuses to
+ * execute signals for these, so the configure screen has to name them.
+ */
+export type AdvancedOnlySetting =
+  | 'multi_trade'
+  | 'range_trading'
+  | 'move_sl_to_entry'
+  | 'reverse_signal'
+  | 'close_worse_entries'
+  | 'risk_reward'
+
+export function advancedOnlySettingsInUse(
+  settings: Record<string, unknown> | null | undefined,
+): AdvancedOnlySetting[] {
+  if (!settings || typeof settings !== 'object') return []
+  const found: AdvancedOnlySetting[] = []
+  if (settings.trade_style === 'multi') found.push('multi_trade')
+  if (settings.range_trading === true) found.push('range_trading')
+  if (settings.reverse_signal === true) found.push('reverse_signal')
+  if (settings.close_worse_entries === true) found.push('close_worse_entries')
   const beMode = String(settings.move_sl_to_entry_after_mode ?? 'none')
-  if (beMode !== 'none' && beMode !== '') return true
-  if (settings.rr_for_sl_enabled === true || settings.rr_for_tps_enabled === true) return true
-  return false
+  if (beMode !== 'none' && beMode !== '') found.push('move_sl_to_entry')
+  if (settings.rr_for_sl_enabled === true || settings.rr_for_tps_enabled === true) {
+    found.push('risk_reward')
+  }
+  return found
+}
+
+export function manualSettingsUseAdvancedFeatures(settings: Record<string, unknown>): boolean {
+  return advancedOnlySettingsInUse(settings).length > 0
 }
 
 export interface PlanLimitsSnapshot {

@@ -57,6 +57,7 @@ import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import { useMirrorSlaveChannelGuard } from '../../hooks/useMirrorSlaveChannelGuard'
 import { useSubscription } from '../../context/SubscriptionContext'
 import {
+  advancedOnlySettingsInUse,
   effectivePlan as resolveEffectivePlan,
   normalizeManualSettingsForPlan,
   planContextForManualSettings,
@@ -1237,6 +1238,23 @@ export function AccountConfigPage() {
 
   const keywordFiltersEnabled = canUsePlanFeature('channel_keyword_filters')
   const multiTradeStyleEnabled = canUsePlanFeature('multi_trade_style')
+  /**
+   * A Basic account cannot run advanced-only settings, and the worker skips those
+   * signals instead of copying them. Name the exact settings in use so the customer
+   * can see why a channel they just configured will not trade.
+   */
+  const advancedOnlyItems = useMemo(() => {
+    const labels = cm.advancedOnlyNotice.items
+    return advancedOnlySettingsInUse(channelManualSettings as Record<string, unknown>).map(key => ({
+      multi_trade: labels.multiTrade,
+      range_trading: labels.rangeTrading,
+      move_sl_to_entry: labels.moveSlToEntry,
+      reverse_signal: labels.reverseSignal,
+      close_worse_entries: labels.closeWorseEntries,
+      risk_reward: labels.riskReward,
+    }[key]))
+  }, [channelManualSettings, cm])
+  const showAdvancedOnlyNotice = !multiTradeStyleEnabled && advancedOnlyItems.length > 0
   const autoManagementPlanEnabled = canUsePlanFeature('auto_management')
   // Static/dynamic layering modes stay legacy-only in the UI for now.
   const selectedLayeringMode = 'legacy' as const
@@ -3582,6 +3600,22 @@ export function AccountConfigPage() {
                         </button>
                       </div>
                     </div> */}
+
+                    {showAdvancedOnlyNotice ? (
+                      <div className="rounded-xl border border-amber-300/80 bg-amber-50 dark:border-amber-700/70 dark:bg-amber-900/20 p-3">
+                        <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                          {cm.advancedOnlyNotice.title}
+                        </p>
+                        <p className="mt-1 text-xs leading-snug text-amber-900/90 dark:text-amber-100/90">
+                          {cm.advancedOnlyNotice.body}
+                        </p>
+                        <ul className="mt-2 list-disc ps-5 text-xs leading-snug text-amber-900/90 dark:text-amber-100/90">
+                          {advancedOnlyItems.map(item => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
 
                     {AI_CONFIGURATION_ENABLED && channelMode === 'ai' ? (
                       <div className="rounded-xl border border-neutral-200/65 dark:border-neutral-800/55 p-4 space-y-3">
