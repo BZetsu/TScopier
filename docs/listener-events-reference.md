@@ -23,6 +23,7 @@ Columns: `user_id`, `channel_row_id`, `telegram_message_id`, `event_type`,
 | `poll_peer_resolve_failed` | Same peer-resolution failure, but during the poll cycle. | error | 7d |
 | `catchup_get_messages_failed` | Defined in the worker's type list; **no code path emits it.** | error | 30d |
 | `poll_flood_backoff` | Telegram rate-limited us (FloodWait / retry burst); polling paused and backed off, escalating on repeats. | throttle | 30d |
+| `listener_stall_heal` | The listener was connected but no poll cycle had completed for a stale window; the session manager hard-reset it so it would reconnect. `detail.healed` = `true` when the reset happened, `false` when the per-listener hourly budget refused it (the listener stays deaf until the window resets). Added after the 2026-11-18 outage, where this state was invisible for 82 minutes. | warning | 30d |
 
 ## 2. AI parsing
 
@@ -131,7 +132,8 @@ current worker. They still get the default 30-day retention if they are ever wri
 - `worker/src/userListener.ts` — most events.
 - `worker/src/authService.ts` — `telegram_link_attempt`, `telegram_link_success`,
   `telegram_link_failed`.
-- `worker/src/sessionManager.ts` — `telegram_link_disconnect`.
+- `worker/src/sessionManager.ts` — `telegram_link_disconnect`, `listener_stall_heal`
+  (the stalled-listener heal; `detail.healed` says whether the reset happened).
 - `worker/src/channelCanonicalIngest.ts`, `worker/src/channelReconcileMonitor.ts`,
   `worker/src/tradeExecutor/basketMerge/mergeRouting.ts` — channel/merge events.
 - `supabase/functions/_shared/listenerEvents.ts` and
