@@ -62,6 +62,11 @@ import {
   planContextForManualSettings,
 } from '../../lib/planLimits'
 import type { SubscriptionPlan } from '../../lib/planLimits'
+import {
+  isExtensionActive,
+  latestExtensionEndMs,
+  type SubscriptionExtensionGrant,
+} from '../../lib/subscriptionExtensions'
 import { PaywallErrorAlert } from '../../components/billing/PaywallErrorAlert'
 import { UpgradePrompt } from '../../components/billing/UpgradePrompt'
 import {
@@ -878,6 +883,19 @@ async function resolveLatestManualSettingsPlanContext(args: {
 
   const subscription = data as { plan?: SubscriptionPlan; status?: string | null } | null
   const effective = resolveEffectivePlan(subscription?.plan, subscription?.status ?? null)
+
+  // A live admin extension is an Advanced entitlement, exactly as the context,
+  // the edge functions and the trade worker treat it.
+  if (!effective) {
+    const { data: extRows } = await supabase
+      .from('subscription_extensions')
+      .select('days, granted_at')
+      .eq('user_id', args.userId)
+    if (isExtensionActive(latestExtensionEndMs(extRows as SubscriptionExtensionGrant[]))) {
+      return { plan: 'advanced', status: 'active', effectivePlan: 'advanced' }
+    }
+  }
+
   const planCtx = planContextForManualSettings(effective, subscription ?? null)
   return {
     ...planCtx,

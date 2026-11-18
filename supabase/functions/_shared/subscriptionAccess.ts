@@ -138,7 +138,8 @@ export async function assertBrokerAccountLimit(
 
   let plan = effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at);
   if (!plan && (await hasLiveSubscriptionExtension(supabase, userId))) {
-    plan = sub?.plan ?? "basic";
+    // A live admin extension grants Advanced while it is the reason access is alive.
+    plan = "advanced";
   }
   if (!plan) {
     return subscriptionAccessDenied(
@@ -186,7 +187,8 @@ export async function assertBacktestMonthlyLimit(
 
   let plan = effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at);
   if (!plan && (await hasLiveSubscriptionExtension(supabase, userId))) {
-    plan = sub?.plan ?? "basic";
+    // A live admin extension grants Advanced while it is the reason access is alive.
+    plan = "advanced";
   }
   if (!plan) {
     return subscriptionAccessDenied(
@@ -235,7 +237,8 @@ export async function assertTelegramChannelLimit(
 
   let plan = effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at);
   if (!plan && (await hasLiveSubscriptionExtension(supabase, userId))) {
-    plan = sub?.plan ?? "basic";
+    // A live admin extension grants Advanced while it is the reason access is alive.
+    plan = "advanced";
   }
   if (!plan) {
     return subscriptionAccessDenied(

@@ -254,9 +254,13 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     }
   }, [fetchSubscription])
 
-  // A live admin extension counts as an active subscription for every check below.
+  // A live admin extension counts as an active subscription for every check below,
+  // and it entitles the account to Advanced while it is the reason access is alive.
   const extensionActive = isExtensionActive(extensionEndMs)
   const accessStatus = extensionActive ? 'active' : (subscription?.status ?? null)
+  const entitlementPlan: SubscriptionPlan | null = extensionActive
+    ? 'advanced'
+    : (subscription?.plan ?? null)
   const hasActiveSubscription =
     isAdmin || isSubscriptionActive(accessStatus, subscription?.trial_ends_at)
 
@@ -378,28 +382,30 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     !isAdmin && !hasActiveSubscription && subscriptionHasTrialExpired(subscription?.trial_ends_at)
   const activePlan: SubscriptionPlan | null = isAdmin
     ? 'advanced'
-    : effectivePlan(subscription?.plan, accessStatus, subscription?.trial_ends_at)
+    : effectivePlan(entitlementPlan, accessStatus, subscription?.trial_ends_at)
 
   const limits = useMemo(
     () =>
       isAdmin
         ? planLimitsSnapshot('advanced', 'active', 95)
         : planLimitsSnapshot(
-            subscription?.plan,
+            entitlementPlan,
             accessStatus,
             subscription?.extra_accounts ?? 0,
             subscription?.trial_ends_at,
           ),
-    [subscription, isAdmin, accessStatus],
+    [subscription, isAdmin, accessStatus, entitlementPlan],
   )
 
   const planName = isAdmin
     ? 'Admin'
-    : subscription
-      ? subscription.plan === 'advanced'
-        ? 'Advanced'
-        : 'Basic'
-      : ''
+    : extensionActive
+      ? 'Advanced'
+      : subscription
+        ? subscription.plan === 'advanced'
+          ? 'Advanced'
+          : 'Basic'
+        : ''
 
   const requireSubscription = useCallback(() => {
     if (hasActiveSubscription) return true
@@ -418,12 +424,12 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     (feature: PlanFeatureKey) =>
       isAdmin ||
       canUseFeature(
-        subscription?.plan,
+        entitlementPlan,
         accessStatus,
         feature,
         subscription?.trial_ends_at,
       ),
-    [isAdmin, subscription, accessStatus],
+    [isAdmin, subscription, accessStatus, entitlementPlan],
   )
 
   const canAddBroker = useCallback(() => {
