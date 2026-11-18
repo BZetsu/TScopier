@@ -45,6 +45,7 @@ import {
   type SupportGuestSession,
   type SupportMessage,
 } from '../../lib/supportChat'
+import { createSupportTypingSession } from '../../lib/supportTyping'
 
 export type SupportWidgetVisibility = 'minimized' | 'maximized' | 'hidden'
 
@@ -290,8 +291,10 @@ export function SupportWidget({
   const [unreadCount, setUnreadCount] = useState(0)
   const [teamAvatars, setTeamAvatars] = useState<SupportHeaderAvatar[]>([])
   const [agentProfiles, setAgentProfiles] = useState<Record<string, SupportAgentProfile>>({})
+  const [peerTyping, setPeerTyping] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const typingSessionRef = useRef<ReturnType<typeof createSupportTypingSession> | null>(null)
   const knownMessageIdsRef = useRef<Set<string>>(new Set())
   const hydratedConversationsRef = useRef<Set<string>>(new Set())
   const ownedConversationIdsRef = useRef<Set<string>>(new Set())
@@ -482,6 +485,26 @@ export function SupportWidget({
     if (!open || !activeId) return
     if (user || guestSession?.token) void loadThread(activeId)
   }, [open, activeId, user, guestSession?.token, loadThread])
+
+  useEffect(() => {
+    if (!activeId) {
+      setPeerTyping(false)
+      typingSessionRef.current?.dispose()
+      typingSessionRef.current = null
+      return
+    }
+    typingSessionRef.current?.dispose()
+    typingSessionRef.current = createSupportTypingSession({
+      conversationId: activeId,
+      selfRole: 'user',
+      onPeerTyping: setPeerTyping,
+    })
+    return () => {
+      typingSessionRef.current?.dispose()
+      typingSessionRef.current = null
+      setPeerTyping(false)
+    }
+  }, [activeId])
 
   useEffect(() => {
     if (user) return
@@ -773,6 +796,7 @@ export function SupportWidget({
   const onSend = async () => {
     const text = draft.trim()
     if ((!text && draftImages.length === 0) || sending || attaching || !guestReady) return
+    typingSessionRef.current?.stop()
     setSending(true)
     setError('')
     const imagesSnapshot = draftImages
@@ -1358,6 +1382,16 @@ export function SupportWidget({
                               </div>
                             )
                           })}
+                          {peerTyping ? (
+                            <p className="px-1 py-1 text-xs font-medium text-neutral-400">
+                              Typing
+                              <span className="inline-flex tracking-wider">
+                                <span className="animate-pulse">.</span>
+                                <span className="animate-pulse [animation-delay:150ms]">.</span>
+                                <span className="animate-pulse [animation-delay:300ms]">.</span>
+                              </span>
+                            </p>
+                          ) : null}
                           <div ref={bottomRef} />
                         </div>
                       </>
@@ -1434,7 +1468,11 @@ export function SupportWidget({
                     </button>
                     <textarea
                       value={draft}
-                      onChange={e => setDraft(e.target.value)}
+                      onChange={e => {
+                        setDraft(e.target.value)
+                        if (e.target.value.trim()) typingSessionRef.current?.signal()
+                        else typingSessionRef.current?.stop()
+                      }}
                       rows={1}
                       placeholder={t.writeMessage}
                       className="max-h-28 min-h-[40px] flex-1 resize-none bg-transparent px-1 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 dark:text-neutral-50"
@@ -1453,6 +1491,7 @@ export function SupportWidget({
                           void onSend()
                         }
                       }}
+                      onBlur={() => typingSessionRef.current?.stop()}
                     />
                     <button
                       type="submit"
