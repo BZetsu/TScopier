@@ -31,6 +31,7 @@ export type ListenerEventType =
   | 'channel_auto_disabled'
   | 'channel_reactivated'
   | 'poll_flood_backoff'
+  | 'listener_stall_heal'
   | 'telegram_link_attempt'
   | 'telegram_link_success'
   | 'telegram_link_failed'

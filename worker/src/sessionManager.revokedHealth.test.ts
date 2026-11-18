@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { UserSessionManager } from './sessionManager'
-import type { UserListener } from './userListener'
+import { UserListener } from './userListener'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 type RpcCall = { name: string; args: Record<string, unknown> }
@@ -70,6 +70,9 @@ function makeSupabase() {
 type Internal = {
   listeners: Map<string, UserListener>
   disconnectedRenewTicks: Map<string, number>
+  stalledRenewTicks: Map<string, number>
+  stalledHealBudget: Map<string, { count: number; windowStartMs: number }>
+  stalledHealsThisCycle: number
   disconnectListener(userId: string): Promise<void>
   renewOneListenerLease(
     userId: string,
@@ -78,17 +81,32 @@ type Internal = {
   ): Promise<void>
 }
 
-function makeListener(opts: { revoked: boolean; userId: string }) {
+function makeListener(opts: {
+  revoked: boolean
+  userId: string
+  connected?: boolean
+  stalled?: boolean
+  pollBackoff?: boolean
+  stopThrows?: boolean
+}) {
   const state = {
     stopped: 0,
     reconnectKicked: [] as string[],
+    stalled: () => opts.stalled ?? false,
+    pollBackoff: () => opts.pollBackoff ?? false,
+    stopThrows: () => opts.stopThrows ?? false,
   }
   const listener = {
     isSessionRevoked: () => opts.revoked,
-    isTelegramConnected: () => false,
-    isListenerHealthy: () => false,
+    isTelegramConnected: () => opts.connected ?? false,
+    isListenerHealthy: () => !state.stalled(),
+    isPollLoopStalled: () => state.stalled(),
+    isPollBackoffActive: () => state.pollBackoff(),
     requestReconnectIfDisconnected: (reason: string) => { state.reconnectKicked.push(reason) },
-    stop: async () => { state.stopped += 1 },
+    stop: async () => {
+      state.stopped += 1
+      if (state.stopThrows()) throw new Error('stop failed')
+    },
     getHealthOwnershipEpoch: () => 'epoch-1',
     getHealthLeaseAcquiredAt: () => '2026-09-30T00:00:00.000Z',
   }
@@ -180,5 +198,257 @@ describe('sessionManager revoked-session health writes', () => {
     } finally {
       delete process.env.TSCOPIER_ADMIN_USER_IDS
     }
+  })
+})
+
+/**
+ * Outage 2026-11-18 (user d5027e0c): a listener reported `connected` and held
+ * its lease while polling nothing at all, so no signal was ever recorded and
+ * nothing repaired it — the only self-heal covered the *disconnected* case.
+ * These tests pin the second heal: silent-but-connected must be reset.
+ */
+describe('sessionManager stalled-listener heal', () => {
+  const renew = { staleMs: 180_000, perUserTimeoutMs: 1_000 }
+
+  async function withAdminUser(userId: string, fn: () => Promise<void>) {
+    process.env.TSCOPIER_ADMIN_USER_IDS = userId
+    try {
+      await fn()
+    } finally {
+      delete process.env.TSCOPIER_ADMIN_USER_IDS
+    }
+  }
+
+  it('hard-resets a connected listener whose poll loop stopped, after the tick threshold', async () => {
+    const userId = 'user-stalled-heal'
+    await withAdminUser(userId, async () => {
+      const supabase = makeSupabase()
+      const internal = new UserSessionManager(supabase as unknown as SupabaseClient) as unknown as Internal
+      const { listener, state } = makeListener({ revoked: false, userId, connected: true, stalled: true })
+      internal.listeners.set(userId, listener)
+
+      await internal.renewOneListenerLease(userId, listener, renew)
+      assert.equal(state.stopped, 0, 'one stalled tick must not tear the listener down')
+      assert.equal(internal.stalledRenewTicks.get(userId), 1)
+
+      await internal.renewOneListenerLease(userId, listener, renew)
+      assert.equal(state.stopped, 1, 'the second stalled tick must reset the listener')
+      assert.equal(internal.listeners.has(userId), false, 'the reset must drop the Map entry so syncSessions restarts it')
+    })
+  })
+
+  it('never resets a listener that is paused by a flood wait', async () => {
+    const userId = 'user-stalled-backoff'
+    await withAdminUser(userId, async () => {
+      const supabase = makeSupabase()
+      const internal = new UserSessionManager(supabase as unknown as SupabaseClient) as unknown as Internal
+      const { listener, state } = makeListener({
+        revoked: false, userId, connected: true, stalled: true, pollBackoff: true,
+      })
+      internal.listeners.set(userId, listener)
+
+      for (let i = 0; i < 5; i++) {
+        await internal.renewOneListenerLease(userId, listener, renew)
+      }
+
+      assert.equal(state.stopped, 0, 'a deliberate Telegram pause must never be reset')
+      assert.equal(internal.stalledRenewTicks.has(userId), false, 'the stall counter must stay clear while paused')
+    })
+  })
+
+  it('clears the stall counter as soon as a poll cycle completes again', async () => {
+    const userId = 'user-stalled-recovers'
+    await withAdminUser(userId, async () => {
+      const supabase = makeSupabase()
+      const internal = new UserSessionManager(supabase as unknown as SupabaseClient) as unknown as Internal
+      const { listener, state } = makeListener({ revoked: false, userId, connected: true, stalled: true })
+      internal.listeners.set(userId, listener)
+
+      await internal.renewOneListenerLease(userId, listener, renew)
+      assert.equal(internal.stalledRenewTicks.get(userId), 1)
+
+      state.stalled = () => false
+      await internal.renewOneListenerLease(userId, listener, renew)
+
+      assert.equal(state.stopped, 0)
+      assert.equal(internal.stalledRenewTicks.has(userId), false, 'a recovered tick must wipe the counter')
+    })
+  })
+
+  it('spends at most two resets per listener per hour', async () => {
+    const userId = 'user-stalled-budget'
+    await withAdminUser(userId, async () => {
+      const supabase = makeSupabase()
+      const internal = new UserSessionManager(supabase as unknown as SupabaseClient) as unknown as Internal
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { listener, state } = makeListener({ revoked: false, userId, connected: true, stalled: true })
+        internal.listeners.set(userId, listener)
+        internal.stalledHealsThisCycle = 0
+        await internal.renewOneListenerLease(userId, listener, renew)
+        await internal.renewOneListenerLease(userId, listener, renew)
+        assert.equal(state.stopped, attempt < 2 ? 1 : 0, `reset attempt ${attempt + 1} must respect the hourly budget`)
+      }
+    })
+  })
+
+  it('does not charge the budget when the reset itself fails, so the next tick retries', async () => {
+    const userId = 'user-stalled-stop-fails'
+    await withAdminUser(userId, async () => {
+      const supabase = makeSupabase()
+      const internal = new UserSessionManager(supabase as unknown as SupabaseClient) as unknown as Internal
+      const failing = makeListener({ revoked: false, userId, connected: true, stalled: true, stopThrows: true })
+      internal.listeners.set(userId, failing.listener)
+      internal.stalledHealsThisCycle = 0
+
+      await internal.renewOneListenerLease(userId, failing.listener, renew)
+      await internal.renewOneListenerLease(userId, failing.listener, renew)
+
+      assert.equal(failing.state.stopped, 1, 'the reset must be attempted')
+      assert.equal(internal.stalledHealBudget.has(userId), false, 'a failed reset must not consume the budget')
+
+      const healthyStop = makeListener({ revoked: false, userId, connected: true, stalled: true })
+      internal.listeners.set(userId, healthyStop.listener)
+      internal.stalledHealsThisCycle = 0
+      await internal.renewOneListenerLease(userId, healthyStop.listener, renew)
+      await internal.renewOneListenerLease(userId, healthyStop.listener, renew)
+
+      assert.equal(healthyStop.state.stopped, 1, 'the retry after a failed stop must still be allowed')
+      assert.equal(internal.stalledHealBudget.get(userId)?.count, 1, 'the successful reset is what gets charged')
+    })
+  })
+
+  it('releases the budget once the one-hour window has passed', async () => {
+    const userId = 'user-stalled-window'
+    await withAdminUser(userId, async () => {
+      const supabase = makeSupabase()
+      const internal = new UserSessionManager(supabase as unknown as SupabaseClient) as unknown as Internal
+      internal.stalledHealBudget.set(userId, { count: 99, windowStartMs: Date.now() - 61 * 60_000 })
+
+      const { listener, state } = makeListener({ revoked: false, userId, connected: true, stalled: true })
+      internal.listeners.set(userId, listener)
+      internal.stalledHealsThisCycle = 0
+      await internal.renewOneListenerLease(userId, listener, renew)
+      await internal.renewOneListenerLease(userId, listener, renew)
+
+      assert.equal(state.stopped, 1, 'an expired window must allow healing again')
+      assert.equal(internal.stalledHealBudget.get(userId)?.count, 1, 'the window restarts at the first new reset')
+    })
+  })
+
+  it('heals at most two listeners per renew cycle so a platform-wide stall cannot herd reconnects', async () => {
+    await withAdminUser('user-a,user-b,user-c', async () => {
+      const supabase = makeSupabase()
+      const internal = new UserSessionManager(supabase as unknown as SupabaseClient) as unknown as Internal
+      const stopped: string[] = []
+      internal.stalledHealsThisCycle = 0
+
+      for (const userId of ['user-a', 'user-b', 'user-c']) {
+        const { listener } = makeListener({ revoked: false, userId, connected: true, stalled: true })
+        const original = listener.stop.bind(listener)
+        ;(listener as unknown as { stop: () => Promise<void> }).stop = async () => {
+          await original()
+          stopped.push(userId)
+        }
+        internal.listeners.set(userId, listener)
+        await internal.renewOneListenerLease(userId, listener, renew)
+        await internal.renewOneListenerLease(userId, listener, renew)
+      }
+
+      assert.deepEqual(stopped, ['user-a', 'user-b'], 'the third listener must wait for the next cycle')
+    })
+  })
+
+  it('records a refused heal so an unhealed deaf listener is visible to ops', async () => {
+    const userId = 'user-stalled-budget-spent'
+    await withAdminUser(userId, async () => {
+      const supabase = makeSupabase()
+      const internal = new UserSessionManager(supabase as unknown as SupabaseClient) as unknown as Internal
+      internal.stalledHealBudget.set(userId, { count: 2, windowStartMs: Date.now() })
+      const { listener, state } = makeListener({ revoked: false, userId, connected: true, stalled: true })
+      internal.listeners.set(userId, listener)
+      internal.stalledHealsThisCycle = 0
+
+      await internal.renewOneListenerLease(userId, listener, renew)
+      await internal.renewOneListenerLease(userId, listener, renew)
+
+      assert.equal(state.stopped, 0, 'a spent budget must not reset the listener')
+      const eventWrite = supabase.calls.find(c => c.table === 'listener_events' && c.op === 'insert')
+      assert.ok(eventWrite, 'the refused heal must be persisted, not only logged')
+    })
+  })
+
+  it('does not charge the budget when the listener is no longer tracked', async () => {
+    const userId = 'user-stalled-untracked'
+    await withAdminUser(userId, async () => {
+      const supabase = makeSupabase()
+      const internal = new UserSessionManager(supabase as unknown as SupabaseClient) as unknown as Internal
+      const { listener } = makeListener({ revoked: false, userId, connected: true, stalled: true })
+      // Deliberately not added to internal.listeners: another path removed it
+      // between the renew cycle's snapshot and this call.
+      internal.stalledHealsThisCycle = 0
+
+      await internal.renewOneListenerLease(userId, listener, renew)
+      await internal.renewOneListenerLease(userId, listener, renew)
+
+      assert.equal(
+        internal.stalledHealBudget.has(userId),
+        false,
+        'a reset that stopped nothing must not consume the hourly budget',
+      )
+    })
+  })
+})
+
+/**
+ * The stall trigger must read poll progress, never the watchdog's timestamp:
+ * the watchdog refreshes that timestamp every 30 s, so a listener whose socket
+ * answers probes while its poll loops are wedged still looks healthy there —
+ * the exact blind spot behind the 2026-11-18 outage.
+ */
+describe('UserListener.isPollLoopStalled', () => {
+  // A view of the private fields the predicate reads. Casting through this
+  // shape (not through `UserListener`) keeps the private members out of an
+  // intersection, which TypeScript collapses to `never`.
+  type StallView = {
+    isConnected: boolean
+    lastSuccessfulPollAt: number
+    lastPollCycleCompletedAt: number
+    isPollLoopStalled(staleMs: number): boolean
+  }
+
+  function makeRawListener(): StallView {
+    const client = {} as never
+    const supabase = makeSupabase() as unknown as SupabaseClient
+    return new UserListener('stall-user', 'session', supabase, client) as unknown as StallView
+  }
+
+  it('is stalled when probes are fresh but no poll cycle has completed', () => {
+    const listener = makeRawListener()
+    listener.isConnected = true
+    listener.lastSuccessfulPollAt = Date.now()          // watchdog just probed fine
+    listener.lastPollCycleCompletedAt = Date.now() - 10 * 60_000 // polls stopped 10 minutes ago
+    assert.equal(listener.isPollLoopStalled(180_000), true)
+  })
+
+  it('is not stalled once a poll cycle completes again', () => {
+    const listener = makeRawListener()
+    listener.isConnected = true
+    listener.lastPollCycleCompletedAt = Date.now()
+    assert.equal(listener.isPollLoopStalled(180_000), false)
+  })
+
+  it('is not stalled before the first cycle has ever run', () => {
+    const listener = makeRawListener()
+    listener.isConnected = true
+    listener.lastPollCycleCompletedAt = 0
+    assert.equal(listener.isPollLoopStalled(180_000), false)
+  })
+
+  it('leaves the disconnected case to the existing disconnected heal', () => {
+    const listener = makeRawListener()
+    listener.isConnected = false
+    listener.lastPollCycleCompletedAt = Date.now() - 10 * 60_000
+    assert.equal(listener.isPollLoopStalled(180_000), false)
   })
 })
