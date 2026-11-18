@@ -79,6 +79,7 @@ export const tradingRu: TradingPagesBundleTranslations = {
     reasonCloseWorseEntries: 'Закрыта, чтобы освободить место под лучшие входы.',
     reasonCopyLimitFlatten: 'Закрыта автоматически при достижении лимита копирования.',
     reasonUserForceClose: 'Закрыта вами.',
+    reasonSignalDeleted: 'Closed because the signal message was deleted.',
     reasonPositionGone: 'Позиция уже отсутствовала у брокера, когда мы проверили.',
     reasonMirrorSourceClosed: 'Исходная сделка закрыта, поэтому эта копия закрыта вместе с ней.',
     reasonMirrorCopyClosed: 'Эта скопированная сделка была закрыта до того, как причины закрытия начали записываться.',

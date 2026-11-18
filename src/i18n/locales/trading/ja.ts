@@ -79,6 +79,7 @@ export const tradingJa: TradingPagesBundleTranslations = {
     reasonCloseWorseEntries: 'より良いエントリーのための空きを作る目的で決済されました。',
     reasonCopyLimitFlatten: 'コピーリミットに達したため自動的に決済されました。',
     reasonUserForceClose: 'あなたが決済しました。',
+    reasonSignalDeleted: 'Closed because the signal message was deleted.',
     reasonPositionGone: '確認した時点でブローカー側ではすでに保有がありませんでした。',
     reasonMirrorSourceClosed: '元の取引が決済されたため、このコピーも決済されました。',
     reasonMirrorCopyClosed: 'このコピー取引は、決済理由が記録される前に決済されました。',

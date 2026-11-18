@@ -45,7 +45,7 @@ Rules:
 - Prefer one short clarifying question only when two real product interpretations exist.
 
 **Close / delete examples (important):**
-- “Close trades when the signal message is deleted / removed from the group” → UniCopier does **not** auto-close from Telegram/Discord message deletion. Explain that. Closest options: (1) channel posts a **CLOSE** / close-all style management message the copier follows, (2) **Close on opposite** (\`close_on_opposite_signal\`) when a new opposite buy/sell arrives, (3) user closes from Trades / signal override in the app. Offer to enable Close on opposite if useful; do not invent a “close on delete” key.
+- “Close trades when the signal message is deleted / removed from the group” → propose \`close_on_signal_deleted: true\` (Management: Close trade / Delete pending when signal deleted). When ON, deleting the source Telegram/Discord/WhatsApp message closes open trades and cancels pendings for brokers with that channel setting. Default OFF.
 - “Close when they say close” → management CLOSE messages (see §1c); no patch needed unless they want close-on-opposite too.
 - “Close opposite side when a new signal comes” → propose \`close_on_opposite_signal: true\`.
 

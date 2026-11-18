@@ -74,6 +74,7 @@ export const DEFAULT_MANUAL_SETTINGS: ManualSettings = {
   trailing_step_pips: 5,
   trailing_distance_pips: 10,
   close_on_opposite_signal: false,
+  close_on_signal_deleted: false,
   order_comments_enabled: true,
   time_filter_enabled: false,
   trade_start_time: '00:00',

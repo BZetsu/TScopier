@@ -2,6 +2,26 @@
 
 ## Changelog
 
+### 2026-11-18 — Close trade when signal message deleted (Management toggle)
+
+- **Context:** Users wanted open trades closed / pendings cancelled when the Telegram (or Discord/WhatsApp) signal post is deleted.
+- **Plain English:** New Management setting **Close trade / Delete pending when signal deleted** (default OFF). When ON for that channel on a broker, deleting the original signal message closes that signal’s open trades and cancels its pending orders.
+- **Root cause (technical):** Feature was previously unsupported (Configure-with-AI said so).
+- **Fix (files):** Setting `close_on_signal_deleted`; Configure + Account Config UI; listener Raw delete + reconcile miss + Discord MessageDelete + WhatsApp revoke → trade worker `/internal/force-close-trades` with `close_reason=signal_deleted` (brokers filtered by setting); close reason `signal_deleted`.
+- **Tests/verification:** `forceCloseSignalTrades.test.ts`, `signalDeletedClose.test.ts`, `tradeCloseReasonSync.test.ts` green.
+- **Deploy state:** Local only — redeploy listener + trade (+ Discord/WhatsApp listeners) and ship frontend.
+- **Follow-ups:** Redeploy workers; verify on Migration with a test post delete.
+
+### 2026-11-18 — cTrader “no pendings” was config, not provider
+
+- **Context:** Martins Migration: Demo MT placed BuyLimits @ 3763 while Fusion cTrader market-filled ~3768 on the same FOREX KING BACKUP signal (`365f8b27`).
+- **Plain English:** Fusion’s channel settings had **Use Signal Entry Price off**, so cTrader correctly went market. Demo had it on → pending. Not a cTrader limit-order bug.
+- **Root cause (technical):** Per-broker `broker_channel_trading_configs` / embedded map: Demo `use_signal_entry_price=true` + `last_price`; Fusion `false` / prefer null. Logs: MT `signal_entry_pending_placed` BuyLimit; cTrader `order_send` Buy.
+- **Fix:** Enabled Fusion FOREX KING BACKUP to match Demo (`use_signal_entry_price=true`, `signal_entry_prefer=last_price`, tol 10) on Migration.
+- **Tests/verification:** SQL/REST inspect of trades + execution logs + configs.
+- **Deploy state:** Migration DB config only.
+- **Follow-ups:** Next dual-quote signal should BuyLimit on both when price is away; confirm in Copier/logs.
+
 ### 2026-11-18 — Entry price First/Last flipped (Worse/Best)
 
 - **Context:** Use Signal Entry Price First Price selected the other dual-quote level (and vice versa). Product intent: First = Worse, Last = Best.

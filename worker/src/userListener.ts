@@ -7,6 +7,7 @@ import { NewMessage } from 'telegram/events'
 import type { NewMessageEvent } from 'telegram/events/NewMessage'
 import { EditedMessage } from 'telegram/events/EditedMessage'
 import type { EditedMessageEvent } from 'telegram/events/EditedMessage'
+import { Raw } from 'telegram/events'
 import { Api } from 'telegram/tl'
 import {
   buildClient,
@@ -79,6 +80,7 @@ import {
   RECONCILE_POLL_HOOK_WINDOW_MS,
   RECONCILE_SWEEP_INTERVAL_MS,
   chunkTelegramMessageIds,
+  deletedTelegramMessageIds,
   findSignalsNeedingReconcile,
   groupSignalsByChannel,
   loadSignalsForReconcile,
@@ -89,6 +91,7 @@ import {
   telegramEditDateSec,
   telegramMessageText,
 } from './signalTelegramReconcile'
+import { handleSignalMessageDeleted } from './signalDeletedClose'
 import { evaluateParsedSignalExecutionEligibility, deterministicEntryNeedsAiRepair } from './signalExecutionEligibility'
 import { getUniversalParseMode } from './signalIntent/parseConfig'
 import { routeSignalParse } from './signalIntent/parseRouting'
@@ -417,6 +420,7 @@ function channelSourceDisplayName(row: ChannelRow): string {
 
 type Handler = (event: NewMessageEvent) => void
 type EditHandler = (event: EditedMessageEvent) => void
+type RawHandler = (update: Api.TypeUpdate) => void
 
 export type SignalReconcileStats = {
   checked: number
@@ -550,6 +554,8 @@ export class UserListener {
   private currentEventBuilder: NewMessage | null = null
   private currentEditHandler: EditHandler | null = null
   private currentEditEventBuilder: EditedMessage | null = null
+  private currentRawHandler: RawHandler | null = null
+  private currentRawEventBuilder: Raw | null = null
   private startedAt = 0
   /** Set when start() reuses the auth-time client (no second connect). */
   private startedWithLiveClient = false
@@ -1460,14 +1466,25 @@ export class UserListener {
         console.error(`[userListener] handleEditedMessage error for ${this.userId}:`, err)
       })
     }
+    const rawHandler: RawHandler = (update: Api.TypeUpdate) => {
+      this.handleDeletedMessagesUpdate(update).catch(err => {
+        console.error(`[userListener] handleDeletedMessagesUpdate error for ${this.userId}:`, err)
+      })
+    }
     const builder = new NewMessage({})
     const editBuilder = new EditedMessage({})
+    const rawBuilder = new Raw({
+      types: [Api.UpdateDeleteChannelMessages, Api.UpdateDeleteMessages],
+    })
     this.client.addEventHandler(handler, builder)
     this.client.addEventHandler(editHandler, editBuilder)
+    this.client.addEventHandler(rawHandler, rawBuilder)
     this.currentHandler = handler
     this.currentEventBuilder = builder
     this.currentEditHandler = editHandler
     this.currentEditEventBuilder = editBuilder
+    this.currentRawHandler = rawHandler
+    this.currentRawEventBuilder = rawBuilder
   }
 
   private removeCurrentHandler(client: TelegramClient = this.client) {
@@ -1485,10 +1502,19 @@ export class UserListener {
         // ignore
       }
     }
+    if (this.currentRawHandler && this.currentRawEventBuilder) {
+      try {
+        client.removeEventHandler(this.currentRawHandler, this.currentRawEventBuilder)
+      } catch {
+        // ignore
+      }
+    }
     this.currentHandler = null
     this.currentEventBuilder = null
     this.currentEditHandler = null
     this.currentEditEventBuilder = null
+    this.currentRawHandler = null
+    this.currentRawEventBuilder = null
   }
 
   private setsEqual(a: Set<string>, b: Set<string>) {
@@ -2044,6 +2070,37 @@ export class UserListener {
       { source: 'live', receivedAt: messageReceivedAt },
     )
     void this.bumpLastLive(channelRow.id)
+  }
+
+  private async handleDeletedMessagesUpdate(update: Api.TypeUpdate): Promise<void> {
+    if (update instanceof Api.UpdateDeleteChannelMessages) {
+      const channelId = String(update.channelId)
+      const messageIds = (update.messages ?? []).map(id => String(id)).filter(Boolean)
+      if (!messageIds.length) return
+      const channelRow = await this.resolveChannelRowForChat(toChannelIdVariants(channelId), '')
+      if (!channelRow) return
+      for (const messageId of messageIds) {
+        await handleSignalMessageDeleted(this.supabase, {
+          userId: this.userId,
+          telegramMessageId: messageId,
+          channelRowId: channelRow.id,
+          source: 'telegram_live',
+        })
+      }
+      return
+    }
+
+    if (update instanceof Api.UpdateDeleteMessages) {
+      // Non-channel deletes omit peer; look up by message id for this user only.
+      const messageIds = (update.messages ?? []).map(id => String(id)).filter(Boolean)
+      for (const messageId of messageIds) {
+        await handleSignalMessageDeleted(this.supabase, {
+          userId: this.userId,
+          telegramMessageId: messageId,
+          source: 'telegram_live',
+        })
+      }
+    }
   }
 
   private async handleEditedMessage(event: EditedMessageEvent) {
@@ -3677,6 +3734,7 @@ export class UserListener {
     }
 
     const snapshots = new Map<string, { text: string; editDateSec: number | null }>()
+    const deletedMessageIds = new Set<string>()
     const ids = signals.map(s => s.telegram_message_id)
     for (const chunk of chunkTelegramMessageIds(ids)) {
       const numericIds = chunk
@@ -3689,6 +3747,12 @@ export class UserListener {
         })) as unknown[]
         for (const [id, snap] of snapshotsFromTelegramMessages(batch ?? [])) {
           snapshots.set(id, snap)
+        }
+        for (const deletedId of deletedTelegramMessageIds(
+          chunk.map(id => String(id)),
+          batch ?? [],
+        )) {
+          deletedMessageIds.add(deletedId)
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -3706,6 +3770,20 @@ export class UserListener {
           },
         })
       }
+    }
+
+    for (const deletedId of deletedMessageIds) {
+      void handleSignalMessageDeleted(this.supabase, {
+        userId: this.userId,
+        telegramMessageId: deletedId,
+        channelRowId: channelRow.id,
+        source: 'telegram_reconcile',
+      }).catch(err => {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `[userListener] signal-deleted reconcile close failed message=${deletedId}: ${msg.slice(0, 200)}`,
+        )
+      })
     }
 
     const checkedIds: string[] = []

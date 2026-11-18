@@ -24,6 +24,8 @@ export const TRADE_CLOSE_REASON = {
   COPY_LIMIT_FLATTEN: 'copy_limit_flatten',
   /** The user force-closed it from the UI. */
   USER_FORCE_CLOSE: 'user_force_close',
+  /** Source channel message was deleted and close_on_signal_deleted is on. */
+  SIGNAL_DELETED: 'signal_deleted',
   /** The broker no longer shows the position — reason unknown, closed elsewhere. */
   POSITION_GONE: 'position_gone',
 } as const

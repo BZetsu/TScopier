@@ -547,10 +547,13 @@ export const configureModalEn: ConfigureModalTranslations = {
     reverseSignal: 'Reverse Signal',
     addToExisting: 'Add New Trade to Existing',
     closeOpposite: 'Close on Opposite Signal',
+    closeOnSignalDeleted: 'Close trade / Delete pending when signal deleted',
     reverseHint:
       'Reverse: a channel buy is copied as a sell, and a sell as a buy. Override signal SL/TP (pips from entry) are applied on the reversed side. If those are off, signal SL/TP prices are mirrored around entry.',
     closeOppositeHint:
       'Close on opposite: in manual mode, a new channel buy/sell closes any open trades on the same symbol facing the opposite way (channel direction, before reverse), cancels their virtual range pendings, then the new plan runs.',
+    closeOnSignalDeletedHint:
+      'When ON, deleting the original signal message on Telegram, Discord, or WhatsApp closes open trades from that signal and cancels its pending orders (including virtual range legs). Off by default.',
     addExistingHint:
       'Add to existing: follow-up on the same side refreshes every open leg that belongs to the same original signal (same basket), in fill order (oldest leg first), using the planner\'s multi-trade TP distribution (each leg gets the SL/TP of the matching immediate order from your TP lot percentage rows). Range virtual pendings for that basket are cancelled and re-inserted under the parent signal. Reply-thread or 4h time window still applies. Single-trade partial-TP rows are only re-created when the basket is a single leg.',
     rrFallbacksTitle: 'R:R fallbacks',

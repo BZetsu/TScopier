@@ -632,6 +632,12 @@ export function ConfigurationSettingsEditor({
             onChange={value => onPatch({ close_on_opposite_signal: value })}
           />
         </SettingRow>
+        <SettingRow label={cm.strategy.closeOnSignalDeleted}>
+          <OnOff onLabel={copy.on} offLabel={copy.off}
+            checked={settings.close_on_signal_deleted === true}
+            onChange={value => onPatch({ close_on_signal_deleted: value })}
+          />
+        </SettingRow>
         <SettingRow label={cm.management.moveSlTitle}>
           <Choice
             value={moveMode}

@@ -234,6 +234,7 @@ export function describeChannelConfiguration(
     { label: cm.strategy.reverseSignal, value: onOff(row.reverse_signal === true, copy) },
     { label: cm.strategy.addToExisting, value: onOff(row.add_new_trades_to_existing !== false, copy) },
     { label: cm.strategy.closeOpposite, value: onOff(row.close_on_opposite_signal === true, copy) },
+    { label: cm.strategy.closeOnSignalDeleted, value: onOff(row.close_on_signal_deleted === true, copy) },
     { label: cm.management.moveSlTitle, value: moveSlValue(row, cm, copy) },
     { label: cm.management.trailingTitle, value: onOff(row.trailing_enabled === true, copy) },
     { label: cm.management.orderCommentsTitle, value: onOff(row.order_comments_enabled !== false, copy) },
