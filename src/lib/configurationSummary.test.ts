@@ -65,7 +65,7 @@ describe('describeChannelConfiguration', () => {
     } as ManualSettings
 
     expect(riskValue(settings, 'Use Signal Entry Price')).toBe('ON')
-    expect(riskValue(settings, 'Entry price')).toBe('Last Price')
+    expect(riskValue(settings, 'Entry price')).toBe('Last Price (Best)')
     expect(riskValue(settings, 'Pip tolerance')).toBe('10')
   })
 })

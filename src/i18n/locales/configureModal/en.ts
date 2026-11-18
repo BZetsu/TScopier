@@ -236,9 +236,9 @@ export const configureModalEn: ConfigureModalTranslations = {
     useSignalEntryPrice: 'Use Signal Entry Price',
     signalEntryPrefer: 'Entry price',
     signalEntryPreferHint:
-      'When the signal lists two entry prices (a range), choose the first or last price as written. Pip tolerance then applies to that single price.',
-    signalEntryPreferFirst: 'First Price',
-    signalEntryPreferLast: 'Last Price',
+      'When the signal lists two entry prices, First Price uses the worse level for that side (buy: higher, sell: lower) and Last Price uses the best. Pip tolerance then applies to that single price.',
+    signalEntryPreferFirst: 'First Price (Worse)',
+    signalEntryPreferLast: 'Last Price (Best)',
     pipToleranceLegacy: 'Pip tolerance',
     pipToleranceHint:
       'Allowed distance from the signal entry level before entry is deferred (single trade strict entry and range signal range).',

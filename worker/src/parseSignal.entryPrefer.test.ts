@@ -16,8 +16,8 @@ STOP LOSS:          (3840)`
     assert.equal(parsed.entry_zone_last, 3878)
     assert.equal(parsed.entry_zone_low, 3878)
     assert.equal(parsed.entry_zone_high, 3879)
-    assert.equal(resolvePreferredSignalEntryPrice(parsed, 'first_price'), 3879)
-    assert.equal(resolvePreferredSignalEntryPrice(parsed, 'last_price'), 3878)
+    assert.equal(resolvePreferredSignalEntryPrice(parsed, 'first_price', 'buy'), 3879)
+    assert.equal(resolvePreferredSignalEntryPrice(parsed, 'last_price', 'buy'), 3878)
   })
 
   it('parses BUY NOW slash dual prices as ordered zone', () => {
@@ -26,6 +26,6 @@ STOP LOSS:          (3840)`
     assert.equal(status, 'parsed')
     assert.equal(parsed.entry_zone_first, 3879)
     assert.equal(parsed.entry_zone_last, 3878)
-    assert.equal(resolvePreferredSignalEntryPrice(parsed, 'last_price'), 3878)
+    assert.equal(resolvePreferredSignalEntryPrice(parsed, 'last_price', 'buy'), 3878)
   })
 })

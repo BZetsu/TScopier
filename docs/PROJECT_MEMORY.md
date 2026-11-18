@@ -2,14 +2,34 @@
 
 ## Changelog
 
-### 2026-11-17 — Migration backtest blocked: MTAPI clock secrets unset
+### 2026-11-18 — Entry price First/Last flipped (Worse/Best)
 
-- **Context:** After signal sync progressed, Martins Migration backtest failed with `MTAPI server timezone unit/sign/DST policy has not been explicitly verified` (Demo Exness-MT5Trial10 / MTAPI).
-- **Plain English:** History bars need an explicit timezone policy. Staging/prod already have it; the Migration Edge project never got those secrets.
-- **Root cause (technical):** [`createMtapiClockResolver`](supabase/functions/_shared/backtest/mtapiMarketData.ts) requires `MTAPI_HISTORY_TIMEZONE_VERIFIED=true`, `MTAPI_HISTORY_TIMESTAMP_MODE`, unit/sign/DST; Migration `supmsgcubipmmowrzoub` missing them (same gate as 2026-11-02).
-- **Fix (files):** Document secrets in [`docs/backtest-setup.md`](docs/backtest-setup.md). Ops: set on Migration the measured fleet policy (`TIMESTAMP_MODE=server`, `UNIT_MT4=minutes`, `UNIT_MT5=hours`, `SIGN=server_minus_utc`, `DST=observed`).
-- **Deploy state:** Secrets apply immediately to Edge; no function redeploy required for env-only change.
-- **Follow-ups:** Confirm secrets on Migration dashboard/CLI; retry Run backtest.
+- **Context:** Use Signal Entry Price First Price selected the other dual-quote level (and vice versa). Product intent: First = Worse, Last = Best.
+- **Plain English:** With two entry quotes, First Price now takes the worse level for that side (buy higher / sell lower); Last Price takes the best.
+- **Root cause (technical):** When `entry_zone_first/last` were missing, [`resolvePreferredSignalEntryPrice`](worker/src/manualPlanning/parsedEntry.ts) mapped first→zone **min** and last→**max**, which inverted common BUY quotes written high-then-low (`(3879) 3878`).
+- **Fix (files):** Side-aware worse/best selection; labels/hints in configureModal en/es/fr; Configure-with-AI §4b; planner passes signal side.
+- **Tests/verification:** `parsedEntry.test.ts` + `parseSignal.entryPrefer.test.ts` green.
+- **Deploy state:** Worker + frontend local; redeploy trade worker for live effect.
+- **Follow-ups:** Redeploy trade worker (+ frontend for label copy).
+
+### 2026-11-17 — Migration Pull signals: Unauthorized = backtest token mismatch
+
+- **Context:** UI showed `No tradeable signals in range (0 messages scanned). Unauthorized` after clock fix. A BTC **Run** at 20:51Z still completed using earlier imports.
+- **Plain English:** Pull talks to Railway **Backtest**; its `WORKER_INTERNAL_TOKEN` does not match Listener/Trade (or Edge). Clearer Unauthorized copy shipped in Edge; Backtest Railway still needs the same token as Listener/Trade/Edge.
+- **Root cause (technical):** `workerSync` → `backtest-migration` `/auth/backtest_sync_signals` 401; local/trade token accepted by trade+listener, rejected by backtest.
+- **Fix:** Clearer Unauthorized copy in [`workerSync.ts`](supabase/functions/_shared/backtest/workerSync.ts). **Ops:** set identical `WORKER_INTERNAL_TOKEN` on Railway **backtest-migration** (match Listener) and redeploy that service.
+- **Deploy state:** Migration `backtest-run` **v165** (2026-11-17 21:16Z). Railway Backtest token still operator action.
+- **Follow-ups:** User pastes Listener’s `WORKER_INTERNAL_TOKEN` onto Backtest → redeploy → Pull again.
+
+### 2026-11-17 — Migration backtest: stale edge + missing clock secrets (vs staging/prod)
+
+- **Context:** Local app → Migration Supabase; signal sync worked (BACKUP 21 imported) but Run failed with MTAPI unit/sign/DST unverified. User thought staging/prod had no clock vars.
+- **Plain English:** Those vars are **Supabase Edge secrets** (not Railway / `worker/.env`). Staging + prod already had them; Migration did not, and Migration’s `backtest-run` was still the **2026-10-20** build while staging/prod had the **Nov 2–4** clock-aware build.
+- **Root cause (technical):** (1) Clock policy secrets absent on `supmsgcubipmmowrzoub` until set. (2) `backtest-run` v161 @ 2026-10-20 vs staging v33 @ 2026-11-02 / prod v151 @ 2026-11-04. (3) `WORKER_URL` digest matched **trade**-migration (footgun; sync OK only because `BACKTEST_WORKER_URL` pointed at backtest).
+- **Fix:** Set same measured clock secrets as staging/prod; deployed `backtest-run` → Migration **v162** (2026-11-17 20:46Z); set `WORKER_URL=https://listener-migration.up.railway.app` (kept `BACKTEST_WORKER_URL=https://backtest-migration.up.railway.app`).
+- **Tests/verification:** Secrets digests now match staging/prod for all `MTAPI_HISTORY_*` / `MTAPI_SERVER_TIMEZONE_*`; function list shows v162.
+- **Deploy state:** Migration Edge updated. Retry Run backtest on FOREX KING BACKUP + XAUUSD/BTCUSD.
+- **Follow-ups:** User re-run; if still failing, check Exness Demo session / symbol map next.
 
 ### 2026-11-17 — Backtest “0 messages” on wrong FOREX KING + fetch filter
 

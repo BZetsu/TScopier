@@ -233,9 +233,9 @@ export const configureModalEs: ConfigureModalTranslations = {
     useSignalEntryPrice: 'Usar precio de entrada de la señal',
     signalEntryPrefer: 'Precio de entrada',
     signalEntryPreferHint:
-      'Cuando la señal lista dos precios de entrada (un rango), elige el primero o el último tal como está escrito. La tolerancia en pips se aplica a ese único precio.',
-    signalEntryPreferFirst: 'Primer precio',
-    signalEntryPreferLast: 'Último precio',
+      'Cuando la señal lista dos precios de entrada, Primer precio usa el peor nivel del lado (compra: más alto, venta: más bajo) y Último precio el mejor. La tolerancia en pips se aplica a ese único precio.',
+    signalEntryPreferFirst: 'Primer precio (peor)',
+    signalEntryPreferLast: 'Último precio (mejor)',
     pipToleranceLegacy: 'Tolerancia en pips (heredada)',
     pipToleranceHint:
       'Sin uso en el enrutamiento de entrada estricta; se conserva por compatibilidad con ajustes guardados.',

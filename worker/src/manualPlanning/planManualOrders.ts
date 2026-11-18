@@ -86,9 +86,10 @@ export function planManualOrders(args: {
         ?? channelKeywords?.additional?.prefer_entry
         ?? 'first_price',
     )
-  // Dual entry quotes: prefer ordered first/last (or zone lo/hi) over a scalar
-  // entry_price so Use Signal Entry Price honors First/Last Price.
-  let entry: number | null = resolvePreferredSignalEntryPrice(parsed, preferEntry)
+  // Dual entry quotes: First Price = worse for the signal side, Last = best
+  // (not raw text order / not min-as-first).
+  const signalSide = String(parsed.action ?? '').toLowerCase() === 'sell' ? 'sell' : 'buy'
+  let entry: number | null = resolvePreferredSignalEntryPrice(parsed, preferEntry, signalSide)
   const entryOk = entry != null && Number.isFinite(entry) && entry > 0
   const entryAnchorFromSignal = entryOk ? entry : null
 

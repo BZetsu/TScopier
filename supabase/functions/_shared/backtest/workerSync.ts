@@ -55,13 +55,17 @@ export async function syncBacktestSignalsViaWorker(
       if (!res.ok) {
         const raw = (data.error ?? `Telegram sync failed (${res.status})`).trim()
         // Trade / listener-only workers return plain "Not found" for unknown routes.
-        const errors = [
-          raw === "Not found" || (res.status === 404 && /not found/i.test(raw))
-            ? "Backtest sync URL points at a worker without /auth/backtest_sync_signals "
-              + "(trade or wrong role). Set Edge secret BACKTEST_WORKER_URL to a "
-              + "WORKER_ROLE=backtest (or all) Railway service — see docs/backtest-setup.md."
-            : raw,
-        ]
+        let message = raw
+        if (raw === "Not found" || (res.status === 404 && /not found/i.test(raw))) {
+          message = "Backtest sync URL points at a worker without /auth/backtest_sync_signals "
+            + "(trade or wrong role). Set Edge secret BACKTEST_WORKER_URL to a "
+            + "WORKER_ROLE=backtest (or all) Railway service — see docs/backtest-setup.md."
+        } else if (res.status === 401 || /unauthorized/i.test(raw)) {
+          message = "Unauthorized talking to the backtest worker — "
+            + "WORKER_INTERNAL_TOKEN on Supabase Edge must exactly match the "
+            + "Railway Backtest service (same value as Listener/Trade on Migration)."
+        }
+        const errors = [message]
         return {
           messages_scanned: 0,
           candidates: 0,
