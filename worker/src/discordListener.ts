@@ -27,6 +27,7 @@ import {
   pushParsedSignalToTradeWorkerAccept,
   warnDiscordTradePushConfig,
 } from './tradeSignalPush'
+import { handleDiscordMessageDeleted } from './signalDeletedClose'
 
 // Node.js 20 has no native WebSocket; supabase-js realtime refuses to construct
 // without one. Same polyfill as index.ts / whatsappListener (noop on Node 22+).
@@ -327,6 +328,18 @@ export async function startDiscordListener(): Promise<DiscordListenerHandle> {
   })
   client.on(Events.MessageCreate, message => {
     void copyMessage(supabase, message)
+  })
+  client.on(Events.MessageDelete, message => {
+    const channelId = 'channelId' in message ? String(message.channelId ?? '') : ''
+    const messageId = String(message.id ?? '')
+    if (!channelId || !messageId) return
+    void handleDiscordMessageDeleted(supabase, {
+      discordMessageId: messageId,
+      discordChannelId: channelId,
+    }).catch(err => {
+      const detail = err instanceof Error ? err.message : String(err)
+      console.warn(`[discord] delete-close failed message=${messageId}: ${detail}`)
+    })
   })
 
   try {

@@ -489,8 +489,10 @@ export interface ConfigureModalTranslations {
     reverseSignal: string
     addToExisting: string
     closeOpposite: string
+    closeOnSignalDeleted: string
     reverseHint: string
     closeOppositeHint: string
+    closeOnSignalDeletedHint: string
     addExistingHint: string
     rrFallbacksTitle: string
     rrFallbacksIntro: string

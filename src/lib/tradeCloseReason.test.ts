@@ -18,6 +18,7 @@ const labels: TradeCloseReasonLabels = {
   reasonCloseWorseEntries: 'Closed to make room for better entries.',
   reasonCopyLimitFlatten: 'Closed automatically when the copy limit was reached.',
   reasonUserForceClose: 'Closed by you.',
+  reasonSignalDeleted: 'Closed because the signal message was deleted.',
   reasonPositionGone: 'The position was already gone on the broker when we checked.',
   reasonMirrorSourceClosed: 'The original trade closed, so this copy was closed with it.',
   reasonMirrorCopyClosed: 'UniCopier closed this copied trade.',

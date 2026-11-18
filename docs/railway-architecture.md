@@ -83,9 +83,9 @@ Uses `EXECUTION_ENGINE=v2` with `FXSOCKET_API_KEY` for broker communication. Kee
 The Telegram client is temporary — it connects, downloads what it needs, and disconnects. No persistent session, no risk of `AUTH_KEY_DUPLICATED`.
 
 **Env highlights:**
-- No `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` needed (uses the same Supabase-stored credentials)
-- No `FXSOCKET_API_KEY` needed (no live broker calls)
-- `WORKER_URL` must be set in Supabase Edge secrets (Edge functions call this service)
+- **`TELEGRAM_API_ID` / `TELEGRAM_API_HASH` required** on this Railway service (same as Listener). Session strings live in Supabase; GramJS still needs the API app credentials in process env. Supabase Edge secrets do **not** inject these into Railway.
+- No `FXSOCKET_API_KEY` needed on the worker for sync (market data is fetched by the Edge `backtest-run` function)
+- Point Edge `BACKTEST_WORKER_URL` at this service (falls back to `WORKER_URL`)
 
 ---
 

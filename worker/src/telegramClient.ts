@@ -1,8 +1,29 @@
 import { TelegramClient } from 'telegram'
 import { StringSession } from 'telegram/sessions'
 
-export const API_ID = parseInt(process.env.TELEGRAM_API_ID ?? '0')
-export const API_HASH = process.env.TELEGRAM_API_HASH ?? ''
+/** Strip quotes/whitespace Railway/UI pastes sometimes leave on secret values. */
+function envTrim(raw: string | undefined): string {
+  return String(raw ?? '').trim().replace(/^['"]|['"]$/g, '')
+}
+
+function readApiId(): number {
+  const n = Number.parseInt(envTrim(process.env.TELEGRAM_API_ID), 10)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+function readApiHash(): string {
+  return envTrim(process.env.TELEGRAM_API_HASH)
+}
+
+/** Resolved at call time so health / buildClient see current process env. */
+export function telegramApiCredentialsConfigured(): boolean {
+  return readApiId() > 0 && readApiHash().length > 0
+}
+
+/** @deprecated Prefer reading via buildClient; kept for auth QR helpers. */
+export const API_ID = readApiId()
+/** @deprecated Prefer reading via buildClient; kept for auth QR helpers. */
+export const API_HASH = readApiHash()
 
 /**
  * Construct a TelegramClient with a fingerprint that matches what an official
@@ -14,17 +35,22 @@ export const API_HASH = process.env.TELEGRAM_API_HASH ?? ''
  * of the strongest ban signals.
  */
 export function buildClient(sessionString: string = ''): TelegramClient {
-  if (!API_ID || !API_HASH) {
-    throw new Error('TELEGRAM_API_ID / TELEGRAM_API_HASH must be set in env')
+  const apiId = readApiId()
+  const apiHash = readApiHash()
+  if (!apiId || !apiHash) {
+    throw new Error(
+      'TELEGRAM_API_ID / TELEGRAM_API_HASH must be set in env '
+      + '(Railway Backtest/Listener service variables — not Supabase Edge secrets)',
+    )
   }
   const fp = sessionString.length > 8
     ? `${sessionString.slice(0, 4)}...${sessionString.slice(-4)}`
     : 'empty'
-  console.log(`[telegram-conn] event=build_client session_fingerprint=${fp} api_id=${API_ID}`)
+  console.log(`[telegram-conn] event=build_client session_fingerprint=${fp} api_id=${apiId}`)
   const client = new TelegramClient(
     new StringSession(sessionString),
-    API_ID,
-    API_HASH,
+    apiId,
+    apiHash,
     {
       connectionRetries: 5,
       retryDelay: 4000,

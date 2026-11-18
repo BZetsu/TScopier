@@ -4436,6 +4436,13 @@ export function AccountConfigPage() {
                                   onChange={e => setManual({ close_on_opposite_signal: e.target.value === 'yes' })}
                                   options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
                                 />
+                                <ConfigureSelect
+                                  label={cm.strategy.closeOnSignalDeleted}
+                                  hint={cm.strategy.closeOnSignalDeletedHint}
+                                  value={ms.close_on_signal_deleted ? 'yes' : 'no'}
+                                  onChange={e => setManual({ close_on_signal_deleted: e.target.value === 'yes' })}
+                                  options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
+                                />
                               </div>
                                 </div>
 

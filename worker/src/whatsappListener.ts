@@ -9,6 +9,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { isWhatsAppGroupJid, whatsappMessageText, type WhatsAppMessageContent } from './whatsappMessage'
 import { parseRawChannelMessage } from './parseSignal'
 import { pushParsedSignalToTradeWorker } from './tradeSignalPush'
+import { handleSignalMessageDeleted } from './signalDeletedClose'
 import { userBelongsToShard } from './workerConfig'
 import { installRelayFetch } from './relayFetch'
 import {
@@ -396,7 +397,48 @@ async function openSocket(supabase: SupabaseClient, userId: string): Promise<Liv
       })
     }
   })
+  sock.ev.on('messages.update', (updates: Array<{
+    key?: { remoteJid?: string | null; id?: string | null }
+    update?: { messageStubType?: number | null; message?: unknown }
+  }>) => {
+    for (const entry of updates ?? []) {
+      const jid = entry.key?.remoteJid
+      const messageId = entry.key?.id
+      if (!isWhatsAppGroupJid(jid) || !messageId) continue
+      // Baileys: revoke / delete-for-everyone typically clears message or stubs REVOKE (2).
+      const stub = Number(entry.update?.messageStubType ?? NaN)
+      const revoked = entry.update?.message === null || stub === 2
+      if (!revoked) continue
+      void handleWhatsAppMessageDeleted(supabase, userId, jid, messageId).catch(err => {
+        const detail = err instanceof Error ? err.message : String(err)
+        console.warn(`[whatsapp] delete-close failed message=${messageId}: ${detail}`)
+      })
+    }
+  })
   return live
+}
+
+async function handleWhatsAppMessageDeleted(
+  supabase: SupabaseClient,
+  userId: string,
+  groupJid: string,
+  messageId: string,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('whatsapp_groups')
+    .select('channel_id, is_active')
+    .eq('user_id', userId)
+    .eq('group_jid', groupJid)
+    .maybeSingle()
+  if (error || !data || !(data as { is_active?: boolean }).is_active) return
+  const channelId = String((data as { channel_id?: string }).channel_id ?? '').trim()
+  if (!channelId) return
+  await handleSignalMessageDeleted(supabase, {
+    userId,
+    telegramMessageId: messageId,
+    channelRowId: channelId,
+    source: 'whatsapp',
+  })
 }
 
 async function waitForPair(live: LiveSession): Promise<void> {

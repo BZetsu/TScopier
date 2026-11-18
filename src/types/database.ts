@@ -471,6 +471,8 @@ export interface ManualSettings {
   trailing_step_pips?: number
   trailing_distance_pips?: number
   close_on_opposite_signal?: boolean
+  /** When true, deleting the source channel message closes trades / cancels pendings. */
+  close_on_signal_deleted?: boolean
   /** When false, OrderSend comments are left empty (Management tab). Default on. */
   order_comments_enabled?: boolean
   time_filter_enabled?: boolean

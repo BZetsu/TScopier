@@ -233,9 +233,9 @@ export const configureModalFr: ConfigureModalTranslations = {
     useSignalEntryPrice: 'Utiliser le prix d’entrée du signal',
     signalEntryPrefer: 'Prix d’entrée',
     signalEntryPreferHint:
-      'Lorsque le signal indique deux prix d’entrée (une zone), choisissez le premier ou le dernier prix tel qu’écrit. La tolérance en pips s’applique ensuite à ce prix unique.',
-    signalEntryPreferFirst: 'Premier prix',
-    signalEntryPreferLast: 'Dernier prix',
+      'Lorsque le signal indique deux prix d’entrée, Premier prix prend le pire niveau du côté (achat : plus haut, vente : plus bas) et Dernier prix le meilleur. La tolérance en pips s’applique à ce prix unique.',
+    signalEntryPreferFirst: 'Premier prix (pire)',
+    signalEntryPreferLast: 'Dernier prix (meilleur)',
     pipToleranceLegacy: 'Tolérance en pips (héritée)',
     pipToleranceHint:
       'Non utilisée pour le routage d’entrée stricte ; conservée pour compatibilité avec les réglages enregistrés.',
@@ -546,10 +546,13 @@ export const configureModalFr: ConfigureModalTranslations = {
     reverseSignal: 'Inverser le signal',
     addToExisting: 'Ajouter une position à l’existant',
     closeOpposite: 'Fermer sur signal opposé',
+    closeOnSignalDeleted: 'Fermer le trade / Supprimer le pending si le signal est effacé',
     reverseHint:
       'Inverser : un achat du canal est copié en vente, et une vente en achat. Les SL/TP prédéfinis (pips depuis l’entrée) s’appliquent au sens inversé. Sinon, les SL/TP du signal sont miroir autour de l’entrée.',
     closeOppositeHint:
       'Fermer sur opposé : en mode manuel, un nouvel achat/vente du canal ferme les positions ouvertes sur le même symbole en sens inverse (direction du canal, avant inversion), annule leurs ordres en attente virtuels de range, puis exécute le nouveau plan.',
+    closeOnSignalDeletedHint:
+      'Si activé, supprimer le message signal d’origine sur Telegram, Discord ou WhatsApp ferme les positions ouvertes de ce signal et annule ses ordres en attente (y compris les jambes virtuelles de range). Désactivé par défaut.',
     addExistingHint:
       'Ajouter à l’existant : un suivi du même côté actualise chaque jambe ouverte de la même signal d’origine (même panier), par ordre d’exécution (la plus ancienne d’abord), via la répartition multi-positions des TP du planificateur (chaque jambe reçoit le SL/TP de l’ordre immédiat correspondant selon vos lignes de % de TP). Les ordres en attente virtuels de range de ce panier sont annulés et réinsérés sous le signal parent. Le fil de réponse ou la fenêtre de 4 h s’appliquent toujours. Les lignes de TP partiel en position unique ne sont recréées que lorsque le panier n’a qu’une jambe.',
     rrFallbacksTitle: 'Repli R:R',

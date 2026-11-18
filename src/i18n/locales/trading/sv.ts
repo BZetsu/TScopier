@@ -79,6 +79,7 @@ export const tradingSv: TradingPagesBundleTranslations = {
     reasonCloseWorseEntries: 'Stängdes för att göra plats för bättre entréer.',
     reasonCopyLimitFlatten: 'Stängdes automatiskt när kopieringsgränsen nåddes.',
     reasonUserForceClose: 'Stängdes av dig.',
+    reasonSignalDeleted: 'Closed because the signal message was deleted.',
     reasonPositionGone: 'Positionen var redan borta hos mäklaren när vi kontrollerade.',
     reasonMirrorSourceClosed: 'Originaltransaktionen stängdes, så den här kopian stängdes med den.',
     reasonMirrorCopyClosed: 'Den här kopierade transaktionen stängdes innan stängningsorsaker började sparas.',

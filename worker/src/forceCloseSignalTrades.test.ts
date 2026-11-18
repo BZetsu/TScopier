@@ -157,6 +157,7 @@ describe('forceCloseSignalById', () => {
           }
           if (table === 'trades') return chainQuery([])
           if (table === 'range_pending_legs') return chainQuery([])
+          if (table === 'signal_entry_pending_orders') return chainQuery([])
           throw new Error(`unexpected table ${table}`)
         },
       }
@@ -235,6 +236,7 @@ describe('forceCloseSignalById', () => {
             return chainQuery(data, error)
           }
           if (table === 'range_pending_legs') return chainQuery([])
+          if (table === 'signal_entry_pending_orders') return chainQuery([])
           throw new Error(`unexpected table ${table}`)
         },
       }
@@ -359,6 +361,18 @@ describe('forceCloseSignalById ownership + session guards', () => {
             }
             return chain
           }
+          if (table === 'signal_entry_pending_orders') {
+            const result = Promise.resolve({ data: [], error: null, count: 0 })
+            const chain = {
+              select: () => chain,
+              eq: () => chain,
+              in: () => chain,
+              update: () => chain,
+              then: result.then.bind(result),
+              catch: result.catch.bind(result),
+            }
+            return chain
+          }
           if (table === 'trade_execution_logs') {
             return { insert: () => Promise.resolve({ data: null, error: null }) }
           }
@@ -471,6 +485,18 @@ describe('forceCloseSignalById ownership + session guards', () => {
               select: () => chain,
               eq: (col: string, val: unknown) => { eqCalls.push([`brokers.${col}`, String(val)]); return chain },
               in: () => chain,
+              then: result.then.bind(result),
+              catch: result.catch.bind(result),
+            }
+            return chain
+          }
+          if (table === 'signal_entry_pending_orders') {
+            const result = Promise.resolve({ data: [], error: null, count: 0 })
+            const chain = {
+              select: () => chain,
+              eq: () => chain,
+              in: () => chain,
+              update: () => chain,
               then: result.then.bind(result),
               catch: result.catch.bind(result),
             }
