@@ -3,7 +3,10 @@ import { test } from 'node:test'
 import { invalidateCopierPauseCache, setUserCopierPausedCached } from './copierPause'
 import {
   extensionAccessActive,
+  loadCachedSubscriptionExtensionEnd,
+  queuesUntilSubscriptionEnd,
   subscriptionBlocksSignalExecution,
+  subscriptionEndMs,
   userMayRunCopierListener,
   type UserSubscriptionRow,
 } from './subscriptionAccess'
@@ -225,4 +228,79 @@ test('extensionAccessActive treats the end moment as expired', () => {
   assert.equal(extensionAccessActive(future), true)
   assert.equal(extensionAccessActive(past), false)
   assert.equal(extensionAccessActive(Date.now(), Date.now()), false)
+})
+
+const DAY_MS = 86_400_000
+
+test('subscriptionEndMs reads the period end even after cancellation', () => {
+  const now = Date.now()
+  const ended = new Date(now - DAY_MS).toISOString()
+  // Stripe flips to canceled and keeps current_period_end. Discarding it there made a
+  // grant expire unused on the ordinary cancellation path.
+  assert.equal(
+    subscriptionEndMs({ plan: 'basic', status: 'canceled', extra_accounts: 0, trial_ends_at: null, current_period_end: ended }),
+    Date.parse(ended),
+  )
+  assert.equal(
+    subscriptionEndMs({ plan: 'basic', status: 'active', extra_accounts: 0, trial_ends_at: null, current_period_end: ended }),
+    Date.parse(ended),
+  )
+  assert.equal(
+    subscriptionEndMs({ plan: 'basic', status: 'incomplete', extra_accounts: 0, trial_ends_at: null }),
+    null,
+  )
+})
+
+test('queuesUntilSubscriptionEnd only queues behind a running period', () => {
+  const now = Date.now()
+  const later = now + 10 * DAY_MS
+  assert.equal(
+    queuesUntilSubscriptionEnd({ plan: 'basic', status: 'active', extra_accounts: 0, trial_ends_at: null }, later, now),
+    true,
+  )
+  assert.equal(
+    queuesUntilSubscriptionEnd({ plan: 'basic', status: 'canceled', extra_accounts: 0, trial_ends_at: null }, later, now),
+    false,
+  )
+  assert.equal(
+    queuesUntilSubscriptionEnd({ plan: 'basic', status: 'active', extra_accounts: 0, trial_ends_at: null }, now - DAY_MS, now),
+    false,
+  )
+})
+
+test('a grant anchored at the period end still pays out after cancellation', async () => {
+  const now = Date.now()
+  const grantedAt = new Date(now - 7 * DAY_MS).toISOString()
+  const periodEnd = new Date(now - DAY_MS).toISOString()
+  const supabase = {
+    from(table: string) {
+      if (table !== 'subscription_extensions') throw new Error(`unexpected table ${table}`)
+      return {
+        select() {
+          return {
+            eq() {
+              return {
+                order() {
+                  return {
+                    limit: async () => ({ data: [{ days: 7, granted_at: grantedAt }], error: null }),
+                  }
+                },
+              }
+            },
+          }
+        },
+      }
+    },
+  }
+  const sub: UserSubscriptionRow = {
+    plan: 'basic',
+    status: 'canceled',
+    extra_accounts: 0,
+    trial_ends_at: null,
+    current_period_end: periodEnd,
+  }
+  const end = await loadCachedSubscriptionExtensionEnd(supabase as never, 'user-grant-after-cancel', sub)
+  // Anchored at the period end, not the grant date: -1 day + 7 days = +6 days.
+  assert.equal(end, Date.parse(periodEnd) + 7 * DAY_MS)
+  assert.equal(extensionAccessActive(end), true)
 })

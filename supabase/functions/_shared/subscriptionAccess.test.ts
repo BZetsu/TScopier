@@ -45,3 +45,22 @@ Deno.test("hasLiveSubscriptionExtension: any open grant counts, expired ones do 
   const none = await hasLiveSubscriptionExtension(makeClient([]), "user-1");
   assertEquals(none, false);
 });
+
+Deno.test("extensionWindowActive: a grant awaits the end of a running paid period", () => {
+  const now = Date.parse("2026-11-15T00:00:00.000Z");
+  const grantedAt = "2026-11-10T00:00:00.000Z";
+  const running = { status: "active", current_period_end: "2026-12-10T00:00:00.000Z" };
+  // Queued behind the paid period: not active today.
+  assertEquals(extensionWindowActive(7, grantedAt, now, running), false);
+  // Active inside the window that starts at the period end.
+  const during = Date.parse("2026-12-12T00:00:00.000Z");
+  assertEquals(extensionWindowActive(7, grantedAt, during, running), true);
+});
+
+Deno.test("extensionWindowActive: a canceled row keeps its period end as the anchor", () => {
+  const now = Date.parse("2026-11-15T00:00:00.000Z");
+  // Granted 7 days before the period ended yesterday; 7-day grant runs 6 more days.
+  const canceled = { status: "canceled", current_period_end: "2026-11-14T00:00:00.000Z" };
+  assertEquals(extensionWindowActive(7, "2026-11-07T00:00:00.000Z", now, canceled), true);
+  assertEquals(extensionWindowActive(7, "2026-11-07T00:00:00.000Z", now, null), false);
+});

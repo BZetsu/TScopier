@@ -202,7 +202,10 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     ])
 
     setSubscription(data as Subscription | null)
-    setExtensionEndMs(latestExtensionEndMs(extensionResult.data as SubscriptionExtensionGrant[]))
+    setExtensionEndMs(latestExtensionEndMs(
+      extensionResult.data as SubscriptionExtensionGrant[],
+      data as { status?: string | null; trial_ends_at?: string | null; current_period_end?: string | null } | null,
+    ))
     setUsage({
       brokerAccounts: usageResults[0].count ?? 0,
       telegramChannels: usageResults[1].count ?? 0,
@@ -256,11 +259,19 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
 
   // A live admin extension counts as an active subscription for every check below,
   // and it entitles the account to Advanced while it is the reason access is alive.
+  // Order matters and must match the server: a running paid subscription (or a live
+  // trial) keeps its own plan, and only a grant fills the gap when there is no plan.
+  // Otherwise a paying Basic customer holding a queued grant would be shown Advanced.
   const extensionActive = isExtensionActive(extensionEndMs)
-  const accessStatus = extensionActive ? 'active' : (subscription?.status ?? null)
-  const entitlementPlan: SubscriptionPlan | null = extensionActive
-    ? 'advanced'
-    : (subscription?.plan ?? null)
+  const paidPlan: SubscriptionPlan | null = effectivePlan(
+    subscription?.plan,
+    subscription?.status ?? null,
+    subscription?.trial_ends_at,
+  )
+  const accessStatus = paidPlan
+    ? (subscription?.status ?? null)
+    : (extensionActive ? 'active' : (subscription?.status ?? null))
+  const entitlementPlan: SubscriptionPlan | null = paidPlan ?? (extensionActive ? 'advanced' : null)
   const hasActiveSubscription =
     isAdmin || isSubscriptionActive(accessStatus, subscription?.trial_ends_at)
 

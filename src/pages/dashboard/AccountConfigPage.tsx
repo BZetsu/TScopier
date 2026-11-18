@@ -869,7 +869,7 @@ async function resolveLatestManualSettingsPlanContext(args: {
 
   const { data, error } = await supabase
     .from('subscriptions')
-    .select('plan,status')
+    .select('plan,status,trial_ends_at,current_period_end')
     .eq('user_id', args.userId)
     .maybeSingle()
 
@@ -881,8 +881,17 @@ async function resolveLatestManualSettingsPlanContext(args: {
     }
   }
 
-  const subscription = data as { plan?: SubscriptionPlan; status?: string | null } | null
-  const effective = resolveEffectivePlan(subscription?.plan, subscription?.status ?? null)
+  const subscription = data as {
+    plan?: SubscriptionPlan
+    status?: string | null
+    trial_ends_at?: string | null
+    current_period_end?: string | null
+  } | null
+  const effective = resolveEffectivePlan(
+    subscription?.plan,
+    subscription?.status ?? null,
+    subscription?.trial_ends_at ?? null,
+  )
 
   // A live admin extension is an Advanced entitlement, exactly as the context,
   // the edge functions and the trade worker treat it.
@@ -891,7 +900,10 @@ async function resolveLatestManualSettingsPlanContext(args: {
       .from('subscription_extensions')
       .select('days, granted_at')
       .eq('user_id', args.userId)
-    if (isExtensionActive(latestExtensionEndMs(extRows as SubscriptionExtensionGrant[]))) {
+    if (isExtensionActive(latestExtensionEndMs(
+      extRows as SubscriptionExtensionGrant[],
+      subscription,
+    ))) {
       return { plan: 'advanced', status: 'active', effectivePlan: 'advanced' }
     }
   }
