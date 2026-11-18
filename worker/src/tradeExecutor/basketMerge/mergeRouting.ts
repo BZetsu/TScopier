@@ -5,7 +5,6 @@ import { isChannelSlTpUpdateBlocked, normalizeChannelMessageFiltersMap } from '.
 import {
   parsedHasExplicitEntryAnchor,
   signalEntryPriceStrictEnabled,
-  signalEntryRangeStrictEnabled,
   type ChannelKeywords,
   type ManualSettings
 } from '../../manualPlanner'
@@ -217,7 +216,11 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
           symbol,
         } as unknown as Record<string, unknown>,
       })
-      return { handled: true, success: false }
+      return {
+        handled: true,
+        success: false,
+        failureReason: 'basket_modify_skipped_by_channel_filter',
+      }
     }
 
     const a = String(parsed.action ?? '').toLowerCase()
@@ -619,7 +622,6 @@ export async function tryTeaserCompletionMerge(ctx: TradeExecutorContext, args: 
       strictEntryPrefetch, commentPrefix,
     } = args
     const liveEntryFast = args.liveEntryFast === true
-    const manual = (broker.manual_settings ?? {}) as ManualSettings
     if (!parsedSignalHasExplicitStops(parsed)) return { handled: false }
     if (!messageHasMarketNowIntent(String(parsed.raw_instruction ?? ''))) return { handled: false }
     if (shouldRouteAsBasketParameterRefresh(parsed)) return { handled: false }
@@ -630,14 +632,11 @@ export async function tryTeaserCompletionMerge(ctx: TradeExecutorContext, args: 
     if (a !== 'buy' && a !== 'sell') return { handled: false }
     const direction = a === 'buy' ? 'buy' : 'sell'
 
-    if (isChannelSlTpUpdateBlocked(
-      normalizeChannelMessageFiltersMap(broker.channel_message_filters),
-      signal.channel_id,
-      parsed,
-    )) {
-      return { handled: true, success: false }
-    }
-
+    // The channel's "ignore SL/TP changes" filters decide whether an EXISTING basket may be
+    // modified. They must never decide whether a NEW entry may open, and they used to, because
+    // this check ran before the anchor lookup: a fresh entry carrying stops was consumed as a
+    // modification and dropped with no order and no reason (incident 2026-11-18, Basic plan).
+    // So the lookup comes first: no anchor means no basket to modify, and the entry continues.
     const anchor = await resolveOpenBasketAnchorForParameterFollowUp(
       ctx.supabase,
       {
@@ -703,6 +702,40 @@ export async function tryTeaserCompletionMerge(ctx: TradeExecutorContext, args: 
       familyTrades: anchorFamily,
     })
     if (ghostCheck.isGhostBasket) return { handled: false }
+
+    // The channel's "ignore SL/TP changes" filters decide whether an EXISTING basket may be
+    // modified. They must never decide whether a NEW entry may open (incident 2026-11-18: a
+    // Basic-plan account lost every entry because this ran before anything proved a leg existed).
+    // This is the first point where open legs are certain — the anchor alone can come from the
+    // recent-signals fallback and proves nothing.
+    if (isChannelSlTpUpdateBlocked(
+      normalizeChannelMessageFiltersMap(broker.channel_message_filters),
+      signal.channel_id,
+      parsed,
+    )) {
+      // The channel asked us to ignore SL/TP edits, so the teaser completion is skipped — recorded,
+      // never silent. The reason is its own code: `channel_filter_ignored` is a keyword-filter code
+      // the customer log hides, which would recreate the original "no explanation" complaint.
+      void writeExecutionLog(ctx.supabase, {
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        broker_account_id: broker.id,
+        action: 'merge_routed_modify_only',
+        status: 'skipped',
+        request_payload: {
+          skip_reason: 'channel_filter_ignored',
+          channel_id: signal.channel_id,
+          symbol,
+          anchor_signal_id: anchor.anchorSignalId,
+          open_legs: anchorFamily.length,
+        } as unknown as Record<string, unknown>,
+      })
+      return {
+        handled: true,
+        success: false,
+        failureReason: 'basket_modify_skipped_by_channel_filter',
+      }
+    }
 
     console.log(
       `[tradeExecutor] teaser_completion_merge signal=${signal.id} anchor=${anchor.anchorSignalId}`
