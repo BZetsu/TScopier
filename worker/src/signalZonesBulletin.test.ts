@@ -131,6 +131,87 @@ test('eligibility: ZONES without predefined when manuals known is rejected', () 
   assert.equal(el.skipReason, ENTRY_MISSING_PREDEFINED_STOPS_REASON)
 })
 
+test('eligibility: ZONES with its own SL and TPs passes without overrides', () => {
+  const raw = 'Gold Sell Zone 3712 - 3718\n\nSL : 3723\n\nTP1 : 3707\nTP2 : 3702\nTP3 : 3697'
+  const parsed = {
+    ...parseBuySellZonesBulletin('GOLD SELL ZONES\n\n3712\n3718')!,
+    sl: 3723,
+    tp: [3707, 3702, 3697],
+  }
+  const el = evaluateParsedSignalExecutionEligibility(
+    parsed,
+    raw,
+    null,
+    [{ use_predefined_sl_pips: false, use_predefined_tp_pips: false }],
+  )
+  assert.equal(el.eligible, true)
+})
+
+test('eligibility: ZONES with TPs but no SL still needs overrides', () => {
+  const raw = 'Gold Sell Zone 3712 - 3718\n\nTP1 : 3707\nTP2 : 3702'
+  const parsed = {
+    ...parseBuySellZonesBulletin('GOLD SELL ZONES\n\n3712\n3718')!,
+    sl: null,
+    tp: [3707, 3702],
+  }
+  const el = evaluateParsedSignalExecutionEligibility(
+    parsed,
+    raw,
+    null,
+    [{ use_predefined_sl_pips: false, use_predefined_tp_pips: false }],
+  )
+  assert.equal(el.eligible, false)
+  assert.equal(el.skipReason, ENTRY_MISSING_PREDEFINED_STOPS_REASON)
+})
+
+test('eligibility: ZONES with a stop on the wrong side still needs overrides', () => {
+  const raw = 'Gold Sell Zone 3712 - 3718\n\nSL : 3705\n\nTP1 : 3707\nTP2 : 3702'
+  const parsed = {
+    ...parseBuySellZonesBulletin('GOLD SELL ZONES\n\n3712\n3718')!,
+    sl: 3705,
+    tp: [3707, 3702],
+  }
+  const el = evaluateParsedSignalExecutionEligibility(
+    parsed,
+    raw,
+    null,
+    [{ use_predefined_sl_pips: false, use_predefined_tp_pips: false }],
+  )
+  assert.equal(el.eligible, false)
+  assert.equal(el.skipReason, ENTRY_MISSING_PREDEFINED_STOPS_REASON)
+})
+
+test('eligibility: ZONES whose parsed stop disagrees with the labelled stop is rejected', () => {
+  const raw = 'Gold Sell Zone 3712 - 3718\n\nSL : 3723\n\nTP1 : 3707\nTP2 : 3702'
+  const parsed = {
+    ...parseBuySellZonesBulletin('GOLD SELL ZONES\n\n3712\n3718')!,
+    sl: 3730,
+    tp: [3707, 3702],
+  }
+  const el = evaluateParsedSignalExecutionEligibility(
+    parsed,
+    raw,
+    null,
+    [{ use_predefined_sl_pips: false, use_predefined_tp_pips: false }],
+  )
+  assert.equal(el.eligible, false)
+  assert.equal(el.skipReason, ENTRY_MISSING_PREDEFINED_STOPS_REASON)
+})
+
+test('parseChannelMessageSync: labelled zone keeps its own SL and TPs', () => {
+  const result = parseChannelMessageSync(
+    'Gold Sell Zone 3712 - 3718\n\nSL : 3723\n\nTP1 : 3707\nTP2 : 3702\nTP3 : 3697',
+    DEFAULT_CHANNEL_KEYWORDS,
+    null,
+  )
+  assert.equal(result.status, 'parsed')
+  assert.equal(result.parsed.action, 'sell')
+  assert.equal(result.parsed.sl, 3723)
+  assert.ok((result.parsed.tp?.length ?? 0) >= 3)
+  assert.equal(result.parsed.entry_zone_low, 3712)
+  assert.equal(result.parsed.entry_zone_high, 3718)
+})
+
 test('eligibility: ZONES without manuals list still allowed (listener path)', () => {
   const parsed = parseBuySellZonesBulletin('GOLD SELL ZONES\n\n3866\n3874')!
   const el = evaluateParsedSignalExecutionEligibility(

@@ -6,12 +6,14 @@ import {
   entryMissingSlTpRequiresNow,
   messageHasExplicitSlTpLabels,
   messageHasExplicitStopLabel,
+  messageHasExplicitTpLabel,
   parsedHasPositiveSl,
   parsedHasPositiveTp,
   parsedHasSlOrTp,
   type MarketNowKeywordFields,
 } from './signalEntryNowRequirement'
 import { looksLikeChannelManagementUpdate } from './signalManagementIntent'
+import { parseSlFromText } from './parseSignal'
 import { resolvePredefinedSlPips, resolvePredefinedTpPips } from './manualPlanning/manualStops'
 import type { ManualSettings } from './manualPlanning/types'
 import { looksLikeBuySellZonesBulletin } from './signalPriceInference'
@@ -105,6 +107,16 @@ export function evaluateParsedSignalExecutionEligibility(
     || (Array.isArray(parsed.entry_zone_levels) && parsed.entry_zone_levels.length > 0)
   const hasPredefinedStops = (manuals ?? []).some(m => manualHasSlAndTpOverride(m))
   const zoneWithPredefined = zonesBulletin && parsedHasEntryAnchor(parsed) && hasPredefinedStops
+  // A zone bulletin that states its own stop and at least one target is complete;
+  // it must not depend on the account's Override SL/TP settings. Both labels are
+  // required, the parsed stop must agree with the labelled price, and the parsed
+  // levels must sit on the correct side of the zone.
+  const labelledSl = zonesBulletin ? parseSlFromText(raw) : null
+  const zoneCarriesOwnStops = zonesBulletin
+    && messageHasExplicitStopLabel(raw)
+    && messageHasExplicitTpLabel(raw)
+    && (labelledSl == null || positive(parsed.sl) === labelledSl)
+    && zoneStopsOnProfitSide(parsed)
 
   const imperative = messageHasImperativeEntryPhrase(raw, channelKeywords)
   const labeledStops = messageHasExplicitSlTpLabels(raw) && parsedHasSlOrTp(parsed)
@@ -138,11 +150,12 @@ export function evaluateParsedSignalExecutionEligibility(
     }
   }
 
-  // Zone bulletins wait for price — they never need a "NOW" cue. When manuals are
-  // known, require Override SL+TP; when unknown (listener), allow through so dispatch
-  // can re-check with broker configs.
+  // Zone bulletins wait for price — they never need a "NOW" cue. When the message
+  // carries its own stop and targets it is complete; otherwise the account must
+  // supply Override SL+TP. When manuals are unknown (listener), allow through so
+  // dispatch can re-check with broker configs.
   if (zonesBulletin && parsedHasEntryAnchor(parsed) && (symbol || tradeableFromParsed(parsed))) {
-    if (manuals != null && manuals.length > 0 && !hasPredefinedStops) {
+    if (!zoneCarriesOwnStops && manuals != null && manuals.length > 0 && !hasPredefinedStops) {
       return { eligible: false, skipReason: ENTRY_MISSING_PREDEFINED_STOPS_REASON }
     }
     return { eligible: true }
@@ -196,6 +209,34 @@ export function deterministicEntryNeedsAiRepair(
 function positive(v: unknown): number | null {
   const n = Number(v)
   return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/**
+ * True when the parsed stop sits beyond the entry zone and at least one target is on
+ * the profit side, so a zone entry can be traded with the message's own levels.
+ */
+function zoneStopsOnProfitSide(parsed: {
+  action?: unknown
+  sl?: unknown
+  tp?: unknown
+  entry_price?: unknown
+  entry_zone_low?: unknown
+  entry_zone_high?: unknown
+} | null | undefined): boolean {
+  if (!parsed) return false
+  const sl = positive(parsed.sl)
+  const tps = (Array.isArray(parsed.tp) ? parsed.tp : [])
+    .map(positive)
+    .filter((n): n is number => n != null)
+  const lowRaw = positive(parsed.entry_zone_low) ?? positive(parsed.entry_price)
+  const highRaw = positive(parsed.entry_zone_high) ?? positive(parsed.entry_price)
+  if (sl == null || !tps.length || lowRaw == null || highRaw == null) return false
+  const low = Math.min(lowRaw, highRaw)
+  const high = Math.max(lowRaw, highRaw)
+  const action = String(parsed.action ?? '').toLowerCase()
+  if (action === 'sell') return sl > high && tps.some(t => t < low)
+  if (action === 'buy') return sl < low && tps.some(t => t > high)
+  return false
 }
 
 /** Parser extracted buy/sell + entry anchor + SL or TP — trust without "buy now" or label regex. */

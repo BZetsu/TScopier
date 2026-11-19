@@ -63,9 +63,12 @@ import {
 } from '../subscriptionAccess'
 import {
   evaluateParsedSignalExecutionEligibility,
+  manualHasSlAndTpOverride,
   TRADINGVIEW_MISSING_SL_TP_REASON,
   tradingViewEntryStopsSatisfied,
 } from '../signalExecutionEligibility'
+import { parsedHasPositiveSl, parsedHasPositiveTp } from '../signalEntryNowRequirement'
+import { looksLikeBuySellZonesBulletin } from '../signalPriceInference'
 import { evaluateChannelCopyLimitPauseForBroker } from '../copyLimitDispatch'
 import { isV2 } from '../engine/executionMode'
 import { upsertBasketSlTpTarget } from '../basketTargetStore'
@@ -898,6 +901,15 @@ export async function handleSignal(ctx: TradeExecutorContext,
           await ctx.logDispatchSkipped(
             row,
             zonesEligibility.skipReason ?? 'entry_not_execution_eligible',
+            {
+              zone_bulletin: looksLikeBuySellZonesBulletin(rawForZones)
+                || (Array.isArray(parsed.entry_zone_levels) && parsed.entry_zone_levels.length > 0),
+              has_stop: parsedHasPositiveSl(parsed),
+              has_targets: parsedHasPositiveTp(parsed),
+              override_stops: brokerManuals.some(m => manualHasSlAndTpOverride(m)),
+              channel_id: row.channel_id ?? null,
+              broker_ids: brokers.map(b => b.id),
+            },
           )
           return
         }

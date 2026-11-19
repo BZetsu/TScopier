@@ -82,7 +82,9 @@ export function tradeIntentToChannelParsedSignal(
       entry_zone_first: levels[0]!,
       entry_zone_last: levels[levels.length - 1]!,
       entry_zone_levels: levels,
-      // Zone bulletins never carry stops in-channel — predefined SL/TP supplies them.
+      // Bare zone level lists carry no stops — the account's predefined SL/TP supplies
+      // them. A labelled bulletin ("SL : 3723 / TP1 : 3707") keeps its own levels
+      // through the keyword parser and never reaches this fallback.
       sl: null,
       tp: [],
       lot_size: null,
