@@ -49,6 +49,7 @@ export const COPIER_SKIP_REASON_LABELS: Record<string, string> = {
   channel_config_missing: 'Channel not configured',
   channel_config_incomplete: 'Channel settings incomplete',
   channel_filter_ignored: 'Ignored by channel filter',
+  basket_modify_skipped_by_channel_filter: 'Stop-loss changes ignored for this channel',
   no_broker_channel_match: 'No broker linked to channel',
   copier_paused: 'Copier is paused',
   telegram_listener_not_live: 'Telegram not connected',
@@ -104,6 +105,8 @@ export const COPIER_SKIP_REASON_DETAILS: Record<string, string> = {
     'Saved settings for this channel are incomplete. Open Account Configuration and finish lot size, trade style, and channel selection.',
   channel_filter_ignored:
     'This message matched an Ignore or Skip keyword configured for the channel in Account Configuration.',
+  basket_modify_skipped_by_channel_filter:
+    'This channel asked us to ignore stop-loss and take-profit changes, so we did not modify the trade you already had open. New entries from this channel still open normally.',
   no_broker_channel_match:
     'No active broker account is linked to this channel. Open Account Configuration → select your broker → Channels tab → enable this channel → Save.',
   copier_paused:

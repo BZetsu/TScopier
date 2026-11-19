@@ -599,4 +599,16 @@ export interface ConfigureModalTranslations {
     errorFallback: string
     trainHint: string
   }
+  advancedOnlyNotice: {
+    title: string
+    body: string
+    items: {
+      multiTrade: string
+      rangeTrading: string
+      moveSlToEntry: string
+      reverseSignal: string
+      closeWorseEntries: string
+      riskReward: string
+    }
+  }
 }

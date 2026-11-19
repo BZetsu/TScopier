@@ -697,4 +697,16 @@ export const configureModalEn: ConfigureModalTranslations = {
     errorFallback: 'Something went wrong. Please try again.',
     trainHint: 'You can also train Signal Examples in the Configure accordion to refresh channel samples.',
   },
+  advancedOnlyNotice: {
+    title: 'These settings need the Advanced plan',
+    body: 'Your current plan runs entries with simple settings only. Because this configuration uses the items below, signals from this channel are skipped instead of copied. Switch them off, or upgrade the plan.',
+    items: {
+      multiTrade: 'Several positions per signal (trade style: multiple)',
+      rangeTrading: 'Range trading',
+      moveSlToEntry: 'Moving the stop loss to entry after a trigger',
+      reverseSignal: 'Reversed direction',
+      closeWorseEntries: 'Closing instant entries when price runs past the signal',
+      riskReward: 'Stop loss or targets calculated from risk-reward',
+    },
+  },
 }

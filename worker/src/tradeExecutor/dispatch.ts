@@ -743,7 +743,11 @@ export async function handleSignal(ctx: TradeExecutorContext,
           userSub != null && isSubscriptionActive(userSub.status, userSub.trial_ends_at)
         if (!subscriptionActive) {
           // Not active on its own: a live admin extension keeps the copy running.
-          extensionEndMs = await loadCachedSubscriptionExtensionEnd(ctx.supabase, row.user_id)
+          extensionEndMs = await loadCachedSubscriptionExtensionEnd(
+            ctx.supabase,
+            row.user_id,
+            userSub,
+          )
           if (!extensionAccessActive(extensionEndMs)) {
             await ctx.logDispatchSkipped(row, 'subscription_inactive')
             return

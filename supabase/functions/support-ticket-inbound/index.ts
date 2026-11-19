@@ -335,6 +335,7 @@ async function createTicketFromEmail(
       status: "open",
       priority: "normal",
       customer_locale: sourceLocale,
+      source: "email",
     })
     .select("id, number, subject, guest_name, guest_email, customer_locale")
     .single();

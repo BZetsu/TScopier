@@ -57,11 +57,17 @@ import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import { useMirrorSlaveChannelGuard } from '../../hooks/useMirrorSlaveChannelGuard'
 import { useSubscription } from '../../context/SubscriptionContext'
 import {
+  advancedOnlySettingsInUse,
   effectivePlan as resolveEffectivePlan,
   normalizeManualSettingsForPlan,
   planContextForManualSettings,
 } from '../../lib/planLimits'
 import type { SubscriptionPlan } from '../../lib/planLimits'
+import {
+  isExtensionActive,
+  latestExtensionEndMs,
+  type SubscriptionExtensionGrant,
+} from '../../lib/subscriptionExtensions'
 import { PaywallErrorAlert } from '../../components/billing/PaywallErrorAlert'
 import { UpgradePrompt } from '../../components/billing/UpgradePrompt'
 import {
@@ -864,7 +870,7 @@ async function resolveLatestManualSettingsPlanContext(args: {
 
   const { data, error } = await supabase
     .from('subscriptions')
-    .select('plan,status')
+    .select('plan,status,trial_ends_at,current_period_end')
     .eq('user_id', args.userId)
     .maybeSingle()
 
@@ -876,8 +882,33 @@ async function resolveLatestManualSettingsPlanContext(args: {
     }
   }
 
-  const subscription = data as { plan?: SubscriptionPlan; status?: string | null } | null
-  const effective = resolveEffectivePlan(subscription?.plan, subscription?.status ?? null)
+  const subscription = data as {
+    plan?: SubscriptionPlan
+    status?: string | null
+    trial_ends_at?: string | null
+    current_period_end?: string | null
+  } | null
+  const effective = resolveEffectivePlan(
+    subscription?.plan,
+    subscription?.status ?? null,
+    subscription?.trial_ends_at ?? null,
+  )
+
+  // A live admin extension is an Advanced entitlement, exactly as the context,
+  // the edge functions and the trade worker treat it.
+  if (!effective) {
+    const { data: extRows } = await supabase
+      .from('subscription_extensions')
+      .select('days, granted_at')
+      .eq('user_id', args.userId)
+    if (isExtensionActive(latestExtensionEndMs(
+      extRows as SubscriptionExtensionGrant[],
+      subscription,
+    ))) {
+      return { plan: 'advanced', status: 'active', effectivePlan: 'advanced' }
+    }
+  }
+
   const planCtx = planContextForManualSettings(effective, subscription ?? null)
   return {
     ...planCtx,
@@ -1207,6 +1238,23 @@ export function AccountConfigPage() {
 
   const keywordFiltersEnabled = canUsePlanFeature('channel_keyword_filters')
   const multiTradeStyleEnabled = canUsePlanFeature('multi_trade_style')
+  /**
+   * A Basic account cannot run advanced-only settings, and the worker skips those
+   * signals instead of copying them. Name the exact settings in use so the customer
+   * can see why a channel they just configured will not trade.
+   */
+  const advancedOnlyItems = useMemo(() => {
+    const labels = cm.advancedOnlyNotice.items
+    return advancedOnlySettingsInUse(channelManualSettings as Record<string, unknown>).map(key => ({
+      multi_trade: labels.multiTrade,
+      range_trading: labels.rangeTrading,
+      move_sl_to_entry: labels.moveSlToEntry,
+      reverse_signal: labels.reverseSignal,
+      close_worse_entries: labels.closeWorseEntries,
+      risk_reward: labels.riskReward,
+    }[key]))
+  }, [channelManualSettings, cm])
+  const showAdvancedOnlyNotice = !multiTradeStyleEnabled && advancedOnlyItems.length > 0
   const autoManagementPlanEnabled = canUsePlanFeature('auto_management')
   // Static/dynamic layering modes stay legacy-only in the UI for now.
   const selectedLayeringMode = 'legacy' as const
@@ -3553,6 +3601,22 @@ export function AccountConfigPage() {
                       </div>
                     </div> */}
 
+                    {showAdvancedOnlyNotice ? (
+                      <div className="rounded-xl border border-amber-300/80 bg-amber-50 dark:border-amber-700/70 dark:bg-amber-900/20 p-3">
+                        <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                          {cm.advancedOnlyNotice.title}
+                        </p>
+                        <p className="mt-1 text-xs leading-snug text-amber-900/90 dark:text-amber-100/90">
+                          {cm.advancedOnlyNotice.body}
+                        </p>
+                        <ul className="mt-2 list-disc ps-5 text-xs leading-snug text-amber-900/90 dark:text-amber-100/90">
+                          {advancedOnlyItems.map(item => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+
                     {AI_CONFIGURATION_ENABLED && channelMode === 'ai' ? (
                       <div className="rounded-xl border border-neutral-200/65 dark:border-neutral-800/55 p-4 space-y-3">
                         <ConfigTitle variant="semibold" info={cm.ai.intro}>{cm.ai.title}</ConfigTitle>
@@ -4784,7 +4848,38 @@ export function AccountConfigPage() {
                         </section>
                               {!keywordFiltersEnabled ? (
                                 <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
-                                  <div className="pointer-events-auto w-full max-w-md">
+                                  <div className="pointer-events-auto w-full max-w-md space-y-2">
+                                    <div className="rounded-lg border border-neutral-200/70 dark:border-neutral-800/60 bg-neutral-50 dark:bg-neutral-900 px-3 py-2">
+                                      {(() => {
+                                        const applied = normalizeChannelFilters(
+                                          configDraft.channelConfigs[configDraft.selectedChannelId!]?.channelFilters
+                                            ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
+                                        )
+                                        const ignored = channelFilterCategories.filter(
+                                          c => applied[c.key] === 'ignore',
+                                        )
+                                        return ignored.length === 0 ? (
+                                          <p className="text-xs leading-snug text-neutral-900 dark:text-neutral-100">
+                                            No channel instructions are ignored for this channel. Every instruction
+                                            the channel sends is applied to your account.
+                                          </p>
+                                        ) : (
+                                          <>
+                                            <p className="text-xs leading-snug text-neutral-700 dark:text-neutral-300">
+                                              Your plan applies these channel instructions automatically as
+                                              <span className="font-semibold"> Ignore</span>:
+                                            </p>
+                                            <p className="mt-1 text-xs leading-snug text-neutral-900 dark:text-neutral-100">
+                                              {ignored.map(c => c.label).join(' · ')}
+                                            </p>
+                                            <p className="mt-1 text-[11px] leading-snug text-neutral-500 dark:text-neutral-400">
+                                              Entries from this channel still open normally. Only changes to trades
+                                              you already have open are skipped.
+                                            </p>
+                                          </>
+                                        )
+                                      })()}
+                                    </div>
                                     <UpgradePrompt reason={pw.advancedFeature} />
                                   </div>
                                 </div>

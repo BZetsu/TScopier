@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Incident 2026-11-19 — MT5 refused with OLD_VERSION</title>
+<style>
+  @page { size: A4; margin: 22mm 20mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 10.5px; line-height: 1.5; color: #1f2937; margin: 0; }
+  h1 { font-size: 21px; margin: 0 0 4px; color: #111827; letter-spacing: -0.2px; }
+  .subtitle { font-size: 11.5px; color: #6b7280; margin: 0 0 14px; }
+  h2 { font-size: 13.5px; color: #111827; margin: 20px 0 8px; padding-bottom: 3px; border-bottom: 2px solid #2563eb; }
+  h3 { font-size: 11.5px; color: #111827; margin: 14px 0 6px; }
+  p { margin: 6px 0; }
+  ul, ol { margin: 6px 0; padding-left: 18px; }
+  li { margin: 3px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.8px; }
+  th, td { border: 1px solid #d1d5db; padding: 5px 7px; text-align: left; vertical-align: top; }
+  th { background: #f3f4f6; font-weight: 600; color: #374151; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.3px; background: #f3f4f6; padding: 0 3px; border-radius: 3px; }
+  .meta { margin: 10px 0 4px; }
+  .meta td { border: none; border-bottom: 1px solid #e5e7eb; padding: 4px 10px 4px 0; }
+  .meta .lbl { color: #6b7280; font-size: 9.3px; text-transform: uppercase; letter-spacing: 0.4px; width: 16%; }
+  .meta .val { font-weight: 600; color: #111827; width: 34%; }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 9.3px; font-weight: 700; color: #fff; }
+  .pill.fixed { background: #16a34a; }
+  .pill.open { background: #dc2626; }
+  .box { border-left: 4px solid #2563eb; background: #eff6ff; padding: 8px 10px; margin: 10px 0; border-radius: 0 4px 4px 0; }
+  .box.green { border-left-color: #16a34a; background: #f0fdf4; }
+  .box.amber { border-left-color: #d97706; background: #fffbeb; }
+  .box b.tag { display: block; font-size: 9.3px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; color: #374151; }
+  .win { color: #15803d; font-weight: 700; }
+  .lose { color: #b91c1c; font-weight: 700; }
+  .muted { color: #6b7280; }
+  .foot { margin-top: 16px; padding-top: 6px; border-top: 1px solid #e5e7eb; font-size: 8.8px; color: #9ca3af; }
+  .chain { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.2px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 4px; padding: 7px 9px; margin: 6px 0; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<h1>MT5 orders refused with “OLD_VERSION” — the bridge was running an outdated MT5 Manager API build</h1>
+<p class="subtitle">Incident report · 58 signals lost across 18 customers · MTAPI bridge, MT5 Manager API build</p>
+
+<table class="meta">
+  <tr>
+    <td class="lbl">Severity</td><td class="val">High — every order on an affected account refused</td>
+    <td class="lbl">Status</td><td class="val"><span class="pill fixed">FIXED</span> verified in production</td>
+  </tr>
+  <tr>
+    <td class="lbl">Window</td><td class="val">19 Nov 2026 — refusals 02:16 → 09:53 UTC</td>
+    <td class="lbl">Recovered</td><td class="val">19 Nov 2026, 10:15 UTC (bridge updated)</td>
+  </tr>
+  <tr>
+    <td class="lbl">Component</td><td class="val">MTAPI bridge container <code>mtapi</code> (image <code>timurila/mt5rest</code>), MT5 Manager API</td>
+    <td class="lbl">Root cause</td><td class="val">Bridge Manager API build older than the brokers’ new minimum → <code>MT5API.Connect()</code> refused</td>
+  </tr>
+</table>
+
+<h2>1. Executive summary (plain English)</h2>
+<div class="box green">
+  <b class="tag">Plain English</b>
+  Throughout the morning of 19 November, trades stopped opening for a growing number of customers, one broker at a time.
+  Every affected account still showed as <b>connected</b>, signals were received and understood correctly, and the copier tried to place each order — but the broker refused all of them.
+  The refusal was not about trading rules. It happened one step earlier: the small bridge service that connects us to the brokers was running a <b>two-month-old version of the MetaTrader connection software</b>.
+  MetaQuotes periodically raises the minimum version brokers accept, and each broker switches that on at its own time. Once a broker switched, every order for its accounts was refused with <code>OLD_VERSION</code>.
+  Customers only saw <b>“No position opened”</b>, which looks like a problem with the signal or with their account. Nothing on the account was wrong: no trade was placed, nothing was left open, no money was at risk.
+  The incident ran from <b>02:16 to 10:15 UTC</b> and cost <b>58 signals across 18 customers on 27 MT5 accounts</b>. It stopped within a minute of updating the bridge to the current build:
+  the first connection test returned <code>OK</code> instead of <code>OLD_VERSION</code>, and eight trades opened on previously failing accounts between 10:24 and 10:30.
+  <br><br>
+  This had <b>nothing to do with the September “no position opened” bug</b>, which was a parsing problem triggered by edited Telegram messages. Here the order was built correctly and refused by the bridge.
+</div>
+
+<h2>2. Issue encountered</h2>
+<p>Two examples, both parsed correctly, both refused at the bridge:</p>
+<table>
+  <tr><th style="width:22%">Signal</th><th style="width:24%">User / account</th><th style="width:27%">Parsed</th><th>Attempts → result</th></tr>
+  <tr>
+    <td><code>888462e5…</code></td>
+    <td>always luv · <code>5058374208</code><br><span class="muted">MetaQuotes-Demo</span></td>
+    <td>GOLD sell 3736–3739<br>SL 3746 · TP 3730/3720/3690</td>
+    <td><code>SellLimit</code> 3739 twice (08:21:58, 08:22:03)<br><span class="lose">both OLD_VERSION</span></td>
+  </tr>
+  <tr>
+    <td><code>38e71f69…</code></td>
+    <td>Luis ESp · <code>52967879</code><br><span class="muted">ICMarketsSC-Demo</span></td>
+    <td>XAU/USD sell, entry 3728<br>SL 3755 · TP 3724/3700</td>
+    <td>8 legs, 09:31:58–09:32:01<br><span class="lose">all 8 OLD_VERSION in 2.6 s</span></td>
+  </tr>
+</table>
+<div class="box amber">
+  <b class="tag">What customers saw</b>
+  The dashboard reported <code>entry_not_opened</code> — “No position opened / the broker did not open a position for this signal”.
+  That wording points at the parser or at a broker rejection, which is why it was first mistaken for the September parser bug.
+</div>
+
+<h2>3. Affected user(s)</h2>
+<p>27 MT5 accounts across 18 users and 9 brokers. Worst hit:</p>
+<table>
+  <tr><th>User</th><th>Account</th><th>Broker</th><th>Refusals</th><th>First</th></tr>
+  <tr><td>ARUNASALAM SUKUMAR</td><td><code>1300095969</code></td><td>JustMarkets-DEMO6</td><td>89</td><td>08:00</td></tr>
+  <tr><td>Luis ESp</td><td><code>52967879</code></td><td>ICMarketsSC-Demo</td><td>40</td><td>08:07</td></tr>
+  <tr><td>Luis ESp</td><td><code>52886408</code></td><td>ICMarketsSC-Demo</td><td>39</td><td>02:46</td></tr>
+  <tr><td>ARUNASALAM SUKUMAR</td><td><code>1300095974</code></td><td>JustMarkets-DEMO6</td><td>31</td><td>02:16</td></tr>
+  <tr><td>Stefan Zeller</td><td><code>26422396</code></td><td>VantageMarkets-Demo</td><td>13</td><td>07:47</td></tr>
+  <tr><td>FREDY ALBERTO</td><td><code>163127399</code></td><td>Exness-MT5Real22</td><td>10</td><td>07:20</td></tr>
+  <tr><td>always luv</td><td><code>5058374208</code></td><td>MetaQuotes-Demo</td><td>2</td><td>08:21</td></tr>
+</table>
+
+<h2>4. Root cause</h2>
+<p><code>mt5rest</code> does not run a MetaTrader terminal. It is a .NET REST wrapper that logs in to each broker’s trade server through the <b>MT5 Manager API</b>. The bridge’s own stack trace is the proof — the failure is at <code>Connect()</code>, not at order send:</p>
+<div class="chain">[10:06:38 WRN]  &lt;OLD_VERSION&gt;
+mtapi.mt5.ServerException: OLD_VERSION
+   at mtapi.mt5.MT5API.Connect()
+   at mt5rest.MyControllerBase.GetClient(String id, String method, Boolean checkConnect) MyControllerBase.cs:line 253
+   at mt5rest.Connection.CheckConnect(String id) Controllers/Connection.cs:line 1903</div>
+<p>The running container was built from the <b>10 September</b> image (vendor tag <code>26.09.10-15.08</code>; <code>/app</code> files dated 10 Sep 19:08). The vendor has published newer builds since, including <b>ten on 19 November alone</b> (<code>26.11.19-05.02</code> … <code>26.11.19-09.26</code>) — that is how they ship updated Manager API clients. Brokers raise the minimum accepted build in waves, which is why the failures arrived one broker at a time and why no account recovered on its own.</p>
+<table>
+  <tr><th>Broker</th><th>First OLD_VERSION (UTC)</th><th>Last successful order before it</th></tr>
+  <tr><td>JustMarkets-DEMO6</td><td>02:16</td><td>02:06</td></tr>
+  <tr><td>ICMarketsSC-Demo (<code>52886408</code>, <code>52992109</code>)</td><td>02:46</td><td>18 Nov 19:00</td></tr>
+  <tr><td>GNTCapital-Live</td><td>04:10</td><td>18 Nov 10:35</td></tr>
+  <tr><td>Exness-MT5Real30</td><td>04:16</td><td>18 Nov 07:26</td></tr>
+  <tr><td>Deriv-Demo</td><td>05:13</td><td>18 Nov 07:30</td></tr>
+  <tr><td>VantageMarkets-Live 6</td><td>06:34</td><td>16 Nov 17:23</td></tr>
+  <tr><td>ICMarketsSC-Demo (<code>52967879</code>)</td><td>08:07</td><td>01:26</td></tr>
+  <tr><td>MetaQuotes-Demo</td><td>08:10 / 08:21 / 09:17</td><td>05:47</td></tr>
+  <tr><td>Vantage / JustMarkets (rest)</td><td>09:17 → 09:53</td><td>—</td></tr>
+</table>
+<p class="muted">MetaQuotes-Demo covers four accounts with separate cutovers: <code>5051280860</code> at 08:10, <code>5058374208</code> (always luv) at 08:21, and <code>114360758</code> / <code>5058361628</code> at 09:17. The last refusal of the day was 09:53; the bridge was restored at 10:15 — hence the two times in this report.</p>
+<p>Across all 27 accounts there are <b>zero successful orders after the first <code>OLD_VERSION</code></b>, and the accounts stayed <code>connected</code> throughout: an out-of-date Manager API still logs in far enough to stream prices and report balances, and only refuses trading.</p>
+<h3>Why it stayed invisible for eight hours</h3>
+<ol>
+  <li>The customer-visible reason is the generic <code>entry_not_opened</code>; the raw bridge string appeared only as the technical code.</li>
+  <li><code>mtapi_accounts_error</code> and <code>mtapi_connect_errors</code> measure the account connection columns, which stayed <code>connected</code>.</li>
+  <li><code>executions_failing</code> reached only its <b>warning</b> threshold at 08:55 — after six hours and dozens of lost signals — and warning recipients are not paged.</li>
+</ol>
+
+<h2>5. The fix</h2>
+<h3>Operational (applied on the VPS)</h3>
+<ol>
+  <li><code>docker pull timurila/mt5rest</code> → image created <b>2026-11-19T09:27:01Z</b> (<code>26.11.19-09.26</code>).</li>
+  <li>Recreated the container through the redactor installer, preserving the <code>UserKey</code> licence env, the <code>127.0.0.1:8080</code> binding, the <code>unless-stopped</code> restart policy and the password-redacting entrypoint:
+    <div class="chain">cd /root/mtapi-log-redactor
+CONTAINER=mtapi IMAGE=timurila/mt5rest HOST_IP=127.0.0.1 HOST_PORT=8080 CONTAINER_PORT=80 bash ./install.sh</div></li>
+  <li>Verified at the bridge: <code>curl -s "http://127.0.0.1:8080/CheckConnect?id=&lt;session&gt;"</code> → <b>OK</b> (previously <code>201</code> with an <code>OLD_VERSION</code> body).</li>
+</ol>
+<h3>Code (this repository)</h3>
+<ul>
+  <li><code>supabase/functions/alert-evaluator/index.ts</code> — new <code>evalMtapiOldVersion</code>, its dispatch case, the threshold documentation line and a <code>NEXT_ACTION</code> runbook. It fires on the <b>first affected account</b> (<code>max_accounts: 0</code>): <code>OLD_VERSION</code> has no benign cause, nothing self-heals, and this incident's first 24 minutes were a single account before the rest followed. <code>max_rows: 6</code> covers rows without an account id, and <code>persistence_minutes: 5</code> stops a quiet ten-minute gap from resolving the event, emailing “recovered” and then muting the re-fire under the cooldown.</li>
+  <li><code>supabase/migrations/20261119120000_mtapi_old_version_alert.sql</code> — adds the <code>mtapi_old_version</code> rule: <b>critical</b>, <code>{"max_accounts": 0, "max_rows": 6, "persistence_minutes": 5}</code>, 10-minute window, 900 s cooldown.</li>
+</ul>
+<div class="box">
+  <b class="tag">Deploy order</b>
+  Deploy <code>alert-evaluator</code> <b>before</b> applying the migration, or the rule is skipped as “no evaluator for rule”.
+</div>
+
+<h2>6. Files changed</h2>
+<table>
+  <tr><th style="width:52%">File</th><th>Change</th></tr>
+  <tr><td><code>supabase/functions/alert-evaluator/index.ts</code></td><td>evaluator, dispatch case, threshold doc, runbook</td></tr>
+  <tr><td><code>supabase/migrations/20261119120000_mtapi_old_version_alert.sql</code></td><td><code>mtapi_old_version</code> rule (critical)</td></tr>
+  <tr><td><code>docs/incidents/incident-2026-11-19-mtapi-old-version.md/.pdf</code></td><td>this report</td></tr>
+  <tr><td><code>docs/PROJECT_MEMORY.md</code></td><td>changelog entry</td></tr>
+</table>
+<p class="muted">Bridge: container <code>mtapi</code> recreated from <code>26.11.19-09.26</code>. No worker, parser or broker-code change was required — the parser and dispatcher were correct throughout.</p>
+
+<h2>7. Verification</h2>
+<ul>
+  <li><b>Refusals stop:</b> <code>OLD_VERSION</code> rows after 10:15 UTC → <b>0</b> (294 before).</li>
+  <li><b>Connect works:</b> <code>CheckConnect</code> on a live session returns <code>OK</code>; no <code>ServerException</code> in <code>docker logs mtapi</code>.</li>
+  <li><b>Sessions re-registered</b> after the recreate (Luis <code>52967879</code>: <code>6245bb1f…</code> → <code>a26882a5…</code>).</li>
+  <li><b>Write path healthy:</b> 10 <code>BROKER_WRITE_FENCE_REJECTED</code> rows, all between 10:16:26 and 10:17:07 — signals caught mid-restart — none since.</li>
+  <li><b>Trading resumed end-to-end:</b> 8 trades opened 10:24–10:30 UTC with real broker tickets, on accounts refused minutes earlier — echi fru <code>223594169</code> (Exness), Stefan Zeller <code>26422396</code> and Speedy TV <code>26386377</code> (Vantage). 8 successful <code>order_send</code> rows, no duplicates.</li>
+  <li><b>The new rule would have caught it early:</b> replaying the incident rows through the rule's thresholds (10-minute buckets, <code>max_accounts 0</code>) fires in the <b>02:10 bucket</b> — first refusal 02:16 — and with the 5-minute persistence pages at about <b>02:21</b>, five minutes into the incident, instead of a warning at 08:55.
+    <div class="chain">bucket | rows | accts | would_fire
+02:10  |   1  |   1   | true
+02:40  |  18  |   3   | true
+02:50  |   2  |   1   | true
+03:00  |   3  |   1   | true</div></li>
+</ul>
+
+<h2>8. Deployment status</h2>
+<table>
+  <tr><th style="width:26%">Item</th><th>State</th></tr>
+  <tr><td>Bridge container</td><td><span class="win">Fixed and verified on the VPS</span> — image <code>26.11.19-09.26</code></td></tr>
+  <tr><td><code>alert-evaluator</code></td><td><span class="win">Deployed to production</span> — 17 rules, 17 evaluated, 0 skipped, nothing fired, no emails. Required pinning <code>@supabase/supabase-js</code> to <code>2.119.1</code>: npm's <code>latest</code> (2.119.2) depended on <code>@supabase/auth-js@2.119.2</code>, whose tarball 404s and breaks the edge bundler for every function in this repo.</td></tr>
+  <tr><td>Migration</td><td><span class="win">Applied</span> — rule enabled (critical, 10-minute window, 900 s cooldown, <code>{"max_accounts":0,"max_rows":6,"persistence_minutes":5}</code>), <code>20261119120000</code> recorded</td></tr>
+  <tr><td>Worker</td><td>No change, no deploy needed</td></tr>
+</table>
+<div class="box amber">
+  <b class="tag">Not force-fired on purpose</b>
+  The thresholds were validated by replaying the real incident rows, not by injecting a synthetic <code>OLD_VERSION</code> failure — that would have paged critical recipients for a non-event.
+</div>
+
+<h2>9. Follow-ups</h2>
+<ol>
+  <li><b>Pin the image and refresh it deliberately.</b> The container was recreated on 14 Nov with a stale local <code>latest</code> from September. Run a pinned tag and pull a newer build monthly; surface the image creation date in Systems Health.</li>
+  <li><b>Deploy the new rule</b> (evaluator first, then migration) and confirm it fires by threshold-testing against historical rows.</li>
+  <li><b>Log rotation</b> on the Docker daemon (<code>max-size</code>/<code>max-file</code>) — <code>docker logs --since 12h</code> had to be interrupted because the json-file had grown so large.</li>
+  <li><b>Reconcile the nginx internal token</b>: <code>/root/.mtapi_internal_token</code> no longer matches <code>map $http_x_internal_token</code>, so verification calls using the file get 403. The worker is unaffected (it authenticates with the Bearer key).</li>
+  <li><b>No replay of the 58 lost signals</b> — the entries are hours old and re-entering them at current prices is worse than no trade. Customer communication was left to support.</li>
+</ol>
+
+<p class="foot">UniCopier · incident-2026-11-19-mtapi-old-version · generated 2026-11-19</p>
+
+</body>
+</html>

@@ -253,11 +253,14 @@ async function callChatCompletions(args: {
       // 429 (rate limit) and 5xx are transient — retry with backoff before
       // falling back to the next provider. Previously a single 429 silently
       // degraded the whole stage-2 to the weaker OpenAI fallback model.
-      if (res.status === 429 || res.status >= 500) {
+      if (res.status === 402 || res.status === 429 || res.status >= 500) {
         const body = await res.text().catch(() => '')
         lastError = `${args.label} HTTP ${res.status}: ${body.slice(0, 200)}`
-        // Daily quota is exhausted — retrying the same key cannot succeed, the
-        // caller must rotate to the next key (or fall back to OpenAI).
+        // Only the daily token limit is terminal for this key. A 402
+        // payment_required stays in the retry path on purpose: measured on
+        // 2026-11-16, the same key answered 402 once and then served 44
+        // consecutive requests normally, so quarantining it would have been
+        // wrong. Retry with backoff, then rotate.
         dailyExhausted = isCerebrasDailyLimit(res.status, body)
         if (dailyExhausted) break
         if (attempt < attempts) {
@@ -357,6 +360,8 @@ async function callCerebrasUniversal(context: UniversalParseContext): Promise<{
     }
     lastError = attempt.error
     if (attempt.dailyExhausted) {
+      // Covers both a daily token limit and a 402 payment refusal: either way
+      // this key cannot serve until it is rotated out or billing is fixed.
       cerebrasKeyState.set(key, { exhausted: true })
       console.warn(
         `[universalSignalParser] Cerebras[${idx}] daily limit exhausted (${maskKey(key)}) — rotating to next key`,

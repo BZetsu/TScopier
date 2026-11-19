@@ -1,5 +1,13 @@
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
+import {
+  collectList,
+  isBullet,
+  isHeading,
+  isNumbered,
+  normalizeChatMarkdown,
+  parseHeading,
+} from './assistantMarkdown'
 
 type Variant = 'user' | 'assistant'
 
@@ -37,35 +45,6 @@ function renderInline(text: string, variant: Variant): ReactNode[] {
   }
   if (last < text.length) nodes.push(text.slice(last))
   return nodes
-}
-
-function isBullet(line: string) {
-  return /^[-*•]\s+/.test(line)
-}
-
-function isNumbered(line: string) {
-  return /^\d+[.)]\s+/.test(line)
-}
-
-function isHeading(line: string) {
-  return /^#{1,4}\s+\S/.test(line)
-}
-
-function parseHeading(line: string): { level: number; text: string } | null {
-  const m = line.match(/^(#{1,4})\s+(.+)$/)
-  if (!m) return null
-  return { level: m[1].length, text: m[2].trim() }
-}
-
-/** Light cleanup when the model dumps numbered/bulleted steps on one line. */
-function normalizeChatMarkdown(raw: string): string {
-  return raw
-    .replace(/\r\n/g, '\n')
-    .replace(/([^\n])\s+(\d+\.\s+\*\*)/g, '$1\n\n$2')
-    .replace(/([^\n])\s+(\d+\.\s+[A-Z])/g, '$1\n\n$2')
-    .replace(/([.:])\s+-\s+/g, '$1\n- ')
-    .replace(/([^\n])\s+(#{1,4}\s+)/g, '$1\n\n$2')
-    .trim()
 }
 
 function headingClass(level: number, variant: Variant): string {
@@ -113,11 +92,9 @@ export function AssistantMessageContent({
     }
 
     if (isBullet(line)) {
-      const items: string[] = []
-      while (i < lines.length && isBullet(lines[i])) {
-        items.push(lines[i].replace(/^[-*•]\s+/, ''))
-        i += 1
-      }
+      const collected = collectList(lines, i, isBullet)
+      const items = collected.items.map((item) => item.replace(/^[-*•]\s+/, ''))
+      i = collected.next
       blocks.push(
         <ul key={key++} className="my-1.5 list-disc space-y-1 ps-4">
           {items.map((item, idx) => (
@@ -129,11 +106,9 @@ export function AssistantMessageContent({
     }
 
     if (isNumbered(line)) {
-      const items: string[] = []
-      while (i < lines.length && isNumbered(lines[i])) {
-        items.push(lines[i].replace(/^\d+[.)]\s+/, ''))
-        i += 1
-      }
+      const collected = collectList(lines, i, isNumbered)
+      const items = collected.items.map((item) => item.replace(/^\d+[.)]\s+/, ''))
+      i = collected.next
       blocks.push(
         <ol key={key++} className="my-1.5 list-decimal space-y-1 ps-4">
           {items.map((item, idx) => (
