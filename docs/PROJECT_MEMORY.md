@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### 2026-11-19 — Deploy Edge: shard routing + public-status (production)
+
+- **Context:** User asked to deploy the shard-routing and public-status Edge functions to production.
+- **Plain English:** Production now has the same Edge builds as Migration for Telegram shard routing and `/status`.
+- **Fix (files):** Deployed `telegram-auth`, `signal-reconcile-sweep`, `signal-override`, `tradingview-webhook`, `public-status` → `sxkpcovbyaficvtkpsdo`.
+- **Tests/verification:** CLI deploy succeeded (5 functions).
+- **Deploy state:** Production (`sxkpcovbyaficvtkpsdo`).
+- **Follow-ups:** Set prod `LISTENER_SHARD_URLS` / `TRADE_WORKER_SHARD_URLS` only when the prod N-listener fleet is live; frontend `/status` still needs Netlify ship.
+
 ### 2026-11-19 — Deploy Edge: shard routing + public-status (Migration)
 
 - **Context:** Ship listener shard routing and public status API to Migration.
