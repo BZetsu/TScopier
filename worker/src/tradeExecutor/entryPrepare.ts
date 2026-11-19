@@ -11,6 +11,7 @@ import {
   resolvedParsedEntryZone,
   signalEntryPriceStrictEnabled,
   signalEntryRangeStrictEnabled,
+  narrowRangeWaitToNearestZoneLevel,
   SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
   SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED,
   SKIP_REASON_LEVEL_ALREADY_PASSED,
@@ -1086,16 +1087,32 @@ export async function prepareEntryExecution(
   ) {
     const wait = plan.rangeEntryWait
     const zoneFromParsed = resolvedParsedEntryZone(parsed)
-    const waitToStore = zoneFromParsed
+    let waitToStore = zoneFromParsed
       ? { ...wait, zoneLo: zoneFromParsed.lo, zoneHi: zoneFromParsed.hi }
       : wait
+    let parsedForRange = parsed
     const pipSize = plan.pip ?? params?.point ?? 0.00001
     const fromWake = signal.dispatch_source === SIGNAL_RANGE_WAKE_DISPATCH_SOURCE
     try {
       const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
       strictEntryPrefetch = q
+      const narrowed = narrowRangeWaitToNearestZoneLevel({
+        wait: waitToStore,
+        parsed: parsedForRange as PlannerParsedSignal,
+        bid: q.bid,
+        ask: q.ask,
+        pipSize,
+      })
+      waitToStore = narrowed.wait
+      parsedForRange = narrowed.parsed as ParsedSignal
+      if (narrowed.collapsed) {
+        console.log(
+          `[tradeExecutor] zone levels collapsed to nearest signal=${signal.id} broker=${broker.id}`
+          + ` zone=${waitToStore.zoneLo}-${waitToStore.zoneHi} bid=${q.bid} ask=${q.ask}`,
+        )
+      }
       const stale = evaluatePreEntryStaleness({
-        parsed,
+        parsed: parsedForRange,
         bid: q.bid,
         ask: q.ask,
         isBuy: wait.isBuy,
@@ -1140,7 +1157,7 @@ export async function prepareEntryExecution(
           symbol,
           wait: waitToStore,
           manual,
-          parsed,
+          parsed: parsedForRange,
         })
         if (fromWake) {
           await logSignalRangeEntryWakeRetry(ctx.supabase, signal, broker.id, symbol, q.bid, q.ask)
@@ -1173,7 +1190,7 @@ export async function prepareEntryExecution(
         symbol,
         wait: waitToStore,
         manual,
-        parsed,
+        parsed: parsedForRange,
       })
     }
   }

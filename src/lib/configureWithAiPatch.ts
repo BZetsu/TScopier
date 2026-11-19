@@ -32,6 +32,7 @@ export const CONFIGURE_AI_PATCHABLE_KEYS = new Set([
   'symbol_to_trade',
   'symbols_exclude',
   'close_on_opposite_signal',
+  'close_on_signal_deleted',
   'order_comments_enabled',
   'pending_expiry_hours',
   'add_new_trades_to_existing',

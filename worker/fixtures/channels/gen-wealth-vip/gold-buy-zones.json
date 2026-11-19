@@ -1,0 +1,12 @@
+{
+  "name": "gen-wealth-gold-buy-zones",
+  "raw_message": "GOLD BUY ZONES\n\n3847\n3842\n3837",
+  "expected": {
+    "action": "buy",
+    "symbol": "XAUUSD",
+    "entry_zone_low": 3837,
+    "entry_zone_high": 3847,
+    "sl": null,
+    "tp": []
+  }
+}

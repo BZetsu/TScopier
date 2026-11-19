@@ -257,17 +257,20 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     }
   }, [fetchSubscription])
 
+  // A live admin extension counts as an active subscription for every check below,
+  // and it entitles the account to Advanced while it is the reason access is alive.
   // Order matters and must match the server: a running paid subscription (or a live
-  // trial) keeps its own plan, and only a grant is allowed to fill the gap when
-  // there is no plan. Otherwise a paying Basic customer holding a grant would be
-  // shown Advanced while the database, edge functions and worker still say Basic.
+  // trial) keeps its own plan, and only a grant fills the gap when there is no plan.
+  // Otherwise a paying Basic customer holding a queued grant would be shown Advanced.
   const extensionActive = isExtensionActive(extensionEndMs)
   const paidPlan: SubscriptionPlan | null = effectivePlan(
     subscription?.plan,
     subscription?.status ?? null,
     subscription?.trial_ends_at,
   )
-  const accessStatus = paidPlan ? (subscription?.status ?? null) : (extensionActive ? 'active' : (subscription?.status ?? null))
+  const accessStatus = paidPlan
+    ? (subscription?.status ?? null)
+    : (extensionActive ? 'active' : (subscription?.status ?? null))
   const entitlementPlan: SubscriptionPlan | null = paidPlan ?? (extensionActive ? 'advanced' : null)
   const hasActiveSubscription =
     isAdmin || isSubscriptionActive(accessStatus, subscription?.trial_ends_at)

@@ -14,6 +14,7 @@ import {
 import { looksLikeChannelManagementUpdate } from './signalManagementIntent'
 import { resolvePredefinedSlPips, resolvePredefinedTpPips } from './manualPlanning/manualStops'
 import type { ManualSettings } from './manualPlanning/types'
+import { looksLikeBuySellZonesBulletin } from './signalPriceInference'
 import { minPlausibleQuotePrice, reconcileSymbolWithQuoteLevels, sanitizeParsedSymbol, filterPlausibleInstrumentPrices } from './tradableSymbol'
 
 export { ENTRY_REQUIRES_NOW_REASON } from './signalEntryNowRequirement'
@@ -23,6 +24,13 @@ export const ENTRY_MISSING_STRUCTURE_REASON = 'entry_missing_sl_tp_structure'
 export const ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON =
   'entry_requires_imperative_or_labeled_stops'
 export const TRADINGVIEW_MISSING_SL_TP_REASON = 'tradingview_missing_sl_tp'
+/** Zone bulletin needs Override SL + Override TP when manuals are known. */
+export const ENTRY_MISSING_PREDEFINED_STOPS_REASON = 'entry_missing_predefined_stops'
+
+export type EligibilityManual = Pick<
+  ManualSettings,
+  'use_predefined_sl_pips' | 'predefined_sl_pips' | 'use_predefined_tp_pips' | 'predefined_tp_pips'
+> | null | undefined
 
 /** TradingView alert JSON includes both absolute SL and TP prices. */
 export function parsedHasSlAndTp(parsed: { sl?: unknown; tp?: unknown } | null | undefined): boolean {
@@ -63,12 +71,14 @@ export function evaluateParsedSignalExecutionEligibility(
     entry_price?: unknown
     entry_zone_low?: unknown
     entry_zone_high?: unknown
+    entry_zone_levels?: unknown
     sl?: unknown
     tp?: unknown
     lot_size?: unknown
   } | null | undefined,
   rawMessage?: string | null,
   channelKeywords?: MarketNowKeywordFields | null,
+  manuals?: ReadonlyArray<EligibilityManual>,
 ): { eligible: boolean; skipReason?: string } {
   if (!parsed) return { eligible: false, skipReason: 'parsed_data_missing' }
   const action = String(parsed.action ?? '').toLowerCase()
@@ -91,9 +101,14 @@ export function evaluateParsedSignalExecutionEligibility(
   // TP-without-SL is an *account* decision (predefined/RR SL can supply the stop).
   // Do not skip the signal here — entry prep still blocks accounts with no fallback.
 
+  const zonesBulletin = looksLikeBuySellZonesBulletin(raw)
+    || (Array.isArray(parsed.entry_zone_levels) && parsed.entry_zone_levels.length > 0)
+  const hasPredefinedStops = (manuals ?? []).some(m => manualHasSlAndTpOverride(m))
+  const zoneWithPredefined = zonesBulletin && parsedHasEntryAnchor(parsed) && hasPredefinedStops
+
   const imperative = messageHasImperativeEntryPhrase(raw, channelKeywords)
   const labeledStops = messageHasExplicitSlTpLabels(raw) && parsedHasSlOrTp(parsed)
-  const structuredEntry = parsedStructuredEntryEligible(parsed)
+  const structuredEntry = parsedStructuredEntryEligible(parsed) || zoneWithPredefined
   if (!imperative && !labeledStops && !structuredEntry) {
     return { eligible: false, skipReason: ENTRY_REQUIRES_IMPERATIVE_OR_LABELED_STOPS_REASON }
   }
@@ -121,6 +136,16 @@ export function evaluateParsedSignalExecutionEligibility(
     if (tps.length > 0 && plausibleTps.length === 0) {
       return { eligible: false, skipReason: COMMENTARY_NOT_SIGNAL_REASON }
     }
+  }
+
+  // Zone bulletins wait for price — they never need a "NOW" cue. When manuals are
+  // known, require Override SL+TP; when unknown (listener), allow through so dispatch
+  // can re-check with broker configs.
+  if (zonesBulletin && parsedHasEntryAnchor(parsed) && (symbol || tradeableFromParsed(parsed))) {
+    if (manuals != null && manuals.length > 0 && !hasPredefinedStops) {
+      return { eligible: false, skipReason: ENTRY_MISSING_PREDEFINED_STOPS_REASON }
+    }
+    return { eligible: true }
   }
 
   if (labeledStops || structuredEntry) {

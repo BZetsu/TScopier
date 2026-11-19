@@ -634,6 +634,7 @@ export interface CopierLogsTranslations {
     close_worse_entries: string
     copy_limit_flatten: string
     user_force_close: string
+    signal_deleted: string
     position_gone: string
     mirror_source_closed: string
     mirror_copy_closed: string
@@ -1570,6 +1571,7 @@ export interface TradesTranslations {
   reasonCloseWorseEntries: string
   reasonCopyLimitFlatten: string
   reasonUserForceClose: string
+  reasonSignalDeleted: string
   reasonPositionGone: string
   reasonMirrorSourceClosed: string
   reasonMirrorCopyClosed: string

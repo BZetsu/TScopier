@@ -34,10 +34,13 @@ Each tradeable row needs **buy/sell**, a **valid symbol**, and **SL or TP**. Ent
 
 The worker must be running with:
 
+- **`TELEGRAM_API_ID` + `TELEGRAM_API_HASH`** on the Railway **Backtest** service (not only Listener, not Supabase Edge secrets)
 - Active `telegram_sessions` for the user
 - Channel in `telegram_channels` with `is_active = true`
 - `PARSE_SIGNAL_URL` (or `SUPABASE_URL` + `/functions/v1/parse-signal`)
 - `SUPABASE_SERVICE_ROLE_KEY` for parse auth and RPC upsert
+
+After setting Telegram API vars, **redeploy** the Backtest service. Confirm with `GET /health` → `telegram_api_configured: true`.
 
 **Telegram MTProto slot:** Only one active connection per session is allowed. Backtest signal sync always needs that slot briefly:
 
@@ -59,9 +62,17 @@ Deploy/restart the worker after pulling changes (new route `POST /auth/backtest_
 
 | Secret | Purpose |
 |--------|---------|
-| `FXSOCKET_API_KEY` | FxSocket platform key — market data + broker API |
-| `WORKER_URL` | Base URL of the worker (no trailing slash) |
+| `FXSOCKET_API_KEY` | FxSocket platform key — market data + broker API (legacy; MTAPI path preferred) |
+| `WORKER_URL` / `BACKTEST_WORKER_URL` | Base URL of the listener / backtest worker (no trailing slash) |
 | `WORKER_INTERNAL_TOKEN` | Must match worker env |
+| `MTAPI_HISTORY_TIMEZONE_VERIFIED` | `true` — opens the fail-closed history clock gate |
+| `MTAPI_HISTORY_TIMESTAMP_MODE` | `server` (measured bridge labels) or `utc` |
+| `MTAPI_SERVER_TIMEZONE_UNIT_MT4` | `minutes` (MT4 `ServerTimezone` unit) |
+| `MTAPI_SERVER_TIMEZONE_UNIT_MT5` | `hours` (MT5 `ServerTimezone` unit) |
+| `MTAPI_SERVER_TIMEZONE_SIGN` | `server_minus_utc` |
+| `MTAPI_SERVER_TIMEZONE_DST` | `observed` (mixed fleet) or `none` (UTC-fixed only) |
+
+Without the `MTAPI_HISTORY_*` / `MTAPI_SERVER_TIMEZONE_*` set, `backtest-run` fails with **MTAPI server timezone unit/sign/DST policy has not been explicitly verified**. Staging/prod already use the measured policy above; Migration must match.
 
 ### 4. Linked broker (required)
 
@@ -93,7 +104,7 @@ Open **Backtest** in the sidebar (`/backtest`).
 
 | Symptom | Check |
 |---------|--------|
-| `0 messages from Telegram` | User session active; channel access; worker online |
+| `0 messages from Telegram` | Session active; still in **that exact** channel (not a backup/mirror); date range; redeploy backtest worker. Prefer the channel that shows live Copier signals. |
 | `WORKER_URL not configured` | Edge secret set to reachable worker URL |
 | `FXSOCKET_API_KEY not configured` | Edge secret (not only worker `.env`) |
 | `Connect an MT5 broker in Brokers` | User needs linked FxSocket broker account |

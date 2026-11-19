@@ -52,24 +52,49 @@ export function normalizeSignalEntryPrefer(raw: unknown): SignalEntryPrefer {
     : 'first_price'
 }
 
+export type SignalEntrySide = 'buy' | 'sell'
+
+/** Worse fill for the signal side: buy high / sell low. */
+export function worseEntryPrice(side: SignalEntrySide, a: number, b: number): number {
+  return side === 'buy' ? Math.max(a, b) : Math.min(a, b)
+}
+
+/** Best fill for the signal side: buy low / sell high. */
+export function bestEntryPrice(side: SignalEntrySide, a: number, b: number): number {
+  return side === 'buy' ? Math.min(a, b) : Math.max(a, b)
+}
+
+function signalEntrySideFromParsed(parsed: ParsedSignal): SignalEntrySide {
+  return String(parsed.action ?? '').toLowerCase() === 'sell' ? 'sell' : 'buy'
+}
+
 /**
- * Collapse a dual entry (ordered pair or min/max zone) to one price for
- * Use Signal Entry Price. Prefers text order when available; otherwise lo/hi.
- * When an ordered pair exists it wins over a scalar `entry_price` so dual quotes
- * are not stuck on a first-only parse.
+ * Collapse a dual entry to one price for Use Signal Entry Price.
+ *
+ * Product mapping (side-aware, not raw text order):
+ * - First Price → worse entry (buy: higher, sell: lower)
+ * - Last Price → best entry (buy: lower, sell: higher)
+ *
+ * Using min/max for first/last previously flipped common BUY quotes written
+ * high-then-low (e.g. `(3879) 3878`) whenever `entry_zone_first/last` were absent.
  */
 export function resolvePreferredSignalEntryPrice(
   parsed: ParsedSignal,
   prefer: SignalEntryPrefer,
+  side?: SignalEntrySide | null,
 ): number | null {
+  const entrySide = side ?? signalEntrySideFromParsed(parsed)
   const ordered = resolvedParsedEntryZoneOrdered(parsed)
-  if (ordered) {
-    return prefer === 'last_price' ? ordered.last : ordered.first
-  }
   const z = resolvedParsedEntryZone(parsed)
-  if (z) {
-    return prefer === 'last_price' ? z.hi : z.lo
+  const a = ordered?.first ?? z?.lo ?? null
+  const b = ordered?.last ?? z?.hi ?? null
+  if (a != null && b != null) {
+    return prefer === 'last_price'
+      ? bestEntryPrice(entrySide, a, b)
+      : worseEntryPrice(entrySide, a, b)
   }
+  if (a != null) return a
+  if (b != null) return b
   return resolvedParsedEntryPrice(parsed)
 }
 

@@ -1,7 +1,7 @@
 import { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
 import { TelegramClient } from 'telegram'
 import { runEphemeralBacktestSync, runWithEphemeralListener } from './backtestSync'
-import { TelegramSessionInvalidError } from './telegramClient'
+import { TelegramSessionInvalidError, telegramApiCredentialsConfigured } from './telegramClient'
 import { envNumber } from './envNumber'
 import {
   openTelegramSession,
@@ -1058,6 +1058,8 @@ export class UserSessionManager {
     lease_gap: number
     lease_mismatch_user_ids?: string[]
     session_encryption: { primary: string | null; previous: string[] }
+    /** True when TELEGRAM_API_ID + TELEGRAM_API_HASH are present (no secret values). */
+    telegram_api_configured: boolean
     metrics: Record<string, number>
     checked_at: string
   }> {
@@ -1116,6 +1118,7 @@ export class UserSessionManager {
         ? { lease_mismatch_user_ids: leaseMismatchUserIds }
         : {}),
       session_encryption: telegramSessionKeyFingerprints(),
+      telegram_api_configured: telegramApiCredentialsConfigured(),
       metrics: getMetricsSnapshot(),
       checked_at: new Date(now).toISOString(),
     }

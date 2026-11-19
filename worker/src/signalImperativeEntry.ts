@@ -36,6 +36,13 @@ export function messageHasImperativeEntryPhrase(
 
   if (/\b(?:gold|xau(?:usd)?)\s+(?:buy|sell)\s+now\b/i.test(raw)) return true
   if (/\b(?:buy|sell)\s+(?:gold|xau(?:usd)?)\s+now\b/i.test(raw)) return true
+  // Gen Wealth / ICT: "GOLD SELL ZONES" / "BTC BUY ZONES" is an entry bulletin, not chat.
+  if (/\b(?:gold|xau(?:usd)?|btc(?:usd|usdt)?|bitcoin|eth(?:usd|usdt)?|silver|xag(?:usd)?)\s+(?:buy|sell)s?\s+zones?\b/i.test(raw)) {
+    return true
+  }
+  if (/\b(?:buy|sell)s?\s+zones?\b/i.test(raw) && /\b(?:gold|xau|btc|bitcoin|eth|silver|xag)\b/i.test(raw)) {
+    return true
+  }
 
   const delim = channelKeywords?.additional?.delimiters ?? '|'
   const buyAliases = splitKeywordAliases(channelKeywords?.signal?.buy ?? '', delim)

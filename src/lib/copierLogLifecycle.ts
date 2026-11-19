@@ -37,6 +37,7 @@ export type CopierCloseReasonLabels = {
   close_worse_entries: string
   copy_limit_flatten: string
   user_force_close: string
+  signal_deleted: string
   position_gone: string
   mirror_source_closed: string
   mirror_copy_closed: string
@@ -277,6 +278,7 @@ export const COPIER_CLOSE_REASON_CODES: readonly TradeCloseReasonCode[] = [
   'close_worse_entries',
   'copy_limit_flatten',
   'user_force_close',
+  'signal_deleted',
   'position_gone',
   'mirror_source_closed',
   'mirror_copy_closed',

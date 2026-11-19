@@ -79,6 +79,7 @@ export const tradingAr: TradingPagesBundleTranslations = {
     reasonCloseWorseEntries: 'أُغلقت لإفساح المجال لعمليات دخول أفضل.',
     reasonCopyLimitFlatten: 'أُغلقت تلقائيًا عند الوصول إلى حد النسخ.',
     reasonUserForceClose: 'أُغلقت من قبلك.',
+    reasonSignalDeleted: 'Closed because the signal message was deleted.',
     reasonPositionGone: 'كانت الصفقة مغلقة لدى الوسيط بالفعل عندما تحقّقنا.',
     reasonMirrorSourceClosed: 'أُغلقت الصفقة الأصلية، لذا أُغلقت هذه النسخة معها.',
     reasonMirrorCopyClosed: 'أُغلقت هذه الصفقة المنسوخة قبل بدء تسجيل أسباب الإغلاق.',

@@ -79,6 +79,7 @@ export const tradingNl: TradingPagesBundleTranslations = {
     reasonCloseWorseEntries: 'Gesloten om ruimte te maken voor betere instappen.',
     reasonCopyLimitFlatten: 'Automatisch gesloten toen de kopieerlimiet werd bereikt.',
     reasonUserForceClose: 'Door jou gesloten.',
+    reasonSignalDeleted: 'Closed because the signal message was deleted.',
     reasonPositionGone: 'De positie was al weg bij de broker toen we het controleerden.',
     reasonMirrorSourceClosed: 'De originele transactie is gesloten, dus deze kopie is mee gesloten.',
     reasonMirrorCopyClosed: 'Deze gekopieerde transactie is gesloten voordat sluitingsredenen werden vastgelegd.',

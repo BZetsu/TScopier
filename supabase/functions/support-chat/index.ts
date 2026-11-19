@@ -3,7 +3,7 @@
  *
  * POST body:
  *   { action: "send", conversation_id?, message?, images?, image_data_urls?,
- *     guest_name?, guest_email?, guest_token? }
+ *     reply_to_id?, guest_name?, guest_email?, guest_token? }
  *   { action: "escalate", conversation_id?, guest_token? }
  *   { action: "list", conversation_id?, guest_token? }
  *
@@ -32,7 +32,7 @@ const MODEL = Deno.env.get("SUPPORT_OPENAI_MODEL")?.trim() || "gpt-4o-mini";
 const MAX_HISTORY = 24;
 const MAX_IMAGES = 3;
 const MESSAGE_SELECT =
-  "id, conversation_id, sender_type, sender_user_id, body, images, source_locale, translations, created_at";
+  "id, conversation_id, sender_type, sender_user_id, body, images, source_locale, translations, reply_to_id, created_at";
 const CONVO_SELECT =
   "id, user_id, status, assignee_id, subject, last_message_at, created_at, updated_at, guest_name, guest_email, guest_token, customer_locale";
 const DESK_LOCALE = "en";
@@ -467,6 +467,20 @@ async function handleSend(
 
   const persistBody = message || (images.length ? "Shared an image" : "");
 
+  const replyToRaw = String(body.reply_to_id ?? "").trim();
+  let replyToId: string | null = null;
+  if (replyToRaw) {
+    const { data: parent, error: parentErr } = await admin
+      .from("support_messages")
+      .select("id")
+      .eq("id", replyToRaw)
+      .eq("conversation_id", id)
+      .maybeSingle();
+    if (parentErr) return bad(500, parentErr.message);
+    if (!parent) return bad(400, "Invalid reply_to_id");
+    replyToId = parent.id as string;
+  }
+
   const { data: userMsg, error: userMsgErr } = await admin
     .from("support_messages")
     .insert({
@@ -477,6 +491,7 @@ async function handleSend(
       images,
       source_locale: locale,
       translations: {},
+      reply_to_id: replyToId,
     })
     .select(MESSAGE_SELECT)
     .single();

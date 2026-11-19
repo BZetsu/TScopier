@@ -45,6 +45,7 @@ export type SupportMessage = {
   images: string[]
   source_locale?: string | null
   translations?: Record<string, string> | null
+  reply_to_id?: string | null
   created_at: string
 }
 
@@ -323,6 +324,7 @@ export async function sendSupportMessage(params: {
   images?: string[]
   imageDataUrls?: string[]
   locale?: string | null
+  replyToId?: string | null
   guest?: { name: string; email: string; token?: string | null } | null
 }): Promise<SupportChatSendResult> {
   const headers = params.guest ? anonHeaders() : await authOrAnonHeaders()
@@ -337,6 +339,7 @@ export async function sendSupportMessage(params: {
       images: params.images?.length ? params.images : undefined,
       image_data_urls: params.imageDataUrls?.length ? params.imageDataUrls : undefined,
       locale: params.locale ?? undefined,
+      reply_to_id: params.replyToId ?? undefined,
       guest_name: params.guest?.name,
       guest_email: params.guest?.email,
       guest_token: params.guest?.token ?? undefined,
@@ -386,4 +389,45 @@ export function loginUrlForSupportReturn(): string {
       : '/dashboard'
   const params = new URLSearchParams({ returnTo })
   return `/login?${params.toString()}`
+}
+
+export type SupportFeedbackStatus = {
+  hasResponse: boolean
+  skipped: boolean
+  rating: number | null
+}
+
+export async function getSupportConversationFeedbackStatus(params: {
+  conversationId: string
+  guestToken?: string | null
+}): Promise<SupportFeedbackStatus> {
+  const { data, error } = await supabase.rpc('support_conversation_feedback_status', {
+    p_conversation_id: params.conversationId,
+    p_guest_token: params.guestToken ?? null,
+  })
+  if (error) throw new Error(error.message)
+  const row = Array.isArray(data) ? data[0] : data
+  if (!row) return { hasResponse: false, skipped: false, rating: null }
+  return {
+    hasResponse: Boolean(row.has_response ?? true),
+    skipped: Boolean(row.skipped),
+    rating: typeof row.rating === 'number' ? row.rating : null,
+  }
+}
+
+export async function submitSupportConversationFeedback(params: {
+  conversationId: string
+  rating?: number | null
+  comment?: string | null
+  skipped?: boolean
+  guestToken?: string | null
+}): Promise<void> {
+  const { error } = await supabase.rpc('support_submit_conversation_feedback', {
+    p_conversation_id: params.conversationId,
+    p_rating: params.skipped ? null : (params.rating ?? null),
+    p_comment: params.skipped ? null : (params.comment ?? null),
+    p_skipped: Boolean(params.skipped),
+    p_guest_token: params.guestToken ?? null,
+  })
+  if (error) throw new Error(error.message)
 }

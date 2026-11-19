@@ -72,10 +72,10 @@ export function queuesUntilSubscriptionEnd(
 }
 
 /**
- * True when a single grant window is still open at `now`.
+ * True when a single grant window is open at `now`.
  *
- * The window starts at the later of the grant date and the end of the paid period:
- * a grant given to a paying customer must not run while they are still paying.
+ * A grant given to a paying customer starts at the period end (queued), not while
+ * they are still paying; one given after that period started at that end.
  */
 export function extensionWindowActive(
   days: unknown,
@@ -92,7 +92,6 @@ export function extensionWindowActive(
     : queuesUntilSubscriptionEnd(sub, end, now)
       ? Math.max(granted, end)
       : Math.max(granted, Math.min(end, now));
-  // A queued window (starting after the paid period) does not grant access yet.
   return start <= now && start + d * 86_400_000 > now;
 }
 

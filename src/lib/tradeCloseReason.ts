@@ -19,6 +19,7 @@ export type TradeCloseReasonCode =
   | 'close_worse_entries'
   | 'copy_limit_flatten'
   | 'user_force_close'
+  | 'signal_deleted'
   | 'position_gone'
   | 'mirror_source_closed'
   | 'mirror_copy_closed'
@@ -36,6 +37,7 @@ const KNOWN_REASONS: ReadonlySet<string> = new Set<TradeCloseReasonCode>([
   'close_worse_entries',
   'copy_limit_flatten',
   'user_force_close',
+  'signal_deleted',
   'position_gone',
   'mirror_source_closed',
   'mirror_copy_closed',
@@ -116,6 +118,7 @@ export interface TradeCloseReasonLabels {
   reasonCloseWorseEntries: string
   reasonCopyLimitFlatten: string
   reasonUserForceClose: string
+  reasonSignalDeleted: string
   reasonPositionGone: string
   reasonMirrorSourceClosed: string
   reasonMirrorCopyClosed: string
@@ -135,6 +138,7 @@ export const CLOSE_REASON_LABEL_KEYS: Record<TradeCloseReasonCode, keyof TradeCl
   close_worse_entries: 'reasonCloseWorseEntries',
   copy_limit_flatten: 'reasonCopyLimitFlatten',
   user_force_close: 'reasonUserForceClose',
+  signal_deleted: 'reasonSignalDeleted',
   position_gone: 'reasonPositionGone',
   mirror_source_closed: 'reasonMirrorSourceClosed',
   mirror_copy_closed: 'reasonMirrorCopyClosed',

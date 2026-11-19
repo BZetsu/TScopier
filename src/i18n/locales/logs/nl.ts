@@ -45,6 +45,7 @@ export const logsNl: LogsBundleTranslations = {
       close_worse_entries: 'Slechtere entries gesloten.',
       copy_limit_flatten: 'Gesloten door kopieerlimiet.',
       user_force_close: 'Handmatig gesloten.',
+      signal_deleted: 'Closed — signal message deleted.',
       position_gone: 'Gesloten bij broker.',
       mirror_source_closed: 'Masterpositie gesloten.',
       mirror_copy_closed: 'Spiegelkopie gesloten.',

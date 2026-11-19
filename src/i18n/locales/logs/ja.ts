@@ -45,6 +45,7 @@ export const logsJa: LogsBundleTranslations = {
       close_worse_entries: 'Worse entries closed.',
       copy_limit_flatten: 'Closed by copy limit.',
       user_force_close: 'Closed manually.',
+      signal_deleted: 'Closed — signal message deleted.',
       position_gone: 'Closed on broker.',
       mirror_source_closed: 'Master position closed.',
       mirror_copy_closed: 'Mirror copy closed.',

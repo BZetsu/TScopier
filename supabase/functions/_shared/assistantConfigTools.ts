@@ -27,6 +27,7 @@ export const DEFAULT_MANUAL_SETTINGS: Record<string, unknown> = {
   signal_entry_prefer: "first_price",
   signal_entry_pip_tolerance: 10,
   close_on_opposite_signal: false,
+  close_on_signal_deleted: false,
   order_comments_enabled: true,
 };
 
@@ -63,6 +64,7 @@ export const PATCHABLE_MANUAL_KEYS = new Set([
   "symbol_to_trade",
   "symbols_exclude",
   "close_on_opposite_signal",
+  "close_on_signal_deleted",
   "order_comments_enabled",
   "pending_expiry_hours",
   "add_new_trades_to_existing",

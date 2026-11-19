@@ -820,10 +820,14 @@ export function startTradeHttpServer(
           broker_account_id?: string
           channel_id?: string | null
           signal_id?: string | null
+          close_reason?: string | null
         }
         const userId = body.user_id?.trim()
         const brokerAccountId = body.broker_account_id?.trim()
         const signalId = body.signal_id?.trim() || null
+        const closeReason = body.close_reason?.trim() === 'signal_deleted'
+          ? 'signal_deleted' as const
+          : undefined
         if (!userId || (!brokerAccountId && !signalId)) {
           return sendJson(res, 400, { error: 'user_id and broker_account_id (or signal_id) required' })
         }
@@ -840,7 +844,11 @@ export function startTradeHttpServer(
         }
         try {
           const result = signalId
-            ? await forceCloseSignalById(tradeExecutor.supabase, { userId, signalId })
+            ? await forceCloseSignalById(tradeExecutor.supabase, {
+                userId,
+                signalId,
+                ...(closeReason ? { closeReason } : {}),
+              })
             : await forceCloseSignalTrades(tradeExecutor.supabase, {
                 userId,
                 brokerAccountId: brokerAccountId!,

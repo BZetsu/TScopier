@@ -80,7 +80,7 @@ export async function loadCachedSubscriptionExtensionEnd(
           : queued
             ? Math.max(start, subEndMs)
             : Math.max(start, Math.min(subEndMs, now))
-        // A window queued behind a paid period has not started: it does not grant access yet.
+        // A window queued behind a paid period has not started: it grants nothing yet.
         if (windowStart > now) continue
         const end = windowStart + days * 86_400_000
         if (endMs == null || end > endMs) endMs = end

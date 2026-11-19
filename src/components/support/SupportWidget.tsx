@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+} from 'react'
 import {
   ArrowLeft,
   CheckCircle2,
@@ -8,7 +15,9 @@ import {
   ImagePlus,
   Loader2,
   MessageCircle,
+  Reply,
   Send,
+  Star,
   Ticket,
   UserRound,
   X,
@@ -35,8 +44,10 @@ import {
   loginUrlForSupportReturn,
   readSupportGuestSession,
   ensureSupportTranslation,
+  getSupportConversationFeedbackStatus,
   resolveSupportMessageText,
   sendSupportMessage,
+  submitSupportConversationFeedback,
   SUPPORT_MAX_IMAGES,
   uploadSupportImages,
   writeSupportGuestSession,
@@ -45,6 +56,7 @@ import {
   type SupportGuestSession,
   type SupportMessage,
 } from '../../lib/supportChat'
+import { createSupportTypingSession } from '../../lib/supportTyping'
 
 export type SupportWidgetVisibility = 'minimized' | 'maximized' | 'hidden'
 
@@ -73,6 +85,15 @@ function avatarInitials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean)
   if (parts.length >= 2) return `${parts[0]![0]}${parts[1]![0]}`.toUpperCase()
   return (parts[0] ?? 'U').slice(0, 2).toUpperCase()
+}
+
+function quoteSnippet(message: Pick<SupportMessage, 'body' | 'images'>): string {
+  const body = message.body?.trim() ?? ''
+  if (body && !(message.images?.length && body === 'Shared an image')) {
+    return body.length > 120 ? `${body.slice(0, 119)}…` : body
+  }
+  if (message.images?.length) return 'Image'
+  return body || 'Message'
 }
 
 function PersonAvatar({
@@ -275,6 +296,12 @@ export function SupportWidget({
   const [messages, setMessages] = useState<SupportMessage[]>([])
   const [draft, setDraft] = useState('')
   const [draftImages, setDraftImages] = useState<string[]>([])
+  const [replyTo, setReplyTo] = useState<SupportMessage | null>(null)
+  const [feedbackDone, setFeedbackDone] = useState(false)
+  const [feedbackRating, setFeedbackRating] = useState(0)
+  const [feedbackComment, setFeedbackComment] = useState('')
+  const [feedbackBusy, setFeedbackBusy] = useState(false)
+  const [feedbackHover, setFeedbackHover] = useState(0)
   const [attaching, setAttaching] = useState(false)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
@@ -290,8 +317,12 @@ export function SupportWidget({
   const [unreadCount, setUnreadCount] = useState(0)
   const [teamAvatars, setTeamAvatars] = useState<SupportHeaderAvatar[]>([])
   const [agentProfiles, setAgentProfiles] = useState<Record<string, SupportAgentProfile>>({})
+  const [peerTyping, setPeerTyping] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const typingSessionRef = useRef<ReturnType<typeof createSupportTypingSession> | null>(null)
+  const dragDepthRef = useRef(0)
   const knownMessageIdsRef = useRef<Set<string>>(new Set())
   const hydratedConversationsRef = useRef<Set<string>>(new Set())
   const ownedConversationIdsRef = useRef<Set<string>>(new Set())
@@ -360,6 +391,12 @@ export function SupportWidget({
     () => conversations.find(c => c.id === activeId) ?? null,
     [activeId, conversations],
   )
+
+  const messagesById = useMemo(() => {
+    const map: Record<string, SupportMessage> = {}
+    for (const m of messages) map[m.id] = m
+    return map
+  }, [messages])
 
   const refreshConversations = useCallback(async () => {
     if (!user) {
@@ -482,6 +519,59 @@ export function SupportWidget({
     if (!open || !activeId) return
     if (user || guestSession?.token) void loadThread(activeId)
   }, [open, activeId, user, guestSession?.token, loadThread])
+
+  useEffect(() => {
+    setReplyTo(null)
+    setDraft('')
+    setDraftImages([])
+    setFeedbackDone(false)
+    setFeedbackRating(0)
+    setFeedbackComment('')
+    setFeedbackHover(0)
+  }, [activeId])
+
+  useEffect(() => {
+    if (!activeId || !activeConversation) return
+    if (activeConversation.status !== 'resolved' && activeConversation.status !== 'closed') {
+      setFeedbackDone(false)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const status = await getSupportConversationFeedbackStatus({
+          conversationId: activeId,
+          guestToken: user ? null : guestSession?.token,
+        })
+        if (!cancelled) setFeedbackDone(status.hasResponse)
+      } catch {
+        if (!cancelled) setFeedbackDone(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activeId, activeConversation?.status, user, guestSession?.token])
+
+  useEffect(() => {
+    if (!activeId) {
+      setPeerTyping(false)
+      typingSessionRef.current?.dispose()
+      typingSessionRef.current = null
+      return
+    }
+    typingSessionRef.current?.dispose()
+    typingSessionRef.current = createSupportTypingSession({
+      conversationId: activeId,
+      selfRole: 'user',
+      onPeerTyping: setPeerTyping,
+    })
+    return () => {
+      typingSessionRef.current?.dispose()
+      typingSessionRef.current = null
+      setPeerTyping(false)
+    }
+  }, [activeId])
 
   useEffect(() => {
     if (user) return
@@ -770,14 +860,64 @@ export function SupportWidget({
     }
   }
 
+  const canDropImages =
+    showComposer &&
+    activeConversation?.status !== 'resolved' &&
+    activeConversation?.status !== 'closed' &&
+    !sending &&
+    !attaching &&
+    draftImages.length < SUPPORT_MAX_IMAGES
+
+  const resetDragOver = () => {
+    dragDepthRef.current = 0
+    setDragOver(false)
+  }
+
+  const onComposerDragEnter = (event: ReactDragEvent) => {
+    if (!canDropImages) return
+    if (![...event.dataTransfer.types].includes('Files')) return
+    event.preventDefault()
+    event.stopPropagation()
+    dragDepthRef.current += 1
+    setDragOver(true)
+  }
+
+  const onComposerDragLeave = (event: ReactDragEvent) => {
+    if (!dragOver) return
+    event.preventDefault()
+    event.stopPropagation()
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) setDragOver(false)
+  }
+
+  const onComposerDragOver = (event: ReactDragEvent) => {
+    if (!canDropImages) return
+    if (![...event.dataTransfer.types].includes('Files')) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'copy'
+  }
+
+  const onComposerDrop = (event: ReactDragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    resetDragOver()
+    if (!canDropImages) return
+    const files = Array.from(event.dataTransfer.files ?? [])
+    if (files.length) void addImageFiles(files)
+  }
+
   const onSend = async () => {
     const text = draft.trim()
     if ((!text && draftImages.length === 0) || sending || attaching || !guestReady) return
+    typingSessionRef.current?.stop()
     setSending(true)
     setError('')
     const imagesSnapshot = draftImages
+    const replyToSnapshot = replyTo
     setDraft('')
     setDraftImages([])
+    setReplyTo(null)
     try {
       if (user) {
         const conversationId =
@@ -795,6 +935,7 @@ export function SupportWidget({
           conversationId,
           images: uploaded,
           locale,
+          replyToId: replyToSnapshot?.id,
         })
         setActiveId(result.conversation_id)
         const appended = [result.user_message, result.ai_message].filter(Boolean) as SupportMessage[]
@@ -820,6 +961,7 @@ export function SupportWidget({
         conversationId: activeId,
         imageDataUrls: imagesSnapshot.length > 0 ? imagesSnapshot : undefined,
         locale,
+        replyToId: replyToSnapshot?.id,
         guest,
       })
       const token = result.guest_token ?? guest.token
@@ -865,6 +1007,7 @@ export function SupportWidget({
     } catch (err) {
       setDraft(text)
       setDraftImages(imagesSnapshot)
+      setReplyTo(replyToSnapshot)
       setError(err instanceof Error ? err.message : t.errorSend)
     } finally {
       setSending(false)
@@ -1266,11 +1409,68 @@ export function SupportWidget({
                             </span>
                           ) : null}
                         </div>
-                        <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 py-2">
+                        <div
+                          className="relative min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 py-2"
+                          onDragEnter={onComposerDragEnter}
+                          onDragLeave={onComposerDragLeave}
+                          onDragOver={onComposerDragOver}
+                          onDrop={onComposerDrop}
+                        >
+                          {dragOver && canDropImages ? (
+                            <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-green-500 bg-green-50/90 dark:bg-green-950/50">
+                              <p className="text-sm font-medium text-green-700 dark:text-green-300">
+                                Drop images to attach
+                              </p>
+                            </div>
+                          ) : null}
                           {loadingThread ? (
                             <p className="text-center text-xs text-neutral-400">{t.loading}</p>
                           ) : null}
                           {messages.map(m => {
+                            const quoted = m.reply_to_id ? messagesById[m.reply_to_id] : null
+                            const canReply =
+                              activeConversation?.status !== 'resolved' &&
+                              activeConversation?.status !== 'closed'
+                            const quoteBlock = quoted ? (
+                              <div
+                                className={clsx(
+                                  'mb-1.5 rounded-lg border-l-2 px-2 py-1 text-[11px] leading-snug',
+                                  m.sender_type === 'user'
+                                    ? 'border-white/40 bg-white/10 text-white/80 dark:border-neutral-900/40 dark:bg-black/10 dark:text-neutral-900/75'
+                                    : 'border-green-500 bg-white/70 text-neutral-600 dark:border-green-400 dark:bg-black/20 dark:text-neutral-300',
+                                )}
+                              >
+                                <span className="block font-medium opacity-90">
+                                  {quoted.sender_type === 'user'
+                                    ? 'You'
+                                    : quoted.sender_type === 'ai'
+                                      ? t.aiName
+                                      : quoted.sender_type === 'agent'
+                                        ? agentProfiles[quoted.sender_user_id ?? '']?.display_name ||
+                                          t.supportName
+                                        : t.supportName}
+                                </span>
+                                <span className="line-clamp-2">{quoteSnippet(quoted)}</span>
+                              </div>
+                            ) : null
+                            const replyBtn = canReply ? (
+                              <button
+                                type="button"
+                                className={clsx(
+                                  'absolute -left-1 -top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full border shadow-sm transition',
+                                  'opacity-0 group-hover:opacity-100 focus:opacity-100',
+                                  m.sender_type === 'user'
+                                    ? 'border-white/20 bg-white text-neutral-700 hover:bg-neutral-50 dark:border-neutral-800/30'
+                                    : 'border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200',
+                                )}
+                                aria-label="Reply to message"
+                                title="Reply"
+                                onClick={() => setReplyTo(m)}
+                              >
+                                <Reply className="h-3 w-3" />
+                              </button>
+                            ) : null
+
                             if (m.sender_type === 'system') {
                               return (
                                 <div
@@ -1287,8 +1487,10 @@ export function SupportWidget({
                               return (
                                 <div
                                   key={m.id}
-                                  className="ml-auto max-w-[88%] rounded-2xl rounded-br-md bg-neutral-900 px-3.5 py-2 text-sm leading-relaxed text-white dark:bg-green-400 dark:text-neutral-950"
+                                  className="group relative ml-auto max-w-[88%] rounded-2xl rounded-br-md bg-neutral-900 px-3.5 py-2 text-sm leading-relaxed text-white dark:bg-green-400 dark:text-neutral-950"
                                 >
+                                  {replyBtn}
+                                  {quoteBlock}
                                   {m.body &&
                                   !(m.images?.length && m.body === 'Shared an image')
                                     ? (
@@ -1322,12 +1524,14 @@ export function SupportWidget({
                                   icon={isAi}
                                   className="mb-0.5"
                                 />
-                                <div className="min-w-0 rounded-2xl rounded-bl-md bg-neutral-100 px-3.5 py-2 text-sm leading-relaxed text-neutral-800 dark:bg-neutral-900 dark:text-neutral-100">
+                                <div className="group relative min-w-0 rounded-2xl rounded-bl-md bg-neutral-100 px-3.5 py-2 text-sm leading-relaxed text-neutral-800 dark:bg-neutral-900 dark:text-neutral-100">
+                                  {replyBtn}
                                   {m.sender_type === 'agent' ? (
                                     <p className="mb-0.5 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
                                       {agentName}
                                     </p>
                                   ) : null}
+                                  {quoteBlock}
                                   {displayText &&
                                   !(m.images?.length && m.body === 'Shared an image')
                                     ? (
@@ -1358,6 +1562,16 @@ export function SupportWidget({
                               </div>
                             )
                           })}
+                          {peerTyping ? (
+                            <p className="px-1 py-1 text-xs font-medium text-neutral-400">
+                              Typing
+                              <span className="inline-flex tracking-wider">
+                                <span className="animate-pulse">.</span>
+                                <span className="animate-pulse [animation-delay:150ms]">.</span>
+                                <span className="animate-pulse [animation-delay:300ms]">.</span>
+                              </span>
+                            </p>
+                          ) : null}
                           <div ref={bottomRef} />
                         </div>
                       </>
@@ -1369,13 +1583,118 @@ export function SupportWidget({
           </div>
 
           {showComposer ? (
-            <div className="px-3 pb-2 pt-1">
+            <div
+              className="relative px-3 pb-2 pt-1"
+              onDragEnter={onComposerDragEnter}
+              onDragLeave={onComposerDragLeave}
+              onDragOver={onComposerDragOver}
+              onDrop={onComposerDrop}
+            >
               {error ? <p className="mb-2 px-1 text-xs text-red-500">{error}</p> : null}
               {activeConversation?.status === 'resolved' ||
               activeConversation?.status === 'closed' ? (
-                <p className="rounded-2xl bg-neutral-50 px-3 py-3 text-xs text-neutral-500 dark:bg-white/[0.03]">
-                  {t.conversationResolved}
-                </p>
+                feedbackDone ? (
+                  <p className="rounded-2xl bg-neutral-50 px-3 py-3 text-xs text-neutral-500 dark:bg-white/[0.03]">
+                    {t.conversationResolved}
+                  </p>
+                ) : (
+                  <div className="space-y-2 rounded-2xl bg-neutral-50 px-3 py-3 dark:bg-white/[0.03]">
+                    <p className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
+                      How was your support experience?
+                    </p>
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: 5 }, (_, i) => {
+                        const value = i + 1
+                        const active = (feedbackHover || feedbackRating) >= value
+                        return (
+                          <button
+                            key={value}
+                            type="button"
+                            className="rounded-md p-0.5 transition hover:scale-110"
+                            aria-label={`Rate ${value} out of 5`}
+                            disabled={feedbackBusy}
+                            onMouseEnter={() => setFeedbackHover(value)}
+                            onMouseLeave={() => setFeedbackHover(0)}
+                            onClick={() => setFeedbackRating(value)}
+                          >
+                            <Star
+                              className={clsx(
+                                'h-6 w-6',
+                                active
+                                  ? 'fill-amber-400 text-amber-400'
+                                  : 'text-neutral-300 dark:text-neutral-600',
+                              )}
+                            />
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <textarea
+                      value={feedbackComment}
+                      onChange={e => setFeedbackComment(e.target.value)}
+                      rows={2}
+                      placeholder="Optional comment"
+                      disabled={feedbackBusy}
+                      className="w-full resize-none rounded-xl border border-neutral-200 bg-white px-2.5 py-2 text-xs text-neutral-800 outline-none focus:border-green-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+                    />
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200"
+                        disabled={feedbackBusy}
+                        onClick={() => {
+                          void (async () => {
+                            setFeedbackBusy(true)
+                            try {
+                              await submitSupportConversationFeedback({
+                                conversationId: activeConversation.id,
+                                skipped: true,
+                                guestToken: user ? null : guestSession?.token,
+                              })
+                              setFeedbackDone(true)
+                            } catch (err) {
+                              setError(
+                                err instanceof Error ? err.message : 'Could not skip feedback',
+                              )
+                            } finally {
+                              setFeedbackBusy(false)
+                            }
+                          })()
+                        }}
+                      >
+                        Skip
+                      </button>
+                      <button
+                        type="button"
+                        disabled={feedbackBusy || feedbackRating < 1}
+                        className="rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40 dark:bg-green-400 dark:text-neutral-950"
+                        onClick={() => {
+                          void (async () => {
+                            setFeedbackBusy(true)
+                            setError('')
+                            try {
+                              await submitSupportConversationFeedback({
+                                conversationId: activeConversation.id,
+                                rating: feedbackRating,
+                                comment: feedbackComment.trim() || null,
+                                guestToken: user ? null : guestSession?.token,
+                              })
+                              setFeedbackDone(true)
+                            } catch (err) {
+                              setError(
+                                err instanceof Error ? err.message : 'Could not submit feedback',
+                              )
+                            } finally {
+                              setFeedbackBusy(false)
+                            }
+                          })()
+                        }}
+                      >
+                        {feedbackBusy ? 'Sending…' : 'Submit'}
+                      </button>
+                    </div>
+                  </div>
+                )
               ) : (
                 <form
                   className="space-y-2"
@@ -1384,6 +1703,34 @@ export function SupportWidget({
                     void onSend()
                   }}
                 >
+                  {replyTo ? (
+                    <div className="flex items-start gap-2 rounded-2xl bg-neutral-50 px-2.5 py-2 dark:bg-white/[0.04]">
+                      <div className="min-w-0 flex-1 border-l-2 border-green-500 pl-2 dark:border-green-400">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
+                          Replying to{' '}
+                          {replyTo.sender_type === 'user'
+                            ? 'You'
+                            : replyTo.sender_type === 'ai'
+                              ? t.aiName
+                              : replyTo.sender_type === 'agent'
+                                ? agentProfiles[replyTo.sender_user_id ?? '']?.display_name ||
+                                  t.supportName
+                                : t.supportName}
+                        </p>
+                        <p className="truncate text-xs text-neutral-700 dark:text-neutral-300">
+                          {quoteSnippet(replyTo)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded-md p-1 text-neutral-400 hover:bg-white hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+                        aria-label="Cancel reply"
+                        onClick={() => setReplyTo(null)}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ) : null}
                   {draftImages.length > 0 ? (
                     <div className="flex flex-wrap gap-2 px-1">
                       {draftImages.map((src, idx) => (
@@ -1434,7 +1781,11 @@ export function SupportWidget({
                     </button>
                     <textarea
                       value={draft}
-                      onChange={e => setDraft(e.target.value)}
+                      onChange={e => {
+                        setDraft(e.target.value)
+                        if (e.target.value.trim()) typingSessionRef.current?.signal()
+                        else typingSessionRef.current?.stop()
+                      }}
                       rows={1}
                       placeholder={t.writeMessage}
                       className="max-h-28 min-h-[40px] flex-1 resize-none bg-transparent px-1 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 dark:text-neutral-50"
@@ -1453,6 +1804,7 @@ export function SupportWidget({
                           void onSend()
                         }
                       }}
+                      onBlur={() => typingSessionRef.current?.stop()}
                     />
                     <button
                       type="submit"

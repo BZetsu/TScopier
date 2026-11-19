@@ -79,6 +79,7 @@ export const tradingPl: TradingPagesBundleTranslations = {
     reasonCloseWorseEntries: 'Zamknięta, aby zrobić miejsce na lepsze wejścia.',
     reasonCopyLimitFlatten: 'Zamknięta automatycznie po osiągnięciu limitu kopiowania.',
     reasonUserForceClose: 'Zamknięta przez Ciebie.',
+    reasonSignalDeleted: 'Closed because the signal message was deleted.',
     reasonPositionGone: 'Pozycja była już zamknięta u brokera, gdy to sprawdziliśmy.',
     reasonMirrorSourceClosed: 'Transakcja źródłowa została zamknięta, więc ta kopia również została zamknięta.',
     reasonMirrorCopyClosed: 'Ta skopiowana transakcja została zamknięta, zanim zaczęto zapisywać powody zamknięcia.',

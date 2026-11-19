@@ -5,6 +5,82 @@
 > Per-contributor logs: `docs/PROJECT_MEMORY-MARTINS.md` (Martins / Planmoni App) and
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
+### 2026-11-18 — Close trade when signal message deleted (Management toggle)
+
+- **Context:** Users wanted open trades closed / pendings cancelled when the Telegram (or Discord/WhatsApp) signal post is deleted.
+- **Plain English:** New Management setting **Close trade / Delete pending when signal deleted** (default OFF). When ON for that channel on a broker, deleting the original signal message closes that signal’s open trades and cancels its pending orders.
+- **Root cause (technical):** Feature was previously unsupported (Configure-with-AI said so).
+- **Fix (files):** Setting `close_on_signal_deleted`; Configure + Account Config UI; listener Raw delete + reconcile miss + Discord MessageDelete + WhatsApp revoke → trade worker `/internal/force-close-trades` with `close_reason=signal_deleted` (brokers filtered by setting); close reason `signal_deleted`.
+- **Tests/verification:** `forceCloseSignalTrades.test.ts`, `signalDeletedClose.test.ts`, `tradeCloseReasonSync.test.ts` green.
+- **Deploy state:** Local only — redeploy listener + trade (+ Discord/WhatsApp listeners) and ship frontend.
+- **Follow-ups:** Redeploy workers; verify on Migration with a test post delete.
+
+### 2026-11-18 — cTrader “no pendings” was config, not provider
+
+- **Context:** Martins Migration: Demo MT placed BuyLimits @ 3763 while Fusion cTrader market-filled ~3768 on the same FOREX KING BACKUP signal (`365f8b27`).
+- **Plain English:** Fusion’s channel settings had **Use Signal Entry Price off**, so cTrader correctly went market. Demo had it on → pending. Not a cTrader limit-order bug.
+- **Root cause (technical):** Per-broker `broker_channel_trading_configs` / embedded map: Demo `use_signal_entry_price=true` + `last_price`; Fusion `false` / prefer null. Logs: MT `signal_entry_pending_placed` BuyLimit; cTrader `order_send` Buy.
+- **Fix:** Enabled Fusion FOREX KING BACKUP to match Demo (`use_signal_entry_price=true`, `signal_entry_prefer=last_price`, tol 10) on Migration.
+- **Tests/verification:** SQL/REST inspect of trades + execution logs + configs.
+- **Deploy state:** Migration DB config only.
+- **Follow-ups:** Next dual-quote signal should BuyLimit on both when price is away; confirm in Copier/logs.
+
+### 2026-11-18 — Entry price First/Last flipped (Worse/Best)
+
+- **Context:** Use Signal Entry Price First Price selected the other dual-quote level (and vice versa). Product intent: First = Worse, Last = Best.
+- **Plain English:** With two entry quotes, First Price now takes the worse level for that side (buy higher / sell lower); Last Price takes the best.
+- **Root cause (technical):** When `entry_zone_first/last` were missing, [`resolvePreferredSignalEntryPrice`](worker/src/manualPlanning/parsedEntry.ts) mapped first→zone **min** and last→**max**, which inverted common BUY quotes written high-then-low (`(3879) 3878`).
+- **Fix (files):** Side-aware worse/best selection; labels/hints in configureModal en/es/fr; Configure-with-AI §4b; planner passes signal side.
+- **Tests/verification:** `parsedEntry.test.ts` + `parseSignal.entryPrefer.test.ts` green.
+- **Deploy state:** Worker + frontend local; redeploy trade worker for live effect.
+- **Follow-ups:** Redeploy trade worker (+ frontend for label copy).
+
+### 2026-11-17 — Migration Pull signals: Unauthorized = backtest token mismatch
+
+- **Context:** UI showed `No tradeable signals in range (0 messages scanned). Unauthorized` after clock fix. A BTC **Run** at 20:51Z still completed using earlier imports.
+- **Plain English:** Pull talks to Railway **Backtest**; its `WORKER_INTERNAL_TOKEN` does not match Listener/Trade (or Edge). Clearer Unauthorized copy shipped in Edge; Backtest Railway still needs the same token as Listener/Trade/Edge.
+- **Root cause (technical):** `workerSync` → `backtest-migration` `/auth/backtest_sync_signals` 401; local/trade token accepted by trade+listener, rejected by backtest.
+- **Fix:** Clearer Unauthorized copy in [`workerSync.ts`](supabase/functions/_shared/backtest/workerSync.ts). **Ops:** set identical `WORKER_INTERNAL_TOKEN` on Railway **backtest-migration** (match Listener) and redeploy that service.
+- **Deploy state:** Migration `backtest-run` **v165** (2026-11-17 21:16Z). Railway Backtest token still operator action.
+- **Follow-ups:** User pastes Listener’s `WORKER_INTERNAL_TOKEN` onto Backtest → redeploy → Pull again.
+
+### 2026-11-17 — Migration backtest: stale edge + missing clock secrets (vs staging/prod)
+
+- **Context:** Local app → Migration Supabase; signal sync worked (BACKUP 21 imported) but Run failed with MTAPI unit/sign/DST unverified. User thought staging/prod had no clock vars.
+- **Plain English:** Those vars are **Supabase Edge secrets** (not Railway / `worker/.env`). Staging + prod already had them; Migration did not, and Migration’s `backtest-run` was still the **2026-10-20** build while staging/prod had the **Nov 2–4** clock-aware build.
+- **Root cause (technical):** (1) Clock policy secrets absent on `supmsgcubipmmowrzoub` until set. (2) `backtest-run` v161 @ 2026-10-20 vs staging v33 @ 2026-11-02 / prod v151 @ 2026-11-04. (3) `WORKER_URL` digest matched **trade**-migration (footgun; sync OK only because `BACKTEST_WORKER_URL` pointed at backtest).
+- **Fix:** Set same measured clock secrets as staging/prod; deployed `backtest-run` → Migration **v162** (2026-11-17 20:46Z); set `WORKER_URL=https://listener-migration.up.railway.app` (kept `BACKTEST_WORKER_URL=https://backtest-migration.up.railway.app`).
+- **Tests/verification:** Secrets digests now match staging/prod for all `MTAPI_HISTORY_*` / `MTAPI_SERVER_TIMEZONE_*`; function list shows v162.
+- **Deploy state:** Migration Edge updated. Retry Run backtest on FOREX KING BACKUP + XAUUSD/BTCUSD.
+- **Follow-ups:** User re-run; if still failing, check Exness Demo session / symbol map next.
+
+### 2026-11-17 — Backtest “0 messages” on wrong FOREX KING + fetch filter
+
+- **Context:** Martins (`acb848d6-…`) Migration backtest on **FOREX KING 👑** (`1fbbf71b` / `@dstader1`) returned `0 messages from Telegram` after API env was fixed.
+- **Plain English:** Live copy traffic is on **FOREX KING BACKUP👑** (`be8d30df`), not the main `@dstader1` row. Also, backtest history fetch still dropped non-heuristic texts, so empty results looked like “no access.”
+- **Root cause (technical):** UI channel ≠ live signal channel; [`fetchMessagesBetween`](worker/src/userListener.ts) `forBacktest` path still applied `looksLikeTradingSignal` unless `BACKTEST_FETCH_ALL_MESSAGES`; `getMessages` errors were swallowed.
+- **Fix (files):** Backtest fetch keeps all text in range; surface getMessages/resolve errors; clearer empty-channel error. Ops: user should backtest **BACKUP** (or the channel with `last_live_at` / live signals).
+- **Deploy state:** Worker code local — redeploy **backtest-migration**.
+- **Follow-ups:** Redeploy backtest worker; retry Pull on FOREX KING BACKUP.
+
+### 2026-11-17 — Backtest needs TELEGRAM_API_* on Railway Backtest service
+
+- **Context:** After pointing Edge at `backtest-migration`, sync failed with `TELEGRAM_API_ID / TELEGRAM_API_HASH must be set in env` despite vars in Supabase secrets and (claimed) Backtest worker.
+- **Plain English:** Those credentials must live on the **Railway Backtest** process. Edge/Supabase secrets never reach GramJS; Listener vars do not auto-copy to Backtest.
+- **Root cause (technical):** [`buildClient`](worker/src/telegramClient.ts) reads `process.env`; outdated [`railway-architecture.md`](docs/railway-architecture.md) wrongly said Backtest needs no API id/hash.
+- **Fix (files):** Docs corrected; env trim/unquote + clearer error; health `telegram_api_configured` boolean. Ops: set exact names on Backtest service → redeploy → `/health` true.
+- **Deploy state:** Local worker/docs; Backtest Railway redeploy needed for health flag.
+- **Follow-ups:** User verifies Railway Backtest Variables (service-scoped, not shared-unattached) then redeploys.
+
+### 2026-11-17 — Backtest "Not found" = wrong worker URL
+
+- **Context:** Local Migration app (`.env` → `supmsgcubipmmowrzoub`) showed bare **"Not found"** when starting a backtest (Pull signals / sync).
+- **Plain English:** Sync was calling a **trade** Railway service, which has no Telegram backtest route. The dedicated backtest worker already exists.
+- **Root cause (technical):** `POST /auth/backtest_sync_signals` on `trade-migration` (role `trade`) returns `{error:"Not found"}`. Route exists on `backtest-migration` (role `backtest`, 401 without token) and listener (but listener blocks sync by design). Edge `BACKTEST_WORKER_URL` / `WORKER_URL` was aimed at the trade host.
+- **Fix (files):** Clearer mapping in [`workerSync.ts`](supabase/functions/_shared/backtest/workerSync.ts). **Ops:** Migration Edge secret `BACKTEST_WORKER_URL=https://backtest-migration.up.railway.app` (prod: `https://tscopier-backtest-production.up.railway.app`); token must match that service.
+- **Tests/verification:** Probed hosts — trade → 404 Not found; backtest-migration → 401 on sync route.
+- **Deploy state:** Clearer error string in repo only (not redeployed). Secret fix is the unblock.
+- **Follow-ups:** Set Migration `BACKTEST_WORKER_URL`; redeploy `backtest-run` when convenient for clearer UI copy; spot-check prod Edge secrets the same way.
 
 ### 2026-11-19 — Toky RAKOTOBE: Telegram disconnected 13 times in six minutes by repeated Disconnect calls
 
@@ -86,19 +162,6 @@
   4. Late replay of broker-rejected entries (`SERVICE_NOT_AVAILABLE` → replayed 4 h 40 min later). Consider expiring entry signals after their pending window rather than replaying them at a much worse price.
   5. `885a003b` (Patrizio Caringi) was restored by the same restart and confirmed on the new worker; no further action.
 
-### 2026-11-16 — Gen Wealth VIP: GOLD/BTC ZONES as range waits
-
-- **Context:** Liam Nicolas (`b23d53d4-…`) Gen Wealth VIP (`8d385907-…`) posted multiline `GOLD/BTC BUY|SELL ZONES` bulletins; worker treated them as market entries with invented SL/TP → `entry_price_moved_adverse`, 0 trades.
-- **Plain English:** Zone lists now parse as entry bands (no fake stops). With Multi + range wait + Override SL/TP, the copier waits for price to touch the nearest level, then uses his predefined pip stops.
-- **Root cause (technical):** No deterministic ZONES path; AI/`classifyPricesByDirection` folded bare prices into SL/TP; eligibility required invented stops; Liam was Single with waits off; wide N≥3 lists as min–max were too broad.
-- **Fix (files):** `extractBuySellZonesBulletin` / `parseBuySellZonesBulletin` in [`signalPriceInference.ts`](worker/src/signalPriceInference.ts) + [`parseSignal.ts`](worker/src/parseSignal.ts) (preserve `entry_zone_levels` in `normalizeParsedFromModel`); AI adapter clears SL/TP for ZONES; imperative + eligibility with manuals / `ENTRY_MISSING_PREDEFINED_STOPS`; [`collapseZonesLevelsToWaitBand`](worker/src/signalPriceInference.ts) + [`narrowRangeWaitToNearestZoneLevel`](worker/src/manualPlanning/signalEntryRange.ts) at plan/prepare; dispatch re-checks manuals. Prod config: Genwealth account + channel → `trade_style=multi`, `use_signal_entry_range=true`, `use_predefined_sl/tp_pips=true` (30 / 20·40·60 kept).
-- **Tests/verification:** `signalZonesBulletin.test.ts` + fixtures under `worker/fixtures/channels/gen-wealth-vip/`; eligibility suites green.
-- **Deploy state:** Prod **account config applied** (broker + `broker_channel_trading_configs` + embedded channel map). Worker commit `781e7d85` on `origin/migration` (1 ahead of `main`); Railway redeploy blocked here (no token / `gh pr` Forbidden). After prod listener+trade redeploy, confirm next `GOLD * ZONES` → `signal_range_entry_waits` (not `entry_price_moved_adverse`).
-- **Follow-ups:** Merge/redeploy prod workers from `781e7d85`; out of scope: structured “Selling gold now” `entry_not_opened`, multi-limit-per-level ladder.
-- **Author:** Martins (Planmoni App). 
-- **His full log:** `docs/PROJECT_MEMORY-MARTINS.md` holds every entry he authored; his code is the source of truth for the files it covers.
-)
-
 ### 2026-11-17 — Support chat AI: grounded product map + read-only account tools
 
 - **Context:** a customer asked where to set risk, lot size and pips. The support chat answered with five different guessed paths ("Manage Trades", "Copier Process", "Account Configuration", "Copier Process or Copy Settings", "Account Configuration again"), the customer said "Nothing!!!" each time, and then escalated asking whether anyone would ever reply. Root cause: `support-chat` had an 11-line generic prompt and **no product knowledge at all**, plus a single tool (`escalate_to_human`) and therefore no way to look at the customer's account.
@@ -151,206 +214,1185 @@
 - **Correct fix:** apply the 16 migration files to **staging** (the objects are genuinely needed there, and the existing rows then become truthful), and run the same registration block on **production** (where the objects already exist). Alternative: delete the 16 staging rows first if a later CLI apply should register them itself.
 - **Deploy state:** this note plus the checklist rewrite are pushed to `upstream/staging` and `bzetu/staging` on the owner's instruction.
 
-### 2026-11-15 (seventh pull) — PRs #231–#232 merged into staging (strict-entry pendings, configure-with-AI answers); new index migration state recorded
+### 2026-11-16 — Copier Log: Partial close + TP N hit
 
-- **Context:** two more production PRs landed while the test repairs were being finished: **#231** — strict entry creates a separate pending order per TP share; **#232** — configure/assistant AI answers questions (no "confusion" stalls) and the multi-leg pending unique index was corrected (TP2/TP3 were blocked by the old index).
-- **Plain English:** both were pulled in with the usual single memory-file conflict; his six new notes went to his own memory file. The strict-entry code compiles and its tests pass; the configure-with-AI changes are edge-function only.
-- **Technical:**
-  - `worker/src/tradeExecutor/strictEntryPending.ts` (+ its new test, casts widened through `unknown` so the file compiles under ts-node) — per-TP pending orders.
-  - `supabase/migrations/20261115162000_signal_entry_pending_multi_leg_unique.sql` — drops `signal_entry_pending_orders_active_unique`, creates `signal_entry_pending_orders_active_ticket_unique`.
-  - `supabase/functions/configure-with-ai` + `_shared/configureWithAiKnowledge.ts` / `assistantKnowledge.ts` and deploy bundles.
-- **Database state (read-only check after the pull):** **production already has the new index** (`signal_entry_pending_orders_active_ticket_unique`, old one gone) but the migration version is **not registered** in `schema_migrations`; **staging still has the old index** — the migration must be applied there before staging exercises multi-leg strict entries.
-- **Deploy state:** merges `17faeed6` (#231) and `7e689523` (#232) plus the test-repair commit are on `staging-merge`, pushed to `upstream/staging` and `bzetu/staging`.
-- **Follow-ups:** apply `20261115162000` to staging (and register the version on both databases); Martins to confirm the trusted-ack and entry-zone behaviour items from the test repairs; `TP_BUNDLE_ENABLED` still to be added on Railway when bundling is enabled.
+- **Context:** Dashboard Copier preview showed “Closed / TP hit.” while sibling percent-split legs were still open (e.g. BTCUSDm FOREX KING).
+- **Plain English:** When only one TP leg closes and others remain open, the log now shows **Partial close** and **TP 1 hit.** (or TP 2/3…). Full closes stay Closed; bare single-leg TP still says “TP hit.”
+- **Root cause (technical):** Synthetic closed rows always used status `closed` + generic take_profit copy; UI hard-coded `statusConfig.closed` and ignored `draft.status` / `next_tp_index`.
+- **Fix (files):** [`copierLogLifecycle.ts`](src/lib/copierLogLifecycle.ts) — `status: partial` when `openSignalIds` still has the signal; `TP {n} hit.` via `next_tp_index` (prefer level on partial, or n>1); wire Dashboard + CopierLogsPage status badges/`CLOSED_TRADE_SELECT`; i18n `statusPartialClose` / `messagePartialClose` / `take_profit_level` (en + es/fr + logs ar/ja/nl/pl/ru/sv).
+- **Tests/verification:** `copierLogLifecycle.test.ts`; Netlify `tsc -b` failed until locale keys added — re-verify with `npm run build`.
+- **Deploy state:** Frontend only — ship with next Netlify deploy.
+- **Follow-ups:** None; older closed rows without distinct `next_tp_index` still show “TP hit.” until that column is set.
 
-### 2026-11-15 — All 20 known-red tests repaired (owner sign-off, test-side only) + PR #231 pulled; suites fully green
+### 2026-11-15 — Message edit left Demo strict-entry pendings on old SL/TP
 
-- **Context:** the owner asked to fix every failing test, without changing behaviour. Sign-off note: all repairs are **test files only** — no production code was touched. Two expectations encode behaviour that came from Martins's batches; both were red on his own `main` before this work.
-- **Repairs (files):**
-  - `worker/src/managementClose.test.ts` (I2) — fake broker reply gained the now-required `OrderResult.ticket`.
-  - `worker/src/socialCopyMonitor.test.ts` (I1) — duplicate `order()` in the fake removed.
-  - `worker/src/virtualPendingMonitor.test.ts` ×4 (I3) — expectations moved from the removed "restamp from fill" behaviour to frozen-first-entry.
-  - `worker/src/tradeExecutor/managementExecutor.providerScope.test.ts` (I4) — fake `is()` now filters like the orphan-fold query.
-  - `worker/src/tradeExecutor/deferredOnlyRangePlan.test.ts` ×3 — test ctx gained `entryBrokerReadCache: new Map()`.
-  - `worker/src/tradeExecutor/managementExecutor.replyScope.test.ts` ×1 — **behaviour updated**: trusted acknowledgement (0.01 stored, signal `executed`) wins over a stale live volume; test renamed. Martins to confirm.
-  - `worker/src/parseSignal.test.ts` ×1 — **behaviour updated**: bare `A / B` pair on a sell-now reads as an entry zone (4527–4557, TP 4527, SL 4577); test renamed. Martins to confirm.
-  - `src/lib/brokerCopyLink.test.ts` ×6 — fake made chainable for the delete chain and gained the leftover `select().eq()…maybeSingle()` probe.
-  - `src/components/social/TraderReviews.test.ts` ×2 — assertions target the labelled icon button and the current "Loading…" text.
-  - `worker/src/tradeExecutor/strictEntryPending.test.ts` (new file from PR #231) — three `as PreparedEntry` casts widened through `unknown`; the file did not compile under ts-node on `main` either.
-- **Results:** frontend node:test **635/635**, vitest **569/569**; worker suite **3,302 / 3,303** — the single miss was `src/observability/sentry.test.ts` "event rate limiter re-allows an event after the window expires", which passes **48/48 three times in isolation** (timing-window test under full parallel load); after PR #231 the new strict-entry file passes **2/2**.
-- **Also pulled:** PR #231 (`6877b842`) — strict entry creates a **separate pending order per TP share** (`worker/src/tradeExecutor/strictEntryPending.ts`); one new memory entry moved to his file; merge `17faeed6`.
-- **Checklist:** §7 rewritten — the known-red table is now a repair log; protection script still **85/85**.
-- **Deploy state:** commits pushed to `upstream/staging` and `bzetu/staging` on the owner's instruction.
-- **Follow-ups:** Martins to confirm the two behaviour items (trusted acknowledgement; bare-pair sells as an entry zone); the sentry timing test is flaky under full load and could be given a small margin if it recurs.
+- **Context:** FOREX KING signal `0b582d78` on Migration Demo was edited (SL 65150→65100, TPs 64200/64000/63900→64500/64000/63500). Fusion open legs got `basket_leg_modify`; Demo SellLimits stayed on the old stops.
+- **Plain English:** Editing a signal updated filled trades but ignored waiting limit orders on Demo.
+- **Root cause (technical):** Same-signal revision anchor + family load filtered `status='open'` only, so Demo pending-only baskets never entered modify (`parameter_follow_up_no_open_basket` / empty family). Live-market SL guard would also mishandle pendings.
+- **Fix (files):** Include `pending` in [`resolveOpenBasketAnchorForSameSignal`](worker/src/multiTradeMerge.ts), mergeRouting leg probe, [`slTpRefresh`](worker/src/tradeExecutor/basketMerge/slTpRefresh.ts) family load, [`loadOpenBasketLegs`](worker/src/basketSlTpReconcile.ts); pending legs use entry as stop guard; sync `signal_entry_pending_orders` after modify.
+- **Tests/verification:** Migration logs 19:02Z Fusion modified; Demo SEP still 65150/64200… until worker redeploy + re-edit or manual sync.
+- **Deploy state:** Worker local — redeploy trade-migration.
+- **Follow-ups:** Redeploy; optionally OrderModify pending entry price when the edit changes the limit price.
 
-### 2026-11-15 (fifth and sixth pulls) — Main's TP/entry batch (#226–#230) merged into staging; owner-approved lot distribution reinstated inside the new shared planner
+### 2026-11-15 — Pending/mgmt: stop farthest-TP backfill on percent-split legs
 
-- **Context:** `main` moved twice while the promotion PR was being prepared: **PRs #226–#229 (11 commits)** — single-style one-trade-per-take-profit, teaser split by Targets %, multi-basket survivor TP freeze, reconciler fixes, signal-entry first/last price, dashboard wording — then **PR #230 (3 commits)** — teaser follow-up TP matched by `:tpN`, localisation of "Single Entries", edge-function redeploys.
-- **Plain English:** his new work replaces the separate single/multi split paths with one shared planner, so single accounts also get one broker trade per take-profit. In doing that, the **lot distribution rule approved on 13 November** was not carried over, so per the owner's instruction it was **reinstated inside his shared helper**: floor each share to the lot step, top short levels back up to the broker minimum nearest-first, round the minimum **up**, and give only the true leftover to the deepest level. The teaser behaviour is now his (a teaser splits immediately); our one outdated teaser test was updated to match. Two conflicts total, both the project-memory file (his11 new notes went to his file); everything else merged automatically.
-- **Technical:**
-  - `worker/src/manualPlanning/planTpPercentSplitOrders.ts` — replaced the `kept/rescuedUnits/remainderUnits` distribution with the approved `floor → top-up → deepest` algorithm (ceil `minUnits`, over-100 guard before rescue, nearest-first top-up, leftover to the farthest survivor). `planBundleManualOrders.ts` is now his thin wrapper; the restore lives in the shared module so **single and multi both inherit it**.
-  - `worker/src/manualPlanning/planBundleManualOrders.test.ts` — the `open_tp` test now expects the split teaser behaviour (`0.5/0.3/0.2`, TP0, `bundle_open_tp_split`); the other19 planner tests pass unchanged.
-  - Protection script: **+2 checks → 85/85** (`Math.ceil(minLot / lotStep` and `rescue pot` anchors).
-  - New documented known-red: `worker/src/parseSignal.test.ts` — "infers TP/SL from bare prices on sell now signal" **fails on `upstream/main` itself** (verified in a clean worktree of his branch on 2026-11-15), so it joins §7 of the checklist rather than being treated as merge fallout.
-- **Gates:** protection **85/85**; `npx tsc -b` clean; frontend node:test **635/635**, vitest **561 passed with the documented 8 known-reds**; worker build clean; **worker suite 3,264 / 3,276 pass** — the 12 failures are exactly the documented known-red set (2 compile + deferredOnlyRangePlan ×3 + VirtualPendingMonitor ×4 + providerScope ×1 + replyScope ×1 + the parseSignal case), **zero unexplained**.
-- **Deploy state:** both merges plus docs committed on `staging-merge` and pushed to `upstream/staging` and `bzetu/staging` so the promotion PR compares the current branch.
-- **Follow-ups:** the parked known-red repairs (I1–I4) remain untouched pending Martins's sign-off; `TP_BUNDLE_ENABLED` still needs adding on Railway when bundling is to be enabled.
+- **Context:** User reported reconciler still pinning Pending Order trades to farthest TP on Migration.
+- **Plain English:** Demo Use-Signal-Entry pendings that placed after the multi-leg fix already had the right TPs (64200/64000/63900). The old smash was on **open** Demo legs (`1a11e460` → all 65000). A separate bug: channel SL/TP apply could still fill a naked pending with the **deepest** ladder TP because management rows lacked `next_tp_index`.
+- **Root cause (technical):** (1) Migration trade worker still needs redeploy for `shouldApplySingleTakeProfitTarget → false`. (2) `channelStopApply` freeze/naked path used `frozenDeepestTp`; `MGMT_TRADE_SELECT` omitted `next_tp_index`.
+- **Fix (files):** Load `next_tp_index` in [`managementScope.ts`](worker/src/managementScope.ts); percent-split identity/reladder (no deepest) in [`channelStopApply.ts`](worker/src/channelStopApply.ts).
+- **Tests/verification:** Migration SQL: `70c8bc9b` Demo pending place/fill kept distinct TPs; `1a11e460` Demo closed all at 65000 (pre-fix smash).
+- **Deploy state:** Worker local — redeploy trade-migration for live effect.
+- **Follow-ups:** Redeploy worker.
 
-### 2026-11-15 (fourth pull) — Main moved again (#224/#225, "Configure with AI"): 6 commits merged into staging; checklist 79 → 83
+### 2026-11-15 — Configure/Assistant AI: answer questions, no “confusion” stalls
 
-- **Context:** while the promotion PR was being prepared, Martins merged PRs **#224 and #225** (6 commits): the **Configure with AI** feature for the account-configuration page — an AI chat modal that turns a plain-language description (or a loaded channel signal / TradingView alert JSON) into a trading configuration, with apply-in-chat controls, a sticky "Apply Settings" bar, wording fixes, full localisation, a fix for the "no input" answer after loading a signal, and production deploys.
-- **Plain English:** We pulled his newest feature into staging so the promotion PR keeps merging cleanly. As always, one file needed a decision — the project memory — and his 23 change notes were filed into his own memory file. The protection checklist grew to **83 checks**, all passing; the frontend checks are green with only the already-recorded known failures, and the worker code was not touched by this batch.
-- **Conflict record:** exactly **one file — `docs/PROJECT_MEMORY.md`** (his block held 103 headings; **23 were new**, 80 duplicates skipped whole-entry). Merge commit `bc1cc01c`.
-- **Checklist upgrade (79 → 83):** `ConfigureWithAiModal`, `configureWithAiClient.ts`, `configureWithAiPatch.ts`, `configureWithAiSignalFormat.ts` (the last two ship with tests).
-- **Gates:** protection script **83/83**; `npx tsc -b` clean; frontend node:test **634/634**, vitest **560 passed with the documented 8 known-reds**; no worker files in the batch, so the worker suite was not re-run.
-- **Deploy state:** merged locally then pushed to `upstream/staging` and `bzetu/staging` on the owner's instruction.
-- **Follow-ups:** none new — the promotion PR checklist is unchanged (no database changes in this batch).
+- **Context:** Users asking clear how-tos (e.g. close trades when the signal post is deleted) got a vague “there might be some confusion… share specific requests” brush-off.
+- **Plain English:** The AI now answers product questions even when it cannot flip a setting, and tells the truth when a feature does not exist.
+- **Root cause (technical):** Configure-with-AI “Scope (strict)” + missing guidance for unsupported close-on-delete; model fell back to refusal hedges.
+- **Fix (files):** Q&A §0c + softer scope in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); context reminder in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); same answer-first + no-delete-close fact in [`assistantKnowledge.ts`](supabase/functions/_shared/assistantKnowledge.ts).
+- **Tests/verification:** Deployed `configure-with-ai` + `assistant-chat` to Migration and production.
+- **Deploy state:** Migration `supmsgcubipmmowrzoub` + production `sxkpcovbyaficvtkpsdo`.
+- **Follow-ups:** None for prompts; close-on-message-delete remains unsupported product-wise.
 
-### 2026-11-14 (third pull) — Two migration-branch commits ahead of main pulled into staging (CSV export, assistant language, mirror-copy ratio sizing); checklist 74 → 79
+### 2026-11-15 — Multi-leg strict entry pendings: unique index blocked TP2/TP3
 
-- **Context:** after the second main pull, `upstream/migration` was **2 commits ahead of `main`** (PR #224 not yet merged): `1a7e28f4` Account Trades CSV export and `c0bd1b39` assistant replies respect the user's UI language — and the same batch carries a **mirror-copy balance/equity ratio sizing** change. The owner asked to pull them in so the staging → main promotion PR includes them.
-- **Plain English:** We brought in the two newest changes so our branch is current even ahead of production. One file needed a decision again — the project memory — where his three new notes were filed into his own memory file. The protection checklist grew to **79 checks**, all passing, and every test gate is green with only the same known failures recorded before.
-- **The two commits (plus their third documented change):**
+- **Context:** After placing percent-split SellLimits, Migration Demo `e24fb8b3` only kept **one** pending (2.5 lots TP1). BTCUSD market path opened 2–3 legs.
+- **Plain English:** Waiting for entry price could only store one pending order per signal. The 2nd and 3rd TP shares were rejected by the database and cancelled on the broker.
+- **Root cause (technical):** Unique index `signal_entry_pending_orders_active_unique` on `(signal_id, broker_account_id) WHERE status=broker_pending`.
+- **Fix (files):** Migration `20261115162000_signal_entry_pending_multi_leg_unique.sql` → unique on `(signal_id, broker_account_id, broker_ticket)`; log SEP insert failures in `strictEntryPending.ts`. Applied on Migration `supmsgcubipmmowrzoub`.
+- **Tests/verification:** Index verified on Migration; worker redeploy still required for the multi-pending placer.
+- **Deploy state:** Migration DB updated; same migration applied to production `sxkpcovbyaficvtkpsdo` (2026-11-15). Worker local / redeploy still needed for placer.
+- **Follow-ups:** Redeploy worker; re-send signal or manually add missing Demo TP2/TP3 pendings for `e24fb8b3`.
 
-| Commit | What it does |
-|---|---|
-| `1a7e28f4` | Account Trades: **CSV export** (download card in the assistant panel, order/stat helpers in `src/lib/accountTradesCsv*.ts`, `export_account_trades_csv` assistant tool) |
-| `c0bd1b39` | Assistant replies now **respect the user's UI language** (`assistantReplyLanguageAddon` injected in `assistant-chat`; trade-failure explanations use `buildTradeFailureAssistantPrompt` with an explicit language instruction) |
-| (within the batch) | **Mirror copy: balance/equity ratio sizing** (`balance_ratio` / `equity_ratio` modes in `worker/src/mirrorCopy/mirrorCopyPlan.ts` + monitor, with tests) |
+### 2026-11-15 — Single + Use Signal Entry Price: split limit pendings by TP %
 
-- **Conflict record:** again exactly **one file — `docs/PROJECT_MEMORY.md`**. His block held 80 headings; **3 were new** and moved to `PROJECT_MEMORY-MARTINS.md` (77 duplicates skipped whole-entry). His file now holds226 entries with **0 duplicate headings**. Source note: pulled from `upstream/migration` directly because `main` had not merged #224 yet — when his PR lands, the same commit hashes arrive in `main` and will not duplicate.
-- **Checklist upgrade (74 → 79, all passing):** `accountTradesCsv.ts` + `accountTradesCsvCore.ts` exist; `balance_ratio` sizing in `mirrorCopyPlan.ts`; `buildTradeFailureAssistantPrompt`; `assistantReplyLanguageAddon` in `assistant-chat`.
-- **Gates:** protection script **79/79**; `npx tsc -b` clean; frontend node:test **631/631**, vitest **556 passed with the documented 8 known-reds** (6 `brokerCopyLink`, 2 `TraderReviews` — his batch added 20 vitest tests, all passing); worker build clean; **worker suite 3,245 / 3,256 pass** — the 11 failures are exactly the §7 known-red list again, **zero unexplained** (run in three sequential chunks).
-- **Deploy state:** local only — merge commit `417f74d9` plus this docs commit on `staging-merge`, **not pushed**. Branch now contains `main` through `98aad25a` **and** `migration` through `c0bd1b39`.
-- **Follow-ups:** if `main` merges #224 (or newer) with anything beyond these hashes, pull once more before opening the promotion PR; parked known-red repairs (I1–I4) remain untouched by instruction; the 16 staging-only migrations still need registration reconciliation on prod at promotion time.
+- **Context:** With Use Signal Entry Price (First/Last Price), when live price was away from entry the worker deferred to one SellLimit/BuyLimit for the **full lot** (`:strictEntryAgg`) instead of one pending per Targets % leg. Seen on Migration `4c92e903` (Demo 5.0 SellLimit @ 64950).
+- **Plain English:** Waiting for the signal entry price now places a separate pending for each TP share (e.g. 50/30/20), each with its own take-profit — not one big order.
+- **Root cause (technical):** [`strictEntryPending.ts`](worker/src/tradeExecutor/strictEntryPending.ts) always summed `capped` volumes into one pending when `capped.length > 1`.
+- **Fix (files):** Percent-split baskets (`isTpPercentSplitBasket`) place one Limit per plan order (volume + TP + `:tpN`); classic multi still aggregates. Persist `next_tp_index`.
+- **Tests/verification:** `strictEntryPending.test.ts` — 3 pendings 2.5/1.5/1.0 vs multi aggregate.
+- **Deploy state:** Worker local — redeploy trade worker.
+- **Follow-ups:** Redeploy worker; cancel any existing full-lot `:strictEntryAgg` pendings manually if still open.
 
-### 2026-11-14 (second pull) — Merged main again: Martins's PRs #221–#223 into staging (one conflict; his 27 new entries moved to his file; checklist 63 → 74)
+### 2026-11-15 — Single teaser follow-up: TP by `:tpN`, not open time
 
-- **Context:** after the morning merge (PRs #217–#220) Martins kept pushing: `main` moved another **20 commits** through PRs **#221–#223** during the day. Owner asked to pull them in so the staging → main promotion PR stays mergeable, to document each push, to bring his written entries into his own memory file, and to extend the protection checklist.
-- **Plain English:** We brought the day's second batch of his work into our staging branch. Only the shared project-memory file needed a decision — everything else merged on its own. His 27 written change notes were moved into his personal memory file (where they belong), and while there we removed **33 entries that earlier pulls had copied twice**, so his file now lists every change exactly once. The protection checklist grew to **74 checks**, all passing, and the full test gates are green with only the already-documented 11 known failures — nothing new broke.
-- **The 20 commits pulled in (each documented in detail in `PROJECT_MEMORY-MARTINS.md`):**
+- **Context:** FOREX KING “Btc sell now” then TP/SL follow-up on Migration (`1df27fc2` / Demo BTCUSDm). Lots opened correctly 2.5/1.5/1.0 with `:tp1/:tp2/:tp3`, but follow-up attached 65200/65000/64900 by `opened_at` — so the 1-lot `:tp3` got TP1 and closed first.
+- **Plain English:** After a teaser, take-profit prices now stick to the planned TP1/TP2/TP3 legs (by order comment, saved index, or lot size), not whichever order the broker filled first.
+- **Root cause (technical):** `bundleSteadyLegTps` backfilled naked legs as `ladder[i]` on `opened_at` order; parallel OrderSend completion order ≠ planned TP index.
+- **Fix (files):** `parseOrderCommentTpIndex` + `resolveBundleLegTpIndexes` in `tpBundleIdentity.ts` / `tradeComment.ts`; wire through `buildPerLegStopTargets`, `slTpRefresh`, reconcile, mgmt modify; persist `next_tp_index` at open; v2 distribute also for Single percent-split.
+- **Tests/verification:** `tpBundleIdentity.test.ts` (comment + volume + default-1 ignore); `tradeComment.test.ts`.
+- **Deploy state:** Worker local — redeploy trade worker for live teaser baskets.
+- **Follow-ups:** Redeploy worker.
 
-| Commit | What it does |
-|---|---|
-| `bcf10815` | Copier Log localization and action display fixes |
-| `bf33aea5` | Welcome/onboarding modal redesign + localization |
-| `c6765da8` | Hero Dashboard matches soft-shell UI + localization |
-| `86b09ab4` | UniCopier dark/light image assets updated |
-| `34047076` | App header + showcase cards unified soft-shell styling |
-| `974180d0` | Landing page scroll animations |
-| `8bd51fae` | Marketing header avatar for signed-in users |
-| `72a77cd6` | Feature-card scroll hijack |
-| `e5aa86cb` | Marketing footer social links |
-| `49b5bdb6` | Merge PR #221 |
-| `c92ca1ab` | Dashboard SL/TP parameter handling + real-time trade updates |
-| `a5e01a84` | Dispatch push logging and error handling |
-| `76900a9c` | "Order Skipped" noise removed for live fills |
-| `e45029ea` | Signal-override SL/TP moves to background apply + closable modal UI |
-| `3e968b02` | cTrader close-trade fix ("trade service did not answer") |
-| `c71962af` | Demo close-all fix (live snapshot miss) + management execution |
-| `a6d381f9` | Configure-trading modal UI + localization |
-| `519a413d` | Merge PR #222 |
-| `fe7f732e` | `isInternalRebalancePayload` build guard (Netlify tsc) |
-| `98aad25a` | Merge PR #223 |
+### 2026-11-15 — Edge functions → production
 
-- **Conflict record:** exactly **one file — `docs/PROJECT_MEMORY.md`** (both sides appended entries). His block held 77 headings; **27 were new** and went to `PROJECT_MEMORY-MARTINS.md`, **50 were whole-entry duplicates** already moved earlier and were skipped entirely (headings *and* bodies this time). While auditing that, **33 historical duplicate entries** committed by earlier pulls were removed from his file (first occurrence kept; verified 0 duplicate headings after). Everything else — 116 changed files including `worker/src/tradeExecutor/managementExecutor.ts`, `worker/src/tradeSignalPush.ts`, `applySignalOverride.ts`, `tradeBrokerDrift.ts`, `basketSlTpReconcileMonitor.ts`, `forceCloseSignalTrades.ts`, both `force-close-trades`/`signal-override` edge functions — auto-merged.
-- **Checklist upgrade (63 → 74, all passing):** `forceApply` resend path (manual "Resend Parameters" must hit the broker even when the DB already matches), `signal-override` edge (`background worker apply`), `force-close-trades` edge (`SUPPORTED_PROVIDERS` set), force-close provider-session columns, `tradeBrokerDrift` module + `broker_drift` fingerprint, the 429/5xx retry classifier in `tradeSignalPush.ts`, `isInternalRebalancePayload` guard, `copierLogDetail` module. Checklist §10 lists his nine paired test files.
-- **Gates:** protection script **74/74**; `npx tsc -b` clean; frontend `npm test` **627/627 exit 0**; worker build clean; **worker suite 3,244 / 3,255 pass** — the 11 failures are **exactly the documented §7 known-reds** (managementClose + socialCopyMonitor compile, deferredOnlyRangePlan ×3, VirtualPendingMonitor ×4, providerScope ×1, replyScope ×1), **zero unexplained**. Note: a full worker run takes ~36 minutes here; detached background runs are killed when the tool session is interrupted, so the suite was run in three sequential chunks (~11–17 min each) — same files, same totals.
-- **Deploy state:** local only — merge commit `53176605` plus this docs commit on `staging-merge`, **not pushed**. Branch matches `main` as of `98aad25a`.
-- **Follow-ups:** `upstream/migration` already has **2 newer commits** (CSV export for account trades, assistant language handling) not yet merged into `main` — if Martins merges PR #224 before the promotion PR opens, one more pull is needed. Owner still opens/pushes the PR; the parked known-red repairs (I1–I4) remain untouched by instruction; the 16 staging-only migrations still need registration reconciliation on prod at promotion time.
+- **Context:** Deploy weekend-touched edge functions to production after Migration work.
+- **Plain English:** Production now has the latest Configure with AI, assistant, parse-signal, signal-override, and force-close-trades.
+- **Fix (files):** Deployed `configure-with-ai`, `assistant-chat`, `force-close-trades`, `parse-signal`, `signal-override` to `sxkpcovbyaficvtkpsdo`.
+- **Deploy state:** Production only (this deploy).
+- **Follow-ups:** Worker redeploy still needed for Single/Range TP trading fixes.
 
-### 2026-01-14 — Merged upstream/main (Martins's PRs #217–#220) into staging for the promotion PR; preservation list upgraded 46 → 63 checks
+### 2026-11-15 — Single teaser: split lots by Targets % before TP prices arrive
 
-- **Context:** the owner is preparing a **staging → main PR**. Since the split point (`6a4033d6`, ~Nov 10) main had moved **109 commits (80 authored by Martins)** while staging carried **83 of its own** — the same feature areas developed on both lines produced **25 merge conflicts**, three of them add/add (both sides independently created `tradingViewAlertTemplate.ts`, `worker/tradingViewAlert.ts` and its test). Owner instruction: **pull his side in**, and remember his entries belong in his own memory file.
-- **Plain English:** We brought the production branch's latest work into our staging branch so the two can be merged through a clean pull request. Where the two lines had edited the same file, we kept Martins's newer version (his work is the source of truth), with three deliberate exceptions: the Trades-page file kept our side because it already contained both his staging work and our validated fix; translations and environment files merged both sides' additions so nothing either line added disappears; and his documentation entries were moved into his own memory file (`PROJECT_MEMORY-MARTINS.md`) instead of the shared one, exactly as agreed. We then extended the protection checklist with checks covering his new batch, so future changes cannot silently strip his fixes, and ran the full test gates.
-- **Root cause / mechanics (technical):**
-  - **Merge:** `git merge upstream/main` on `staging-merge` → commit `66c51256`. Resolution policy by class: **12 files took his main side wholesale** (TradingView path: `tradingViewAlertTemplate.ts`+tests, `_shared/tradingViewAlert.ts`, `worker/tradingViewAlert.ts`; dashboard: CopierLogs/Dashboard/CopierStatusCard/CopierLogToasts/TradingViewSourcePanel/AppLayout; `mtapiProvider.ts` — every staging-side touch on those was also his), verified per file that no BZetsu commit sat on the staging side except `useTradesData.ts`.
-  - **`useTradesData.ts` kept ours:** our side already contains his staging perf work (`6098502f`: `TRADES_LIVE_FETCH_LIMIT`, `LiveTradesFetch`) **plus** the owner-validated `3568bd34` fix (incremental history, hydration backoff, `peekSessionCache`); main's version was a parallel duplicate of the same feature without the fix — taking it would have regressed the validated 60-second read cycle back to full-history polling.
-  - **i18n (10 locale files) + `.env.example` ×2:** kept his values inside the conflicting hunks (same keys, newer wording/real `tl.unicopier.com` defaults) while staging-only additions outside the hunks survived untouched.
-  - **`PROJECT_MEMORY.md`:** his 540-line block moved to `docs/PROJECT_MEMORY-MARTINS.md` under `## Changelog` (owner rule, 2026-11-11); the shared file keeps only this branch's entries.
-  - **Preservation list upgraded** (`docs/audit-2026-11-11/verify-martins-fixes.sh`): **+17 checks → 63/63 pass** covering his new batch — `perAccountConcurrency.ts` (module + `mtapiProvider` wiring), `brokerTradeError.ts` (`userImpact = delayed`), `observability/businessEvents.ts` (module + `userListener` wiring), `MTAPI_GLOBAL_ORDER_CONCURRENCY` / `MTAPI_GLOBAL_ORDER_WAIT_MS`, `dashboardLiveOpenMetrics.ts` (module + `DashboardPage` wiring), `copierLogLifecycle.ts`, `copierProcessToast.ts` (+ wiring), `channelWorkerLogMessage.ts`, `fxsocketStreamParse.ts`, `tl.unicopier.com` default in `TradingViewSourcePanel.tsx`, `{{plot(` plot-based alert template. Checklist §9 lists his eight paired test files.
-- **Gates (all post-merge):** `verify-martins-fixes.sh` **63/63**; `npx tsc -b` clean; frontend `npm test` **exit 0** (node:test 617/617 + vitest green); `npm --prefix worker run build` clean; **full worker suite 3,242/3,253 pass — exactly the 11 documented known-reds from checklist §7** (managementClose + socialCopyMonitor compile, deferredOnlyRangePlan ×3, VirtualPendingMonitor ×4, providerScope ×1, replyScope ×1) with **zero unexplained failures**; no parked repair (I1/I2) was applied — his code stands alone pending owner sign-off. Suite runtime on this machine is ~35–40 minutes (a30-minute cap is not enough).
-- **Deploy state:** local only — merge commit `66c51256` + this docs commit on `staging-merge`, **not pushed** (owner creates the PR). Note for the PR: the16 staging-only migration files are **not registered on `supabase_migrations.schema_migrations` in prod** (their objects mostly exist there from manual applies — reconcile before/at merge), and the new `support-*` edge functions deploy with the promotion.
-- **Follow-ups:** owner pushes and opens the PR (draft ready); reconcile the16 prod migration registrations; run the parked known-red repairs (I1/I2…) only with owner sign-off.
+- **Context:** Bare “buy now” teasers on Single Entry opened one full-lot trade; lots only split when the follow-up brought TP/SL prices.
+- **Plain English:** If Targets % has two or more enabled rows (e.g. 50/30/20), Single opens those sized legs immediately on the teaser (naked TPs). The later TP/SL message fills in the prices.
+- **Root cause (technical):** [`planTpPercentSplitOrders.ts`](worker/src/manualPlanning/planTpPercentSplitOrders.ts) returned one full-lot `_open_tp` when `finalTps` was empty.
+- **Fix (files):** Empty-ladder path builds buckets from enabled `tp_lots` and emits the percent split with `takeprofit: 0` (`*_open_tp_split`).
+- **Tests/verification:** `manualPlanner.test.ts` teaser 3.0 → 1.5/0.9/0.6 naked; single-row teaser stays 1×full.
+- **Deploy state:** Worker local — redeploy for live teasers.
+- **Follow-ups:** Deploy trade worker.
 
-### 2026-11-13 → 11-14 — Alerts audit: critical-only emails, severity escalation over time, no more "recovered" emails for pages that never went out (all deployed to staging + prod)
+### 2026-11-15 — Range/Multi merge refresh froze survivor TPs (FOREX KING Demo)
 
-- **Context:** after the admin-dashboard batches the owner asked for a full audit of the alerting pipeline ("audit the alerts"), then chose fixes from the findings: **Option B** for confusing recovery emails, **severity escalation** ("if the bridge is down for 2 minutes call it medium, after 10 minutes page critical again"), and **critical-only emails by default** ("warning alerts don't get sent as email, only critical, unless set in the config").
-- **Plain English:** The audit found the alert system fundamentally healthy — the evaluator runs every minute, alerts open and close themselves, all 203 emails delivered with zero failures, cooldowns respected, staging and production identical, and the five rules that have never fired were each proven to be silent for a good reason (nothing they watch for has gone wrong). Three real issues came out of it. (1) A problem that lasted under two minutes could produce a "it's fixed again" email without anyone ever being told it broke — **now a recovery email is only sent if the original page actually went out**. (2) Alert severity never changed with time — **now every configured rule can raise its own severity after a set number of minutes and send a second, louder email** (the bridge example: fires quietly as a warning at 2 minutes, pages critical at ~10 minutes total). (3) Every severity emailed by default — **now only critical emails go out; each email address's minimum severity in the config decides if it also gets warnings** (both addresses set to critical, changeable per address in the Alerts console). Side effect the owner wanted: the noisy telegram-gap blips (~4 emails/day) are now completely silent in the inbox and only page if a gap lasts 30+ minutes.
-- **Root cause / mechanics (technical):**
-  - **Audit** (`docs/scratchpads/scratchpad-alerts-audit-2026-11-13.md`, read-only Management API on both projects + evaluator code trace): MEDIUM-1 root cause of recovery-only emails — the insert run's email pass skips the just-created row (`email_next_attempt_at` default `now()` is later than the run's captured `startedAt`, "still backing off"), and the next run resolves the event first, so only `kind='resolved'` is ever mailed; 8 of 57 events since the Nov-5 apply lacked `firing_email_sent_at`, all sub-60-second blips. MEDIUM-2: staging `openai_key_invalid` seeded 2026-10-27 stuck firing (cleanup SQL delivered, owner to run). Verified healthy: one-open-firing unique index, 0 cooldown violations ever, 100% `email_sent_at` coverage, `cond_*` NULLs are expected steady state (only telegram_gap has `persistence_minutes`), never-fired rules each checked against live data (0 dead letters, 0 CONNECT_ERROR matches vs14 "invalid login or password" rows outside any rule, 5.7% error rate under the 20% threshold).
-  - **Option B:** `shouldSuppressRecovery()` in `supabase/functions/_shared/alertEvalRules.ts` — resolved + no `firing_email_sent_at` + column present ⇒ mark `email_sent_at`/`email_next_attempt_at` and skip the send (`recovery_suppressed` counter in the run summary); claimed row is already CAS-owned by the email pass. Column guard keeps legacy behaviour if migration 20261102160000 is absent; the `unsent` select gains the column only when available.
-  - **Escalation:** `threshold.escalations` JSONB tiers (no schema change; editable in the Alerts console threshold editor). `nextEscalation(tiers, currentSeverity, createdAt, now)` (pure, shared, unit-tested) returns the highest elapsed tier strictly above the current severity — severity only rises so each tier fires at most once. Evaluated in the loop on event age alone (before `evaluate()`, so a skip this tick doesn't block it), CAS update `eq(severity) + is(resolved_at, null)` prevents double-sends, then a new **`escalated` email kind** (subject `ESCALATED to <severity>`, accent/label now driven by `event.severity`, footer shows event severity, escalation note in the body) and `firing_email_sent_at` stamped when sent>0 so Option B still allows the later recovery email. `SEVERITY_RANK` moved to the shared module; recipients fetched once before the loop (escalation + email pass share it).
-  - **Config (owner-run SQL, applied to BOTH databases, verified by read-back):** `alert_recipients.min_severity='critical'` + column default changed; escalation tiers — bridge_down critical@8m, trade_workers_offline/workers_offline critical@10m, queue_stuck/telegram_gap critical@30m, executions_failing critical@120m; initial severity downgraded to warning for bridge_down, trade_workers_offline, workers_offline, queue_stuck. Recipient filter (`SEVERITY_RANK[min] <= SEVERITY_RANK[event.severity]`, existing code) then does the gating — no code change needed for critical-only mail; warnings now stamp `email_sent_at` with `sent=0` and mail nobody.
-- **Tests / verification:** `npx deno test _shared/alertEvalRules.test.ts` → 16 passed / 0 failed (4 new: tier timing, rank-order/jump, malformed input, suppression matrix); `npx deno check alert-evaluator/index.ts` clean (the `--node-modules-dir=auto` run dirtied root `deno.lock` with 2,244 lines — restored). **Staging E2E seeded by owner:** escalation seed (warning, opened 15 min) → tick escalated to critical + stamped the page (`firing_email_sent_at`) + re-check resolved it + recovery email correctly allowed — the whole chain in one tick; blip seed (resolved, never paged) → marked by suppression at the next tick, `firing_email_sent_at` NULL, no email. Deployed to staging then prod; both probes fresh afterwards (`alert_evaluator up`, prod run `rules=13 fired=0 resolved=0 emailed=0`), zero open events on prod.
-- **Deploy state:** `alert-evaluator` deployed to **staging (`axdcledcyhyvzrnfkwat`) and prod (`sxkpcovbyaficvtkpsdo`)** 2026-11-14 ~00:36–00:40 UTC; all database config applied on both projects before deploy. Committed on `staging-merge` and **pushed to `upstream/staging` (tartarixinc) and `bzetu/staging` (BZetsu, Netlify source) on 2026-11-14** on the owner's explicit go-ahead — not pushed to `origin`.
-- **Follow-ups:** owner: delete the two `SEED TEST` rows on staging — the MEDIUM-2 staging resolve for the stuck `openai_key_invalid` **was run** (resolved 2026-11-14 00:45 UTC) but the seed DELETE had not run as of the push (rows still present); confirm the inbox shows exactly the STAGING escalation + recovery mails and nothing for the blip; watch prod for the next natural telegram_gap blip (must be silent now). Deferred audit LOWs: acknowledgement feature still unused (0 of 203), no rule covers MTAPI "invalid login or password" (14 accounts), optional telegram-gap patience tuning (hold 2→5 min or threshold 3→5+ sessions).
+- **Context:** FOREX KING BACKUP → Demo BTC buy `7f546323…` opened 20 legs; after TP follow-up (65400/65800/66100) and TP1 hits, survivors were rewritten to **65400 only**.
+- **Plain English:** When some take-profits filled, the remaining trades should have kept TP2/TP3. Merge/refresh was rebuilding Range targets without the freeze gate, so survivors got shoved onto TP1. Management modify could also pin multi-leg baskets to the first TP if it read account Single instead of channel Multi/Range.
+- **Root cause (technical):** [`slTpRefresh.ts`](worker/src/tradeExecutor/basketMerge/slTpRefresh.ts) skipped TP-hit freeze when `range_trading === true`; [`managementModifyBaskets.ts`](worker/src/managementModifyBaskets.ts) used account `manual_settings` + `parsedTpLevels[0]` for non-multi baskets.
+- **Fix (files):** Apply `preserveOpenLegTakeProfits` after TP hit for Range and Multi in slTpRefresh; resolve per-channel manual settings; distribute TPs for any multi-leg basket instead of pinning to TP1.
+- **Tests/verification:** `rangeBasketTpSync.test.ts` closed-leg freeze + preserve survivors regression.
+- **Deploy state:** Worker local — redeploy required.
+- **Follow-ups:** Deploy trade worker. Demo FOREX KING channel config currently shows `trade_style=single` / `range_trading=false` (verify Configure if Range is intended).
 
-### 2026-11-13 — `CLOSE TP2` closed the whole bundled basket: the reconcile sweep re-read management commands and widened them (fixed, deployed to staging, validated 3/3)
+### 2026-11-15 — Reconciler smashed Single percent-split TPs to farthest
 
-- **Context:** TP bundling (one broker position per take-profit level, `TP_BUNDLE_ENABLED`) was re-enabled on staging and tested live with the pipeline tool (`scripts/test-signal.mjs`) and the owner's MT5 chart. Opening trades behaved perfectly: 3-TP and 4-TP signals opened one trade per level with exact percentage lots (0.25 / 0.15 / 0.05 / 0.05 of 0.5) and the signal's exact take-profits. The management test then failed: a reply-scoped `CLOSE TP2`, which must close only the trade sitting at the second target, closed the **entire basket** — three times out of three.
-- **Plain English:** A management message like "CLOSE TP2" is a one-time instruction, not a document to be kept in sync. Our system did two things instead of one: the live pass understood it correctly and closed the right trade, but about twenty seconds later the background "did this message change?" checker decided it had changed (it hadn't — the stored copy of the text was blank, so it could never match), re-read the instruction with the AI, and the AI returned a vaguer command — plain "close", with the "TP2" part gone. That vaguer version replaced the correct one in the database and was executed a second time, which closed every remaining trade in the basket. We fixed it by making two rules absolute: management commands are never re-read or re-run by any background pass, and nothing is ever re-read from an empty text. We also made the text reader take the message text from whichever field actually contains it (some Telegram message shapes keep it elsewhere), which removes the false "changed" alarm at its source, and the checker now quietly ignores commands it won't re-read instead of flagging them every minute. Coverage was added so these rules cannot silently regress. After deploying, the same test was run three more times: every time only the TP2 trade closed and the other legs stayed open, and edited entry signals still refreshed their price and stops exactly as before.
+- **Context:** Migration BTC sell `1a11e460…` opened correctly as 65400/65200/65000 (50/30/20), then ~90s later Demo legs were all `basket_leg_modify`’d to `target_tp: 65000`.
+- **Plain English:** After Single started opening one trade per TP, the background reconciler still treated Single like “one target = farthest” and rewrote every leg to the last TP.
+- **Root cause (technical):** `shouldApplySingleTakeProfitTarget` + `expandPerLegTargetsToCount({ chosenTp })` in [`basketReconcileTargets.ts`](worker/src/basketReconcileTargets.ts); steady/identity path only for multi+bundle, not `isTpPercentSplitBasket`.
+- **Fix (files):** Disable single_tp_target pin; use `isTpPercentSplitBasket` + `bundleSteadyLegTps` for Single; harden [`basketSlTpReconcile.ts`](worker/src/basketSlTpReconcile.ts) `bundleIdentity` path (no `isTpBundleEnabled` gate / no farthest pin).
+- **Tests/verification:** `singleTakeProfitTarget.test.ts` updated; evidence in `trade_execution_logs` for signal `1a11e460`.
+- **Deploy state:** Worker local only — **must redeploy trade worker** or live Single baskets will keep getting smashed.
+- **Follow-ups:** Deploy worker; existing smashed baskets need manual broker TP restore if still open.
+
+### 2026-11-15 — Configure with AI: Single TP-split knowledge → Migration + Prod
+
+- **Context:** Deploy Single Entry percent-split broker-leg knowledge (no partial closes / omit `single_tp_target`) after the Single TP split change.
+- **Plain English:** Configure with AI on Migration and production now describes Single as one broker trade per TP %.
+- **Fix (files):** Redeployed [`configure-with-ai`](supabase/functions/configure-with-ai/index.ts) (+ shared knowledge) to Migration `supmsgcubipmmowrzoub` and production `sxkpcovbyaficvtkpsdo`.
+- **Deploy state:** Migration + production.
+- **Follow-ups:** Worker + frontend still need deploy for execution/UI of the Single split itself.
+
+### 2026-11-15 — Single trade: split lots across broker TPs
+
+- **Context:** Single Entry used one full-lot order plus worker `partial_tp` closes at earlier Targets % levels; users wanted each TP visible as its own broker trade.
+- **Plain English:** Single Entry now opens a separate broker trade per enabled Take-Profit % (e.g. 3.0 lot + 50/30/20 → 1.5 / 0.9 / 0.6). No auto partial closes. Single TP Target is hidden/unused. Basic plans keep `trade_style: single`.
+- **Root cause (technical):** N/A — product behavior change.
+- **Fix (files):** Shared [`planTpPercentSplitOrders.ts`](worker/src/manualPlanning/planTpPercentSplitOrders.ts); Single via [`planSingleManualOrders.ts`](worker/src/manualPlanning/planSingleManualOrders.ts); `isTpPercentSplitBasket` + remove `single_style_multi_leg_blocked`; UI/i18n + [`singleTpLotBreakdown.ts`](src/lib/singleTpLotBreakdown.ts); Configure with AI knowledge omits `single_tp_target` / partial-close copy.
+- **Tests/verification:** `manualPlanner.test.ts` (3-leg / 1-TP / 3.0 lot); `singleTpLotBreakdown.test.ts`; `singleStyleHardBlock.test.ts`.
+- **Deploy state:** `configure-with-ai` → Migration + production (see entry above). Worker + frontend still local.
+- **Follow-ups:** Deploy worker + frontend for live Single split behavior.
+
+### 2026-11-15 — Configure with AI: First / Last entry price
+
+- **Context:** Configure with AI needed to know about `signal_entry_prefer` (First/Last under Use Signal Entry Price).
+- **Plain English:** The AI can propose Entry price: First Price or Last Price when a signal lists two entry quotes, and Apply writes that into the form.
+- **Fix (files):** Knowledge §4b; analyze `dual_entry_quotes` + suggested prefer; propose auto-default + warning; tool/prompt/summary allowlist already included `signal_entry_prefer`.
+- **Deploy state:** `configure-with-ai` → Migration `supmsgcubipmmowrzoub` and production `sxkpcovbyaficvtkpsdo`.
+- **Follow-ups:** Frontend/worker still need deploy for the Configure UI + execution path.
+
+### 2026-11-15 — Use Signal Entry Price: First / Last Price
+
+- **Context:** Signals often list two entry quotes (e.g. `BUY NOW: (3879) 3878)`); users need to pick one price for strict entry.
+- **Plain English:** Under Use Signal Entry Price (before Pip Tolerance) you can choose **First Price** or **Last Price** — the first or last number as written in the signal.
+- **Fix (files):** `signal_entry_prefer` on ManualSettings + config UI/i18n/summary; parse stores `entry_zone_first`/`entry_zone_last` (paren + slash forms); planner collapses via `resolvePreferredSignalEntryPrice`; Configure with AI allowlist/knowledge.
+- **Tests/verification:** `parseSignal.entryPrefer.test.ts`, `parsedEntry.test.ts`, normalize prefer default.
+- **Deploy state:** Frontend + worker local; Configure with AI edge updated on Migration (see entry above).
+- **Follow-ups:** Deploy worker; promote edge to production when ready.
+
+### 2026-11-15 — Multi basket: freeze survivor TPs after TP hit
+
+- **Context:** After TP1 closed, remaining open legs had their take-profits rewritten to the TP1 price (wrong).
+- **Plain English:** Once a take-profit is hit on a multi basket, the survivors keep the TP levels they already had. We no longer reshuffle them onto nearer targets.
+- **Root cause (technical):** Non-range multi reconcile / merge refresh re-ran count-weighted Targets % (`expandPerLegTargetsToCount` / `buildPerLegStopTargets`) after a leg closed, so fewer open legs were remapped onto the near end of the signal ladder. Range already froze on closed-leg / TP-touch; multi did not.
+- **Fix (files):** Freeze multi TPs after `hasClosedBasketLegs` or `hasTpTouchedLock` in [`basketReconcileTargets.ts`](worker/src/basketReconcileTargets.ts) and [`slTpRefresh.ts`](worker/src/tradeExecutor/basketMerge/slTpRefresh.ts) (preserve open-leg TPs; message revisions still reladder).
+- **Tests/verification:** `basketReconcileTargets.test.ts` + worker `tsc --noEmit`.
+- **Deploy state:** Worker local only — deploy worker for effect on live baskets.
+- **Follow-ups:** Redeploy trade worker; existing mis-set survivor TPs need a manual/broker fix or channel SL/TP update to correct.
+
+### 2026-11-15 — Dashboard: Active Signal Sources + stacked logos
+
+- **Context:** Overview stat still said “Active Signal Channels” with a bare count; first pass showed channel count (e.g. 3) next to unique platform logos (e.g. 2).
+- **Plain English:** The card is **Active Signal Sources**: overlapping platform logos plus a matching count of connected platforms (Telegram / Discord / WhatsApp / TradingView), not total channel rows.
+- **Fix (files):** [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) OverviewStat `valueAddon` + `activeSourceKinds.length`; i18n label updates in en/fr/es + dashboard locale packs.
+- **Deploy state:** Frontend only.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: fix “no input” after Load from channel
+
+- **Context:** On production, after loading UPDATE/ENTRY samples the model replied that the user provided no input.
+- **Plain English:** Loaded signals are treated as real user input again; Load → analyze → propose works without a fake “no input” stall.
+- **Root cause (technical):** Samples lived mainly on an assistant-role chat bubble; the model ignored them. Knowledge also under-emphasized “samples present = proceed.”
+- **Fix (files):** User-turn examples + clearer analyze prompt in [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx); knowledge §0b + no-input stall recovery in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) / [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); en analyze copy.
+- **Deploy state:** Deploying to production (and Migration).
+- **Follow-ups:** Frontend rebuild for modal change on app.tscopier.ai.
+
+### 2026-11-15 — Configure with AI: production edge redeploy
+
+- **Context:** User asked to deploy the latest Configure with AI edge (no-samples requests, BE keys, Range label, pip-tolerance rules, etc.) to production.
+- **Plain English:** Production Configure with AI matches the current Migration build.
+- **Fix (files):** Redeployed [`configure-with-ai`](supabase/functions/configure-with-ai/index.ts) to `sxkpcovbyaficvtkpsdo`.
+- **Deploy state:** production.
+- **Follow-ups:** Frontend i18n/modal still needs Netlify if not already shipped.
+
+### 2026-11-15 — Configure with AI: i18n for all locales
+
+- **Context:** Configure with AI modal copy was English (or partial) in fr/es/nl/pl/sv/ru/ja/ar.
+- **Plain English:** Welcome, pills, TradingView strings, and related labels are translated in every configureModal locale.
+- **Fix (files):** [`configureModal/*.ts`](src/i18n/locales/configureModal/) (all non-en locales aligned to en keys).
+- **Deploy state:** Frontend only.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: work without signal samples
+
+- **Context:** Asking “set break even to TP2” without loading samples stalled the chat (AI demanded examples; Load/Paste pills disappeared).
+- **Plain English:** You can ask for settings right away — samples are optional. Break even at TP2 applies correctly; Load/Paste stays available if you want a full format setup later.
+- **Root cause (technical):** Knowledge required samples first; BE patch allowlist used wrong keys (\`after_tp_index\` / \`after_pips\` instead of \`move_sl_to_entry_tp_index\` / \`after_value\`); sending cleared welcome Load/Paste actions.
+- **Fix (files):** Knowledge §0 + BE keys in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts), [`assistantConfigTools.ts`](supabase/functions/_shared/assistantConfigTools.ts), [`configureWithAiPatch.ts`](src/lib/configureWithAiPatch.ts); propose normalize + context in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); persistent Load/Paste + welcome copy in [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx) / en i18n.
+- **Tests/verification:** `configureWithAiPatch` BE allowlist test; deploy edge to Migration.
+- **Deploy state:** `configure-with-ai` → Migration; frontend local/Netlify.
+- **Follow-ups:** Promote edge to production when ready.
+
+### 2026-11-15 — Configure with AI: production redeploy (latest)
+
+- **Context:** User asked to apply the latest Configure with AI edge (Range label, no fake Total Lot Size, pip tolerance only with entry gate, Range Layering with Multi, pills) to production.
+- **Plain English:** Production Configure with AI matches Migration again.
+- **Fix (files):** Redeployed [`configure-with-ai`](supabase/functions/configure-with-ai/index.ts) to production `sxkpcovbyaficvtkpsdo`.
+- **Deploy state:** production (`sxkpcovbyaficvtkpsdo`).
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: pip tolerance only with entry gate
+
+- **Context:** Proposals listed Signal Entry Pip Tolerance: 10 while Use Signal Entry Range (and Price) were off.
+- **Plain English:** Pip tolerance is only suggested when an entry gate is on; with teaser→params it is omitted.
+- **Fix (files):** Knowledge §4 + propose strip/warn in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) / [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
+- **Deploy state:** `configure-with-ai` → Migration; also production (see above).
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: ban fake Total Lot Size bullets
+
+- **Context:** Proposals invented “Total Lot Size: 0.01 per TP (total 0.03…)” under dynamic 1% on a large account.
+- **Plain English:** That line is removed from guidance — TP rows stay percent-only; dynamic % sizes the whole basket, not 0.01 per TP.
+- **Fix (files):** Knowledge §2b + context reminders in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) / [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
+- **Deploy state:** `configure-with-ai` → Migration.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: label Multi as Range
+
+- **Context:** AI proposals said “Trade Style: Multi”; product UI already calls that style Range Trading.
+- **Plain English:** Configure with AI now says **Trade Style: Range** in chat (patch value stays \`multi\`).
+- **Fix (files):** Label rules in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); tool/warning copy in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
+- **Deploy state:** `configure-with-ai` → Migration (redeploy).
+- **Follow-ups:** Promote to production if needed.
+
+### 2026-11-15 — Configure with AI: production deploy
+
+- **Context:** User asked to promote the Configure with AI edge function to production after Migration testing (pills, Range Layering with Multi, teaser rules).
+- **Plain English:** Production now runs the same Configure with AI expert as Migration (Apply pills, Range Layering with Multi, teaser entry-gate rules).
+- **Fix (files):** Deployed [`configure-with-ai`](supabase/functions/configure-with-ai/index.ts) (+ shared knowledge/tools) to production `sxkpcovbyaficvtkpsdo`.
+- **Tests/verification:** CLI deploy succeeded (`TScopierAI` · production).
+- **Deploy state:** `configure-with-ai` → production (`sxkpcovbyaficvtkpsdo`); Migration already had the same build.
+- **Follow-ups:** Frontend/Netlify still needs the modal pills UI if not already live on app.tscopier.ai.
+
+### 2026-11-15 — Configure with AI: Range Layering with Multi
+
+- **Context:** Multi proposals omitted Range Layering, so only the first split opened and the entry range was unused.
+- **Plain English:** When Configure with AI recommends Multi, it now also recommends **Range Layering** so new trades can add as price moves against entry and the full range is used.
+- **Root cause (technical):** Analyze/suggest forced \`range_trading: false\` for teaser→params and knowledge treated multi TP as range-off.
+- **Fix (files):** Knowledge §3b + teaser multi guidance in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); suggest defaults + propose auto-fill/warnings in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
+- **Tests/verification:** Redeploy edge; re-run Configure with AI on a multi/teaser channel — proposal should list Range Layering on with step/distance.
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`).
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: Apply via in-chat pills
+
+- **Context:** Apply Settings button was easy to miss / missing when the model listed settings without `propose_settings`.
+- **Plain English:** After a proposal, **Apply settings** and **Something else** appear as pills under the reply; tapping Apply writes the draft to the form.
+- **Root cause (technical):** Prose proposals without a tool call left `pending_settings_patch` null, so no Apply UI rendered.
+- **Fix (files):** In-chat pills in [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx); force `propose_settings` + `chat_actions` in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); knowledge rule in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts).
+- **Tests/verification:** Edge redeployed; reload app and re-run Configure with AI until a proposal — pills under the reply.
+- **Deploy state:** Frontend local/Netlify; `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`).
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: sticky Apply Settings bar
+
+- **Context:** Apply was below a tall chat bubble and easy to miss / scroll past.
+- **Plain English:** **Apply Settings** stays pinned above the composer (plus under the latest reply) whenever a proposal is pending.
+- **Fix (files):** [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx); knowledge requires `propose_settings` whenever listing a proposal.
+- **Deploy state:** Frontend local/Netlify; `configure-with-ai` → Migration.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: no Predefined SL on teaser→params
+
+- **Context:** AI suggested Predefined SL “until signal SL arrives”; Predefined SL actually overrides signal SL.
+- **Plain English:** For teaser→parameters channels that send SL in the follow-up, Predefined SL stays off and is no longer recommended with that wrong rationale.
+- **Fix (files):** Knowledge + suggest/propose enforcement in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) / [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`).
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: label modify/close as Update
+
+- **Context:** Channel management messages (MOVE SL/TP, CLOSE HALF) were shown and treated as Entry.
+- **Plain English:** Samples are classified as Entry vs Update from parsed data or raw text; load keeps a mix of both so AI sees modify/close formats too.
+- **Fix (files):** [`configureWithAiSignalFormat.ts`](src/lib/configureWithAiSignalFormat.ts) classifiers + tests; [`configureWithAiSignalLoad.ts`](src/lib/configureWithAiSignalLoad.ts); knowledge §1c; analyze request copy.
+- **Deploy state:** Frontend local/Netlify; `configure-with-ai` → Migration.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: distinct signal formats only
+
+- **Context:** Load-from-channel dumped many near-duplicate signals (same layout, different prices).
+- **Plain English:** Samples are deduped by format shape (prices scrubbed) so AI only sees different signal layouts for context.
+- **Fix (files):** [`configureWithAiSignalFormat.ts`](src/lib/configureWithAiSignalFormat.ts) + tests; [`configureWithAiSignalLoad.ts`](src/lib/configureWithAiSignalLoad.ts) uses format fingerprints (max 8).
+- **Deploy state:** Frontend only.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: load from channel vs TradingView JSON
+
+- **Context:** “Load from channel” only read saved examples; TradingView needed alert JSON, not chat history.
+- **Plain English:** Telegram/WhatsApp/Discord now pull recent channel signals (Telegram can backfill history). TradingView shows **Load JSON format** from the alert template (+ recent alerts).
+- **Fix (files):** [`configureWithAiSignalLoad.ts`](src/lib/configureWithAiSignalLoad.ts); [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx); `source_kind` from [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx); configureModal i18n; context hint in configure-with-ai knowledge.
+- **Deploy state:** Frontend local/Netlify; `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`) with `source_kind` context.
+- **Follow-ups:** None.
+
+### 2026-11-15 — Configure with AI: Apply Settings follow-up
+
+- **Context:** Users needed a clear in-chat action after a settings proposal.
+- **Plain English:** When AI proposes settings, an **Apply Settings** follow-up button appears under the reply (with short helper text) and on the proposal card.
+- **Fix (files):** [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx); `applySettings` / `applySettingsHint` in configureModal i18n.
+- **Deploy state:** Frontend only (local / Netlify rebuild).
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure with AI: teaser → parameters format
+
+- **Context:** Channels that post “Gold buy now” then a follow-up with entry band/SL/multi-TP (incl. `TP: open`) were at risk of Use Signal Entry Price/Range recommendations that skip the bare teaser.
+- **Plain English:** UniCopier already opens the teaser at market and attaches later SL/TPs. Configure with AI now detects that pattern, keeps entry-price/range gates off, and sizes finite TP rows (open/runner excluded).
+- **Fix (files):** Knowledge §1b in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); `teaser_then_params` detection + propose enforcement in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts).
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`).
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure with AI: TP ladder follows signal count
+
+- **Context:** Proposals kept default Take-Profit Levels TP1–TP3 even when signals posted a different number of TPs.
+- **Plain English:** Take-Profit rows now match how many TPs the channel signals use; the server corrects mismatched ladders and warns if the plan caps rows.
+- **Fix (files):** Signal TP mode + raw TP counting, `buildSuggestedTpLots(N)`, propose auto-align in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); knowledge rule in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); `plan_limits.max_tp_rows` from [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx).
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`). Frontend rebuild for `plan_limits`.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure with AI: answer TP follow-ups
+
+- **Context:** “What about TPs?” got a generic “misunderstanding” reply instead of take-profit guidance.
+- **Plain English:** The expert now treats TP questions as take-profits, covers targets in the first proposal when signals have them, and can revise the current Apply card from follow-ups.
+- **Fix (files):** TP decision section + no-dodge rule in [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); richer TP analysis/suggestions + pending patch in context in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); client passes `pending_settings_patch` from [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx).
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`). Frontend rebuild needed for pending-patch context on follow-ups.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure with AI: pip tolerance + interactive close
+
+- **Context:** Range-entry proposals said Use Signal Entry Range without discussing pip tolerance or miss risk; closes felt one-shot.
+- **Plain English:** When recommending Use Signal Entry Range, the expert now sets/explains pip tolerance, warns that trades can be missed if price is too far from the zone, and asks whether to proceed or if you have something else in mind.
+- **Fix (files):** [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) section 4 + interactive close; [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts) suggested tolerance, hints, soft warning on proposals.
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`).
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure with AI: account size + single vs range
+
+- **Context:** Expert should weight account size and whether signals are single-price or range/zone.
+- **Plain English:** Recommendations now classify single entry vs buy/sell zone and scale lots/risk from the broker balance/equity tier.
+- **Fix (files):** [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts) decision framework; richer `analyze_signal_format` + proposal checks in [`configure-with-ai/index.ts`](supabase/functions/configure-with-ai/index.ts); welcome copy.
+- **Deploy state:** Redeploy `configure-with-ai` to Migration.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure with AI (draft expert modal)
+
+- **Context:** Users needed guided trading config from signal format without cracking their heads on every setting.
+- **Plain English:** Configure Trading has a **Configure with AI** button that opens a nested expert chat. It loads or accepts pasted signal samples, recommends lot/style/management, and **Apply to form** updates the draft (Save still persists).
+- **Root cause (technical):** N/A — new feature; separate from global `assistant-chat`.
+- **Fix (files):** Edge [`configure-with-ai`](supabase/functions/configure-with-ai/index.ts) + [`configureWithAiKnowledge.ts`](supabase/functions/_shared/configureWithAiKnowledge.ts); extended [`CONFIGURE_AI_PATCHABLE_KEYS`](supabase/functions/_shared/assistantConfigTools.ts); UI [`ConfigureWithAiModal.tsx`](src/components/configure/ConfigureWithAiModal.tsx), client/patch helpers, [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) wire-up; configureModal i18n.
+- **Tests/verification:** `configureWithAiPatch.test.ts`; `tsc -b` clean.
+- **Deploy state:** `configure-with-ai` → Migration (`supmsgcubipmmowrzoub`). Frontend needs Netlify/local rebuild.
+- **Follow-ups:** Production deploy when ready; optional lot-calculator deep-link.
+
+### 2026-11-14 — Assistant trade explain respects UI language
+
+- **Context:** “Explain with AI” always asked for plain English even when UniCopier UI was another language.
+- **Plain English:** Explain-with-AI prompts and assistant replies now follow the user’s UniCopier language.
+- **Root cause (technical):** Hardcoded English auto-send strings; `locale` was sent by the client but unused in `assistant-chat`.
+- **Fix (files):** Localized `explainSignalPrompt` / `explainFailurePrompt` / `askAiAboutIssue` in [`detailModal.ts`](src/i18n/locales/copierLogs/detailModal.ts); wired in Copier Log / Trade / Signal Review modals; [`assistantReplyLanguageAddon`](supabase/functions/_shared/assistantKnowledge.ts) + locale on system prompt in [`assistant-chat`](supabase/functions/assistant-chat/index.ts).
+- **Tests/verification:** `tradeFailureDisplay` prompt tests; typecheck via locale bundle.
+- **Deploy state:** `assistant-chat` → Migration (`supmsgcubipmmowrzoub`). Frontend needs rebuild for localized prompts.
+- **Follow-ups:** Redeploy `assistant-chat` to production if desired.
+
+### 2026-11-14 — Assistant: export Account Trades CSV
+
+- **Context:** Trader asked the AI assistant to export today’s account trades as CSV for analysis.
+- **Plain English:** The assistant can now export Account Trades for a day (default today) as a downloadable CSV, optionally filtered to one broker.
+- **Root cause (technical):** N/A — new capability.
+- **Fix (files):** `export_account_trades_csv` tool in [`assistant-chat/index.ts`](supabase/functions/assistant-chat/index.ts) + knowledge prompt; client download via [`accountTradesCsv.ts`](src/lib/accountTradesCsv.ts) / [`accountTradesCsvCore.ts`](src/lib/accountTradesCsvCore.ts); [`AssistantCsvDownloadCard`](src/components/assistant/AssistantCsvDownloadCard.tsx) + [`AssistantPanel`](src/components/assistant/AssistantPanel.tsx) / [`assistantActions`](src/lib/assistantActions.ts); i18n `csvCard`.
+- **Tests/verification:** `npx tsx --test src/lib/accountTradesCsv.test.ts` (3 pass); `tsc -b` clean.
+- **Deploy state:** `assistant-chat` → Migration (`supmsgcubipmmowrzoub`) and production (`sxkpcovbyaficvtkpsdo`). Frontend needs Netlify/local rebuild for the download UI.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Mirror copy: support balance/equity ratio sizing
+
+- **Context:** Using mirror accounts failed with “Sizing mode not supported” / `SIZING_MODE_UNSUPPORTED`.
+- **Plain English:** Proportional mirror sizing (balance or equity ratio) was offered in the app but the copy engine rejected it. Those modes now work using live account balance/equity.
+- **Root cause (technical):** `parseMirrorCopySettings` mapped `balance_ratio` / `equity_ratio` (and legacy `dynamic_balance_percent`) to `sizingMode: 'unsupported'`; monitor `failLink`’d before open.
+- **Fix (files):** [`mirrorCopyTypes.ts`](worker/src/mirrorCopy/mirrorCopyTypes.ts), [`mirrorCopyPlan.ts`](worker/src/mirrorCopy/mirrorCopyPlan.ts), [`mirrorCopyMonitor.ts`](worker/src/mirrorCopy/mirrorCopyMonitor.ts) — parse + volume with account metrics; tests updated.
+- **Tests/verification:** `npx tsx --test src/mirrorCopy/mirrorCopyPlan.test.ts src/mirrorCopy/mirrorCopyMonitor.test.ts` (59 pass).
+- **Deploy state:** Worker code local — redeploy trade/mirror worker (Migration) to clear live errors.
+- **Follow-ups:** Redeploy worker; re-enable/retry the mirror link after deploy.
+
+### 2026-11-14 — Fix unused isInternalRebalancePayload (Netlify tsc)
+
+- **Context:** Netlify `tsc -b` failed: `isInternalRebalancePayload` declared but never read.
+- **Plain English:** Internal range-rebalance trade logs stay hidden in Copier Process; the unused check is wired in so the build passes.
+- **Fix (files):** [`channelWorkerLogMessage.ts`](src/lib/channelWorkerLogMessage.ts) — early `return null` when `request_payload.internal_rebalance` is true.
+- **Tests/verification:** `tsc -b`; `tsx --test src/lib/channelWorkerLogMessage.test.ts`.
+- **Deploy state:** Frontend; Netlify rebuild needed.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure modal header title → “Trading”
+
+- **Context:** Modal chrome still said “Configure Trading” while the body already has Configure channel on broker.
+- **Plain English:** The top title is now just Trading.
+- **Fix (files):** [`configureModal`](src/i18n/locales/configureModal/) — `title` shortened in all locales.
+- **Tests/verification:** Open modal; header reads Trading.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading: accordion order (trading first)
+
+- **Context:** Signal Examples / Symbols / Instructions were at the top of Configure Trading.
+- **Plain English:** Trading settings (Risk, Targets, Management, Filters) come first; Signal Examples, Symbols, and Instructions are at the bottom. Risk opens by default.
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — reorder accordion blocks; default `openConfigSections` / `resetConfigSectionScroll` → `risk`.
+- **Tests/verification:** Parse check; open modal and confirm section order.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading: channel-on-broker body title
+
+- **Context:** Hard to tell which source/broker the accordion settings apply to once the modal is open.
+- **Plain English:** Above the settings list, the modal shows Configure Source on Broker with source and destination logos beside each name (no quote marks).
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — logo+name slots for `{channel}` / `{broker}`; [`configureModal`](src/i18n/locales/configureModal/) — `configureChannelOnBroker` without quotes.
+- **Tests/verification:** Open Configure Trading with a linked channel; title updates when switching source; logos match sidebar/platform icons.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading modal: ash shell, white accordions
+
+- **Context:** Configure Trading looked flat white-on-white in light mode.
+- **Plain English:** The modal chrome is ash gray; each settings accordion stays white so sections read clearly.
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — dialog/header/footer/sidebar `bg-neutral-100`; `ConfigAccordionSection` keeps `bg-white`.
+- **Tests/verification:** Visual in light mode.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading accordion: section descriptions
+
+- **Context:** FAQ-style Configure Trading headers showed titles only; users needed a one-line hint for each menu item.
+- **Plain English:** Each accordion row now shows a short description under the title (e.g. Risk explains lot size and trade style).
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — `description` on `ConfigAccordionSection`. [`configureModal`](src/i18n/locales/configureModal/) — `manualSubTabDescriptions` in types + all locales.
+- **Tests/verification:** Typecheck via locale typing; open Configure Trading and confirm blurbs under each section header.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Configure Trading modal: FAQ-style accordion sections
+
+- **Context:** Configure Trading felt crowded — horizontal sub-tabs plus a long always-open scroll of Symbols / Instructions / Risk / Targets / Management / Filters / Signal Examples.
+- **Plain English:** Each settings group is now an inline collapsible row (like an FAQ). Click a header to expand or collapse; Signal Examples starts open when you open the modal. Switching channels resets to one open section.
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — `ConfigAccordionSection`, per-section open state, removed top tab strip + intersection spy-scroll.
+- **Tests/verification:** Lint clean on the page file; open Configure Trading → click sections to expand/collapse.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — “Close all trades now” skipped Demo (live snapshot miss)
+
+- **Context:** FOREX KING BACKUP “Close all trades now” (`mgmt_close` signal `70c91aea…`, basket `c2b506fb…` “BTC sell now”). UI: *Did not close your open trade (position not in live snapshot…)*. Fusion Markets closed (ticket `49652718`); Demo left **20 open** BTCUSDm sells.
+- **Plain English:** Close-all worked on Fusion. On Demo it never sent a broker close — it looked at a live-positions list, could not match each stored ticket, and stopped with “awaiting reconciliation” instead of closing. The positions stayed open.
+- **Root cause (technical):** `managementExecutor` required `resolveCurrentLivePosition` success before `OrderClose`. Absent/ambiguous snapshot (`stored ticket has no live position match`) threw `PositionAbsentFromLiveError` → `mgmt_close` **skipped** (no `orderClose`). Early OpenedOrders warm also `.catch(() => [])` and `prepareMgmtLiveOrderSnapshots` skipped re-fetch when a non-empty map already held `[]`.
+- **Fix (files):** [`managementExecutor.ts`](worker/src/tradeExecutor/managementExecutor.ts) — full close proceeds with stored ticket when identity resolve fails; refresh empty OpenedOrders snapshots before close.
+- **Tests/verification:** Unit path review; needs **trade-migration** (and prod trade) worker redeploy, then re-send close-all or use UI Close this trade on Demo basket.
+- **Deploy state:** Code local only — worker redeploy required.
+- **Follow-ups:** Redeploy worker; optional: settle DB when close confirms unknown-ticket after absent snapshot.
+
+### 2026-11-14 — Close trade: “trade service did not answer” on Fusion cTrader
+
+- **Context:** Martins Migration — Close this trade / Close this account on signal `a58de3cb…` (“BTC sell now”) showed *The trade service did not answer* while Demo was Closed and Fusion Markets stayed Open (ticket `49652216`).
+- **Plain English:** The close button was not timing out. Fusion Markets is a **cTrader** account. The close API only allowed MetaTrader providers (MTAPI/FxSocket), so it rejected Fusion with HTTP 400. The UI hid that as a generic “try again.” Demo (MT5) had already closed earlier; Fusion never got a real close attempt through that path.
+- **Root cause (technical):** (1) Edge `force-close-trades` broker-scope gate: `provider !== fxsocket && !== mtapi` → `400 Broker provider is invalid` (edge logs 17:31:50Z). (2) Worker `forceCloseSignalById` / broker-scope selects omitted `ctrader_account_id` (and other non-MT session columns), so even signal-scope close could not resolve a cTrader session and counted the leg as failed/unreachable.
+- **Fix (files):** [`supabase/functions/force-close-trades/index.ts`](supabase/functions/force-close-trades/index.ts) — allow ctrader/binance/bybit/kucoin/dxtrade/tradelocker/matchtrader; provider-aware session check. [`worker/src/forceCloseSignalTrades.ts`](worker/src/forceCloseSignalTrades.ts) — select all provider session ids. [`EditSignalOverrideModal.tsx`](src/components/dashboard/EditSignalOverrideModal.tsx) — map provider/session 400s to `closeNotConnected` instead of `closeRetry`.
+- **Tests/verification:** Edge redeployed Migration `force-close-trades` **v39** and Production **v31** (same sha). Confirm Fusion still open until **trade-migration** / prod trade worker redeploy picks up the select fix, then retry Close this account / Yes close trade.
+- **Deploy state:** Edge Migration ✅ v39; Production ✅ v31. Worker + frontend still need deploy for full close + clearer copy.
+- **Follow-ups:** Redeploy `trade-migration` (and frontend). Confirm edge `TRADE_WORKER_URL` points at `https://trade-migration.up.railway.app` (not listener-only).
+
+### 2026-11-14 — False “Closed on broker” for live BuyLimit (Copier log)
+
+- **Context:** Copier Process showed BTCUSD Closed / “Closed on broker” while the Fusion Markets BuyLimit was still live (Martins Migration, ticket `49652208`, trade `1f08c89e…`, ~14:46 UTC).
+- **Plain English:** A resting limit order was marked closed in our database even though it was still on the broker. The log then said “Closed on broker.” We restored that order to pending and stopped the background sweep from doing this again.
+- **Root cause (technical):** `tradeBrokerDriftMonitor` treats tickets missing from `/OpenedOrders` as ghosts after two passes. Many bridges’ OpenedOrders are positions-only, so a `status=pending` BuyLimit never appears → `missingOnce` → `close_reason=position_gone` with null fill. Row had `lot_size=0` from broker echo `lots=0` on LIMIT accept.
+- **Fix (files):** [`tradeBrokerDrift.ts`](worker/src/tradeBrokerDrift.ts) never plans/closes pending ghosts (open-only CAS); tests in [`tradeBrokerDrift.test.ts`](worker/src/tradeBrokerDrift.test.ts); [`orderLegExecution.ts`](worker/src/tradeExecutor/orderLegExecution.ts) keep requested volume when broker lots≤0. Migration SQL reopened trade `1f08c89e…` → `pending`, lot 3, cleared close fields.
+- **Tests/verification:** `npx tsx --test src/tradeBrokerDrift.test.ts`; trade row reopened on Migration.
+- **Deploy state:** Code local; Migration DB repaired. Worker redeploy needed for drift fix.
+- **Follow-ups:** Redeploy trade worker; optional ClosedOrders corroboration if we later want drift to retire abandoned pendings.
+
+### 2026-11-14 — Resend Parameters / Edit SL/TP runs in background + closable modal
+
+- **Context:** Manage Trades Edit SL/TP stayed on “Sending Order” while the edge function awaited worker OrderModify across every open leg; Escape/X were disabled. Reconciler felt slow (5s/15s ticks).
+- **Plain English:** Saving or resending SL/TP now returns as soon as the override is stored. Broker updates run on the worker in the background; the modal can always be closed. The page shows a banner that apply is running. Basket reconcile ticks faster when there is work.
+- **Root cause (technical):** `signal-override` awaited `callWorkerApply` → `applySignalOverride` (blocking HTTP); modal `actionBusy` disabled dismiss.
+- **Fix (files):** [`supabase/functions/signal-override/index.ts`](supabase/functions/signal-override/index.ts) `EdgeRuntime.waitUntil` kick + immediate `{ queued: true }`; [`worker/src/httpServer.ts`](worker/src/httpServer.ts) background apply + accept response; [`EditSignalOverrideModal.tsx`](src/components/dashboard/EditSignalOverrideModal.tsx) close on save, never lock dismiss; [`SignalHistoryPage.tsx`](src/pages/dashboard/SignalHistoryPage.tsx) + i18n `applyQueued`; [`basketSlTpReconcileMonitor.ts`](worker/src/basketSlTpReconcileMonitor.ts) active 2s / idle 8s defaults.
+- **Tests/verification:** Deploy edge to Migration; worker redeploy needed for async apply + faster reconcile; UI: Resend closes modal immediately with background banner.
+- **Deploy state:** Edge `signal-override` v39 on Migration `supmsgcubipmmowrzoub`. Worker + frontend still need deploy for background accept + faster reconcile ticks + closable UI.
+- **Follow-ups:** Redeploy trade worker (and frontend) wherever Manage Trades is tested.
+
+### 2026-11-14 — Martins prod: open BTC sells have no SL/TP (reconciler idle, not broken)
+
+- **Context:** User asked why SL/TP missing on `martins.osodi@gmail.com` (prod) and what happened to the reconciler.
+- **Plain English:** The open BTC sells never had stop or take-profit levels in the channel message, and this account’s predefined SL/TP pips are turned off. The worker opened the legs with SL=0/TP=0 on purpose. The reconciler did not invent levels — it had no targets and no jobs to run.
+- **Root cause (technical):** Signal `0ee0e1e5…` raw “Lets all Sell BTC now”; `parsed_data.sl=null`, `tp=[]`; OrderSend payloads `stoploss:0`/`takeprofit:0`; `manual_settings.use_predefined_sl_pips=false` / `use_predefined_tp_pips=false`; `basket_reconcile_jobs` and `basket_sl_tp_targets` counts = 0 for this user; post-fill `basket_leg_modify` skipped `no_stops_to_apply`. Same pattern on closed signal `b2d57ea5…`. Older signals with SL/TP in the text did get stops. Account “New Con” `974cd34d…`.
+- **Fix (files):** Diagnosis only this turn — no code change.
+- **Tests/verification:** Prod SQL on user `a23f24d9…`: 15/15 open legs missing SL+TP; 0 reconcile jobs/targets.
+- **Deploy state:** N/A (investigation).
+- **Follow-ups:** Enable predefined SL/TP pips on the account (30 / 20-40-60 already configured but toggles off), or use Edit SL/TP / Resend; optional product rule to refuse market entries with no stops when predefined pips are off.
+
+### 2026-11-14 — Copier Process “Order Skipped” on live fills
+
+- **Context:** Copier Process showed many “Order placement / Skipped” rows with “Completed: sell BTCUSD…” while the sell was live on the broker.
+- **Plain English:** After a successful open, the worker logs per-leg stop housekeeping as skipped when there is nothing to change. The UI treated those as skipped orders and even reused the buy/sell label, so a live fill looked skipped.
+- **Root cause (technical):** `basket_leg_modify` + `no_stops_to_apply`; `resolveTradeActivityKind` preferred signal `sell` over `basket_leg_modify` → kindOrder; message fallthrough used “Completed: sell”.
+- **Fix (files):** [`tradeActivities.ts`](src/lib/tradeActivities.ts) kind order; [`channelWorkerLogMessage.ts`](src/lib/channelWorkerLogMessage.ts) hide `basket_leg_modify`, silence `no_stops_to_apply`, never “Completed” on skipped status.
+- **Tests/verification:** `tradeActivities.test.ts`, `channelWorkerLogMessage.test.ts` for BTCUSD sell + no_stops skip.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Dispatch push timeline noise + short 429/502 retries
+
+- **Context:** Copier Execution Timeline showed many `dispatch push attempt (failed)` rows next to successes; users thought signals were failing often.
+- **Plain English:** Most of those rows were misleading. Every push logged a fake “success” before trying, and real retries on a busy/cold worker used tiny backoffs (tens of ms), so rate-limit/502 attempts stacked in the same second. Production still handed off ~682/686 signals in 7 days; only a handful fully failed (429, Railway 502, timeout) and the DB sweep still picks those up.
+- **Root cause (technical):** `tradeSignalPush` logged `phase=start` with `status=success`; retry sleep was `PUSH_RETRY_BASE_MS * attempt` (~50–100ms) for 429/5xx.
+- **Fix (files):** [`tradeSignalPush.ts`](worker/src/tradeSignalPush.ts) drop start marker; 400–2500ms backoff on 429/5xx/timeout; [`copierLogDetail.ts`](src/lib/copierLogDetail.ts) hide historical start rows + plain-English dispatch summaries.
+- **Tests/verification:** `copierLogDetail.test.ts` dispatch helpers; redeploy worker for logging/backoff; frontend for timeline copy.
+- **Deploy state:** Frontend + worker deploy needed.
+- **Follow-ups:** If 502s cluster, check Railway trade-worker health / cold starts on `tscopier-worker-production`.
+
+### 2026-11-14 — Edit SL/TP Resend Parameters when unchanged
+
+- **Context:** Update Live Trades stayed greyed out when SL/TP matched the current override, so users could not re-push stops that never landed on the broker.
+- **Plain English:** With the same values, the button says “Resend Parameters” and stays clickable; it becomes “Update Live Trades” only after you edit. Resend forces the broker modify even if the database already looks correct.
+- **Fix (files):** [`EditSignalOverrideModal.tsx`](src/components/dashboard/EditSignalOverrideModal.tsx); i18n `resendParameters`; [`signalOverrideApi.ts`](src/lib/signalOverrideApi.ts) `force_apply`; edge [`signal-override`](supabase/functions/signal-override/index.ts); worker [`applySignalOverride.ts`](worker/src/applySignalOverride.ts) + [`httpServer.ts`](worker/src/httpServer.ts).
+- **Tests/verification:** `applySignalOverride.test.ts` forceApply dry-run; open Edit SL/TP with unchanged levels → Resend Parameters enabled; change a level → Update Live Trades.
+- **Deploy state:** Frontend + edge `signal-override` + worker (Migration branch for edge when deploying).
+- **Follow-ups:** Deploy edge + worker for force_apply to take effect in staging/prod.
+
+### 2026-11-14 — Dashboard Open Trades / Open PnL near-realtime
+
+- **Context:** Sidebar showed “N Open” while Dashboard Open Trades / Open PnL stayed at 0; opens did not appear instantly.
+- **Plain English:** The cards now seed and refresh from the same broker open-positions feed as the sidebar, keep prior counts when a poll skips the opens fetch, and re-check within about half a second when trades change in the database.
+- **Root cause (technical):** MTAPI REST poll treated a flat AccountSummary as `open_trades = 0` without fetching OpenedOrders; WS `onAccount` never updated open count; `useDashboardRealtime` quiet path used `syncLive: false`; sidebar counted all `status=open` (incl. pending) vs cards’ market-only rule.
+- **Fix (files):** [`brokerOpenBook.ts`](src/lib/brokerOpenBook.ts) shared market-open book; [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) seed + 40s reconcile + preserve-on-skip + WS/realtime nudge; [`useDashboardRealtime.ts`](src/hooks/useDashboardRealtime.ts) `onTradesChange`; [`useHasOpenTrades.ts`](src/hooks/useHasOpenTrades.ts) + [`tradesSessionCache.ts`](src/lib/tradesSessionCache.ts) market-only badge; [`dashboardLiveOpenMetrics.ts`](src/lib/dashboardLiveOpenMetrics.ts) `resolveOpenCountWhenOpensFetchSkipped`.
+- **Tests/verification:** `brokerOpenBook.test.ts`, `dashboardLiveOpenMetrics.test.ts` skip-fetch cases; with live MT opens, Open Trades / Open PnL and sidebar badge should match within ~1s of open/close.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Copier Engine Active channels exclude non-Telegram sources
+
+- **Context:** TradingView / Discord / WhatsApp rows in `telegram_channels` appeared under Active channels with “Invalid Telegram ID”.
+- **Plain English:** Those sources share one table but aren’t Telegram chats. A couple of refresh paths forgot to filter them, so they showed up and failed the Telegram ID check.
+- **Root cause (technical):** `handleTelegramSessionInvalid` and `fetchTgChannels` reconcile called `setChannels` with all `source_kind`s; ChannelRow always ran `hasValidTelegramChannelIdentity`.
+- **Fix (files):** [`telegramChannelIdentity.ts`](src/lib/telegramChannelIdentity.ts) `isTelegramSourceChannel`; [`CopierEnginePage.tsx`](src/pages/dashboard/CopierEnginePage.tsx) filter on load/session-invalid/fetch/realtime; skip invalid-ID banner for non-Telegram.
+- **Tests/verification:** `telegramChannelIdentity.test.ts` source-kind cases; refresh Copier Engine with TV/Discord/WhatsApp configured — Active channels should be Telegram-only.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Features section scroll hijack
+
+- **Context:** Sticky scroll-track “hijack” never pinned because `marketing-hero-bg` used `overflow-hidden`; user wanted the page to stop and advance cards.
+- **Plain English:** Reaching Features stops page scroll; wheel/touch flips through feature cards, then the page continues.
+- **Root cause (technical):** Parent `overflow-hidden` broke sticky; also needed real `wheel` `preventDefault` hijack.
+- **Fix (files):** [`index.css`](src/index.css) drop overflow on `marketing-hero-bg`; [`FeaturesSection.tsx`](src/components/marketing/sections/FeaturesSection.tsx) wheel/touch/keyboard lock + card steps.
+- **Tests/verification:** Desktop landing `#features` — page freezes, cards advance, release at ends.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Marketing header shows avatar when signed in
+
+- **Context:** Signed-in visitors only saw a Dashboard button; avatar image often missing because marketing has no app session/profile.
+- **Plain English:** After Dashboard, the header shows the user’s photo (or initials). The app writes a shared avatar cookie; marketing also loads `user_profiles` when a session exists.
+- **Fix (files):** [`authPresenceCookie.ts`](src/lib/authPresenceCookie.ts) `tsc_auth_avatar`; [`useMarketingHeaderAvatar.ts`](src/hooks/useMarketingHeaderAvatar.ts); [`MarketingAuthCta.tsx`](src/components/marketing/MarketingAuthCta.tsx); sync from [`AuthContext.tsx`](src/context/AuthContext.tsx) + [`UserProfileContext.tsx`](src/context/UserProfileContext.tsx).
+- **Tests/verification:** Open app (loads profile) then marketing host — avatar cookie should render photo; same-origin marketing with session fetches profile photo.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** Visit the app once after deploy so the avatar cookie is written for cookie-only marketing visits.
+
+### 2026-11-14 — Landing page scroll appearance
+
+- **Context:** Marketing landing sections appeared statically with no entrance motion.
+- **Plain English:** As you scroll the landing page, sections and key cards fade/slide in once; respects reduced-motion.
+- **Fix (files):** [`ScrollReveal.tsx`](src/components/marketing/ScrollReveal.tsx); [`LandingPage.tsx`](src/pages/marketing/LandingPage.tsx); staggered reveals in showcase/features/steps/reviews; footer CTA/main.
+- **Tests/verification:** Visual — scroll marketing landing; OS reduced-motion skips animation.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — App header pills + Connection Status match hero soft-shell
+
+- **Context:** Hero dashboard preview showed pill backgrounds on header controls and a bordered Connection Status chip with chevron; the live app lagged.
+- **Plain English:** Header buttons (copier, bell, language, theme) and Connection Status now use the same soft white pill/card chrome as the marketing hero mock.
+- **Fix (files):** [`CopierStatusCard.tsx`](src/components/dashboard/CopierStatusCard.tsx) (dot + `:` + chevron + `APP_CARD`); [`CopierPauseToggle.tsx`](src/components/layout/CopierPauseToggle.tsx), [`NotificationBell.tsx`](src/components/layout/NotificationBell.tsx), [`LanguageSwitcher.tsx`](src/components/auth/LanguageSwitcher.tsx), [`ThemeToggle.tsx`](src/components/ui/ThemeToggle.tsx) (`APP_PILL`).
+- **Tests/verification:** Visual — app header + dashboard greeting row.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Showcase cards use soft-shell app previews
+
+- **Context:** Product showcase (“Built to reduce complexity…”) still showed old dark-framed dashboards with the pre-soft-shell app chrome.
+- **Plain English:** Those three cards now use the same ash rail / white shell look as the live app and hero preview.
+- **Fix (files):** [`AppPreviewWindow.tsx`](src/components/marketing/preview/AppPreviewWindow.tsx) soft-shell shell; [`ProductShowcaseSection.tsx`](src/components/marketing/sections/ProductShowcaseSection.tsx) ash card frames.
+- **Tests/verification:** Visual — landing `#showcase`.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Marketing hero ash background + centered copy
+
+- **Context:** Landing hero used a green WebGL swirl and left-aligned two-column copy.
+- **Plain English:** Hero background is now the same soft ash as the app sidebar, with a light grain; headline, subcopy, and CTAs are centered above the dashboard preview.
+- **Fix (files):** [`HeroSection.tsx`](src/components/marketing/sections/HeroSection.tsx); [`LandingPage.tsx`](src/pages/marketing/LandingPage.tsx) drops `darkHero` so the nav matches the light ash hero.
+- **Tests/verification:** Visual — marketing landing hero.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Marketing hero dashboard matches soft-shell app UI
+
+- **Context:** Landing hero still showed an older flat dashboard mock (side-by-side channel worker + short logs).
+- **Plain English:** The hero preview now looks like today’s dashboard: gray canvas, floating sidebar, white main shell, KPI cards, Copier Logs (with Reason/Destination/Message), and Linked Accounts.
+- **Fix (files):** [`HeroDashboardPreview.tsx`](src/components/marketing/HeroDashboardPreview.tsx); landing types + all locale `hero.dashboard` data (`linkedAccounts`, richer `copierLogRows`).
+- **Tests/verification:** `tsc` check for hero/landing errors.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-14 — Welcome modal redesign
+
+- **Context:** Post-signup welcome overlay was a plain checklist with a green check icon.
+- **Plain English:** Welcome now shows the UniCopier mark, a short intro, and three feature cards (signal sources, brokers, risk) before Start / Explore.
+- **Fix (files):** [`WelcomeModal.tsx`](src/components/onboarding/WelcomeModal.tsx); auth `welcome` copy in all locales + [`types.ts`](src/i18n/auth/types.ts) (`eyebrow` + `features`).
+- **Tests/verification:** Lint clean on modal + auth types.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-13 — Copier Signal details + BUY/SELL i18n
+
+- **Context:** Signal details modal chrome stayed English; Copier Log Type column showed raw `buy`/`sell`.
+- **Plain English:** Modal labels (title, reason, timeline, …) are translated per locale. Buy/Sell/Close etc. use the same Signal History action strings as toasts.
+- **Fix (files):** [`copierLogs/detailModal.ts`](src/i18n/locales/copierLogs/detailModal.ts) + wired into en/es/fr and `logs/*`; [`CopierLogsPage.tsx`](src/pages/dashboard/CopierLogsPage.tsx), [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx), [`MirrorLogDetailModal.tsx`](src/components/dashboard/MirrorLogDetailModal.tsx), [`copierLogDisplay.ts`](src/lib/copierLogDisplay.ts) action helpers.
+- **Tests/verification:** `merge.test.ts` detailModal Polish; existing display tests.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** Timeline/`tradeFailureDisplay` English strings still need locale maps.
+
+### 2026-11-13 — Copier Log reasons not translated
+
+- **Context:** Copier Logs Reason column stayed English in non-English locales.
+- **Plain English:** Skip/fail reasons now pick up the same translated Channel Worker strings, and partial locale bundles no longer wipe the rest of the Copier Logs dictionary.
+- **Root cause (technical):** `mergeLocaleBundle` shallow-replaced `copierLogs`, so `logs/*` kept only ~4 `skipReasons`. Lookup then fell through to English `COPIER_SKIP_REASON_LABELS`. Human-review free text also failed key normalization (`;`).
+- **Fix (files):** [`merge.ts`](src/i18n/locales/merge.ts) deep-merge + CW fold; [`copierSkipReasons.ts`](src/i18n/locales/copierSkipReasons.ts); en/es/fr `skipReasons` via `buildCopierLogsSkipReasons`; [`copierSkipReasonLabels.ts`](src/lib/copierSkipReasonLabels.ts) free-text aliases.
+- **Tests/verification:** `copierLogDetail.test.ts`, `merge.test.ts`, `copierLogLifecycle.test.ts` pass.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** Translate remaining copy-risk-only codes beyond Channel Worker maps if they appear in production logs.
+
+### 2026-11-13 — TradingView ingest host → tl.unicopier.com
+
+- **Context:** Dashboard was showing the raw Railway listener URL for TradingView webhooks.
+- **Plain English:** Webhook URLs now use `https://tl.unicopier.com/webhooks/tradingview/{token}` (custom domain pointed at the listener).
+- **Fix (files):** [`TradingViewSourcePanel.tsx`](src/components/dashboard/TradingViewSourcePanel.tsx) default ingest base; `.env` / `.env.example` / `worker/.env.example`.
+- **Tests/verification:** `POST https://tl.unicopier.com/webhooks/tradingview/probe` → 200 (domain reaches listener).
+- **Deploy state:** Local `.env` set. **Netlify:** set or update `VITE_TRADINGVIEW_INGEST_BASE_URL=https://tl.unicopier.com` and redeploy so prod builds don’t keep an old Railway value.
+- **Follow-ups:** Users with an old Railway URL pasted in TradingView should re-copy from Configure.
+
+### 2026-11-13 — TradingView plot-based alert JSON
+
+- **Context:** Configure emitted zeros/`tp[]`; plot-based `side`/`event`/`tp1`… alerts would not parse.
+- **Plain English:** Alert templates now use TradingView `{{plot("Entry")}}` / SL / TP1… fields. The webhook still accepts the old `action` + `tp` array shape. Auth stays on the webhook URL (no JSON secret).
+- **Fix (files):** [`tradingViewAlert.ts`](supabase/functions/_shared/tradingViewAlert.ts) + [`worker/src/tradingViewAlert.ts`](worker/src/tradingViewAlert.ts) — `side`/`event`, `tp1`–`tp5`, optional LIMIT `entry`; [`tradingViewAlertTemplate.ts`](src/lib/tradingViewAlertTemplate.ts) — plot templates; panel + i18n hints; tests.
+- **Tests/verification:** `node --import tsx --import ./test/preload.ts --test src/lib/tradingViewAlert.test.ts src/lib/tradingViewAlertTemplate.test.ts` — 17 pass.
+- **Deploy state:** Local only — worker + Migration-branch `tradingview-webhook` deploy when asked.
+- **Follow-ups:** Deploy worker ingest and edge shared parser when ready.
+
+### 2026-11-13 — Brokers Accounts list layout fix
+
+- **Context:** Linked signal sources under Name listed every channel with icon+full name and blew out the Brokers table.
+- **Plain English:** Sources now show up to 3 overlapping logos plus a short summary (or “N sources”). Connection badges stack cleanly; phones get card rows instead of a sideways-scroll table.
+- **Fix (files):** [`AccountConfigPage.tsx`](src/pages/dashboard/AccountConfigPage.tsx) — `BrokerLinkedSources`, fixed-column desktop table, mobile cards; i18n `channelsLinkedCount`.
+- **Tests/verification:** `tsc --noEmit` clean.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-13 — Fix Netlify TS build (Copier Log / Dashboard)
+
+- **Context:** Netlify `npm run build` failed with 4 TypeScript errors.
+- **Plain English:** Closed-filter Copier Log rows and dashboard status badges typed cleanly again so the site builds.
+- **Fix (files):** [`CopierLogsPage.tsx`](src/pages/dashboard/CopierLogsPage.tsx) — `LogViewEntry[]` + `'signal' in entry`; [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) — `Record<string, …>` status config.
+- **Tests/verification:** `tsc --noEmit` clean.
+- **Deploy state:** Frontend only until Netlify redeploy.
+- **Follow-ups:** None.
+
+### 2026-11-13 — Mobile list views for Copier + Linked Accounts
+
+- **Context:** Dashboard Copier and Linked Accounts used wide grids that forced horizontal scroll on phones.
+- **Plain English:** On mobile, Copier and Linked Accounts show stacked cards (symbol/source/destination or account metrics + toggle). Desktop keeps the table grids.
+- **Fix (files):** [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) — `LogCard`, `LinkedAccountCard`, responsive wrappers.
+- **Tests/verification:** Local — resize below `md`/`lg`.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-13 — Stacked Destination logos (max 3)
+
+- **Context:** Multiple destination logos sat side-by-side and crowded the Copier Log Destination column.
+- **Plain English:** Destination logos now overlap halfway (avatar stack) and show at most three platforms; the label still lists every broker.
+- **Fix (files):** [`CopierDestinationLogos.tsx`](src/components/dashboard/CopierDestinationLogos.tsx); cap in [`copierLogToast.ts`](src/lib/copierLogToast.ts); wired in Copier Logs, dashboard strip, detail modal, toasts.
+- **Tests/verification:** `copierLogToast.test.ts` summary cap.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-13 — Hover chevron on Copier + Linked Accounts
+
+- **Context:** Dashboard list rows looked static on hover.
+- **Plain English:** Copier Log and Linked Accounts rows show a chevron on the right when you hover, same cue as Trades.
+- **Fix (files):** [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) — `group` + `ChevronRight` on `LogRow` and `LinkedAccountRow`.
+- **Tests/verification:** Local hover check.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-13 — Destination in modal + Closed signal details
+
+- **Context:** Copier Log / dashboard strip lost the Destination column; Closed rows could not open the detail modal and closed-detail wiring referenced brokers without loading them.
+- **Plain English:** Copier Log and the dashboard strip show **Destination** again (broker logos + account labels). Closed log lines open the same detail modal with close reason, destination accounts, and closed time; when only a trade stub exists, the duplicate “Received” timestamp is hidden.
+- **Fix (files):** [`CopierLogsPage.tsx`](src/pages/dashboard/CopierLogsPage.tsx), [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx), [`CopierLogDetailModal.tsx`](src/components/dashboard/CopierLogDetailModal.tsx), [`copierLogToast.ts`](src/lib/copierLogToast.ts) helpers wired; i18n `colDestination` (en/es/fr + logs bundles pl/ja/sv/ru/ar/nl).
+- **Tests/verification:** `npx tsx --test src/lib/copierLogToast.test.ts`.
+- **Deploy state:** Local only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-13 — Connection Status moved into greeting
+
+- **Context:** Dashboard Connection Status card took a full section.
+- **Plain English:** Connection Status now sits on the right of the greeting; click it to open the status modal.
+- **Fix (files):** [`CopierStatusCard.tsx`](src/components/dashboard/CopierStatusCard.tsx) — header trigger + modal; [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) — `PageHeader` actions.
+- **Tests/verification:** Local — greeting row shows status; click opens modal; section card gone.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-13 — Copier Log Open / Closed statuses + reasons
+
+- **Context:** Copier Log only showed dispatch statuses; Executed had no Reason, and trade open/close was invisible.
+- **Plain English:** Copier Log now shows **Parsed / Executed / Open / Skipped / Failed / Closed**, each with a Reason. Open means a live position from a Telegram signal; Closed is a separate log line when a trade ends (e.g. Full TP hit / Due to stop loss).
+- **Fix (files):** [`copierLogLifecycle.ts`](src/lib/copierLogLifecycle.ts); [`CopierLogsPage.tsx`](src/pages/dashboard/CopierLogsPage.tsx); [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) strip; i18n `closeReasons` / lifecycle reasons; detail modal `displayReason`.
+- **Tests/verification:** `copierLogLifecycle.test.ts`; `tsc --noEmit` clean.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** Optional Closed toasts on `trades` realtime.
+
+### 2026-11-13 — Dashboard Your Trades + Open Trades link
+
+- **Context:** Surface Manage Trades from the dashboard overview.
+- **Plain English:** Open Trades stat now has a **Manage Trades** text link to `/manage-signals`. Your Trades strip (open-only, above Copier Log) was added in the same workstream.
+- **Fix (files):** [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) — Open Trades `OverviewStat` `addTo="/manage-signals"`; Your Trades card + i18n `yourTrades` / `manageTrades`.
+- **Tests/verification:** Local — Open Trades link navigates; strip only when open.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-13 — Copier Process as toast (dashboard strip removed)
+
+- **Context:** Dashboard “Most Recent Copier Process” strip duplicated Management; user wanted process events as toasts instead.
+- **Plain English:** Copier Process updates now pop as toasts (click opens Copier Process / `/activities`). The dashboard only keeps Most Recent Copier Log.
+- **Fix (files):** [`CopierProcessToasts.tsx`](src/components/dashboard/CopierProcessToasts.tsx) + [`copierProcessToast.ts`](src/lib/copierProcessToast.ts); stacked with Copier Log toasts in [`AppLayout.tsx`](src/components/layout/AppLayout.tsx); process section removed from [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx).
+- **Tests/verification:** `copierProcessToast.test.ts`.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** None.
+
+### 2026-11-13 — Restore OrderSend reliability after capacity regression
+
+- **Context:** Production (Martins / New Con) after the global OrderSend capacity gate: **42** `BROKER_BUSY` and **12** OrderSend timeouts since 07:00Z; Gold-lab multi-leg baskets failed while the bridge was still alive.
+- **Plain English:** Orders were waiting only 8 seconds for a free send slot, then failing as “broker busy,” and the dashboard was also polling open trades every tick on the same MTAPI session. We now wait longer, retry busy once, stop throttling send concurrency just because the queue is busy, and poll open trades less often when the account is flat.
+- **Root cause (technical):** `MTAPI_GLOBAL_ORDER_WAIT_MS` default 8s fail-fast; saturation forced `MT_SEND_OP_CONCURRENCY → 1`; no in-basket busy retry; Dashboard `refresh_summary` + `trades(scope=open)` every ~35s × N accounts contended with OrderSend.
+- **Fix (files):** [`mtapiProvider.ts`](worker/src/mtapiProvider.ts) — wait default **45s** (cap **60s**); remove saturation→send concurrency 1. [`orderLegExecution.ts`](worker/src/tradeExecutor/orderLegExecution.ts) — retry `BROKER_BUSY` once (~400ms); serialize-on-sat opt-in via `MT_SEND_SERIALIZE_WHEN_SATURATED`. [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) — summary every ~45s; OpenedOrders only when not flat or ~4 min reconcile. [`worker/.env.example`](worker/.env.example) comments updated.
+- **Tests/verification:** Worker `tsc --noEmit` clean; broker busy classification tests pass (36). Source checklist: wait 45s/cap 60s, busy retry on `attempt===0`, no sat→send=1, serialize opt-in, dashboard summary-only + 4‑min open reconcile. Prod New Con `974cd34d-…` since 07:00Z still **42 busy / 12 timeout / 54 ok** (pre-redeploy baseline — expected until trade-worker ships this commit).
+- **Deploy state:** Local / code ready — needs trade-worker redeploy + Netlify for dashboard poll.
+- **Follow-ups:** After trade-worker redeploy, re-check New Con Gold-lab `order_send` busy count (should drop sharply vs 42).
+
+### 2026-11-13 — Dashboard Open Trades = market only (fix 104 / $0 PnL)
+
+- **Context:** Martins (`martins.osodi@gmail.com`) on production showed **Open Trades 104** with **Open PnL $0** while New Con `477486720` was flat (`last_equity = last_balance`) and DB had **0 open** / **100 pending**.
+- **Plain English:** The dashboard was counting waiting limit/stop orders as “open trades” next to floating P/L, so it looked like 104 opens with no profit. Open Trades now means filled market positions only (same idea as Open PnL).
+- **Root cause (technical):** Pending top-up + `OpenedOrders` all `status=open`; `normalizeLiveOpenMetrics` forced `open_pnl: 0` when mark was unknown; sticky counts survived flat AccountSummary.
+- **Fix (files):** [`dashboardLiveOpenMetrics.ts`](src/lib/dashboardLiveOpenMetrics.ts) — `resolveFlatBookOpenMetrics` / unknown PnL stays null; [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) — market-only headline, flat summary clears sticky opens, MTAPI poll ~35s via `mtapi-broker`.
+- **Tests/verification:** `dashboardLiveOpenMetrics.test.ts`; after deploy, flat New Con → Open Trades 0 / PnL $0.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** 100 DB `pending` on New Con may still need reconcile; they must not drive the Open Trades card.
+
+### 2026-11-13 — Dashboard Open PnL / open trades realtime (clear when flat)
+
+- **Context:** Dashboard showed stale Open PnL (+$406) and wrong Open Trades (4) while MT5 had many XAUUSDm legs (~$268 floating); after closing everything, Open PnL still stuck.
+- **Plain English:** The dashboard was not reading live open positions from MTAPI often enough, and it refused to show Open PnL as zero once it had a non-zero value.
+- **Root cause (technical):** (1) `mergeDashboardStats` used `keepBalance` for `openPnl`, which never accepts `0` when previous ≠ 0. (2) MTAPI `normalizeMtapiAccountSummary` has no `open_trades`, so counts relied on a stale trade list. (3) REST poll updated only one account per 45s tick and preferred sticky list counts.
+- **Fix (files):** [`dashboardLiveOpenMetrics.ts`](src/lib/dashboardLiveOpenMetrics.ts); [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) — allow Open PnL → 0; zero PnL when open count is 0; MTAPI poll fetches `trades(scope=open)` + summary every ~20s for all accounts; first tick at 2s.
+- **Tests/verification:** `dashboardLiveOpenMetrics.test.ts`; after deploy, open/close on MT5 — Open Trades and Open PnL should track within ~20s and clear when flat.
+- **Deploy state:** Frontend only until Netlify deploy.
+- **Follow-ups:** UniCopier DB “recording” of timed-out OrderSends is separate (capacity/worker path); this fix is live broker display.
+
+### 2026-11-13 — Fix UserImpact 'deferred' → 'delayed' (worker image build)
+
+- **Context:** Railway/Docker image build failed on `npm run build` after capacity work.
+- **Plain English:** A busy-broker log used a status label the TypeScript types do not allow, so the worker image would not build.
+- **Root cause (technical):** `userImpact: 'deferred'` in [`orderLegExecution.ts`](worker/src/tradeExecutor/orderLegExecution.ts); `UserImpact` only allows `'delayed'` (and siblings), not `'deferred'`.
+- **Fix (files):** `orderLegExecution.ts` — `BROKER_BUSY` → `userImpact: 'delayed'`.
+- **Tests/verification:** `npm run build` in worker (image rebuild).
+- **Deploy state:** Local fix; redeploy trade-worker image.
+- **Follow-ups:** None.
+
+### 2026-11-13 — Dashboard OPEN TRADES matched Account Trades (include pending)
+
+- **Context:** Overview showed **92** open trades while Account Trades badge showed **101 Open**.
+- **Plain English:** The dashboard was counting only filled market positions. Waiting limit/stop orders still count as open on Account Trades, so the two numbers disagreed.
+- **Root cause (technical):** Dashboard `open_trades` came from position books / `AccountSummary.open_trades` / `countOpenMarketPositionsByBroker` (excludes pending). Sidebar `useOpenTradeCount` counts every broker row with `status === 'open'`.
+- **Fix (files):** [`fxsocketStreamParse.ts`](src/lib/fxsocketStreamParse.ts) — `countOpenTradesByBroker` + `resolveOpenTradesHeadlineCount`; [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) — headline/live snapshots use market + pending.
+- **Tests/verification:** `fxsocketStreamParse.test.ts` pending top-up cases; UI — both counters should match after refresh.
+- **Deploy state:** Frontend only (local until Netlify deploy).
+- **Follow-ups:** None.
+
+### 2026-11-13 — Multi-signal multi-broker MTAPI capacity (OrderSendSafe fairness)
+
+- **Context:** Gold test lab bursts (multi-leg × many brokers) produced `MTAPI OrderSendSafe timed out` storms and UI “Could not buy XAUUSD…”. Production window **2026-11-13 ~06:20–06:29Z** (Exness + ICMarkets demos): baseline ~**1.64 signals/min**, ~**11.8 legs/signal**, **2 brokers**, **81 failed / 190 ok** order_send rows in the window — stampede on one shared bridge with `MT_SEND_OP_CONCURRENCY=3` and no global fairness.
+- **Plain English:** Under load the copier now shares the bridge fairly, queues excess work, and says “broker busy” quickly instead of hanging ~50s per leg. Quiet single-signal copies still fan out legs in parallel.
+- **Root cause (technical):** N brokers × multi-leg baskets × per-account send overlap overloaded MTAPI HTTP; hung requests hit AbortError (~50s) with 0 fills and no admission control.
+- **Fix (files):**
+  - [`perAccountConcurrency.ts`](worker/src/perAccountConcurrency.ts) — `acquireWithDeadline` + `ConcurrencyBusyError`
+  - [`mtapiProvider.ts`](worker/src/mtapiProvider.ts) — `MTAPI_GLOBAL_ORDER_CONCURRENCY` (default 6) + `MTAPI_GLOBAL_ORDER_WAIT_MS` (default 8s) → `BROKER_BUSY`; saturation forces per-account send limit 1; logs `global_wait_ms` / `account_wait_ms` / `http_ms`
+  - [`orderLegExecution.ts`](worker/src/tradeExecutor/orderLegExecution.ts) — serialize + optional `MT_SEND_LEG_GAP_MS` when saturated
+  - [`dispatch.ts`](worker/src/tradeExecutor/dispatch.ts) — backlog warn at 2× `EXECUTOR_MAX_CONCURRENT_SIGNALS`
+  - [`brokerTradeError.ts`](worker/src/brokerTradeError.ts) + Channel Worker i18n — `BROKER_BUSY` / timeout UX (timeout still reconciles via OpenedOrders)
+- **Tests/verification:** `perAccountConcurrency.test.ts` deadline + multi-key burst; `brokerTradeError` / `businessEvents` busy classification. Live Gold-lab retest after trade-worker deploy: expect no multi-minute timeout storms; under overload prefer `broker busy` then recovery. Ops ceiling ≈ global concurrency ÷ (avg HTTP ms) order slots (tunable via env).
+- **Deploy state:** Local only until trade-worker image redeploy (Migration/prod Railway). Bridge health was OK (403 JSON) before this change.
+- **Follow-ups:** After deploy, re-measure Gold test lab signals/min × brokers; raise `MTAPI_GLOBAL_ORDER_CONCURRENCY` only after bridge soak.
+
+### 2026-11-12 — Discord latency: enable trade push + pipeline stamps
+
+- **Context:** Discord→trade took ~7–11s. Prod signals had **0** `dispatch_push_attempt` logs; `created_at`→`t_dispatch_received` was 1–5s (sweep/realtime), then `broker_ready` another 3–6s.
+- **Plain English:** Discord was not HTTP-pushing to the trade worker (missing Railway push env). Code now measures Discord ingest and warns loudly when push is misconfigured; Discord role also runs the trade-push probe.
+- **Root cause (technical):** `discord_listener` without `TRADE_WORKER_URL`/`WORKER_INTERNAL_TOKEN` falls back to parsed sweep (`EXECUTOR_SWEEP_IDLE_MS` up to 5s). Push probe previously started only for Telegram `runsListener`.
+- **Fix (files):** [`discordListener.ts`](worker/src/discordListener.ts) `pipeline_ts` + `pushParsedSignalToTradeWorkerAccept` logging; [`warnDiscordTradePushConfig`](worker/src/tradeSignalPush.ts); [`index.ts`](worker/src/index.ts) probe for discord role; [`docs/discord-setup.md`](docs/discord-setup.md) latency checklist (prod URL `https://tscopier-worker-production.up.railway.app`).
+- **Tests/verification:** `tradeSignalPush.test.ts` warn cases; ops — set Discord Railway `TRADE_WORKER_URL` + token, redeploy, confirm `dispatch_push_attempt` + sub-300ms insert→dispatch.
+- **Deploy state:** Worker image + Discord Railway env (CLI unauthorized here — set vars in Railway UI).
+- **Follow-ups:** After push is green, profile `broker_ready_at` if wall time still multi-second.
+
+### 2026-11-12 — Production “Discord invite is not configured” false positive
+
+- **Context:** Production Netlify already had `VITE_DISCORD_CLIENT_ID` baked in (`155839…`), but Connect still showed “Discord invite is not configured yet.”
+- **Plain English:** A build bug made the Connect button call the wrong function, so it always thought Discord wasn’t set up.
+- **Root cause (technical):** In the `CopierEnginePage` chunk, Rolldown aliased imported `discordClientId` to the same minified name as a `useState` setter inside `DiscordSourcePanel` (`Je`). `Je()` invoked the setter (falsy), not the client-id reader. Live evidence: `function x(){return\`155839…\`}` export existed, but Connect used shadowed `Je`.
+- **Fix (files):** [`DiscordSourcePanel.tsx`](src/components/dashboard/DiscordSourcePanel.tsx) — `import * as discordInvite` and call `discordInvite.discordClientId()` / invite URL helpers (property access can’t be shadowed by a local binding).
+- **Tests/verification:** Redeploy frontend; Connect Discord should open the OAuth invite without the missing-config error.
+- **Deploy state:** Frontend only — needs Netlify production deploy.
+- **Follow-ups:** Watch for similar named-import + useState minify collisions in other fat page chunks.
+
+### 2026-11-12 — Discord panel: Disconnect when connected
+
+- **Context:** Connected Discord UI still showed “+ Connect Discord”.
+- **Plain English:** Once a server is linked, the header action is now **Disconnect Discord** (same pattern as WhatsApp).
+- **Fix (files):** [`DiscordSourcePanel.tsx`](src/components/dashboard/DiscordSourcePanel.tsx); [`disconnectDiscord`](src/lib/discordSource.ts) removes installs, shadow channels, and broker links; i18n `discordDisconnect`.
+- **Tests/verification:** With an installation present, header shows Disconnect; click clears installs/channels and returns to Connect hero.
+- **Deploy state:** Frontend only.
+- **Follow-ups:** None.
+
+### 2026-11-12 — Discord signals silent: DB env mismatch + no ingest logs
+
+- **Context:** Gateway can start, but posting in Discord still yields no UniCopier signal.
+- **Plain English:** Discord was connected on the **Migration** app (1 linked `#general`). **Production** has 0 Discord installs/links. A production-pointed Railway listener looks up subscribers on production, finds none, and drops the message with no log.
+- **Root cause (technical):** `loadSubscribers` returns `[]` when `discord_channels` is empty on that `SUPABASE_URL`; [`copyMessage`](worker/src/discordListener.ts) previously returned silently. Migration still has 0 `source_kind=discord` signals.
+- **Fix (files):** Ops — point Discord Railway `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` at the same project where Connect Discord was done (Migration `supmsgcubipmmowrzoub` for preview), **or** Connect Discord + link `#general` on production. Code — log empty body / zero subscribers / parse ignore in `discordListener.ts`.
+- **Tests/verification:** After align + redeploy, post in linked `#general`; Railway log should show insert path or an explicit skip reason; DB `signals.source_kind=discord` increases.
+- **Deploy state:** Logging needs worker image redeploy; env alignment is Railway Variables.
+- **Follow-ups:** Confirm Message Content Intent stayed on; bot can View/Read the linked channel.
+
+### 2026-11-12 — Discord gateway 4014 DisallowedIntents
+
+- **Context:** Railway `discord_listener` started (`role=discord_listener shard=0/1`) then crash-looped: `shard 0 disconnected code=4014 (DisallowedIntents)`.
+- **Plain English:** The bot asked Discord for privileged intents (message content) that are still off in the Developer Portal.
+- **Root cause (technical):** [`discordListener.ts`](worker/src/discordListener.ts) enables `GatewayIntentBits.MessageContent` (plus Guilds / GuildMessages). Discord closes with 4014 when Message Content Intent is not enabled for the application.
+- **Fix (files):** Ops only — Discord Developer Portal → Application → Bot → Privileged Gateway Intents → enable **Message Content Intent** (Save). Redeploy/restart Discord service.
+- **Tests/verification:** Logs show `[discord] gateway ready as …` instead of 4014.
+- **Deploy state:** Worker start path OK; portal intent toggle required.
+- **Follow-ups:** None if intent stays on; bot must stay under Discord’s privileged-intent approval rules at 100+ servers.
+
+### 2026-11-12 — Discord listener crash: Node 20 WebSocket
+
+- **Context:** Railway Discord service crash-looped on start with `Node.js 20 detected without native WebSocket support` from `@supabase/realtime-js`.
+- **Plain English:** The Discord process creates a Supabase client before login; on Node 20 that needs the `ws` package polyfill. Railway was also started with `npm run discord`, which skips `index.ts` where that polyfill already lived.
+- **Root cause (technical):** [`discordListener.ts`](worker/src/discordListener.ts) called `createClient` with no `globalThis.WebSocket` install; `ws` is already a dependency and polyfilled in [`index.ts`](worker/src/index.ts) / [`whatsappListener.ts`](worker/src/whatsappListener.ts).
+- **Fix (files):** Polyfill `ws` in `discordListener.ts` before `createClient`. Docs: Railway start command must stay `node dist/index.js` + `WORKER_ROLE=discord_listener`.
+- **Tests/verification:** Redeploy Discord service; expect `[discord] gateway ready` (not TokenInvalid / WebSocket error).
+- **Deploy state:** Code fix local — redeploy worker image / Discord service.
+- **Follow-ups:** Prefer `WORKER_ROLE=discord_listener` over custom `npm run discord` start on Railway.
+
+### 2026-11-12 — Discord signals never reach UniCopier (no gateway)
+
+- **Context:** User had Discord connected (guild synced, `#general` linked) but posted signals never appeared in UniCopier.
+- **Plain English:** Connect Discord only registers the server and channels. A separate always-on Discord bot process must listen to those channels and write `signals` rows. That process was not running.
+- **Root cause (technical):** Migration has active `discord_channels` + shadow `telegram_channels` (`source_kind=discord`, channel `dc:926393892734119967:926393892734119971`) but **0** `signals` with `source_kind=discord` (production also 0). Docs mark Railway `WORKER_ROLE=discord_listener` as **planned**. `discord-gateway-production.up.railway.app` returns 502 (likely crash-loop / healthcheck on a role with no HTTP). Edge `discord-sync` only caches channel names; ingest is solely [`worker/src/discordListener.ts`](worker/src/discordListener.ts). Local `npm run discord` also failed: Discord.js `TokenInvalid` for `worker/.env` `DISCORD_BOT_TOKEN` (revoked/rotated or stale copy).
+- **Fix (files):** Ops — regenerate bot token in Discord Developer Portal; set the same value on Migration (`supabase secrets set DISCORD_BOT_TOKEN`), Railway Discord service, and `worker/.env`; deploy/repair Railway service per [`docs/discord-setup.md`](docs/discord-setup.md) (`WORKER_ROLE=discord_listener`, replicas=1, **disable healthcheck**, Message Content Intent on).
+- **Tests/verification:** Gateway log `gateway ready`; post a parseable signal in linked `#general`; expect a new `signals` row with `source_kind=discord`.
+- **Deploy state:** Diagnosis only — gateway not running; token currently invalid.
+- **Follow-ups:** After new token: redeploy Discord Railway service; confirm Message Content Intent; one process per token.
+
+### 2026-11-12 — Discord connect 503: missing DISCORD_BOT_TOKEN on Migration
+
+- **Context:** Connect Discord saved the guild install, then `discord-sync` failed with “Edge Function returned a non-2xx status code”.
+- **Plain English:** The Migration edge function could not talk to Discord because its bot token secret was not set.
+- **Root cause (technical):** Logs show `POST …/functions/v1/discord-sync` → **503**; [`discord-sync/index.ts`](supabase/functions/discord-sync/index.ts) returns `bot_not_configured` when `DISCORD_BOT_TOKEN` is empty.
+- **Fix (files):** Set `DISCORD_BOT_TOKEN` on Migration project `supmsgcubipmmowrzoub` via `supabase secrets set` (same token as worker Discord listener).
+- **Tests/verification:** Retry Connect Discord / guild sync; expect 200 from `discord-sync`.
+- **Deploy state:** Migration edge secret only (no code change).
+- **Follow-ups:** Confirm production `sxkpcovbyaficvtkpsdo` already has the secret if prod Discord connect is used.
+
+### 2026-11-12 — TradingView Configure defaults SL/TP off
+
+- **Context:** New TradingView alert JSON configs defaulted Include SL and Include TP to on.
+- **Plain English:** Fresh Configure settings now start with SL and TP toggles off until the user turns them on.
+- **Fix (files):** [`tradingViewAlertTemplate.ts`](src/lib/tradingViewAlertTemplate.ts) `DEFAULT_TRADINGVIEW_ALERT_CONFIG`.
+- **Tests/verification:** `tradingViewAlertTemplate.test.ts`.
+- **Deploy state:** Frontend only.
+- **Follow-ups:** Existing saved `alert_config` rows keep their stored toggles.
+
+### 2026-11-12 — TradingView always-on Railway ingest
+
+- **Context:** TradingView alerts hit Supabase Edge `tradingview-webhook`, which cold-starts before ACK/dispatch.
+- **Plain English:** New webhook URLs can point at the always-on Railway trade worker (`/webhooks/tradingview/{token}`) so alerts skip Edge cold starts. Old Supabase URLs still work until users paste the new URL.
+- **Fix (files):** [`worker/src/tradingViewIngest.ts`](worker/src/tradingViewIngest.ts) + [`tradingViewAlert.ts`](worker/src/tradingViewAlert.ts); public routes on auth/trade HTTP in [`httpServer.ts`](worker/src/httpServer.ts); warm ping in [`index.ts`](worker/src/index.ts); dashboard URL via `VITE_TRADINGVIEW_INGEST_BASE_URL` in [`TradingViewSourcePanel.tsx`](src/components/dashboard/TradingViewSourcePanel.tsx).
+- **Tests/verification:** `worker` `tradingViewIngest.test.ts` (5 pass); worker `tsc --noEmit`.
+- **Deploy state:** Code ready — set Railway public trade-entry URL + Netlify `VITE_TRADINGVIEW_INGEST_BASE_URL`; edge left for legacy.
+- **Follow-ups:** Users with old URLs should re-copy Webhook URL from Configure once env is set.
+
+### 2026-11-12 — Fix Netlify tsc: empty copier log symbol lookup
+
+- **Context:** Netlify `npm run build` failed: `buildCopierLogSymbolLabels(logs, {})` no longer matches `CopierSymbolContext | Map`.
+- **Plain English:** Critical-path dashboard copier logs now pass an empty Map until enrichment fills symbols.
+- **Fix (files):** [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) — `new Map()` instead of `{}`.
+- **Tests/verification:** `tsc -b`.
+- **Deploy state:** Frontend only (unblocks Netlify).
+- **Follow-ups:** None.
+
+### 2026-11-12 — Promote TradingView alert_config to production
+
+- **Context:** `tradingview_webhooks.alert_config` was only on the Migration branch; Configure modal persistence needed production.
+- **Plain English:** Production now has the same TradingView alert JSON settings column as Migration.
+- **Fix (files):** Applied `tradingview_webhook_alert_config` via MCP `apply_migration` to production `sxkpcovbyaficvtkpsdo` (`add column if not exists alert_config jsonb`).
+- **Tests/verification:** `information_schema` shows `alert_config` jsonb; migration version `20261112114811` listed on production.
+- **Deploy state:** Production DB updated; Migration already had it.
+- **Follow-ups:** None.
+
+### 2026-11-12 — TradingView Configure owns webhook URL; remove Show Details
+
+- **Context:** Webhook URL lived in a separate Details modal; list had both Configure and Show Details. Portrait modal required heavy scrolling.
+- **Plain English:** Configure is a wide landscape modal: settings on the left, alert JSON on the right, URL on top. Show Details is gone from the list.
+- **Fix (files):** [`TradingViewSourcePanel.tsx`](src/components/dashboard/TradingViewSourcePanel.tsx) — URL + rotate + deliveries in `WebhookConfigure`; `ModalFrame` `size="wide"`; two-column layout; removed details modal / Show Details.
+- **Tests/verification:** Visual on TradingView configure.
+- **Deploy state:** Frontend only.
+- **Follow-ups:** None.
+
+### 2026-11-12 — Dark mode sidebar active icon color
+
+- **Context:** Active nav icons (e.g. Dashboard) stayed black in dark mode while labels were white.
+- **Plain English:** The selected sidebar icon is now white in dark mode so it stays visible on the dark active chip.
+- **Fix (files):** [`AppLayout.tsx`](src/components/layout/AppLayout.tsx) — active icon `text-neutral-950 dark:text-neutral-50`.
+- **Tests/verification:** Visual in dark mode sidebar.
+- **Deploy state:** Frontend only.
+- **Follow-ups:** None.
+
+### 2026-11-12 — Dashboard Connection Status redesign + Connect
+
+- **Context:** Connection Status looked sparse: uneven metric alignment, loud green Connect pills, weak hierarchy between sources and broker health.
+- **Plain English:** The card now has a tinted status banner, a 2×2 source grid with quieter Connect actions, and three evenly aligned health metrics.
+- **Fix (files):** [`CopierStatusCard.tsx`](src/components/dashboard/CopierStatusCard.tsx) visual redesign; Connect → `/channels?source=…`. [`CopierEnginePage.tsx`](src/pages/dashboard/CopierEnginePage.tsx) honors `?source=`. i18n title + `connectSource`.
+- **Tests/verification:** `tsc --noEmit`.
+- **Deploy state:** Frontend only (Netlify).
+- **Follow-ups:** None.
+
+### 2026-11-12 — TradingView Configure → tailored alert JSON
+
+- **Context:** TradingView details modal stacked three static alert JSON templates with no SL/TP, while the parser and worker expect optional `sl` / `tp[]`.
+- **Plain English:** Each webhook now has Configure: pick Indicator or Strategy, optional SL and how many TPs, then copy a matching JSON. Details is slimmed to URL + recent alerts.
+- **Fix (files):** Migration `alert_config` on `tradingview_webhooks` (Migration branch). [`tradingViewAlertTemplate.ts`](src/lib/tradingViewAlertTemplate.ts) + tests. [`TradingViewSourcePanel.tsx`](src/components/dashboard/TradingViewSourcePanel.tsx) Configure modal + list CTA. [`tradingViewWebhook.ts`](src/lib/tradingViewWebhook.ts) save helper. i18n en/es/fr + trading locales.
+- **Tests/verification:** `tradingViewAlertTemplate` unit tests; `tsc --noEmit`.
+- **Deploy state:** DB on Migration (`supmsgcubipmmowrzoub`); frontend Netlify.
+- **Follow-ups:** Promote migration when shipping to staging/production.
+
+### 2026-11-11 — Social Trading / provider page i18n for all locales
+
+- **Context:** Social Trading (directory + provider profile) only had full `socialTradingPage` copy in en/es/fr; pl/ru/sv/nl/ja/ar fell back to English via shallow merge.
+- **Plain English:** The Social Trading and provider screens now show localized UI in every supported language.
+- **Fix (files):** New bundle [`src/i18n/locales/socialTrading/`](src/i18n/locales/socialTrading/) (`pl`/`ru`/`sv`/`nl`/`ja`/`ar` + types), wired into each locale root. Fixed Spanish mojibake/accents in `copySetup` and social error strings.
+- **Tests/verification:** Key parity 174 top-level + 59 `copySetup`; `tsc --noEmit` clean.
+- **Deploy state:** Frontend only (Netlify).
+- **Follow-ups:** None.
+
+### 2026-11-11 — Mirror Trading empty state redesign
+
+- **Context:** Mirror Accounts empty view was a plain card with one line of instructional text and a lot of unused space.
+- **Plain English:** The empty page now shows a master→slave illustration, a clear title and explanation, an Add master account button, and three short setup steps — translated in all app locales.
+- **Fix (files):** [`MirrorTradingPage.tsx`](src/pages/dashboard/MirrorTradingPage.tsx) — `MirrorEmptyArt` + `MirrorEmptyState`. i18n `emptyTitle` / `emptyBody` / `emptyStep1–3` (+ title/CTA) in en/es/fr and pl/ru/sv/nl/ja/ar + types.
+- **Tests/verification:** Visual check on Mirror Accounts with no masters; `tsc` if needed.
+- **Deploy state:** Frontend only (Netlify).
+- **Follow-ups:** None.
+
+### 2026-11-11 — Mirror Accounts delete appeared to work then slave returned on refresh
+
+- **Context:** Deleting a slave on Mirror Accounts cleared the table, but refresh brought Fusion Markets slave back.
+- **Plain English:** The delete looked successful in the app, but the database never actually removed the mirror link, so the slave came back.
+- **Root cause (technical):** `mirror_copy_block_delete_with_open_copies` BEFORE DELETE trigger used `NEW.id` / `RETURN NEW`. On DELETE, `NEW` is null, so returning null cancels the row delete with no client error. UI still cleared `links` + localStorage slave ids; refresh rebuilt slaves from surviving `broker_copy_links` destinations.
+- **Fix (files):** Migration [`20261111223000_fix_mirror_delete_trigger_old_row.sql`](supabase/migrations/20261111223000_fix_mirror_delete_trigger_old_row.sql) uses `OLD.id` / `RETURN OLD`. Applied to Migration + production. [`brokerCopyLink.ts`](src/lib/brokerCopyLink.ts) `.delete().select('id')` + leftover check so silent cancel cannot look like success.
+- **Tests/verification:** Trigger replaced on `sxkpcovbyaficvtkpsdo` and `supmsgcubipmmowrzoub`. Delete the slave again — it should stay gone after refresh.
+- **Deploy state:** DB fix live on production; client verify needs Netlify/frontend deploy (optional hardening).
+- **Follow-ups:** None required for the stuck row once user deletes again after trigger fix.
+
+### 2026-11-11 — Account Trades / Performance / Own provider profile under 2s
+
+- **Context:** After Dashboard, Account Trades, Performance, and Social “Your provider profile” still held skeletons on heavy live history.
+- **Plain English:** Those pages now show saved/recent data first, then fill in full broker history in the background instead of waiting on it.
+- **Root cause (technical):** Trades tied skeleton to unbounded MT history + blocking time hydration. Performance awaited 400d MT + serial `refreshSummary` with 800ms sleeps + unbounded map queries. Own provider profile waited on directory-wide `performanceLoading` and up to 20k paginated own trades.
+- **Fix (files):**
+  - [`useTradesData.ts`](src/hooks/useTradesData.ts) — DB critical paint; live fetch `limit` 5000; time hydration background-only.
+  - [`usePerformanceData.ts`](src/hooks/usePerformanceData.ts) — critical 30d/3k MT + cached equity + bounded maps; enrich full history + concurrent summaries (no 800ms sleep).
+  - [`useOwnSocialAccountView.ts`](src/hooks/useOwnSocialAccountView.ts) — single `limit` 800 trades query.
+  - [`SocialTradingPage.tsx`](src/pages/dashboard/SocialTradingPage.tsx) — own profile skeleton only while directory missing.
+  - [`useSocialTradingPreview.ts`](src/hooks/useSocialTradingPreview.ts) — hydrate own first; skip heavy history RPC for `isYou`.
+- **Tests/verification:** `tsc --noEmit` clean.
+- **Deploy state:** Frontend only (Netlify).
+- **Follow-ups:** Discover still hydrates other traders’ history for trade tables.
+
+### 2026-11-11 — Dashboard cold load skeleton under 2s (cut 5s hold + critical path)
+
+- **Context:** Dashboard metrics skeleton stayed up ~6s on mount/refresh; target under 2s.
+- **Plain English:** The loading screen was kept on for five extra seconds after data was ready, and the first paint also waited on heavy broker history and log queries.
+- **Root cause (technical):** `DASHBOARD_METRICS_LOADER_DISMISS_MS = 5000` after `loadDashboard`. Critical `Promise.all` included MT history (5000), unbounded `signals(id,channel_id)`, unbounded attributions, execution logs, and social/manual helpers.
+- **Fix (files):** [`DashboardPage.tsx`](src/pages/dashboard/DashboardPage.tsx) — dismiss via double-rAF + 150ms cap; critical path only channels/counts/strip/trades≤800 + bounded signal ids for those trades; `enrichDashboardAfterCritical` loads MT history, attributions≤2000, execution logs, social/manual, symbol lookup and patches state without holding the skeleton.
+- **Tests/verification:** `tsc --noEmit` clean. Cold refresh should dismiss skeleton shortly after brokers+critical Supabase settle; charts/copier activity may fill a beat later.
+- **Deploy state:** Frontend only (Netlify redeploy).
+- **Follow-ups:** If still >2s, profile Auth→Profile→Brokers gate next.
+
+### 2026-11-11 — WhatsApp signals showed Telegram logo in Copier Logs
+
+- **Context:** After WhatsApp ingest worked, Copier Process/Logs showed the Telegram paper-plane for “Signal test” WhatsApp rows.
+- **Plain English:** The trade worker re-saved each signal and stamped it as Telegram, so the UI drew the wrong logo.
+- **Root cause (technical):** `ensureSignalRow` defaulted `source_kind` to `telegram` whenever `channel_id` was set. Dispatch upsert (no source_kind) overwrote WhatsApp’s correct stamp. UI `resolveSignalSourceKind` also preferred the denormalized (wrong) value over the live channel map.
+- **Fix (files):** [`ensureSignalRow.ts`](worker/src/ensureSignalRow.ts) omits invented telegram; [`userListener.ts`](worker/src/userListener.ts) passes explicit telegram source; [`signalSourceMark.ts`](src/lib/signalSourceMark.ts) prefers live channel kind while the channel exists. Production backfill set `source_kind='whatsapp'` for WhatsApp channel rows (`75b82e21…`, `5b9a6bf5…`).
+- **Tests/verification:** `signalSourceMark.test.ts`, `ensureSignalRow.test.ts`.
+- **Deploy state:** Frontend logo fix needs Netlify redeploy; worker clobber fix needs Railway trade/listener redeploy. Existing production rows corrected in DB.
+- **Follow-ups:** None.
+
+### 2026-11-11 — Cut Adjust SL pre-modify stall (OpenedOrders + listener pre-parse)
+
+- **Context:** After edit-path cuts, channel “Adjust SL to 4023” (`0784c972`) still sat ~12s from `execution_planning_started` (14:13:18.95Z) to first `mgmt_modify` (14:13:31.10Z) on 20 Demo legs; user also saw listener delay before the instruction “started.”
+- **Plain English:** Adjust SL was waiting on a full open-orders snapshot (and extra DB) before touching the broker. Live Adjust now uses the parsed SL + one quote and starts modifying immediately; the listener also runs its early DB checks in parallel so Telegram→parse is shorter.
+- **Root cause (technical):** Live modify always went through `applyChannelStopsToBaskets`, which serially awaited Quote → `hasClosedBasketLegs`/`hasTpTouchedLock` → `OpenedOrders` before Phase-2 OrderModify; default `slFrom` also hit channel memory first. Listener stamped `message_normalized_at` only after serial `resolveSignalChannelId` + parse-context + dedup (~0.6–0.9s on top of ~0.5–1s Telegram→`handleMessage`).
+- **Fix (files):**
+  - [`channelStopApply.ts`](worker/src/channelStopApply.ts) — `liveFast` skips OpenedOrders preflight when verify-after-modify is off; SL-only skips TP-freeze DB; parallelize quote/freeze/orders; accept `prewarmedByUuid` + `onFirstBrokerSend`; honor `slFrom:'parsed'`.
+  - [`managementExecutor.ts`](worker/src/tradeExecutor/managementExecutor.ts) — warm Quote during basket expand on live modify; pass `liveFast`/`slFrom:'parsed'`/prewarm into channel-stop apply; stamp `t_first_broker_send`.
+  - [`userListener.ts`](worker/src/userListener.ts) — parallelize channel-id / parent / parse-context / dedup before normalize stamp (`parentSignalId` kept as `let` for post-parse provider-number linking — Railway `tsc` TS2588).
+- **Tests/verification:** `channelStopApply.test.ts` liveFast SL-only does not call `openedOrders` and uses prewarmed quote; `tsc --noEmit` green after const→let fix.
+- **Deploy state:** Worker code (Migration); Railway listener + trade redeploy needed.
+- **Follow-ups:** Retest Adjust SL — expect first `mgmt_modify` within ~1–2s of dispatch receive; `ms_to_norm` well under prior ~700ms once listener is live.
+
+### 2026-11-11 — Cut message-edit SL/TP pre-modify stalls (~20s SymbolParams + N×Quote)
+
+- **Context:** Edit on `e05e9e95` applied (`mgmt_fast=true`) but wall ~54s; OrderModify span only ~4.3s for 20 legs. ~20s sat on SymbolParams after symbol resolve; another ~24s before first modify (ghost OpenedOrders + per-leg GetQuote).
+- **Plain English:** Editing SL/TP on an open basket no longer waits on a cold symbol-params refetch or twenty separate price quotes before the parallel modifies start.
+- **Root cause (technical):** Revision modify-only still awaited `getSymbolParams(resolvedBrokerSymbol)` when `XAUUSD→XAUUSDm`; early path passed `strictEntryPrefetch: null` so `runBasketLegModifies` quoted per leg; live edits still ran full `reconcileGhostBasketLegs` OpenedOrders.
+- **Fix (files):**
+  - [`entryPrepare.ts`](worker/src/tradeExecutor/entryPrepare.ts) — overlap materialization; peek/cache resolved-symbol params on live materialized revisions; prefetch one quote into modify-only.
+  - [`brokerSymbolCache.ts`](worker/src/tradeExecutor/brokerSymbolCache.ts) / TradeExecutor — `peekCachedSymbolParams`.
+  - [`mergeRouting.ts`](worker/src/tradeExecutor/basketMerge/mergeRouting.ts) — skip ghost OpenedOrders on `liveMgmtFast` + sameSignalRefresh; non-blocking anchor log.
+  - [`slTpRefresh.ts`](worker/src/tradeExecutor/basketMerge/slTpRefresh.ts) — reuse warm `entryBrokerReadCache.openedOrders`.
+  - [`basketSlTpReconcile.ts`](worker/src/basketSlTpReconcile.ts) — one shared quote for the basket before parallel legs.
+- **Tests/verification:** shared-quote + peekCachedSymbolParams node:tests; existing basket modify suite.
+- **Deploy state:** Worker code (Migration); Railway trade redeploy needed.
+- **Follow-ups:** Retest edit on 20-leg Gold — expect `t_params_resolved`≈`t_symbol_resolved`, `quote_count`≈1, first modify soon after anchor.
+
+### 2026-11-11 — Demo 0.1 XAU ghost lot = active social copy follower (not signal double-send)
+
+- **Context:** Demo `46cd046d` (login `81765183`) showed buy 5 + buy 0.1 on XAUUSDm around signal `abeeb0a0` (“Gold buy now”); no 0.1 `trades` / `trade_execution_logs.order_send` row for that broker.
+- **Plain English:** The big lot came from the normal signal copier. The extra 0.1 lot came from Social Trading — this Demo account is actively copying another published provider at a fixed 0.1 lot. Social copies do not write the usual trade/order-send logs, so they looked “missing” in those tables.
+- **Root cause (technical):** Active `social_copy_subscriptions` `4985d304…` → source `0f6ded02…` (provider user `20733d28…`, MT5 Demo login `476205231`), `sizing_mode=fixed_lot`, `fixed_lot=0.1`, `max_lot=0.1`. Worker `SocialCopyMonitor.openPosition` / edge `social-copy-reconcile` call `orderSend` with comment `sc:<sub8>:<ticket>` and ledger only in `social_copy_trade_mappings` + `social_copy_execution_events`. Incident window: signal `order_send` volume 5 at 13:10:35 → dest ticket `557707632`; social open 13:10:48 source `3452591669` → dest `557709065` volume 0.1 (`sc:4985d304:3452591669`). Provider had no TScopier `signals` row in that minute (manual/other); frequent provider gold opens explain “whenever I signal” correlation. Mirror link `11f14bae…` has Demo as **source** only (slave `10144392`) — cannot open 0.1 on Demo. Demo also published as social source `146aec8a…` (`copy_source=true`). Empty `fxsocket_account_id`; provider `mtapi` — no FxSocket copy feature involved.
+- **Fix (files):** Investigation only; subscription stop applied on Migration (see next entry).
+- **Tests/verification:** Migration SQL on `supmsgcubipmmowrzoub` as above.
+- **Deploy state:** N/A (read-only diagnosis).
+- **Follow-ups:** optional UI/query on Copier Logs for `social_copy_*` so destination fills are visible beside `trades`.
+
+### 2026-11-11 — Stopped Demo social copy from James Peter
+
+- **Context:** User confirmed 0.1 XAU `#557803885` is “Copied from James Peter” and asked to stop Demo from copying that provider.
+- **Plain English:** The Demo→James Peter social copy subscription is stopped. The worker will also close any remaining copied positions from that link (same as the in-app “Stop and close copies” action).
+- **Root cause (technical):** N/A (ops).
+- **Fix (files):** Migration SQL on `supmsgcubipmmowrzoub` — `social_copy_subscriptions` `4985d304…` set `desired_status='stopped'`, `status='pending'`, `stopped_at=now()` (RPC `set_social_copy_subscription_status` requires `auth.uid()`, so mirrored its update as service SQL).
+- **Tests/verification:** Row returned pending/stopped intent; open mappings at stop time included dest tickets `557803885` and `556103671`.
+- **Deploy state:** Migration DB only; worker reconcile acknowledges stop.
+- **Follow-ups:** Confirm `status='stopped'` and open social mappings cleared after worker tick.
+
+### 2026-11-11 — Edited signals refresh SL/TP (merge materialization + mgmt fast path)
+
+- **Context:** Migration signal `050b93ec` (live edit SL 4038→4028 after teaser completion into `bffc09f6`) parsed + pushed (`message_revision`, `http_push_ok`) but open legs stayed at 4038. Pipeline `any_opened=false` with no `basket_leg_modify` after the edit.
+- **Plain English:** When a channel edits a signal to change stop/targets, those changes now update the open trades again — and the updates run on the same fast parallel modify path as closes.
+- **Root cause (technical):** Teaser-completion `merge_modify_summary` does not create `trades`/`order_send` on the completion signal, so `manualDispatchAlreadyMaterialized` was false. The edit then lost the still-leased entry claim and skipped without modify. Live accept also dropped revisions while the first handle was in-flight; `isLiveMgmtFast` ignored market-now buy/sell edits that fail `shouldRouteAsBasketParameterRefresh`.
+- **Fix (files):**
+  - [`helpers.ts`](worker/src/tradeExecutor/basketMerge/helpers.ts) — successful `merge_modify_summary` counts as materialized.
+  - [`TradeExecutor.ts`](worker/src/tradeExecutor/TradeExecutor.ts) — message_revision waits on inflight instead of dropping; claim-lost revisions attempt SL/TP-only refresh before stale-claim takeover.
+  - [`dispatch.ts`](worker/src/tradeExecutor/dispatch.ts) — `message_revision` + SL/TP → `shouldUseMgmtFastPath` / `isLiveMgmtFast`.
+- **Tests/verification:** materialization + fastPath + entry-guard node:tests pass (13).
+- **Deploy state:** Worker code only (Migration); Railway trade (+ listener if separate) redeploy required.
+- **Follow-ups:** Redeploy; retest edit SL on an open Gold basket → expect `merge_modify_summary` + broker SL change; confirm parallel modifies (`liveMgmtFast`).
+
+### 2026-11-11 — Range Trading empty-TP no longer collapses to 1×full lot
+
+- **Context:** Risk UI “Range Trading” (`trade_style=multi`, Fixed Lot 5, per-leg 5% → preview `0.25 × 20`) but MT5 opened a single **buy 5** on bare “Gold buy now” (signals `abeeb0a0` / `6f7303bf`). Range Layering was off.
+- **Plain English:** Multi / Range Trading now opens the many small legs the Risk preview shows even when the signal has no TP list — not one fat order for the whole fixed lot.
+- **Root cause (technical):** `planMultiManualOrders` empty-`finalTps` path treated `range_trading=false` as a classic teaser → `buildSingleOrder` at full `manualLot` (`multi_trade_fallback_empty_tps`). UI label “Range Trading” maps to `trade_style=multi` and does not set `range_trading`.
+- **Fix (files):** [`planMultiManualOrders.ts`](worker/src/manualPlanning/planMultiManualOrders.ts) — empty-TP always emits `immediateLegs × targetLeg` (+ remainder when no range reservation); [`manualPlanner.test.ts`](worker/src/manualPlanner.test.ts) — teaser expectation → N×leg + 5@5%→20×0.25 regression.
+- **Tests/verification:** `node --import tsx --test src/manualPlanner.test.ts` — 95 pass.
+- **Deploy state:** Worker code only (Migration); Railway trade worker redeploy needed before live retest.
+- **Follow-ups:** Redeploy trade worker; retest bare Gold buy now → expect ~20×0.25 not 1×5; optional UI copy to separate Range Layering from Trade Style.
+
+### 2026-11-11 — Management sub-3s (close / SL·TP / modify)
+
+- **Context:** After entry latency work, Close-all + basket SL/TP still felt slow. Migration close `4c7f8543` had `parse_ms≈2367` (stage-2 AI), `mgmt_wall_ms≈10464`, `mgmt_scope_load_ms≈939`, `other_gateway_wait_ms≈3068` on 34 legs; concurrent serial `basket_leg_modify` fought the same MTAPI gate.
+- **Plain English:** “Close all” and SL/TP edits no longer wait on AI when the phrase is clear, can modify several tickets at once (like the faster buys), warm the open-order book while loading scope, and skip an extra broker re-read after live partial closes.
+- **Root cause (technical):** Management confidence 0.92 failed `FASTPATH_CONFIDENCE=0.99` → stage-2; `MT_TRADE_OP_CONCURRENCY=1` serialized OrderModify; close/scope/OpenedOrders were partly serial; partial close always re-read OpenedOrders; order RPS 12 paced large baskets.
+- **Fix (files):**
+  - [`universalSignalParser.ts`](worker/src/signalIntent/universalSignalParser.ts) / [`parseRouting.ts`](worker/src/signalIntent/parseRouting.ts) — management actions always fast-lane (incl. primary mode).
+  - [`mtapiProvider.ts`](worker/src/mtapiProvider.ts) — `MT_MODIFY_OP_CONCURRENCY` (default 3) + throttle step-down; close default concurrency 6.
+  - [`managementExecutor.ts`](worker/src/tradeExecutor/managementExecutor.ts) — expand∥orphan∥OpenedOrders; live partial skips post-readback; stamp first/last broker on live close.
+  - Env: `MT_MODIFY_OP_CONCURRENCY=3`, `MT_CLOSE_OP_CONCURRENCY=6`, `MTAPI_ORDER_PER_ACCOUNT_RPS=20`, `UNIVERSAL_PARSE_MODE=fastpath`.
+- **Tests/verification:** `tsc --noEmit` clean; parseRouting tests (incl. close @ 0.92 confidence). Live Close-all / SL·TP retest pending Railway deploy.
+- **Deploy state:** Code + local `worker/.env`; Railway trade+listener need same env.
+- **Follow-ups:** Redeploy Migration; avoid testing during post-entry TP sync; confirm close `parse_ms` &lt;100, `mgmt_wall_ms` &lt;3000 for ≤34 legs, modify span &lt;5s.
+
+### 2026-11-11 — Fix post-handoff buy/range latency (send concurrency + prep + listener)
+
+- **Context:** After handoff was healthy (`http_push_ok`), Migration 34-leg Gold buy (`30c10c24`) still spent ~3s prep + ~12s serial OrderSend; Telegram→listener could lose 10–40s on deploy restart.
+- **Plain English:** Multi-leg buys can now send a few orders at once instead of one-by-one, skip a useless 3-second wait when there is no teaser to merge, warm quotes on the fast path, and reclaim the Telegram listener within 1–2s after a deploy instead of waiting half a minute.
+- **Root cause (technical):** `MT_TRADE_OP_CONCURRENCY=1` gated OrderSend; live-fast teaser merge polled `PARAMETER_FOLLOW_UP_ANCHOR_RETRY_MS=3000`; lease-held skips waited for 30s `syncSessions`; sweep selected nonexistent `signals.dispatch_source`.
+- **Fix (files):**
+  - [`worker/src/mtapiProvider.ts`](worker/src/mtapiProvider.ts) — `MT_SEND_OP_CONCURRENCY` (default 3, max 6) for OrderSend; throttle step-down to 1 for ~45s; OrderModify stays on `MT_TRADE_OP_CONCURRENCY`.
+  - [`worker/src/multiTradeMerge.ts`](worker/src/multiTradeMerge.ts) + [`mergeRouting.ts`](worker/src/tradeExecutor/basketMerge/mergeRouting.ts) + [`entryPrepare.ts`](worker/src/tradeExecutor/entryPrepare.ts) — live-fast `retryMs: 0` (no 3s teaser poll).
+  - [`TradeExecutor.ts`](worker/src/tradeExecutor/TradeExecutor.ts) — claim∥light-config; sweep SELECT drops `dispatch_source`; entry read cache.
+  - [`brokerSymbolCache.ts`](worker/src/tradeExecutor/brokerSymbolCache.ts) / [`orderLegExecution.ts`](worker/src/tradeExecutor/orderLegExecution.ts) — order-lane Quote/OpenedOrders prewarm; stamp `t_first_broker_send` immediately before OrderSend.
+  - [`dispatch.ts`](worker/src/tradeExecutor/dispatch.ts) — cache `source_kind` in channel meta.
+  - [`sessionManager.ts`](worker/src/sessionManager.ts) — 1–2s lease retry after held; [`userListener.ts`](worker/src/userListener.ts) — `lastLiveMessageAt` only for monitored chats; `ingest_path` live|catchup.
+  - Env: `MT_SEND_OP_CONCURRENCY=3`, `MTAPI_ORDER_PER_ACCOUNT_RPS=12`, `MTAPI_ORDER_THROTTLE_RETRY=true`, `TELEGRAM_SHUTDOWN_DRAIN_MS=3000`.
+- **Tests/verification:** `npx tsc --noEmit` clean; gateway/concurrency node:tests. Live 34-leg retest pending Railway deploy of trade+listener with new env.
+- **Deploy state:** Code + local `worker/.env` updated for Migration; Railway env/redeploy required before timing proof.
+- **Follow-ups:** Deploy Migration trade+listener; avoid testing within ~45s of redeploy; confirm 34 legs, `t_dispatch_received→t_first_broker_send` &lt;1s, send span &lt;5s; if MTAPI “too many requests”, drop send concurrency to 2.
+
+### 2026-11-11 — Sub-3s latency master plan implementation (Phase 0–3 code)
+
+- **Context:** Close-all felt slow to *start* because live handoff failed (401 → 15s idle sweep). Goal: Telegram → first broker op p95 &lt; 3s.
+- **Plain English:** We stopped treating a failed hand-off as “success”, made the backup scan much faster, and cut waiting in the close/send path so the system can react in under three seconds once Railway tokens/URLs match.
+- **Root cause (technical):** Push treated any HTTP 200 as OK (including `accepted:false`); entry push hard-coded success; 401 was non-retryable with no breaker; idle sweep default 15s; queue auto-enabled when Redis env present; serial DB/broker waits before first close.
+- **Fix (files):**
+  - [`worker/src/internalToken.ts`](worker/src/internalToken.ts) — trim token both sides; fingerprint logs.
+  - [`worker/src/httpServer.ts`](worker/src/httpServer.ts) — trimmed auth; `/internal/dispatch-ping`.
+  - [`worker/src/tradeSignalPush.ts`](worker/src/tradeSignalPush.ts) — require `accepted:true`; 1s timeout / 2 attempts; probe loop + breaker on 401/403/404.
+  - [`worker/src/userListener.ts`](worker/src/userListener.ts) — await accept for entry+mgmt; stamp `receivedAt` at handleMessage start.
+  - [`worker/src/index.ts`](worker/src/index.ts) — start push probe on listener boot.
+  - Sweep idle default **5s**; queue default **off**; Realtime INSERT+UPDATE; wake resubscribe; sweep preserves `pipeline_ts` + fresh-sweep alert.
+  - Mgmt accept dedupe; shorter claim retry; skip redundant `ensureSignalRow`; persist `pipeline_ts` after handle; parallel orphan+OpenedOrders warm; per-account order pacing; session health 60s; channel listener sync 15s; queue idempotency revision + release on retry.
+  - Diagnostics: [`scripts/diagnostics/pipeline_latency.sql`](scripts/diagnostics/pipeline_latency.sql) SLO gate section.
+- **Tests/verification:** `npm --prefix worker run build` clean; targeted node:test **30/30** (push accept/breaker, queue config, gateway, publisher).
+- **Deploy state:** **code in working tree** — Railway must set identical `WORKER_INTERNAL_TOKEN` on listener+trade, `EXECUTOR_SWEEP_IDLE_MS=5000`, `TRADE_SIGNAL_QUEUE_ENABLED=false`, push timeouts, and trade-only `TRADE_*_WORKER_URL` before Migration retest can prove p95 &lt; 3s.
+- **Follow-ups:** (1) sync Railway env + redeploy Migration; (2) re-run Close-all + buy and confirm `http_push_ok=true` / `dispatch_source≠sweep`; (3) run SLO SQL; (4) promote only after p95 gate passes.
+
+### 2026-11-11 — Close-all “~6s before closing starts”: listener→trade push 401, then idle DB sweep
+
+- **Context:** After the OrderCloseSafe / close-concurrency speedup, Migration retest `Close all trades now` (signal `90de4b11…`, msg 646, 2026-11-11 10:16:59Z) still felt slow to *start*. User guessed the trade endpoint was not receiving the instruction on time.
+- **Plain English:** The close message was parsed fine, but the live hand-off from the listener to the trade worker was rejected as unauthorized. With the Redis queue also off for that user, the trade worker only found the close on its slower backup scan — so closing sat idle for about twelve seconds before the first ticket closed. Once it did start, the faster close path ran (34 legs).
 - **Root cause (technical):**
-  1. Reply messages were persisted with `raw_message = ''` (empty) while `parsed_data` held the correct instruction (`action: partial_profit`, `close_tp_index: 2`). Reproduced on signals `80460d12…`, `62802a55…`, `9a1ad3c1…` (message ids 34551…), evidence rows `34548/34549/34550`.
-  2. The per-channel signal-reconcile sweep compares stored text with Telegram text via `storedMessageDiffersFromTelegram`; an empty stored value always differs, so it emitted `signal_reconcile_mismatch` with `edit_date_sec: null` — i.e. no edit existed.
-  3. The sweep then called `tryApplyMessageRevision` → `tryApplyMessageRevisionInner`, which ran the universal/OpenAI revision parse. Listener events show `message_revision_applied` with `ai_source: openai`, `intent: modify` — the re-parse **dropped `close_tp_index`**.
-  4. `updateSignalAfterRevision` rewrote the row to `action: 'close'`, `close_tp_index: null` (the current rows for the close signals show exactly this), and `dispatchRevisionSignal` re-executed it.
-  5. `managementExecutor` then ran a full basket `close` (`mgmt_close` on every remaining ticket) after the one correct `mgmt_partial_profit` — a single reply produced N+1 management actions (verifiable in `trade_execution_logs`: one `mgmt_partial_profit` plus one `mgmt_close` per remaining leg, all under the same signal id). Pre-fix result: 3/3 baskets wiped; trade close reasons `signal_close` / `position_gone` at market prices, not at the target levels.
-- **Fix (files, owner-approved items 1 and 4):**
-  - `worker/src/signalTelegramReconcile.ts` — new `revisionBlockedForManagement(parsed)` (delegates to the shared `isManagementAction`, so the action set cannot drift: close, partial_profit, partial_breakeven, breakeven, close_worse_entries, modify, delete_pendings); `telegramMessageText` now returns the **first non-empty** of `text / message / rawText / caption` (the previous `??` chain stopped at an empty string and could not fall through to a populated caption).
-  - `worker/src/userListener.ts` — in `tryApplyMessageRevisionInner`, immediately after loading the stored signal: refuse management actions (emit `message_revision_management_skipped` with only `signal_id`/`source`/`action`) and refuse empty fetched text. In `runSignalReconcileForChannel`, blocked candidates are settled silently (`markSignalsReconciled`, no mismatch event, honest `stats.mismatches`), so the sweep neither re-flags nor re-parses them every cycle.
-  - `worker/src/listenerEvents.ts` — new event type `message_revision_management_skipped`.
-  - `worker/src/signalTelegramReconcile.test.ts` — tests for extraction precedence (including the empty-text + caption case) and guard polarity (all management actions, casing, whitespace; `buy`/`sell`/empty/null unaffected).
-  - Docs: `docs/audit-2026-11-11/code-preservation-regression-checklist.md` §8b — full incident record with log evidence and fix status.
-- **Tests/verification:** worker `tsc` clean; targeted suites `signalTelegramReconcile`, `signalRevision`, `tradeSignalActions`, `userListener.updateLoopRecovery` **41/41**; Martins code-preservation script **46/46** before and after; lint clean on changed sources (one pre-existing unused import in the test file at HEAD). Post-Implementation Review: `code-tester` **PASS**; `code-review` **PASS_WITH_NOTES** — its MEDIUM (blocked revisions would be re-flagged every cycle) and the text-fallback LOW were fixed before deploy; remaining LOWs are recorded below. Live acceptance on staging after deploy: **3/3 round** — entry bundling intact (0.25/0.15/0.10); `CLOSE TP2` closed **only** the TP2 leg each time while the other legs stayed open (signals `95c8640a…`, `07af1b44…`, `1a85f56c…`). The guard is confirmed firing (`message_revision_management_skipped`, source `catchup`, 259 events in 40 minutes) and entry revisions still apply normally (3 × `message_revision_applied`, one per test entry).
-- **Deploy state:** committed `23d25a5e` and pushed to **`upstream/staging`** (`d987b330..23d25a5e`); the staging trade worker redeployed from it and was verified live on 2026-11-13 19:2x–19:4x UTC. `upstream/main`, `origin` and `bzetu/*` were **not** updated with this commit. Touched Martins's files (`userListener.ts`, `signalTelegramReconcile.ts`, `listenerEvents.ts` + test) only under the owner's explicit sign-off; the change is purely restrictive (adds refusals + one event), and entry revisions are unchanged.
-- **Follow-ups:** (1) the `catchup` path emits the skip event very frequently (259/40 min) — harmless log noise; consider emitting it once per signal/message; (2) blocking `modify` and `delete_pendings` revisions is a deliberate trade-off (a channel *correcting* a "move SL" or "cancel pendings" message is now ignored) — confirm with Martins; (3) the guard classifies the **stored** action, so a management message originally misparsed as an entry could still be revised into a close (different failure mode, out of scope); (4) the revision-removal also removed an accidental retry for the benign "position not in live snapshot" close skip — optionally add one bounded, non-reparsing retry; (5) consolidate the pre-existing duplicate private `isManagementAction` in `parseSignal.ts`; (6) push `23d25a5e` to `bzetu/staging` if that mirror should stay in sync.
+  - `dispatch_route_decision`: `queue_enabled=false`, `queue_skipped_reason=queue_not_enabled_for_user`, `http_push_fallback=true`, `http_push_ok=false`, `mgmt_push_accept_only=true`.
+  - `dispatch_push_attempt` → `https://tscopier-staging.up.railway.app` `/internal/dispatch-signal` returned **401 Unauthorized** in 102ms (`retryable=false`) — `WORKER_INTERNAL_TOKEN` mismatch (or missing) between listener and that Railway service.
+  - Fallback `dispatch_source=sweep`: `queue_consumed_at` 10:17:11.543Z (**+12.5s** after `signals.created_at`); first `mgmt_close` 10:17:15.816Z; `pipeline_summary` `mgmt_wall_ms=10208`, `mgmt_scope_load_ms=890`, `other_gateway_wait_ms=4571`, `mgmt_fast_path=true`. Idle sweep default `EXECUTOR_SWEEP_IDLE_MS=15000` explains the multi-second pickup gap.
+- **Fix (files):** Ops — align `WORKER_INTERNAL_TOKEN` on the Migration/staging **listener** and the service behind `TRADE_MGMT_WORKER_URL` / `TRADE_WORKER_URL` (`tscopier-staging.up.railway.app`); confirm push URL points at a `trade_mgmt` (or `all`) role. Optional: enable Redis queue for this user / fleet so a failed HTTP push is not the only live path. No worker code change in this diagnosis pass.
+- **Tests/verification:** Migration SQL on `trade_execution_logs` for `90de4b11…` (push 401 + route decision + sweep summary). Timing: created→consumed ≈12.5s; consumed→first close ≈4.3s.
+- **Deploy state:** Diagnosis only (Migration DB). Token/URL fix is Railway env, not yet applied from this session.
+- **Follow-ups:** (1) sync internal token + re-run Close-all and confirm `http_push_ok=true` / `dispatch_source` ≠ `sweep`; (2) if gateway wait (~4.5s) still dominates after push is fixed, inspect MTAPI session acquire under close burst; (3) consider shorter mgmt idle sweep or push-failure alert when 401 is non-retryable.
 
-### 2026-11-13 — Trades page stopped re-reading 26 years of broker history every 15 seconds (MT5 bridge load fix)
+### 2026-11-11 — Instant management closes (OrderCloseSafe-first): drop per-leg OpenedOrders verify; modest MTAPI close concurrency
 
-- **Context:** follow-on to the MT5 bridge audit in `docs/scratchpads/scratchpad-mt5-bridge-audit-2026-11-13.md`, which found one day of `/OrderHistory` traffic at **160,543 requests peaking at 1,651/min** (~27.5 req/s against an nginx limit of 10 r/s) and 21,855 upstream timeouts. About 99% of those requests came from our Supabase edge, not from worker monitors, and they were driven by the Trades page. Owner approved fixes **D** (cache integrity) and **E** (incremental refresh) after rejecting a bounded range, a split cadence and a DB-first refactor as too disruptive.
-- **Plain English:** The Trades page was asking the trading bridge for *every* trade on an account since the year 2000, for every linked account, over and over — as often as every 15 seconds whenever a row had no timestamp. The bridge has to walk that whole 26-year range each time, which is what was saturating it and making customers' orders time out. Now the page reads the full history once when it opens and once a day after that; in between it only asks for the last day or so and combines that with the older trades it already has. Timestamps that are missing are retried every five minutes instead of every 15 seconds. A user sees the same list of trades as before, with the same data — the difference is that ordinary refreshes are far cheaper for the bridge, so it stops stalling.
-- **Root cause (technical):** `src/hooks/useTradesData.ts:56` passed `BROKER_FULL_HISTORY_FROM` (`src/lib/tradesConstants.ts:2`, `'2000-01-01'`) on every read; the edge forwards it (`supabase/functions/mtapi-broker/index.ts:289-296`, defaulting to `BROKER_FULL_HISTORY_FROM_DATE` at `:416`) and `_shared/mtapiClient.ts:216-230` issues one `/OrderHistory` per account with a 90 s timeout, paginating up to 40×500 rows on truncation. Two multipliers made it worse: (1) `src/lib/tradesSessionCache.ts` had a 90 s TTL, but `useTradesData.ts` bypassed the cache whenever any cached row lacked a parseable display time (`staleMissingTimes`), so a single untimestamped row caused **two** full-history reads every 15 s (the fetch plus `hydrateMtTradesTimesFromBrokers`, `src/lib/mtTradeTimestamps.ts:203-261`); (2) `useDashboardRealtime` force-refreshed on any `trades`/`signals`/`broker_accounts` change, which also did a full read. A third bug was found during review: `readSessionCache` (`src/lib/sessionDataCache.ts:27-31`) **evicts** an entry that has passed its TTL, so the short-TTL read was destroying the very cache the 24 h reader needed — without that, E would have made things *worse*, turning every post-TTL refresh into a full read.
-- **Fix (files):** **D** — `src/lib/tradesSessionCache.ts:5` TTL 90 s → 60 s; the `staleMissingTimes` bypass removed from both the `load()` short-circuit and the mount effect in `src/hooks/useTradesData.ts`; `needsTimeHydration` is now computed **after** the since-connect filter (`:71-74`) and hydration is throttled by `HYDRATION_BACKOFF_MS` (5 min, `:38`). **E** — new pure module `src/lib/tradesIncrementalHistory.ts`: `incrementalHistoryFrom` (newest cached close − 1 day, clamped to a 7-day maximum window and never past `now`) and `mergeIncrementalTrades` (live rows win by `id`, cached closed rows missing from the live read are retained so a partial response cannot make trades disappear, cached open rows are dropped, unlinked accounts filtered). `useTradesData.ts` peeks the 24 h envelope first, derives the 60 s `cached` from it, threads `historyFrom` into `fetchTradesFromMt` and into hydration, and records `fullHistoryAt` so a daily full read still happens (forced to full while the feed is degraded). `src/lib/sessionDataCache.ts:40` adds **`peekSessionCache`**, a non-destructive reader used for every read of the trades key (`useTradesData.ts`, `openTradeCountInCache`); a `loadSeqRef` guard stops a stale hydration completion from clobbering a newer refresh.
-- **Tests/verification:** `npx tsc -b` clean; eslint clean on all seven files; targeted node:test **14/14** (`tradesIncrementalHistory.test.ts` — clamp, future-date clamp, both account filters, dedupe, sort; `sessionDataCache.test.ts` — peek does not evict); full canonical suite **`npm run test:node` 600/600**; `npm run test:vitest` 537 passed with the **same 8 pre-existing failures** in `brokerCopyLink.test.ts` and `TraderReviews.test.ts` (untouched, unrelated). Post-Implementation Review: `code-tester` **PASS**; first `code-review` **FAIL** (CRITICAL eviction bug + HIGH unbounded window), second round **PASS_WITH_NOTES**; the two recommended MEDIUMs (seq placement, degraded-full-read) and three LOWs were fixed and re-verified. The final `code-review` re-run **failed to start (subagent account-balance error)**, so the last round was self-reviewed against the reviewer's checklist — all six prior findings confirmed fixed, no new issues found. The Martins preservation checklist (`docs/audit-2026-11-11/verify-martins-fixes.sh`) does not cover any file in this diff.
-- **Deploy state:** committed as `3568bd34` and pushed **2026-11-14 00:1x UTC** to `upstream/staging` (fast-forward) and `bzetu/staging`; both remotes then synced at `396972ed` (which adds the CLOSE TP2 incident docs). **Staging only — production still runs the old code**, and prod is ~89% of bridge traffic (143,553 of 160,543 `/OrderHistory` reads), so the bridge load does not drop until this reaches production. **Staging validated 2026-11-14 01:33–01:38 CET** from `mtapi-access.log` at second resolution: three concurrent staging streams (`ref=axdcledcyhyvzrnfkwat`) each firing on a **~60 s cycle** (deltas 58–63 s) — old code can only produce 90 s (TTL) or 15 s (missing-timestamp bypass), so 60 s is `TRADES_CACHE_TTL_MS`, a constant that did not exist before. All requests `200`, **`OrderHistoryPagination` count 0** (a truncated full read paginates up to 40×500), response bodies 7 KB/27 KB/87 KB. Note the `mtapi_safe` format logs `$uri`, so `from=` is not observable in the access log; the range itself still needs one DevTools `history_from` check. VPS rebooted during the same window (`uptime -s 2026-11-14 01:44:26`, ~2 min downtime): both containers back, local `/health` 200 (3 ms) and `/healthz` 200, external `https://…:9443/health` 200, TLS valid to 2026-12-20, **0 alert events in the following 60 min**, and 0 failed `trade_execution_logs` across the reboot window (20 success / 2 skipped).
-- **Follow-ups:** (1) promote to production and then measure `/OrderHistory` volume, timeout count and cache-hit rate on the VPS (`mtapi-access.log` request/min) to confirm the ~4× request drop and the much smaller per-read size — staging-only numbers cannot show it, since prod is 89% of the load; (1b) one DevTools `history_from` check on staging to confirm the range is ~1 day rather than `2000-01-01` (logs cannot show it — `mtapi_safe` uses `$uri`); (2) the UNCERTAIN review question — whether the bridge filters history by open or close time — is answered for the close side by `worker/src/closedTradeFill.ts:467` ("both bridges return rows whose close/deal time runs at or before the DB `closed_at`"), but a held >7-day position closing now is worth one spot-check in prod data; (3) a partial provider response can still drop cached *open* rows (non-regression vs the old replace-the-list behaviour) — surfacing a `partial` flag from `fetchTradesAcrossProviders` would close that; (4) `peekSessionCache` duplicates ~90% of `readSessionCache` and could be consolidated behind an `evict` flag; (5) `useTradesData` itself has no test — only the pure helpers do; (6) a future/garbage `closed_at` is handled, but merge-by-`id` assumes broker ids are stable (true for every provider checked, except a KuCoin fallback path); (7) the alert-audit P0 from the entry above (MT5 bridge load) is what this change addresses — next is P1 `SESSION_REVOKED`; (8) post-reboot observation (pre-existing, not caused by the reboot): of 193 active MTAPI accounts, **182 report `connection_status='connected'` but only 98 carry an `mtapi_session_id`** — and 98 matches the bridge audit's earlier "97 connected", so `connection_status` appears optimistic/stale relative to the live session; 11 accounts sit in `error` with their last sync on 2026-11-13. Worth confirming which field the app treats as authoritative before relying on it.
-
-### 2026-11-13 — System Health alert audit (30 days): delivery healthy, but 25% of recent incidents were never paged, and the MT5 bridge is degrading
-
-- **Context:** requested review of every alert the Systems Health pipeline sent in the past 30 days (prod `sxkpcovbyaficvtkpsdo`, 2026-10-14 → 2026-11-13 09:40 UTC), plus the eight days since the 2026-11-04 tuning deploy. Full evidence, tables and reproducible queries in `docs/scratchpads/scratchpad-system-health-alert-audit-2026-11-13.md`. Staging (`axdcledcyhyvzrnfkwat`) compared. Read-only: **no code changed, nothing deployed.**
-- **Plain English:** The emailing itself is reliable — 195 alerts in 30 days, all resolved, no delivery errors, nothing stuck open in production. But the system is telling us about some incidents too late, or not at all. A 13-minute outage of the MT5 trading bridge on 13 November was never emailed: a quiet-period rule held the alert back until the bridge had almost recovered, and the "we have a problem" email is always sent one minute late, so by then only a "recovered" email went out. Across the eight days since the last alert tune-up, one in four incidents produced only a recovery email and no original warning. Separately, the MT5 bridge is genuinely unwell: it was unreachable for about one sixth of today's checks, against a fraction of a percent a week ago, and the times it stalls line up with customers' orders being rejected as "broker busy" or timing out. Two other things drive most of the noise: one customer's revoked Telegram login is retried every nine seconds forever (about 9,000 failed attempts a day) instead of being marked "reconnect required"; and the big "customers not listening" alerts are really whole-listener disconnects, 20–37 customers at once for a few minutes, not individual Telegram faults.
+- **Context:** Channel `Close all trades now` on SIGNALS TESTER / Demo `81765183` (Migration `supmsgcubipmmowrzoub`) closed 34 legs in ~20s (`mgmt_wall_ms≈20447`, `mgmt_fast_path: true`). Same session left a comment-less / naked broker orphan that the comment-only straggler sweep missed (`broker_fallback` closes = 0).
+- **Plain English:** Closing many legs was slow because every leg re-read the open-order book before and after the close, and MTAPI only allowed one trade call at a time on the account. We now close from one shared snapshot, trust `OrderCloseSafe`’s acknowledgement (or “already closed”), and allow a few closes in parallel. A second pass still catches leftover tickets that were open when Close-all started, including naked positions without our comment.
 - **Root cause (technical):**
-  1. **Firing email always one tick late.** `alert_events.email_next_attempt_at` defaults to `now()` (`20261012120300_alerting.sql:52`); the inserted row's `now()` is later than the evaluator's `startedAt`, and the send pass skips `email_next_attempt_at > startedAt` (`alert-evaluator/index.ts:1189-1190`). Every firing mail was sent 46–64 s after creation. Episodes that resolve on that tick only get the recovery mail, because resolve resets `email_sent_at`/`email_attempts` (`index.ts:1111-1125`). Since 11-04: 14 of 55 episodes had `firing_email_sent_at IS NULL` (12 lasted 54–60 s); two ~59-minute `executions_failing` episodes also lack a stamp and are unexplained (a transient Resend failure would have erased its own evidence on resolve).
-  2. **Critical bridge outage suppressed past recovery.** `bridge_down` has `grace_seconds=120` and `cooldown_seconds=900`. On 11-13 the first MT5 failure was 06:17:23; the prior event resolved 06:15:03, so the next insert was held until 06:30:03. The event opened at 06:30:07 with `bridge_mt5 down 764s` and resolved at 06:31:01 — a 13-minute outage that produced only a recovery email.
-  3. **Bridge is actually degrading.** `bridge_mt5` samples: 99/571 down today (17.3%) vs 3.3% on 11-12, 1.3% on 11-11, 0.2% on 11-07; 211 down samples / 21 clusters ≥2 min in 7 days (`bridge_mt4`: 29 / 1). Detail is `/health AbortError` (5 s timeout) plus `/Ping HTTP_403`; `/health` averages 138 ms when up. Same windows contain 43 `BROKER_BUSY` + 17 `BROKER_TIMEOUT` failures (08:00–08:04) and 8 `MTAPI OrderModifySafe timed out` rows (08:23–08:24). The `/Ping` fallback can never work: the probe sends no auth headers and nginx answers MT5 `/Ping` with 403 (MT4 `/mt4/Ping` is 200).
-  4. **`SESSION_REVOKED` is not recognised as revoked.** `worker/src/telegramClient.ts:78-82` matches only `AUTH_KEY_UNREGISTERED`; `worker/src/userListener.ts:4664` therefore never sets `sessionRevoked` for `401: SESSION_REVOKED`. User `3394c233-8cec-477f-a6b2-3fe99e23624f` retried every ~9 s: 18,034 `poll_peer_resolve_failed` rows in 2 days, `telegram_account_status='linked'`, `listener_status='reconnecting'`, still running at 09:38. Only one user is now counted as not listening, and it is this one.
-  5. **Mass `telegram_gap` = whole-listener disconnects.** At 11-11 16:36:41, 20+ clients logged `Cannot send requests while disconnected` in the same second; the alert opened at 16:39 with `33 of 42` (90 s freshness + 120 s persistence). Similar bursts on 11-08 01:00–16:00, 11-09 17:00, 11-10 13:00–14:00. The health row's `last_successful_probe_at` is the last successful Telegram poll (`userListener.ts:712-725`), so one process-wide disconnect ages every row at once. Flood-backoff users (`9c92ff8b…` 600 s, `dd18ad68…` 240 s) still report fresh and are counted as listening.
-  6. **`executions_failing` is real but opaque.** After the reconcile filter: 616 rows/7 days — `INSUFFICIENT_MARGIN` 179 rows/178 signals/8 users, no `reason_code` 163 rows/31 users, `INVALID_STOPS` 119 rows from 9 signals, `BROKER_BUSY` 47, `BROKER_TIMEOUT` 43, closed-market ~40. The evaluator does not use `reason_code`; the message gives no cause. `mtapi_reconnect_storm` is marginal (all 12–14 transitions vs max 10, often just after a bridge recovery). Staging has a 17-day stale open `openai_key_invalid` event (since 10-27 08:24).
-- **Fix:** none — read-only audit. Recommendations are prioritised in the scratchpad: P0 investigate MT5 bridge overload; P1 recognise `SESSION_REVOKED`, send the firing mail on the insertion tick, cut `bridge_down` cooldown to ~300 s, remove/authenticate the `/Ping` fallback, reword `telegram_gap`; P2 exclude closed-market rows from `executions_failing`, raise `mtapi_reconnect_storm` to 15 or require 3+ accounts, investigate the 6-row stop-loss/price symbol mismatch (`1.11204` vs `3894.469`), resolve the staging stale alert, show `firing_email_sent_at` in the admin console.
-- **Tests/verification:** every claim backed by a query in the scratchpad; 195/195 events resolved; 0 `email_last_error`; current probe state healthy at 09:35 (bridge up, evaluator `rules=13`); current gap 1/45; 30-day and post-11-04 tables computed separately so the pre-tuning legacy 9-day `telegram_gap` event does not distort the averages.
-- **Deploy state:** none (audit only). Prod `alert-evaluator` v27 (2026-11-09), staging v14 (2026-11-05).
-- **Follow-ups:** (1) fix the MT5 bridge (Contabo VPS load, `mt5rest` container logs/restarts, nginx timeouts, MTAPI concurrency) — this is the active customer-facing issue; (2) implement the P1 alert-correctness fixes above, each with a unit test; (3) restore the missing 2026-11-02 audit scratchpad referenced by the previous entry; (4) fix the Railway token so deploys/restarts can be correlated in future audits.
-
-### 2026-11-13 — TP Bundling distribution rule changed to "floor, then top-up short levels" (owner decision); staged for the live chart test
-
-- **Context:** TP bundling (one broker position per take-profit level, behind `TP_BUNDLE_ENABLED`, off since its October rollout) was reviewed for re-enabling alongside Martins's latency/TP-SL batch. The owner challenged the original rescue rule — sub-minimum shares were dumped onto the deepest level — and chose a new rule after a worked example (0.04 lot, 50/30/20 → the old rule opened 0.02/0.02 with no TP3 trade; the new rule opens 0.02/0.01/0.01 with all three signal TPs covered).
-- **Plain English:** When a signal's lot is split across the account's Target percentages, some shares come out smaller than the broker will accept as an order. Previously those tiny shares were thrown onto the last target level, leaving that level overweight and the small target uncovered. Now the system first rounds every share down to a legal size, then uses the leftovers to lift any level that is too small back up to the broker minimum — nearest level first, so when there is not enough to rescue everyone, the deepest levels are given up first — and any volume still unassigned goes to the deepest surviving level. Take-profit prices are never touched at any point: every trade still carries exactly the level from the signal, the total lot always equals the signal's lot, and only the distribution between levels changes.
-- **Root cause (technical):** `planBundleManualOrders` allocation rewritten: (1) over-100 guard now computes `sum(floors)` over ALL buckets before any rescue and falls back to a single full-lot order when `totalUnits - floorSumAll < 0` (review HIGH-1: keying it to surviving floors only let 50/11/50 configs split); (2) rescue pot = `totalUnits - sum(floors of initially-alive levels)` — dead floors and unassigned percent sit inside the pot; (3) promotion loop lifts short levels to `minUnits` consuming exactly `minUnits` per lift, nearest first; (4) `alive = planned.filter(units >= minUnits)` keeps ladder order so promoted levels keep their position and the deepest survivor really is deepest; (5) final pot is dumped on the deepest survivor — conservation `openUnits + promotions + pot ≡ totalUnits` is structural; (6) `minUnits = ceil(minLot/lotStep - 1e-9)` so a non-step-aligned broker minimum can never be undercut by a promoted leg.
-- **Fix (files):** `worker/src/manualPlanning/planBundleManualOrders.ts` (rule), `worker/src/manualPlanning/planBundleManualOrders.test.ts` (15→20 tests: the 0.04 headline case, deepest-sacrificed case, mid-level promotion pin, disabled-row + top-up pressure, TP1-disabled single survivor, over-100 pin 50/11/50, non-aligned minLot 0.015 pin, conservation sweep over 15 lots × 8 shapes × 2 min regimes × ladder-order assertion), `docs/bundled-single-tp-trade-style.md` D2.3/D2.5 rewritten to the new rule.
-- **Tests/verification:** worker `tsc` PASS; eslint clean on both files; `manualPlanning` suites **223/223**; adjacent (`multiTradeMerge`, `basketMerge`) **46/46**; Martins preservation script **46/46**. Post-Implementation Review: `code-tester` **PASS** (15/15 file, 218→223 suites, build/lint/preservation green); `code-review` **FAIL → PASS_WITH_NOTES** — HIGH-1 counterexample plus MEDIUM-1..3 and all notes fixed and re-verified; reviewer's external brute-force sweep of 831,060 configurations found **zero conservation / minimum / ladder-order violations** after the fix.
-- **Deploy state:** committed and pushed to `upstream/staging` and `bzetu/staging`. **The switch is still OFF** — enabling requires `TP_BUNDLE_ENABLED=true` on the staging trade worker (owner step) before the eight-signal live chart test; production untouched.
-- **Follow-ups:** (1) run the live chart test matrix (8 signals: 0.10/0.04/0.02 lots, 2/3/4 TPs, open-TP, CLOSE TP2, 5-minute stability watch) on staging; (2) production enable decision after staging passes; (3) netting-account gap unchanged (design doc known gap); (4) consolidate the three coexisting min-units formulas (review LOW note); (5) remove dead branches `bundle_zero_orders` / `bundle_single_surviving_leg`; (6) owner runs the pending `subscription_extensions` SQL on prod (separate incident entry below).
-
-### 2026-11-10 — Access-extension grants failed on prod with "Unknown action" (function deploy lag + missing table; function now redeployed, table SQL handed to owner)
-
-- **Context:** the owner tried the new Access Extensions grant (admin panel → user profile → grant 7 days, reason "test") against production and got `Unknown action`. The panel UI (`tscopier-admin`, local commit `03f2aac`) calls the `admin-mutate` edge function with `action: 'grant_subscription_extension'`.
-- **Plain English:** The button was newer than the server it talks to. The feature that handles grant requests was written on 6 November, but the production copy of that server function was last deployed on 4 November — it predates the feature, so it did not recognise the request and answered "unknown action". Separately, the table that stores the grants had never been created on production, so even a recognised request would have failed next. On staging both pieces were already in place (table exists, function deployed 6 November), which is why the feature works there.
-- **Root cause (technical):** `grant_subscription_extension` was added in `13fb014d` (2026-11-06 19:47 UTC) to `supabase/functions/admin-mutate/index.ts:116`, with its fallback `Unknown action` at `:646`; prod's deployed `admin-mutate` was version49, updated **2026-11-04 05:02 UTC** — two days older than the action. Prod also had **zero** `subscription_extensions` tables (`information_schema` count 0) — migration `20261105230000_subscription_extensions.sql` was never applied there (staging: table present, function updated 2026-11-06 20:22 UTC — both sides live). The panel's "None granted / 0 of 30 days" display was a silent empty read of a missing table (the select's error is ignored in `UserDetailPage`).
-- **Fix:** `npm run deploy:function admin-mutate --project-ref sxkpcovbyaficvtkpsdo` executed 2026-11-10 from this clean tree (`supabase/functions/` verified clean; the action and `_shared/subscriptionAccess.ts` now shipped). Remaining owner step: run `supabase/migrations/20261105230000_subscription_extensions.sql` on **prod** — the file creates the table, grants `select` to the owner and `is_admin()` (panel read), has no write policies by design (edge writes with service role), and **registers itself** in `supabase_migrations.schema_migrations`.
-- **Tests/verification:** prod `admin-mutate` re-read after deploy (updated timestamp/version refreshed); staging confirmed working end-to-end (table + function both post-date the feature); migration env (`supmsg…`) left alone — table missing and function older, but that preview env is out of scope for this fix.
-- **Deploy state:** function deployed on prod; **table SQL pending the owner** (this session's token is read-only). After the SQL: retry the grant in the panel; expect `{"ok": true, ...}` plus an `admin_audit_logs` row (`action='grant_subscription_extension'`).
-- **Follow-ups:** (1) owner runs the migration on prod and retries the grant; (2) push/PR `feat/access-extensions` (or local main) in tscopier-admin so the UI ships (the grant UI is currently local-only); (3) the panel's extension-list select ignores errors — a missing table looks like "None granted"; consider surfacing it like the Social page's partial-data banner; (4) MIGRATION env (`supmsg…`) still lacks both pieces if the feature is ever needed there.
+  - `closeWithVerification` (`worker/src/managementClose.ts`) always did pre + post `OpenedOrders` (up to 6 empty-book retries on multi-leg books) even when `liveFast: true`.
+  - `prepareMgmtLiveOrderSnapshots` already cached the book, but the verify helper ignored it.
+  - `MT_TRADE_OP_CONCURRENCY` default **1** serialized all `OrderCloseSafe` calls despite `MGMT_LEG_CONCURRENCY=8`.
+  - Straggler sweep (`filterTscopierOrdersForChannelClose`) required a Tscopier comment, so comment-less orphans survived.
+- **Fix (files):**
+  - `worker/src/managementClose.ts` — new `closeMarketPositionFast` (trusted ack; already-closed / unknown-ticket → confirmed; hard reject → not confirmed). `closeOrderFast` aliases it.
+  - `worker/src/tradeExecutor/managementExecutor.ts` — live-fast full close uses trusted-ack; `mgmtCloseFn` routes straggler/CWE/deferred cleanup the same way; non-fast path keeps `closeWithVerification`.
+  - `worker/src/forceCloseSignalTrades.ts` — UI/force close + broker fallback use `closeMarketPositionFast`.
+  - `worker/src/managementBrokerClose.ts` — `filterSnapshotStragglerOrdersForClose` + `preCloseTicketsBySession` so Close-all also closes pre-close tickets that are Tscopier-commented **or** naked (no SL/TP).
+  - `worker/src/mtapiProvider.ts` — `orderClose` / `orderCancel` use `MT_CLOSE_OP_CONCURRENCY` (default **4**, max 8); send/modify stay on `MT_TRADE_OP_CONCURRENCY` (default 1).
+  - `worker/.env.example` — documents `MT_CLOSE_OP_CONCURRENCY` / `MT_TRADE_OP_CONCURRENCY`.
+  - Tests: `managementClose.test.ts` (trusted-ack + no OpenedOrders); existing force-close / reply-scope suites green.
+- **Tests/verification:** `npm --prefix worker run build` **0**; `managementClose` **11/11**; `forceCloseSignalTrades` **12/12**; `managementExecutor.replyScope` **24/24**.
+- **Deploy state:** **local / migration working tree only — not pushed.** Needs Railway worker rebuild on the Migration env after push to `migration`.
+- **Follow-ups:** (1) push + deploy Migration worker and re-time a ~30-leg Close-all; (2) watch MTAPI throttle under `MT_CLOSE_OP_CONCURRENCY=4` and lower if “too many requests” returns; (3) consider the same trusted-ack path for FxSocket if its close RTT dominates similarly.
 
 ### 2026-11-10 — Trades opened without a take-profit (Luis / Gold PRO Alerts): a stale channel ladder was stripped at send, and one-sided modifies could wipe the other stop on MTAPI (fixed in the working tree, NOT yet deployed; the customer-facing execution note shipped to production earlier on 2026-11-09)
 
