@@ -8,10 +8,7 @@ import { useSubscription } from '../../context/SubscriptionContext'
 import { useT } from '../../context/LocaleContext'
 import { isBrokerSessionConnected, isBrokerSessionHealthy } from '../../lib/brokerReconnect'
 import { hasLinkedBrokerForUi } from '../../lib/brokerLink'
-import {
-  fetchCopierHealthStatus,
-  type CopierHealthSnapshot,
-} from '../../lib/copierHealthStatus'
+import { useCopierHealth } from '../../hooks/useCopierHealth'
 import {
   resolveCopierProcessState,
   resolveCopierSourceLinks,
@@ -81,7 +78,7 @@ function StatusValue({ children, tone }: { children: string; tone: Tone }) {
 
 function sourceTone(link: CopierSourceLink): Tone {
   if (link === 'connected') return 'ok'
-  if (link === 'reconnecting') return 'warn'
+  if (link === 'reconnecting' || link === 'linked_not_receiving') return 'warn'
   if (link === 'reconnect' || link === 'offline') return 'bad'
   return 'muted'
 }
@@ -133,25 +130,11 @@ export function CopierStatusCard({
     return Boolean(getCachedTgSession(userId))
   })
   const [sources, setSources] = useState<SourcePresence>(EMPTY_SOURCES)
-  const [copierHealth, setCopierHealth] = useState<CopierHealthSnapshot>({
-    telegramAccountStatus: 'unknown',
-    signalListenerStatus: 'unknown',
-    copierEngineStatus: 'unknown',
-    workerOwnershipStatus: 'unknown',
-    lastSuccessfulHealthAt: null,
-    updatedAt: null,
-    reason: null,
-  })
-  // Number of completed server snapshots. Distinguishes an initial "checking"
-  // pass from a persistent "no data" state (reporter never wrote a health row).
-  const [healthSnapshots, setHealthSnapshots] = useState(0)
-
-  const refreshCopierHealth = useCallback(async () => {
-    if (!userId) return
-    const snap = await fetchCopierHealthStatus(supabase, userId)
-    setCopierHealth(snap)
-    setHealthSnapshots(count => count + 1)
-  }, [userId])
+  const {
+    health: copierHealth,
+    snapshots: healthSnapshots,
+    refresh: refreshCopierHealth,
+  } = useCopierHealth(userId)
 
   const refreshSources = useCallback(async () => {
     if (!userId) {
@@ -201,38 +184,12 @@ export function CopierStatusCard({
   }, [refreshSources])
 
   useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      const snap = userId
-        ? await fetchCopierHealthStatus(supabase, userId)
-        : {
-            telegramAccountStatus: 'unknown' as const,
-            signalListenerStatus: 'unknown' as const,
-            copierEngineStatus: 'unknown' as const,
-            workerOwnershipStatus: 'unknown' as const,
-            lastSuccessfulHealthAt: null,
-            updatedAt: null,
-            reason: null,
-          }
-      if (!cancelled) {
-        setCopierHealth(snap)
-        setHealthSnapshots(count => count + 1)
-      }
-    })()
-    if (!userId) {
-      return () => {
-        cancelled = true
-      }
-    }
+    if (!userId) return
     const interval = setInterval(() => {
-      void refreshCopierHealth()
       void refreshSources()
     }, 30_000)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [userId, refreshCopierHealth, refreshSources])
+    return () => clearInterval(interval)
+  }, [userId, refreshSources])
 
   useEffect(() => {
     if (!open) return
@@ -290,6 +247,8 @@ export function CopierStatusCard({
     hasTelegramSession: hasTgSession,
     telegramAccountStatus: copierHealth.telegramAccountStatus,
     signalListenerStatus: copierHealth.signalListenerStatus,
+    mtprotoConnected: copierHealth.mtprotoConnected,
+    probeFresh: copierHealth.probeFresh,
     telegramHealthUnreported: healthUnreported,
     discordChannels: sources.discordChannels,
     whatsappStatus: sources.whatsappStatus,
@@ -302,12 +261,18 @@ export function CopierStatusCard({
     brokerIssue: brokerConnectionsTone === 'bad' || brokerErrorCount > 0,
     links,
   })
-  const processState = !hasActiveSubscription || !hasConnectedBroker
+  const processState: CopierProcessState = !hasActiveSubscription || !hasConnectedBroker
     ? 'stopped'
-    : resolveCopierProcessState(links)
+    : copierHealth.copierEngineStatus === 'operational'
+      || copierHealth.copierEngineStatus === 'degraded'
+      || copierHealth.copierEngineStatus === 'offline'
+      || copierHealth.copierEngineStatus === 'stopped'
+      ? copierHealth.copierEngineStatus
+      : resolveCopierProcessState(links)
 
   const sourceLabel = (link: CopierSourceLink): string => {
     if (link === 'connected') return cs.connected
+    if (link === 'linked_not_receiving') return cs.linkedNotReceiving
     if (link === 'reconnect') return cs.reconnectRequired
     if (link === 'reconnecting') return cs.reconnecting
     if (link === 'offline') return cs.offline
@@ -329,6 +294,7 @@ export function CopierStatusCard({
   const sourceNotes: string[] = []
   if (links.telegram === 'reconnect') sourceNotes.push(cs.telegramReconnectMessage)
   else if (links.telegram === 'offline') sourceNotes.push(cs.telegramOfflineMessage)
+  else if (links.telegram === 'linked_not_receiving') sourceNotes.push(cs.telegramLinkedNotReceivingMessage)
   else if (links.telegram === 'reconnecting') sourceNotes.push(cs.telegramReconnectingMessage)
   if (links.whatsapp === 'offline') sourceNotes.push(cs.whatsappOfflineMessage)
 
@@ -352,11 +318,13 @@ export function CopierStatusCard({
                 ? cs.whatsappOfflineMessage
                 : links.telegram === 'offline'
                   ? cs.listenerOfflineMessage
-                  : links.telegram === 'reconnecting' || links.whatsapp === 'reconnecting'
-                    ? cs.telegramReconnectingMessage
-                    : brokerConnectionsTone === 'bad'
-                      ? cs.checksFailed
-                      : cs.stoppedMessage
+                  : links.telegram === 'linked_not_receiving'
+                    ? cs.telegramLinkedNotReceivingMessage
+                    : links.telegram === 'reconnecting' || links.whatsapp === 'reconnecting'
+                      ? cs.telegramReconnectingMessage
+                      : brokerConnectionsTone === 'bad'
+                        ? cs.checksFailed
+                        : cs.stoppedMessage
 
   const lastHealthy = hasTgSession
     ? (copierHealth.lastSuccessfulHealthAt

@@ -3,6 +3,11 @@ import type { ContactSupportPageTranslations } from './types'
 export const contactSupportRu: ContactSupportPageTranslations = {
   channelsTitle: 'Чем мы можем помочь?',
   channelsSubtitle: 'Свяжитесь с командой UniCopier по электронной почте, откройте документацию или начните чат в реальном времени.',
+  systemStatus: {
+    title: 'System status',
+    description: 'Check whether UniCopier platform services are operational right now.',
+    cta: 'View status',
+  },
   email: {
     title: 'Поддержка по e-mail',
     description: 'Отправьте вопросы по аккаунту, биллингу или копированию сделок - обычно мы отвечаем в течение одного рабочего дня.',

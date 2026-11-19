@@ -17,6 +17,8 @@ describe('copierHealthStatus', () => {
     expect(health.telegramAccountStatus).toBe('linked')
     expect(health.signalListenerStatus).toBe('connected')
     expect(health.copierEngineStatus).toBe('operational')
+    expect(health.mtprotoConnected).toBe(true)
+    expect(health.probeFresh).toBe(true)
     expect(health.lastSuccessfulHealthAt).toBe('2026-08-06T10:00:00.000Z')
   })
 
@@ -25,6 +27,8 @@ describe('copierHealthStatus', () => {
     expect(health.telegramAccountStatus).toBe('unknown')
     expect(health.signalListenerStatus).toBe('unknown')
     expect(health.copierEngineStatus).toBe('unknown')
+    expect(health.mtprotoConnected).toBe(false)
+    expect(health.probeFresh).toBe(false)
   })
 
   it('rejects invalid or secret-like metadata fields', () => {

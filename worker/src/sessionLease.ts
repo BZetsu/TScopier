@@ -170,7 +170,11 @@ export async function releaseOwnedSessionLeases(
   await q
 }
 
-/** Trade workers: true when a listener shard holds a fresh lease (Telegram path is live). */
+/**
+ * Trade workers: true when a listener shard holds a fresh lease AND
+ * `copier_listener_health` reports MTProto up with a fresh probe.
+ * Lease alone must not gate trades (renew-while-disconnected kept leases green).
+ */
 export async function isTelegramListenerLiveForUser(
   supabase: SupabaseClient,
   userId: string,
@@ -193,17 +197,45 @@ export function isLeaseRowLive(
   return new Date(row.expires_at).getTime() > nowMs
 }
 
+const DEFAULT_PROBE_FRESHNESS_MS = 90_000
+
 async function fetchTelegramListenerLiveForUser(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<boolean> {
-  const { data } = await supabase
+  const { data: lease } = await supabase
     .from('worker_session_leases')
     .select('expires_at, role')
     .eq('user_id', userId)
     .maybeSingle()
 
-  return isLeaseRowLive(data)
+  if (!isLeaseRowLive(lease)) return false
+
+  const { data: health } = await supabase
+    .from('copier_listener_health')
+    .select(
+      'mtproto_connected, last_successful_probe_at, freshness_threshold_ms, shutdown_in_progress, recovery_exhausted',
+    )
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (!health) return false
+  if (health.mtproto_connected !== true) return false
+  if (health.shutdown_in_progress === true) return false
+  if (health.recovery_exhausted === true) return false
+
+  const thresholdRaw = Number(health.freshness_threshold_ms)
+  const freshnessMs =
+    Number.isFinite(thresholdRaw) && thresholdRaw > 0
+      ? thresholdRaw
+      : DEFAULT_PROBE_FRESHNESS_MS
+  const probeAt = health.last_successful_probe_at
+  if (typeof probeAt !== 'string' || !probeAt) return false
+  const probeMs = new Date(probeAt).getTime()
+  if (!Number.isFinite(probeMs)) return false
+  const age = Date.now() - probeMs
+  if (age < -60_000 || age > freshnessMs) return false
+  return true
 }
 
 /** Fresh listener leases among the given user ids (for /health lease sync). */

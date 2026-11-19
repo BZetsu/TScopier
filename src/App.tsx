@@ -25,6 +25,9 @@ import { AppTopBanners } from './components/layout/AppTopBanners'
 const AppPricingPage = lazy(() =>
   import('./pages/pricing/AppPricingPage').then(m => ({ default: m.AppPricingPage })),
 )
+const StatusPage = lazy(() =>
+  import('./pages/StatusPage').then(m => ({ default: m.StatusPage })),
+)
 const AccountConfigPage = lazy(() =>
   import('./pages/dashboard/AccountConfigPage').then(m => ({ default: m.AccountConfigPage })),
 )
@@ -152,6 +155,9 @@ export default function App() {
 
           {/* Public pricing — paywall / acquisition (no auth required). */}
           <Route path="/pricing" element={<LazyPage><AppPricingPage /></LazyPage>} />
+
+          {/* Public platform status — usable without login during outages. */}
+          <Route path="/status" element={<LazyPage><StatusPage /></LazyPage>} />
 
           {/* Public provider profile (shareable link; anon-readable via get_provider_public_profile). */}
           <Route

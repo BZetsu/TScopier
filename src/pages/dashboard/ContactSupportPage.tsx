@@ -1,4 +1,4 @@
-import { ChevronDown, BookOpen, Mail, MessageCircle, Ticket } from 'lucide-react'
+import { ChevronDown, Activity, BookOpen, Mail, MessageCircle, Ticket } from 'lucide-react'
 import clsx from 'clsx'
 import { useT } from '../../context/LocaleContext'
 import { useSupportChat } from '../../context/SupportChatContext'
@@ -76,7 +76,7 @@ export function ContactSupportPage() {
           </h2>
           <p className="mt-1 text-sm text-neutral-900 dark:text-neutral-50">{cs.channelsSubtitle}</p>
         </div>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <ContactChannelCard
             icon={Mail}
             title={cs.email.title}
@@ -100,6 +100,13 @@ export function ContactSupportPage() {
             description={cs.liveChat.description}
             actionLabel={cs.liveChat.cta}
             onAction={openSupportWidget}
+          />
+          <ContactChannelCard
+            icon={Activity}
+            title={cs.systemStatus.title}
+            description={cs.systemStatus.description}
+            actionLabel={cs.systemStatus.cta}
+            href="/status"
           />
         </div>
       </section>

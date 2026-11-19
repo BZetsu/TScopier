@@ -5,6 +5,8 @@ export type CopierSourceLink =
   | 'checking'
   | 'not_connected'
   | 'connected'
+  /** Session linked / lease may exist, but MTProto is down or probe is stale. */
+  | 'linked_not_receiving'
   | 'reconnect'
   | 'reconnecting'
   | 'offline'
@@ -23,6 +25,10 @@ export function resolveCopierSourceLinks(input: {
   hasTelegramSession: boolean
   telegramAccountStatus: TelegramAccountStatus
   signalListenerStatus: SignalListenerStatus
+  /** Require true for Telegram "connected" (lease alone is not enough). */
+  mtprotoConnected?: boolean
+  /** Require true for Telegram "connected" (fresh GetState / poll probe). */
+  probeFresh?: boolean
   telegramHealthUnreported: boolean
   discordChannels: number
   whatsappStatus: string | null
@@ -42,11 +48,15 @@ export function resolveCopierSourceLinks(input: {
   if (input.hasTelegramSession) {
     const account = input.telegramAccountStatus
     const listener = input.signalListenerStatus
+    const mtprotoOk = input.mtprotoConnected === true
+    const probeOk = input.probeFresh === true
     if (account === 'reconnect_required' || account === 'invalid') telegram = 'reconnect'
     else if (listener === 'reconnecting') telegram = 'reconnecting'
     else if (listener === 'disconnected' || listener === 'failed') telegram = 'offline'
     else if (listener === 'unknown') telegram = input.telegramHealthUnreported ? 'unknown' : 'checking'
-    else telegram = 'connected'
+    else if (listener === 'connected' && mtprotoOk && probeOk) telegram = 'connected'
+    else if (listener === 'connected') telegram = 'linked_not_receiving'
+    else telegram = 'linked_not_receiving'
   }
 
   const whatsappStatus = String(input.whatsappStatus ?? '').trim().toLowerCase()
@@ -68,7 +78,7 @@ export function copierSourceIsReady(link: CopierSourceLink): boolean {
 }
 
 export function copierSourceIsIssue(link: CopierSourceLink): boolean {
-  return link === 'reconnect' || link === 'offline'
+  return link === 'reconnect' || link === 'offline' || link === 'linked_not_receiving'
 }
 
 export function resolveCopierStatusHeadline(input: {

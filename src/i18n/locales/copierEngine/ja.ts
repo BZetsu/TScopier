@@ -73,6 +73,7 @@ export const copierEngineJa: CopierEngineBundleTranslations = {
     yourTelegramChannels: 'あなたのTelegramチャンネル',
     telegramConnectedHint: '下でチャンネルを追加してシグナルコピーを開始',
     connected: '接続済み',
+    linkedNotReceiving: 'Linked, not receiving',
     listenerLeaseLive: 'コピーエンジン稼働中',
     listenerLeaseExpired: 'コピーエンジンオフライン',
     listenerLeaseExpiredHint:

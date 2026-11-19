@@ -314,9 +314,11 @@ worker Sentry events and check-ins.
 
 ## Sharding
 
-Assign users with `shard = hash(user_id) % WORKER_SHARD_COUNT`. Each listener service sets `WORKER_SHARD_ID` to its index (0 … N-1).
+Assign users with `shard = hash(user_id) % WORKER_SHARD_COUNT`. Each listener service sets `WORKER_SHARD_ID` to its index (0 … N-1). Startup FATALS if `WORKER_SHARD_ID >= WORKER_SHARD_COUNT`, or (when trade shard URLs are set) if `WORKER_SHARD_COUNT !== TRADE_WORKER_SHARD_COUNT !== URL length`.
 
 **Trade workers** use the same hash: set `WORKER_SHARD_ID` / `WORKER_SHARD_COUNT` on each trade service so monitors and `TradeExecutor` only query users on that shard. On the **listener**, set `TRADE_WORKER_SHARD_URLS` to a comma-separated list of trade-entry public URLs (same order as shard ids). Listener push routes `POST /internal/dispatch-signal` to `shardUrls[hash(user_id) % N]`.
+
+**Edge:** set Supabase secret `LISTENER_SHARD_URLS` to the same ordered listener bases so `telegram-auth` / `signal-reconcile-sweep` hit the owning shard (`supabase/functions/_shared/workerShard.ts`). Auth on the wrong shard returns `wrong_shard`. Pilot checklist: [staging-shard-fleet.md](./staging-shard-fleet.md); diagnostic: `scripts/diagnostics/shard_fleet_check.mjs`.
 
 | Service | `WORKER_SHARD_ID` | `WORKER_SHARD_COUNT` | Notes |
 |---------|-------------------|----------------------|-------|

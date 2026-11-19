@@ -73,6 +73,7 @@ export const copierEngineRu: CopierEngineBundleTranslations = {
     yourTelegramChannels: 'Ваши каналы Telegram',
     telegramConnectedHint: 'Добавьте каналы ниже, чтобы начать копирование сигналов',
     connected: 'Подключено',
+    linkedNotReceiving: 'Linked, not receiving',
     listenerLeaseLive: 'Движок копирования активен',
     listenerLeaseExpired: 'Движок копирования офлайн',
     listenerLeaseExpiredHint:

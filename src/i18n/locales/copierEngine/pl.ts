@@ -73,6 +73,7 @@ export const copierEnginePl: CopierEngineBundleTranslations = {
     yourTelegramChannels: 'Twoje kanały Telegram',
     telegramConnectedHint: 'Dodaj kanały poniżej, aby rozpocząć kopiowanie sygnałów',
     connected: 'Połączono',
+    linkedNotReceiving: 'Linked, not receiving',
     listenerLeaseLive: 'Silnik kopiarki aktywny',
     listenerLeaseExpired: 'Silnik kopiarki offline',
     listenerLeaseExpiredHint:

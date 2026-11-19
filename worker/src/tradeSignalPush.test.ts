@@ -20,12 +20,15 @@ describe('parseTradeWorkerShardUrls', () => {
 describe('validateListenerTradeShardConfig', () => {
   const prevUrls = process.env.TRADE_WORKER_SHARD_URLS
   const prevCount = process.env.TRADE_WORKER_SHARD_COUNT
+  const prevWorkerCount = process.env.WORKER_SHARD_COUNT
 
   afterEach(() => {
     if (prevUrls === undefined) delete process.env.TRADE_WORKER_SHARD_URLS
     else process.env.TRADE_WORKER_SHARD_URLS = prevUrls
     if (prevCount === undefined) delete process.env.TRADE_WORKER_SHARD_COUNT
     else process.env.TRADE_WORKER_SHARD_COUNT = prevCount
+    if (prevWorkerCount === undefined) delete process.env.WORKER_SHARD_COUNT
+    else process.env.WORKER_SHARD_COUNT = prevWorkerCount
   })
 
   it('returns null when shard URLs unset', () => {
@@ -33,18 +36,28 @@ describe('validateListenerTradeShardConfig', () => {
     assert.equal(validateListenerTradeShardConfig(), null)
   })
 
-  it('returns null when URL count matches TRADE_WORKER_SHARD_COUNT', () => {
+  it('returns null when URL count matches TRADE_WORKER_SHARD_COUNT and WORKER_SHARD_COUNT', () => {
     process.env.TRADE_WORKER_SHARD_URLS = 'https://a.example.com,https://b.example.com'
     process.env.TRADE_WORKER_SHARD_COUNT = '2'
+    process.env.WORKER_SHARD_COUNT = '2'
     assert.equal(validateListenerTradeShardConfig(), null)
   })
 
   it('returns error when URL count mismatches TRADE_WORKER_SHARD_COUNT', () => {
     process.env.TRADE_WORKER_SHARD_URLS = 'https://a.example.com,https://b.example.com'
     process.env.TRADE_WORKER_SHARD_COUNT = '3'
+    process.env.WORKER_SHARD_COUNT = '3'
     const err = validateListenerTradeShardConfig()
     assert.ok(err?.includes('2 URL'))
     assert.ok(err?.includes('TRADE_WORKER_SHARD_COUNT=3'))
+  })
+
+  it('returns error when WORKER_SHARD_COUNT mismatches trade shard count', () => {
+    process.env.TRADE_WORKER_SHARD_URLS = 'https://a.example.com,https://b.example.com'
+    process.env.TRADE_WORKER_SHARD_COUNT = '2'
+    process.env.WORKER_SHARD_COUNT = '1'
+    const err = validateListenerTradeShardConfig()
+    assert.ok(err?.includes('WORKER_SHARD_COUNT=1'))
   })
 })
 

@@ -2,6 +2,7 @@ import { authFr } from '../auth/fr'
 import { channelWorkerFr } from '../channelWorker/fr'
 import { tradeNotificationsFr } from '../tradeNotifications/fr'
 import { contactSupportFr } from '../contactSupport/fr'
+import { statusPageFr } from '../statusPage/fr'
 import { supportWidgetFr } from '../supportWidget/fr'
 import { riskDisclaimerFr } from '../riskDisclaimer/fr'
 import { termsOfServiceFr } from '../legal/termsFr'
@@ -20,6 +21,7 @@ export const fr: Translations = {
   channelWorker: channelWorkerFr,
   tradeNotifications: tradeNotificationsFr,
   contactSupportPage: contactSupportFr,
+  statusPage: statusPageFr,
   supportWidget: supportWidgetFr,
   riskDisclaimerPage: riskDisclaimerFr,
   termsOfServicePage: termsOfServiceFr,
@@ -1242,6 +1244,7 @@ export const fr: Translations = {
       notConnected: 'Non connectée',
       connectSource: 'Connecter',
       connected: 'Connectée',
+      linkedNotReceiving: 'Liée, sans réception',
       reconnectRequired: 'Reconnexion requise',
       reconnecting: 'Reconnexion…',
       operational: 'Opérationnel',
@@ -1254,6 +1257,8 @@ export const fr: Translations = {
       telegramReconnectMessage: 'La connexion Telegram a expiré. Reconnectez Telegram pour reprendre la copie.',
       telegramReconnectingMessage: 'Telegram se reconnecte. Les nouveaux signaux peuvent être retardés.',
       telegramOfflineMessage: 'L’écouteur Telegram est hors ligne.',
+      telegramLinkedNotReceivingMessage:
+        'Telegram est lié mais ne reçoit pas de signaux pour le moment. Attendez une minute ou utilisez Reconnecter Telegram.',
       otherSourcesStillCopying: 'Les autres sources connectées copient toujours.',
       listenerOfflineMessage: 'L’écouteur de signaux est hors ligne. Les trades peuvent ne pas être copiés tant qu’il ne se reconnecte pas.',
       whatsappOfflineMessage: 'WhatsApp est déconnecté. Reconnectez-le pour copier vos groupes.',
@@ -1866,6 +1871,7 @@ export const fr: Translations = {
     yourTelegramChannels: 'Vos canaux Telegram',
     telegramConnectedHint: 'Ajoutez des canaux ci-dessous pour commencer à copier les signaux',
     connected: 'Connecté',
+    linkedNotReceiving: 'Lié, sans réception',
     listenerLeaseLive: 'Moteur copieur actif',
     listenerLeaseExpired: 'Moteur copieur hors ligne',
     listenerLeaseExpiredHint:

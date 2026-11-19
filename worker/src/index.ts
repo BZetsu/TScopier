@@ -55,6 +55,7 @@ import {
   validateListenerTradeShardConfig,
   validateListenerMgmtShardConfig,
   validateListenerQueueConfig,
+  validateWorkerShardBounds,
   startTradePushProbeLoop,
 } from './tradeSignalPush'
 import { internalTokenFingerprint } from './internalToken'
@@ -273,6 +274,14 @@ async function main() {
       + ' (WORKER_SHARD_COUNT=1, WORKER_SHARD_ID=0) — one gateway per bot token',
     )
     process.exit(1)
+  }
+
+  if (workerConfig.runsListener || workerConfig.runsTrade) {
+    const boundErr = validateWorkerShardBounds(workerConfig.shardId, workerConfig.shardCount)
+    if (boundErr) {
+      console.error(`[worker] FATAL: ${boundErr}`)
+      process.exit(1)
+    }
   }
 
   if (workerConfig.runsListener) {
