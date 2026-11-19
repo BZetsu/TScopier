@@ -2,6 +2,7 @@ import { authEs } from '../auth/es'
 import { channelWorkerEs } from '../channelWorker/es'
 import { tradeNotificationsEs } from '../tradeNotifications/es'
 import { contactSupportEs } from '../contactSupport/es'
+import { statusPageEs } from '../statusPage/es'
 import { supportWidgetEs } from '../supportWidget/es'
 import { riskDisclaimerEs } from '../riskDisclaimer/es'
 import { termsOfServiceEs } from '../legal/termsEs'
@@ -20,6 +21,7 @@ export const es: Translations = {
   channelWorker: channelWorkerEs,
   tradeNotifications: tradeNotificationsEs,
   contactSupportPage: contactSupportEs,
+  statusPage: statusPageEs,
   supportWidget: supportWidgetEs,
   riskDisclaimerPage: riskDisclaimerEs,
   termsOfServicePage: termsOfServiceEs,
@@ -1242,6 +1244,7 @@ export const es: Translations = {
       notConnected: 'No conectada',
       connectSource: 'Conectar',
       connected: 'Conectada',
+      linkedNotReceiving: 'Vinculada, sin recibir',
       reconnectRequired: 'Reconexión necesaria',
       reconnecting: 'Reconectando',
       operational: 'Operativo',
@@ -1254,6 +1257,8 @@ export const es: Translations = {
       telegramReconnectMessage: 'La conexión de Telegram caducó. Vuelve a conectar Telegram para reanudar la copia.',
       telegramReconnectingMessage: 'Telegram se está reconectando. Las señales nuevas pueden retrasarse.',
       telegramOfflineMessage: 'El listener de Telegram está desconectado.',
+      telegramLinkedNotReceivingMessage:
+        'Telegram está vinculado pero no está recibiendo señales ahora. Espera un minuto o usa Reconectar Telegram.',
       otherSourcesStillCopying: 'Las demás fuentes conectadas siguen copiando.',
       listenerOfflineMessage: 'El listener de señales está desconectado. Las operaciones pueden no copiarse hasta que se reconecte.',
       whatsappOfflineMessage: 'WhatsApp está desconectado. Vuelve a conectarlo para copiar tus grupos.',
@@ -1866,6 +1871,7 @@ export const es: Translations = {
     yourTelegramChannels: 'Tus canales de Telegram',
     telegramConnectedHint: 'Añade canales abajo para empezar a copiar señales',
     connected: 'Conectado',
+    linkedNotReceiving: 'Vinculado, sin recibir',
     listenerLeaseLive: 'Motor copiador activo',
     listenerLeaseExpired: 'Motor copiador desconectado',
     listenerLeaseExpiredHint:

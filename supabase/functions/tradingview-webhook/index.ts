@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2"
 import { parseTradingViewAlert } from "../_shared/tradingViewAlert.ts"
+import { pickTradeWorkerUrl } from "../_shared/workerShard.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -41,33 +42,9 @@ function randomToken(): string {
   return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
 }
 
-function shardForUserId(userId: string, shardCount: number): number {
-  let h = 0
-  for (let i = 0; i < userId.length; i++) {
-    h = (h * 31 + userId.charCodeAt(i)) | 0
-  }
-  return Math.abs(h) % Math.max(1, shardCount)
-}
-
-function parseUrls(raw: string | undefined): string[] {
-  if (!raw?.trim()) return []
-  return raw.split(",").map(s => s.trim().replace(/\/$/, "")).filter(Boolean)
-}
-
 function tradeWorkerUrl(action: string, userId: string): string | null {
-  const entryShards = parseUrls(Deno.env.get("TRADE_WORKER_SHARD_URLS"))
-  const mgmtShards = parseUrls(Deno.env.get("TRADE_MGMT_WORKER_SHARD_URLS"))
-  const entryUrl = (Deno.env.get("TRADE_WORKER_URL") ?? Deno.env.get("WORKER_URL") ?? "").trim().replace(/\/$/, "")
-  const mgmtUrl = (Deno.env.get("TRADE_MGMT_WORKER_URL") ?? "").trim().replace(/\/$/, "")
-  const mgmt = action === "close"
-
-  if (mgmt && mgmtShards.length > 1) return mgmtShards[shardForUserId(userId, mgmtShards.length)] ?? null
-  if (mgmt && mgmtShards.length === 1) return mgmtShards[0] ?? null
-  if (mgmt && mgmtUrl) return mgmtUrl
-
-  if (entryShards.length > 1) return entryShards[shardForUserId(userId, entryShards.length)] ?? null
-  if (entryShards.length === 1) return entryShards[0] ?? null
-  return entryUrl || null
+  const url = pickTradeWorkerUrl(userId, { management: action === "close" })
+  return url || null
 }
 
 function clientIp(req: Request): string {

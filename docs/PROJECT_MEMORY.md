@@ -2,6 +2,44 @@
 
 ## Changelog
 
+### 2026-11-19 — Deploy Edge: shard routing + public-status (Migration)
+
+- **Context:** Ship listener shard routing and public status API to Migration.
+- **Plain English:** Redeployed the Edge functions that route Telegram auth/reconcile/TV/override by user shard, plus `public-status`.
+- **Fix (files):** Deployed `telegram-auth`, `signal-reconcile-sweep`, `signal-override`, `tradingview-webhook`, `public-status` → `supmsgcubipmmowrzoub`.
+- **Tests/verification:** CLI deploy succeeded (5 functions).
+- **Deploy state:** Migration only — not staging/production.
+- **Follow-ups:** Set `LISTENER_SHARD_URLS` only when N listeners exist; ship frontend for `/status`.
+
+### 2026-11-19 — Public `/status` page
+
+- **Context:** Need a public page users can open during outages without logging in.
+- **Plain English:** Visit `/status` for platform service health (listener, trade workers, bridges, AI). Driven by existing probes and open alerts — no secrets or per-user Telegram status.
+- **Fix (files):** Edge `public-status` + `_shared/publicStatus.ts`; `StatusPage` + App route; Contact Support link; mapper tests.
+- **Tests/verification:** `publicStatus.test.ts`.
+- **Deploy state:** Edge `public-status` deployed to Migration (`supmsgcubipmmowrzoub`). Frontend local until Netlify ship.
+- **Follow-ups:** Optional uptime charts from `system_probe_samples`; production Edge deploy when ready.
+
+### 2026-11-19 — Shard fleet readiness + health UI single truth
+
+- **Context:** Multi-shard fleet needed Edge listener routing; dashboard still mixed lease banners with health.
+- **Plain English:** Auth/reconcile now route each user to the right listener when `LISTENER_SHARD_URLS` is set. Dashboard Connected/offline banners use one health hook — never lease alone. Shard fleet check script + staging docs updated (no Railway provision in this pass).
+- **Root cause (technical):** `telegram-auth` used a single `TELEGRAM_LISTENER_URL`; UI `ListenerLeaseOfflineBanner` keyed off `worker_session_leases`.
+- **Fix (files):** `_shared/workerShard.ts` + auth/sweep/TV/override; worker `validateWorkerShardBounds` + `/auth` `wrong_shard`; `useCopierHealth` / `copierHealthUi` / `CopierHealthBanner`; CopierStatusCard + CopierEngine + Dashboard; `scripts/diagnostics/shard_fleet_check.mjs`; staging-shard-fleet + capacity/deploy docs.
+- **Tests/verification:** `tradeSignalPush.test.ts` shard count; `copierHealthUi.test.ts`; prior health/source tests.
+- **Deploy state:** Local only — deploy Edge + frontend + workers; set `LISTENER_SHARD_URLS` only when N listeners exist.
+- **Follow-ups:** Provision staging Railway fleet per staging-shard-fleet.md when ready.
+
+### 2026-11-19 — Telegram Connected means MTProto + fresh probe (not lease)
+
+- **Context:** Users saw green Connected / process live while ingest was dead; lease renew continues while MTProto is down for ownership.
+- **Plain English:** Connected / trade-live now require listener health (MTProto up + recent probe). Lease-only shows “Linked, not receiving.” Ops + support playbooks for flood / AUTH_KEY_DUP and silent disconnects.
+- **Root cause (technical):** UI and `isTelegramListenerLiveForUser` keyed off lease / `listener_status` without requiring `mtproto_connected` + probe freshness; renew-while-disconnected kept leases green.
+- **Fix (files):** `copierHealthStatus` / `copierSourceStatus` + CopierStatusCard + CopierEnginePage badges; `sessionLease` live gate + `sessionManager`/`userListener` health on renew-while-down; docs `telegram-capacity-ops.md`, `telegram-silent-disconnect-support.md`.
+- **Tests/verification:** `copierSourceStatus.test.ts`, `copierHealthStatus.test.ts`, `sessionLease.health.test.ts`.
+- **Deploy state:** Local only — ship frontend + redeploy listener and trade workers.
+- **Follow-ups:** Shard production when FLOOD_WAIT / `/health` metrics warrant (see capacity ops).
+
 ### 2026-11-18 — Close trade when signal message deleted (Management toggle)
 
 - **Context:** Users wanted open trades closed / pendings cancelled when the Telegram (or Discord/WhatsApp) signal post is deleted.

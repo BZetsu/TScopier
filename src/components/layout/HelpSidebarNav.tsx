@@ -85,12 +85,19 @@ export function HelpSidebarNav({ collapsed, onNavigate }: HelpSidebarNavProps) {
         </a>
       </div>
 
-      <div
-        className={clsx(
-          'px-3 transition-[padding] duration-300 ease-out',
-          collapsed && 'flex justify-center',
-        )}
-        role="status"
+      <NavLink
+        to="/status"
+        title={`${hm.status}: ${hm.statusOperational}`}
+        onClick={onNavigate}
+        className={({ isActive }) =>
+          clsx(
+            'block rounded-xl px-3 py-1.5 transition-colors duration-300 ease-out',
+            collapsed && 'flex justify-center',
+            isActive
+              ? 'bg-neutral-100/80 dark:bg-neutral-800/60'
+              : 'hover:bg-neutral-100/50 dark:hover:bg-neutral-800/40',
+          )
+        }
         aria-label={`${hm.status}: ${hm.statusOperational}`}
       >
         <div className={clsx('flex items-start gap-2.5', collapsed && 'gap-0')}>
@@ -99,7 +106,7 @@ export function HelpSidebarNav({ collapsed, onNavigate }: HelpSidebarNavProps) {
               'relative flex h-2 w-2 shrink-0',
               !collapsed && 'mt-1',
             )}
-            title={hm.statusOperational}
+            aria-hidden
           >
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
@@ -114,7 +121,7 @@ export function HelpSidebarNav({ collapsed, onNavigate }: HelpSidebarNavProps) {
             <p className="whitespace-nowrap text-xs text-neutral-900 dark:text-neutral-50">{hm.statusOperational}</p>
           </div>
         </div>
-      </div>
+      </NavLink>
     </div>
   )
 }

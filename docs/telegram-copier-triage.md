@@ -28,7 +28,7 @@ curl -sS "https://YOUR-TRADE.up.railway.app/health" | jq .
 | Shared secret | `WORKER_INTERNAL_TOKEN` | same value |
 | Shard | `WORKER_SHARD_ID`, `WORKER_SHARD_COUNT` | same values |
 | Push target | `TRADE_WORKER_URL` set | `/internal/dispatch-signal` reachable |
-| Lease gate | — | `WORKER_REQUIRE_TELEGRAM_LIVE_FOR_TRADES=true` requires fresh lease |
+| Lease gate | — | `WORKER_REQUIRE_TELEGRAM_LIVE_FOR_TRADES=true` requires fresh lease **and** probe-fresh `copier_listener_health` (MTProto) |
 
 Test dispatch (replace values):
 
@@ -49,6 +49,7 @@ Interpretation:
 |--------------|-------------|
 | No session / inactive | User must reconnect Telegram |
 | No lease or expired | Listener not running or lease renew failing |
+| Lease fresh but health mtproto/probe stale | Linked not receiving — see [telegram-silent-disconnect-support.md](./telegram-silent-disconnect-support.md) |
 | Invalid identity (query 7) | Re-add channel via Telegram picker |
 | No signals (query 4) | Listener not ingesting — check worker logs |
 | Signals but no execution logs | Trade push / broker whitelist / lease gate |

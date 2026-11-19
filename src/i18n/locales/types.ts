@@ -1,6 +1,7 @@
 import type { AuthTranslations } from '../auth/types'
 import type { ChannelWorkerTranslations } from '../channelWorker/types'
 import type { ContactSupportPageTranslations } from '../contactSupport/types'
+import type { StatusPageTranslations } from '../statusPage/types'
 import type { SupportWidgetTranslations } from '../supportWidget/types'
 import type { RiskDisclaimerPageTranslations } from '../riskDisclaimer/types'
 import type { LegalDocumentPageTranslations } from '../legal/types'
@@ -422,6 +423,7 @@ export interface DashboardTranslations {
     notConnected: string
     connectSource: string
     connected: string
+    linkedNotReceiving: string
     reconnectRequired: string
     reconnecting: string
     operational: string
@@ -434,6 +436,7 @@ export interface DashboardTranslations {
     telegramReconnectMessage: string
     telegramReconnectingMessage: string
     telegramOfflineMessage: string
+    telegramLinkedNotReceivingMessage: string
     otherSourcesStillCopying: string
     listenerOfflineMessage: string
     whatsappOfflineMessage: string
@@ -1925,6 +1928,7 @@ export interface CopierEnginePageTranslations {
   yourTelegramChannels: string
   telegramConnectedHint: string
   connected: string
+  linkedNotReceiving: string
   listenerLeaseLive: string
   listenerLeaseExpired: string
   listenerLeaseExpiredHint: string
@@ -2498,6 +2502,7 @@ export interface Translations {
   brokersPage: BrokersPageTranslations
   economicCalendar: EconomicCalendarTranslations
   contactSupportPage: ContactSupportPageTranslations
+  statusPage: StatusPageTranslations
   supportWidget: SupportWidgetTranslations
   riskDisclaimerPage: RiskDisclaimerPageTranslations
   termsOfServicePage: LegalDocumentPageTranslations

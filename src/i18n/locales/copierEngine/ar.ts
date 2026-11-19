@@ -73,6 +73,7 @@ export const copierEngineAr: CopierEngineBundleTranslations = {
     yourTelegramChannels: 'قنوات Telegram الخاصة بك',
     telegramConnectedHint: 'أضف القنوات أدناه لبدء نسخ الإشارات',
     connected: 'متصل',
+    linkedNotReceiving: 'Linked, not receiving',
     listenerLeaseLive: 'محرك الناسخ نشط',
     listenerLeaseExpired: 'محرك الناسخ غير متصل',
     listenerLeaseExpiredHint:

@@ -93,8 +93,17 @@ Normal dashboard copy avoids internal terms such as MTProto, lease, shard, worke
 - Operational: "Copier is ready and listening for signals."
 - Reconnecting: "Telegram is reconnecting. New signals may be delayed."
 - Offline: "Signal listener is offline. Trades may not copy until it reconnects."
+- Linked, not receiving: session/lease may exist but MTProto is down or the probe is stale — never show green Connected.
 - Reconnect required: "Telegram connection expired. Reconnect Telegram to resume copying."
 - Stopped: "Copying is stopped for this account."
+
+Copier Engine badges and source-row Telegram status use the same health rules as CopierStatusCard (`mtproto_connected` + fresh probe). Lease freshness alone must not show Connected / process live.
+
+Frontend single source of truth:
+
+- Hook: [`src/hooks/useCopierHealth.ts`](../src/hooks/useCopierHealth.ts) (poll + realtime on `copier_listener_health`)
+- UI derivation: [`src/lib/copierHealthUi.ts`](../src/lib/copierHealthUi.ts)
+- Banner: [`src/components/dashboard/CopierHealthBanner.tsx`](../src/components/dashboard/CopierHealthBanner.tsx) (replaces lease-only offline banner)
 
 The card also shows the last successful health timestamp and a refresh action.
 
@@ -129,5 +138,6 @@ Rollback frontend to the previous status card if necessary. Worker writes are be
 3. If `listener_status=reconnecting` and `updated_at` is recent, wait through the grace period and refresh.
 4. If `copier_engine_status=offline`, inspect worker logs and Sentry for matching `copier_engine_offline` or `telegram_listener_failed`.
 5. Cross-check `worker_session_leases` only for ownership evidence; do not treat it as proof of connectivity.
+6. Full checklist (Connected but no trades): [telegram-silent-disconnect-support.md](./telegram-silent-disconnect-support.md). Capacity / shard / AUTH_KEY_DUP: [telegram-capacity-ops.md](./telegram-capacity-ops.md).
 
 Sentry does not replace database state, audit logs, or broker reconciliation.

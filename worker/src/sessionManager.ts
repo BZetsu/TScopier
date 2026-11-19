@@ -457,6 +457,7 @@ export class UserSessionManager {
           `[sessionManager] listener disconnected but renewing lease anyway`
           + ` user=${userId} — kicking reconnect in background`,
         )
+        listener.reportLeaseRenewWhileDisconnected()
         listener.requestReconnectIfDisconnected('lease_renew_disconnected')
       }
     } else {

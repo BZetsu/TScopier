@@ -3,6 +3,11 @@ import type { ContactSupportPageTranslations } from './types'
 export const contactSupportEn: ContactSupportPageTranslations = {
   channelsTitle: 'How can we help?',
   channelsSubtitle: 'Reach the UniCopier team by email, browse the docs, or open in-app support chat.',
+  systemStatus: {
+    title: 'System status',
+    description: 'Check whether UniCopier platform services are operational right now.',
+    cta: 'View status',
+  },
   email: {
     title: 'Email support',
     description: 'Send account, billing, or copier questions — we typically reply within one business day.',

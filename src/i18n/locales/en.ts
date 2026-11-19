@@ -2,6 +2,7 @@ import { authEn } from '../auth/en'
 import { channelWorkerEn } from '../channelWorker/en'
 import { tradeNotificationsEn } from '../tradeNotifications/en'
 import { contactSupportEn } from '../contactSupport/en'
+import { statusPageEn } from '../statusPage/en'
 import { supportWidgetEn } from '../supportWidget/en'
 import { riskDisclaimerEn } from '../riskDisclaimer/en'
 import { termsOfServiceEn } from '../legal/termsEn'
@@ -21,6 +22,7 @@ export const en: Translations = {
   channelWorker: channelWorkerEn,
   tradeNotifications: tradeNotificationsEn,
   contactSupportPage: contactSupportEn,
+  statusPage: statusPageEn,
   supportWidget: supportWidgetEn,
   riskDisclaimerPage: riskDisclaimerEn,
   termsOfServicePage: termsOfServiceEn,
@@ -1260,6 +1262,7 @@ export const en: Translations = {
       notConnected: 'Not connected',
       connectSource: 'Connect',
       connected: 'Connected',
+      linkedNotReceiving: 'Linked, not receiving',
       reconnectRequired: 'Reconnect required',
       reconnecting: 'Reconnecting',
       operational: 'Operational',
@@ -1272,6 +1275,8 @@ export const en: Translations = {
       telegramReconnectMessage: 'Telegram connection expired. Reconnect Telegram to resume copying.',
       telegramReconnectingMessage: 'Telegram is reconnecting. New signals may be delayed.',
       telegramOfflineMessage: 'Telegram listener is offline.',
+      telegramLinkedNotReceivingMessage:
+        'Telegram is linked but not receiving signals right now. Wait a minute or use Reconnect Telegram.',
       otherSourcesStillCopying: 'Other connected sources are still copying.',
       listenerOfflineMessage: 'Signal listener is offline. Trades may not copy until it reconnects.',
       whatsappOfflineMessage: 'WhatsApp is disconnected. Reconnect it to copy from your groups.',
@@ -1953,6 +1958,7 @@ export const en: Translations = {
     yourTelegramChannels: 'Your Telegram channels',
     telegramConnectedHint: 'Add channels below to start copying signals',
     connected: 'Connected',
+    linkedNotReceiving: 'Linked, not receiving',
     listenerLeaseLive: 'Copier process live',
     listenerLeaseExpired: 'Copier process offline',
     listenerLeaseExpiredHint:

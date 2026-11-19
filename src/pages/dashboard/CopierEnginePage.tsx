@@ -58,10 +58,9 @@ import {
   invalidateTgSessionCache,
   setCachedTgSession,
 } from '../../lib/telegramSessionCache'
-import {
-  fetchListenerLeaseStatus,
-  type ListenerLeaseSnapshot,
-} from '../../lib/listenerLeaseStatus'
+import { CopierHealthBanner } from '../../components/dashboard/CopierHealthBanner'
+import { useCopierHealth } from '../../hooks/useCopierHealth'
+import { deriveCopierHealthUi } from '../../lib/copierHealthUi'
 import { subscribeDiscordSourcesChanged } from '../../lib/discordSource'
 import { SIGNAL_SOURCE_MARKS, type SignalSourceKind } from '../../lib/signalSourceMark'
 import {
@@ -210,18 +209,11 @@ export function CopierEnginePage() {
   const [tgPassword, setTgPassword] = useState('')
   const [tgLoading, setTgLoading] = useState(false)
   const [tgError, setTgError] = useState('')
-  const [listenerLease, setListenerLease] = useState<ListenerLeaseSnapshot>({
-    status: 'unknown',
-    expiresAt: null,
-  })
+  const { health: copierHealth, refresh: refreshCopierHealth } = useCopierHealth(
+    hasTgSession ? user?.id : null,
+  )
 
   const EDGE_FN = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-auth`
-
-  const refreshListenerLease = useCallback(async () => {
-    if (!user?.id) return
-    const snap = await fetchListenerLeaseStatus(supabase, user.id)
-    setListenerLease(snap)
-  }, [user?.id])
 
   useEffect(() => {
     if (!user) return
@@ -263,45 +255,6 @@ export function CopierEnginePage() {
     }
   }, [user?.id])
 
-  useEffect(() => {
-    if (!user?.id || !hasTgSession) {
-      setListenerLease({ status: 'unknown', expiresAt: null })
-      return
-    }
-    void refreshListenerLease()
-    const interval = setInterval(() => void refreshListenerLease(), 30_000)
-    return () => clearInterval(interval)
-  }, [user?.id, hasTgSession, refreshListenerLease])
-
-  useEffect(() => {
-    if (!user?.id || !hasTgSession) return
-
-    let cancelled = false
-    let rt: ReturnType<typeof supabase.channel> | null = null
-
-    void whenRealtimeReady(user.id).then(() => {
-      if (cancelled) return
-      rt = supabase
-        .channel(`worker_session_leases_ui:${user.id}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'worker_session_leases',
-            filter: `user_id=eq.${user.id}`,
-          },
-          () => void refreshListenerLease(),
-        )
-        .subscribe()
-    })
-
-    return () => {
-      cancelled = true
-      if (rt) void supabase.removeChannel(rt)
-    }
-  }, [user?.id, hasTgSession, refreshListenerLease])
-
   const loadData = async (opts?: { skipTgFetch?: boolean; backgroundTgFetch?: boolean; forceTgFetch?: boolean }) => {
     const [channelsRes, sessionRes, discordInstalls, whatsappSession, tradingViewHooks] = await Promise.all([
       supabase.from('telegram_channels').select('*').eq('user_id', user!.id).order('created_at', { ascending: false }),
@@ -339,7 +292,7 @@ export function CopierEnginePage() {
           : 'idle',
     )
     setLoading(false)
-    if (hasSession) void refreshListenerLease()
+    if (hasSession) void refreshCopierHealth()
     if (hasSession && !opts?.skipTgFetch) {
       const cached = user?.id ? getCachedTgChannels(user.id) : null
       if (cached && !opts?.forceTgFetch) {
@@ -394,8 +347,8 @@ export function CopierEnginePage() {
     setTgCanResendCode(false)
     setTgPassword('')
     setTgStage(nextStage)
-    void refreshListenerLease()
-  }, [user, session?.access_token, EDGE_FN, refreshListenerLease])
+    void refreshCopierHealth()
+  }, [user, session?.access_token, EDGE_FN, refreshCopierHealth])
 
   /** Session revoked server-side — show reconnect UI; never wipe configured channels. */
   const handleTelegramSessionInvalid = useCallback(async () => {
@@ -447,7 +400,7 @@ export function CopierEnginePage() {
       setTgChannels(list)
       if (user?.id) setCachedTgChannels(user.id, list)
       setError('')
-      void refreshListenerLease()
+      void refreshCopierHealth()
     } catch {
       setError(ce.networkError)
     } finally {
@@ -462,7 +415,7 @@ export function CopierEnginePage() {
     ce.failedLoadTgChannels,
     ce.networkError,
     user?.id,
-    refreshListenerLease,
+    refreshCopierHealth,
   ])
 
   const isTgReconnectFlow =
@@ -1039,11 +992,13 @@ export function CopierEnginePage() {
     return t.channelsPage.tabTradingView
   }
 
-  const showListenerLeaseWarning =
-    hasTgSession
-    && hasActiveSubscription
-    && !isTgReconnectFlow
-    && (listenerLease.status === 'expired' || listenerLease.status === 'missing')
+  const healthUi = deriveCopierHealthUi(copierHealth, { hasTelegramSession: hasTgSession })
+  const {
+    telegramLive,
+    telegramReconnectRequired,
+    telegramReconnecting,
+    telegramOffline,
+  } = healthUi
 
   return (
     <PageShell maxWidth="lg" spacing="none" className="space-y-6">
@@ -1127,25 +1082,15 @@ export function CopierEnginePage() {
       ) : source === 'telegram' ? (
       <>
 
-      {showListenerLeaseWarning && (
-        <div className="mb-3 px-4 py-3 bg-warning-50 dark:bg-amber-950/40 border border-warning-200 dark:border-amber-800 rounded-xl text-sm text-warning-800 dark:text-amber-100 flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between">
-          <div className="flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <div>
-              <p className="font-medium">{ce.listenerLeaseExpired}</p>
-              <p className="text-xs mt-0.5 opacity-90">{ce.listenerLeaseExpiredHint}</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2 sm:shrink-0">
-            <Button size="sm" variant="secondary" onClick={() => void fetchTgChannels({ force: true })} loading={loadingTg}>
-              <RefreshCw className="w-3.5 h-3.5" />
-              {t.common.refresh}
-            </Button>
-            <Button size="sm" onClick={() => void reconnectTelegram()}>
-              {ce.reconnectTelegram}
-            </Button>
-          </div>
-        </div>
+      {hasTgSession && !isTgReconnectFlow && (
+        <CopierHealthBanner
+          className="mb-3"
+          onReconnect={() => void reconnectTelegram()}
+          onRefresh={async () => {
+            await refreshCopierHealth()
+            await fetchTgChannels({ force: true })
+          }}
+        />
       )}
 
       {/* Status row */}
@@ -1206,17 +1151,21 @@ export function CopierEnginePage() {
                 <p className="text-xs text-neutral-900 dark:text-neutral-50">{ce.telegramConnectedHint}</p>
               </div>
               <span className="shrink-0 hidden sm:inline-flex gap-1.5">
-                <Badge variant="primary" size="sm">{ce.connected}</Badge>
-                {hasActiveSubscription && listenerLease.status === 'live' && (
+                {telegramLive ? (
+                  <Badge variant="primary" size="sm">{ce.connected}</Badge>
+                ) : telegramReconnectRequired ? (
+                  <Badge variant="error" size="sm">{t.dashboard.copierStatus.reconnectRequired}</Badge>
+                ) : telegramReconnecting ? (
+                  <Badge variant="warning" size="sm">{t.dashboard.copierStatus.reconnecting}</Badge>
+                ) : telegramOffline ? (
+                  <Badge variant="warning" size="sm">{t.dashboard.copierStatus.offline}</Badge>
+                ) : (
+                  <Badge variant="warning" size="sm">{ce.linkedNotReceiving}</Badge>
+                )}
+                {hasActiveSubscription && telegramLive && (
                   <Badge variant="primary" size="sm">{ce.listenerLeaseLive}</Badge>
                 )}
-                {!hasActiveSubscription && listenerLease.status === 'live' && (
-                  <Badge variant="warning" size="sm">{ce.listenerLeaseExpired}</Badge>
-                )}
-                {listenerLease.status === 'unknown' && (
-                  <Badge variant="neutral" size="sm">{ce.listenerLeaseUnknown}</Badge>
-                )}
-                {(listenerLease.status === 'expired' || listenerLease.status === 'missing') && (
+                {!hasActiveSubscription && telegramLive && (
                   <Badge variant="warning" size="sm">{ce.listenerLeaseExpired}</Badge>
                 )}
               </span>
