@@ -146,3 +146,6 @@ verify_jwt = false
 
 [functions.support-translate]
 verify_jwt = false
+
+[functions.support-push]
+verify_jwt = false
