@@ -376,7 +376,14 @@ export function startHttpServer(
           return sendJson(res, 400, { error: 'user_id is required' })
         }
         try {
-          const result = await sessionManager.disconnectTelegramSession(body.user_id)
+          // Who pressed Disconnect, forwarded by the telegram-auth edge function.
+          // Without this the event said "disconnected" and nothing about the caller,
+          // which is exactly what made the 2026-11-19 burst unattributable.
+          const result = await sessionManager.disconnectTelegramSession(body.user_id, {
+            client: headerValue(req.headers['x-client-id']),
+            ip: headerValue(req.headers['x-client-ip']),
+            ua: headerValue(req.headers['x-client-ua']),
+          })
           return sendJson(res, 200, result)
         } catch (err: unknown) {
           return handleTelegramRpcError(res, body.user_id, sessionManager, err, 'Failed to disconnect Telegram')
@@ -865,6 +872,14 @@ async function readText(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = []
   for await (const c of req) chunks.push(c as Buffer)
   return Buffer.concat(chunks).toString('utf8')
+}
+
+/** First string value of a request header, trimmed and capped; undefined when absent. */
+function headerValue(value: string | string[] | undefined, maxLength = 160): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value
+  const trimmed = (raw ?? '').trim()
+  if (!trimmed) return undefined
+  return trimmed.slice(0, maxLength)
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
