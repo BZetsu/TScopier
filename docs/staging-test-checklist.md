@@ -169,7 +169,7 @@ SELECT is_active FROM telegram_channels WHERE id = 'row-1';
 - [ ] Counter increments 1..5 on consecutive failures
 - [ ] At 5: DB update `is_active=false`, `updated_at` set
 - [ ] `auto_disabled` event in `listener_events`
-- [ ] Listener stops polling (no more `poll_peer_resolve_failed` for this channel)
+- [ ] Listener stops polling: no new `poll_peer_resolve_failed` for this channel over at least two minutes, **or** the worker log stops printing `poll peer resolve failed ... channel=<id>` (poll failures are throttled to one row a minute, so a single quiet minute is not proof)
 - [ ] USERNAME_NOT_OCCUPIED counts toward same counter
 - [ ] After disabling: re-enabling via UI (`is_active=true`) resets counter
 - [ ] TIMEOUT errors do NOT count as CHANNEL_INVALID

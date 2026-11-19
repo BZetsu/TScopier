@@ -37,6 +37,7 @@ import {
   pushParsedSignalToTradeWorkerAccept,
 } from './tradeSignalPush'
 import { persistListenerEvent } from './listenerEvents'
+import { PollEventThrottle, POLL_EVENT_WINDOW_MS } from './pollEventThrottle'
 import { getChannelParseContext, invalidateChannelParseCache } from './channelKeywordsCache'
 import { parseChannelMessageSync, parseModificationDeterministic, parseRawChannelMessage } from './parseSignal'
 import { looksLikeTradingSignal, looksLikeTrainingCandidate } from './signalTradingHeuristic'
@@ -606,6 +607,21 @@ export class UserListener {
   private reconnectInFlight: Promise<void> | null = null
   /** Rate-limit AUTH_KEY_DUPLICATED poll_error rows (safety+fast poll can fire every few seconds). */
   private lastAuthKeyDupPollErrorAt = 0
+  /**
+   * Collapses repeated per-channel poll failures into one row per minute.
+   * A dead socket makes every channel on every 3-second tick report the same
+   * error; without this a short outage writes dozens of identical rows.
+   */
+  private pollEventThrottle = new PollEventThrottle(
+    envNumber(process.env.POLL_EVENT_THROTTLE_WINDOW_MS, POLL_EVENT_WINDOW_MS, 5_000, 3_600_000),
+  )
+  /**
+   * Clean reconcile passes ("checked N signals, no mismatch") used to write one row
+   * per channel per sweep — roughly 3,500 rows a day for a twelve-channel account,
+   * with no diagnostic value. One row per channel per hour still proves the sweep
+   * is running.
+   */
+  private reconcileCheckedThrottle = new PollEventThrottle(60 * 60 * 1000)
   private lastAuthKeyDupLogAt = 0
   private lastSavedSession: string
   private readonly canRecreateClient: boolean
@@ -1140,6 +1156,9 @@ export class UserListener {
       }
     }
     this.isConnected = true
+    // Errors from before the reconnect belong to a different episode; do not let
+    // them silence the first error of the next one.
+    this.pollEventThrottle.clear()
     this.startedAt = Date.now()
     this.lastEventAt = Date.now()
     this.lastSuccessfulPollAt = Date.now()
@@ -1727,6 +1746,7 @@ export class UserListener {
           break
         }
         this.isConnected = true
+        this.pollEventThrottle.clear()
         const dialogs = await this.fetchAllDialogs()
         this.connectionTrace('recovery_complete', { source: 'getDialogs', cycleId, attempt: attempt + 1 })
         return dialogs
@@ -3911,14 +3931,7 @@ export class UserListener {
       })
     }
     if (!mismatches.length) {
-      if (stats.checked > 0) {
-        void persistListenerEvent(this.supabase, {
-          userId: this.userId,
-          eventType: 'signal_reconcile_checked',
-          channelRowId: channelRow.id,
-          detail: { source, checked: stats.checked, mismatches: 0 },
-        })
-      }
+      this.persistReconcileChecked(channelRow, source, stats.checked, 0)
       return stats
     }
 
@@ -3945,14 +3958,7 @@ export class UserListener {
     }
     stats.mismatches = actionableMismatches.length
     if (!actionableMismatches.length) {
-      if (stats.checked > 0) {
-        void persistListenerEvent(this.supabase, {
-          userId: this.userId,
-          eventType: 'signal_reconcile_checked',
-          channelRowId: channelRow.id,
-          detail: { source, checked: stats.checked, mismatches: 0, blocked: blockedRevisionIds.length },
-        })
-      }
+      this.persistReconcileChecked(channelRow, source, stats.checked, blockedRevisionIds.length)
       return stats
     }
 
@@ -4285,12 +4291,7 @@ export class UserListener {
         msg,
       )
       incMetric('poll_peer_resolve_failed')
-      void persistListenerEvent(this.supabase, {
-        userId: this.userId,
-        eventType: 'poll_peer_resolve_failed',
-        channelRowId: row.id,
-        detail: { error: msg.slice(0, 300) },
-      })
+      this.persistPollFailure('poll_peer_resolve_failed', row.id, msg)
       return 'failed'
     }
     let minId = Number(row.last_seen_message_id ?? 0)
@@ -4324,12 +4325,7 @@ export class UserListener {
         msg,
       )
       incMetric('poll_get_messages_failed')
-      void persistListenerEvent(this.supabase, {
-        userId: this.userId,
-        eventType: 'poll_error',
-        channelRowId: row.id,
-        detail: { error: msg.slice(0, 300), min_id: minId },
-      })
+      this.persistPollFailure('poll_error', row.id, msg, { min_id: minId })
       return 'failed'
     }
 
@@ -4448,12 +4444,7 @@ export class UserListener {
       }
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[userListener] warmChannelEntity failed channel=${row.id}:`, msg)
-      void persistListenerEvent(this.supabase, {
-        userId: this.userId,
-        eventType: 'peer_resolve_failed',
-        channelRowId: row.id,
-        detail: { error: msg.slice(0, 300) },
-      })
+      this.persistPollFailure('peer_resolve_failed', row.id, msg)
     }
   }
 
@@ -4839,6 +4830,72 @@ export class UserListener {
     }
   }
 
+  /**
+   * Record a clean reconcile pass at most once an hour per channel.
+   *
+   * These rows exist only to prove the sweep is running, so writing one per channel
+   * per minute made the audit trail unusable: ~3,500 rows a day for one account.
+   * `repeats` carries how many passes were folded in since the previous row.
+   */
+  private persistReconcileChecked(
+    channelRow: ChannelRow,
+    source: string,
+    checked: number,
+    blocked: number,
+  ): void {
+    if (checked <= 0) return
+    const decision = this.reconcileCheckedThrottle.shouldEmit(
+      `signal_reconcile_checked|${channelRow.id}`,
+      Date.now(),
+      channelRow.id,
+    )
+    if (!decision.emit) return
+    void persistListenerEvent(this.supabase, {
+      userId: this.userId,
+      eventType: 'signal_reconcile_checked',
+      channelRowId: channelRow.id,
+      detail: {
+        source,
+        checked,
+        mismatches: 0,
+        ...(blocked > 0 ? { blocked } : {}),
+        ...(decision.repeats > 0 ? { repeats: decision.repeats } : {}),
+      },
+    })
+  }
+
+  /**
+   * Write a polling-failure event unless the same error was already written in
+   * the last minute; when repeats were hidden, the row says how many.
+   *
+   * Keys exclude the channel on purpose: one outage covers every channel, so
+   * the operator wants one row, not one per channel.
+   */
+  private persistPollFailure(
+    eventType: 'poll_error' | 'poll_peer_resolve_failed' | 'peer_resolve_failed',
+    channelRowId: string | undefined,
+    message: string,
+    extra: Record<string, unknown> = {},
+  ): void {
+    const key = `${this.clientGeneration}|${eventType}|${message}`
+    const decision = this.pollEventThrottle.shouldEmit(key, Date.now(), channelRowId)
+    if (!decision.emit) return
+    void persistListenerEvent(this.supabase, {
+      userId: this.userId,
+      eventType,
+      // One affected channel. When `repeat_channels` is present the failure hit
+      // that many distinct channels, not this one alone.
+      channelRowId,
+      detail: {
+        error: message.slice(0, 300),
+        ...extra,
+        ...(decision.repeats > 0
+          ? { repeats: decision.repeats, repeat_channels: decision.repeatSources }
+          : {}),
+      },
+    })
+  }
+
   private noteAuthKeyDuplicated(
     source: string,
     channelRowId?: string,
@@ -5134,6 +5191,8 @@ export class UserListener {
           return
         }
         this.isConnected = true
+        // New connection, new episode: the first failure after it must be written.
+        this.pollEventThrottle.clear()
         this.resetTelegramBackoffState()
         this.lastSuccessfulPollAt = Date.now()
         // Deliberately NOT seeding lastPollCycleCompletedAt here: a reconnect

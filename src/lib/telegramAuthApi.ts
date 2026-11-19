@@ -61,6 +61,26 @@ export type TelegramAuthErrorMessages = {
   noPendingPhoneAuth?: string
 }
 
+/**
+ * Per-tab identifier sent with every Telegram call.
+ *
+ * TEMPORARY (2026-11-19 investigation): Telegram sessions were being disconnected in
+ * bursts that the gateway log could not attribute to a client. sessionStorage is
+ * per-tab, so this distinguishes one tab from several devices. Remove together with
+ * the trace line in the `telegram-auth` edge function.
+ */
+function telegramClientId(): string {
+  try {
+    const existing = window.sessionStorage.getItem('uc-tg-client-id')
+    if (existing) return existing
+    const created = (crypto.randomUUID?.() ?? `c${Date.now()}${Math.random().toString(16).slice(2)}`)
+    window.sessionStorage.setItem('uc-tg-client-id', created)
+    return created
+  } catch {
+    return '-'
+  }
+}
+
 export async function callTelegramAuth<T>(
   edgeFnUrl: string,
   accessToken: string | undefined,
@@ -73,6 +93,7 @@ export async function callTelegramAuth<T>(
       Authorization: `Bearer ${accessToken}`,
       apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
       'Content-Type': 'application/json',
+      'x-client-id': telegramClientId(),
     },
     body: JSON.stringify({ action, ...body }),
   })

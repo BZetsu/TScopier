@@ -424,7 +424,7 @@ Create 500+ `telegram_channels` rows across the synthetic users. Monitor:
 - Poll queue build-up
 - Reconnect time
 - Memory for channel state
-- No `poll_peer_resolve_failed` for real channels
+- No `poll_peer_resolve_failed` for real channels (remember these rows are throttled to one per minute per error, so watch the worker log for tick-level failures)
 
 ### 7.4 Concurrent Signal Stress
 

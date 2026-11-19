@@ -43,6 +43,7 @@
  *   openai_key_invalid      { grace_seconds: number }
  *   support_notify_backlog  { max_wait_minutes: number }    // unsent support notifications
  *   listener_stall_heal     { refused_min: number, heals_min: number }  // windowed; refused = hourly heal budget spent
+ *   mtapi_old_version      { max_accounts: number, max_rows: number, persistence_minutes: number }  // windowed; any account refused with OLD_VERSION = bridge Manager API build below the broker minimum
  *
  * OpenAI health is the one external dependency this evaluator probes
  * itself: every run makes a one-token request and writes the outcome to
@@ -59,7 +60,11 @@
  */
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "jsr:@supabase/supabase-js@2";
+// Pinned to 2.119.1, not `@2`: on 2026-11-19 npm's `latest` moved to 2.119.2,
+// whose dependency `@supabase/auth-js@2.119.2` has a missing tarball (404), so
+// the edge bundler fails with "Failed caching npm package". Bump deliberately
+// once 2.119.3+ is fully published.
+import { createClient } from "npm:@supabase/supabase-js@2.119.1";
 import { isReconcileDriftRow, reconnectRequiredUserIds, persistenceStep, nextEscalation, shouldSuppressRecovery, SEVERITY_RANK } from "../_shared/alertEvalRules.ts";
 
 const corsHeaders = {
@@ -104,6 +109,8 @@ const NEXT_ACTION: Record<string, string> = {
   openai_key_invalid: "The OpenAI API key is invalid or was revoked — create a new key in the OpenAI dashboard and update OPENAI_API_KEY in Supabase edge secrets (and Railway for the worker). Until then AI parsing falls back to the regex parser and complex signals are skipped.",
   cerebras_key_invalid: "Cerebras is unusable — the API key was rejected or the account is out of quota/credit (HTTP 402). Check the Cerebras billing tab and the CEREBRAS_API_KEY secrets (Supabase edge + Railway listener). Cerebras parses most signals, so until this is fixed parsing falls back to OpenAI on every affected request, and complex signals may be skipped.",
   support_notify_backlog: "Support notifications are stuck: new tickets and human requests are not reaching the team by email. The tickets are still in the desk; check the support-notify function (its key and logs) and the Resend sending domain. Nothing is lost — the waiting rows send once the cause is fixed.",
+  mtapi_old_version:
+    "The MTAPI bridge's MT5 Manager API build is older than what the brokers now accept, so every order on the affected accounts is refused at connect time with OLD_VERSION (nothing is sent to the broker). On the Contabo VPS: docker pull timurila/mt5rest, then recreate the container through the redactor installer — cd /root/mtapi-log-redactor && CONTAINER=mtapi IMAGE=timurila/mt5rest HOST_IP=127.0.0.1 HOST_PORT=8080 CONTAINER_PORT=80 bash ./install.sh. Verify: curl -s \"http://127.0.0.1:8080/CheckConnect?id=<current session>\" prints OK. Brokers roll the minimum out over hours, so expect accounts to fail in waves. Do NOT replay the failed signals — their prices are hours old.",
 };
 
 const EMAIL_BATCH_LIMIT = 25;
@@ -709,6 +716,63 @@ async function evalExecutionsFailing(sb: any, rule: RuleRow, nowMs: number): Pro
   };
 }
 
+/**
+ * MT5 Manager API build below the broker's minimum (2026-11-19 incident).
+ *
+ * `mt5rest` runs no MetaTrader terminal: it logs in to each broker's trade
+ * server with the MT5 Manager API client bundled in the image. When a broker
+ * raises its minimum accepted build, `MT5API.Connect()` throws
+ * `ServerException: OLD_VERSION` — the bridge cannot open the manager session,
+ * so EVERY order on that account is refused before it is sent. Customers see
+ * "No position opened" / `entry_not_opened`, which reads like a parser or a
+ * broker-rejection problem and hides the real cause.
+ *
+ * OLD_VERSION has no benign cause and nothing self-heals, so the FIRST affected
+ * account pages (`max_accounts: 0`, i.e. `accounts.size > 0`). The incident this
+ * was written for refused one account at 02:16 and the rest in waves after it;
+ * waiting for a second account would have re-created the original blind spot for
+ * however long that first broker stayed alone. `max_rows` still covers rows that
+ * arrive without a `broker_account_id`.
+ *
+ * `persistence_minutes` matters here: the condition is bursty (it is true only
+ * while refusals sit inside the trailing window), so without a hold a quiet
+ * ten-minute gap would resolve the event, email "recovered", and then the
+ * cooldown would mute the re-fire while orders were still being refused.
+ */
+async function evalMtapiOldVersion(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutcome> {
+  const maxAccounts = num(rule.threshold.max_accounts, 0);
+  const maxRows = num(rule.threshold.max_rows, 6);
+  const since = new Date(nowMs - rule.window_minutes * 60_000).toISOString();
+  // No `order_close_audit` / reconcile-drift exclusion on purpose: unlike the
+  // generic executions_failing rule, OLD_VERSION is a manager-login refusal, so
+  // close attempts and drift retries are the same failure and all count.
+  const { data, error } = await sb
+    .from("trade_execution_logs")
+    .select("broker_account_id")
+    .eq("status", "failed")
+    .ilike("error_message", "%OLD_VERSION%")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(500);
+  if (error) return { kind: "skip", reason: "trade_execution_logs unreadable" };
+
+  const rows = (data ?? []) as Array<{ broker_account_id?: string | null }>;
+  const accounts = new Set<string>();
+  for (const row of rows) {
+    const id = String(row.broker_account_id ?? "").trim();
+    if (id) accounts.add(id);
+  }
+  const fired = accounts.size > maxAccounts || rows.length > maxRows;
+  return {
+    kind: "ok",
+    fired,
+    value: fired ? Math.max(accounts.size, rows.length) : accounts.size,
+    message: `${accounts.size} MT5 account(s) refused with OLD_VERSION in ${rule.window_minutes}m`
+      + ` (${rows.length} failure rows; limits ${maxAccounts} accounts / ${maxRows} rows).`
+      + " The bridge's Manager API build is below the broker minimum — update the mt5rest image.",
+  };
+}
+
 async function evalDeadLettersHigh(sb: any, rule: RuleRow): Promise<EvalOutcome> {
   const maxOpen = num(rule.threshold.max_open, 20);
   const count = await headCount(sb, "signal_queue_dead_letters", q => q.is("replayed_at", null));
@@ -1083,6 +1147,7 @@ async function evaluate(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutc
     case "cerebras_key_invalid": return evalCerebrasKeyInvalid(sb, rule, nowMs);
     case "support_notify_backlog": return evalSupportNotifyBacklog(sb, rule, nowMs);
     case "listener_stall_heal": return evalListenerStallHeal(sb, rule, nowMs);
+    case "mtapi_old_version": return evalMtapiOldVersion(sb, rule, nowMs);
     default:
       return { kind: "skip", reason: `no evaluator for rule ${rule.code}` };
   }

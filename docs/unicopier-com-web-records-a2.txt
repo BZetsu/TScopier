@@ -1,0 +1,10 @@
+; Cloudflare BIND import — unicopier.com web records only (Step A2)
+; Import via Cloudflare DNS → unicopier.com → Import (BIND file)
+; Proxy: orange (cf-proxied:true) on every record
+
+unicopier.com.		1	IN	A	13.52.188.95 ; cf_tags=cf-proxied:true
+unicopier.com.		1	IN	A	52.52.192.191 ; cf_tags=cf-proxied:true
+www.unicopier.com.	1	IN	A	13.52.188.95 ; cf_tags=cf-proxied:true
+www.unicopier.com.	1	IN	A	52.52.192.191 ; cf_tags=cf-proxied:true
+app.unicopier.com.	1	IN	A	13.52.188.95 ; cf_tags=cf-proxied:true
+app.unicopier.com.	1	IN	A	52.52.192.191 ; cf_tags=cf-proxied:true

@@ -5,7 +5,13 @@ export type AssistantEventType =
   | "telegram_link_attempt"
   | "telegram_link_success"
   | "telegram_link_failed"
-  | "telegram_link_disconnect";
+  | "telegram_link_disconnect"
+  /**
+   * One row per meaningful Telegram auth action with who sent it. Written so the
+   * admin user page can show a burst of disconnects and the client behind each one,
+   * which the gateway log could not attribute. Temporary diagnostic.
+   */
+  | "telegram_auth_action";
 
 let _supabase: SupabaseClient | null = null;
 

@@ -1329,7 +1329,10 @@ export class UserSessionManager {
    * authorization until the user revokes it in Telegram or a future hard-logout
    * flow is designed.
    */
-  async disconnectTelegramSession(userId: string): Promise<{ ok: true }> {
+  async disconnectTelegramSession(
+    userId: string,
+    origin?: { client?: string; ip?: string; ua?: string },
+  ): Promise<{ ok: true }> {
     await this.supabase.from('telegram_auth_pending').delete().eq('user_id', userId)
     if (this.listeners.has(userId)) {
       await this.stopListener(userId)
@@ -1351,6 +1354,14 @@ export class UserSessionManager {
     void persistListenerEvent(this.supabase, {
       userId,
       eventType: 'telegram_link_disconnect',
+      // Record who pressed it. An empty detail was unreadable in the admin:
+      // a burst of disconnects could not be told apart from a connection drop.
+      detail: {
+        source: 'app',
+        ...(origin?.client ? { client: origin.client } : {}),
+        ...(origin?.ip ? { ip: origin.ip } : {}),
+        ...(origin?.ua ? { ua: origin.ua } : {}),
+      },
     })
     return { ok: true }
   }

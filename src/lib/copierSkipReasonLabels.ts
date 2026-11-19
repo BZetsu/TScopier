@@ -56,6 +56,7 @@ export const COPIER_SKIP_REASON_LABELS: Record<string, string> = {
   subscription_inactive: 'Subscription inactive',
   plan_advanced_feature_required: 'Plan upgrade required',
   entry_not_execution_eligible: 'Signal not eligible to trade',
+  entry_missing_predefined_stops: 'Zone signal skipped — no stop or targets and Override settings off',
   duplicate_provider_signal: 'Duplicate signal',
   explicit_stops_required_when_add_to_existing_off: 'SL/TP required for this channel mode',
   entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
@@ -119,6 +120,8 @@ export const COPIER_SKIP_REASON_DETAILS: Record<string, string> = {
     'This feature requires a higher plan. Upgrade in Billing to enable it.',
   entry_not_execution_eligible:
     'The message was parsed but did not meet execution rules (for example missing NOW, SL, or TP cues for this channel).',
+  entry_missing_predefined_stops:
+    'This is a zone-style entry (for example "Gold Sell Zone 3712 - 3718"). It was skipped because the message did not state a stop loss and at least one target, and your account has Override signal SL and Override signal TPs switched off. Turn both Override settings on in Account Configuration, or ask support to review the channel.',
   duplicate_provider_signal:
     'The same provider signal was already processed recently and was not copied again.',
   explicit_stops_required_when_add_to_existing_off:

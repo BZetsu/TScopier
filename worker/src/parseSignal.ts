@@ -952,7 +952,7 @@ function looksLikeStopOrTpAdjustCommand(text: string): boolean {
   )
 }
 
-function parseSlFromText(text: string): number | null {
+export function parseSlFromText(text: string): number | null {
   const cleaned = stripRiskRewardRatioNoise(text)
   // "SL.TP 4105" / "SL/TP 4105" — a combined stop/target label whose price is the stop.
   const slCombinedTarget = cleaned.match(

@@ -170,7 +170,7 @@ Deno.serve(async (req: Request) => {
     const sub = await loadUserSubscription(supabase, authData.user.id)
     const isAdmin = await loadUserIsAdmin(supabase, authData.user.id)
     let plan = effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at)
-    if (!plan && (await hasLiveSubscriptionExtension(supabase, authData.user.id))) {
+    if (!plan && (await hasLiveSubscriptionExtension(supabase, authData.user.id, sub))) {
       // A live admin extension grants Advanced while it is the reason access is alive.
       plan = "advanced"
     }
