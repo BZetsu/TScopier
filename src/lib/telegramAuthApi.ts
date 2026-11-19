@@ -39,7 +39,8 @@ export type TelegramCodeStatusResponse = {
 // requested. The worker only returns a real resend_available_at when Telegram
 // offers an SMS/call resend path; when the code is delivered to the app only,
 // we still enforce this short floor so the button is never instantly clickable.
-export const MIN_RESEND_COOLDOWN_MS = 30_000
+/** Floor before "Send a new code" re-enables for app-only delivery (matches worker reuse window). */
+export const MIN_RESEND_COOLDOWN_MS = 90_000
 
 // Resolve the resend-availability window to pass to the connect flow. When the
 // worker gives none and there is no real resend path (app-only delivery), fall

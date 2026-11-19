@@ -99,6 +99,9 @@ verify_jwt = false
 [functions.email-unsubscribe]
 verify_jwt = false
 
+[functions.public-status]
+verify_jwt = false
+
 [functions.send-subscription-email]
 verify_jwt = false
 
@@ -147,8 +150,5 @@ verify_jwt = false
 [functions.support-translate]
 verify_jwt = false
 
-# Called only by the pg_cron job 'support-notify', which authenticates with the
-# service-role key (same arrangement as alert-evaluator).
-[functions.support-notify]
+[functions.support-push]
 verify_jwt = false
-

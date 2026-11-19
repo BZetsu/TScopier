@@ -594,7 +594,8 @@ export async function pushParsedSignalToTradeWorkerAwait(
 }
 
 /**
- * Listener startup check: TRADE_WORKER_SHARD_URLS count must match TRADE_WORKER_SHARD_COUNT.
+ * Listener startup check: TRADE_WORKER_SHARD_URLS count must match TRADE_WORKER_SHARD_COUNT
+ * and WORKER_SHARD_COUNT when the listener fleet is partitioned.
  * Returns error message or null if valid / not applicable.
  */
 export function validateListenerTradeShardConfig(): string | null {
@@ -611,6 +612,29 @@ export function validateListenerTradeShardConfig(): string | null {
   }
   if (shardUrls.length !== expected) {
     return `TRADE_WORKER_SHARD_URLS has ${shardUrls.length} URL(s) but TRADE_WORKER_SHARD_COUNT=${expected}`
+  }
+
+  const workerCount = Math.max(1, Math.floor(Number(process.env.WORKER_SHARD_COUNT ?? 1)))
+  if (workerCount !== expected) {
+    return `WORKER_SHARD_COUNT=${workerCount} must equal TRADE_WORKER_SHARD_COUNT=${expected}`
+      + ` (and TRADE_WORKER_SHARD_URLS length ${shardUrls.length})`
+  }
+  return null
+}
+
+/**
+ * Shared bound: WORKER_SHARD_ID must be in [0, WORKER_SHARD_COUNT).
+ * Returns error message or null.
+ */
+export function validateWorkerShardBounds(
+  shardId = Math.max(0, Math.floor(Number(process.env.WORKER_SHARD_ID ?? 0))),
+  shardCount = Math.max(1, Math.floor(Number(process.env.WORKER_SHARD_COUNT ?? 1))),
+): string | null {
+  if (!Number.isFinite(shardCount) || shardCount < 1) {
+    return `WORKER_SHARD_COUNT must be a positive integer (got ${process.env.WORKER_SHARD_COUNT})`
+  }
+  if (!Number.isFinite(shardId) || shardId < 0 || shardId >= shardCount) {
+    return `WORKER_SHARD_ID=${shardId} is out of range for WORKER_SHARD_COUNT=${shardCount}`
   }
   return null
 }

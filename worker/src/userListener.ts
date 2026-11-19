@@ -706,8 +706,9 @@ export class UserListener {
   private currentListenerStatus(): SignalListenerState {
     if (this.isConnected) return 'connected'
     if (this.reconnectInFlight || this.deferredRetryTimer) return 'reconnecting'
-    if (this.stopping) return 'disconnected'
-    return 'unknown'
+    // Idle-disconnected must not report `unknown` — that kept UI/trade gates
+    // treating lease-only renew as live while MTProto was down.
+    return 'disconnected'
   }
 
   private updateHealth(
@@ -1305,6 +1306,15 @@ export class UserListener {
     if (this.sessionRevoked) return
     if (this.isConnected) return
     void this.requestReconnect(reason)
+  }
+
+  /**
+   * Lease renew may keep ownership while MTProto is down — force a health write so
+   * UI / trade live gates never treat lease freshness as Connected.
+   */
+  reportLeaseRenewWhileDisconnected(): void {
+    if (this.stopping) return
+    this.updateHealth('lease_renew_while_disconnected', { force: true })
   }
 
   /** Await recovery until MTProto is up, or throw a client-safe busy error. */

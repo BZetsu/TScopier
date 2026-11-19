@@ -1,6 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
 import { logAssistantEvent } from "../_shared/listenerEvents.ts"
+import {
+  hasListenerWorkerUrl,
+  pickListenerWorkerUrl,
+} from "../_shared/workerShard.ts"
 
 /**
  * Thin proxy in front of the worker's MTProto auth API.
@@ -15,6 +19,7 @@ import { logAssistantEvent } from "../_shared/listenerEvents.ts"
  *
  *   The worker is now the single owner of every MTProto socket. This edge
  *   function only authenticates the Supabase user and forwards the request.
+ *   With LISTENER_SHARD_URLS set, each user is routed to their owning shard.
  */
 
 const corsHeaders = {
@@ -26,17 +31,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-Client-Id",
 }
 
-/** Base URL of the Railway worker (public). Accepts with or without https:// — fetch requires a scheme. */
-function normalizeWorkerBaseUrl(raw: string): string {
-  const trimmed = raw.trim().replace(/\/+$/, "")
-  if (!trimmed) return ""
-  if (/^https?:\/\//i.test(trimmed)) return trimmed
-  return `https://${trimmed}`
-}
-
-const WORKER_URL = normalizeWorkerBaseUrl(
-  Deno.env.get("TELEGRAM_LISTENER_URL") ?? Deno.env.get("WORKER_URL") ?? "",
-)
 const WORKER_INTERNAL_TOKEN = Deno.env.get("WORKER_INTERNAL_TOKEN") ?? ""
 
 const ROUTES: Record<string, string> = {
@@ -74,8 +68,8 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders })
     }
 
-    if (!WORKER_URL || !WORKER_INTERNAL_TOKEN) {
-      console.error("telegram-auth: WORKER_URL or WORKER_INTERNAL_TOKEN not configured")
+    if (!hasListenerWorkerUrl() || !WORKER_INTERNAL_TOKEN) {
+      console.error("telegram-auth: LISTENER_SHARD_URLS/TELEGRAM_LISTENER_URL or WORKER_INTERNAL_TOKEN not configured")
       return Response.json(
         { error: "Telegram service is not configured. Contact support." },
         { status: 503, headers: corsHeaders },
@@ -133,7 +127,16 @@ Deno.serve(async (req: Request) => {
     // and let any signed-in user act as (and link Telegram as) someone else.
     delete rest.user_id
 
-    const workerRes = await fetch(`${WORKER_URL}${path}`, {
+    const workerUrl = pickListenerWorkerUrl(user.id)
+    if (!workerUrl) {
+      console.error("telegram-auth: no listener URL for user shard")
+      return Response.json(
+        { error: "Telegram service is not configured. Contact support." },
+        { status: 503, headers: corsHeaders },
+      )
+    }
+
+    const workerRes = await fetch(`${workerUrl}${path}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",

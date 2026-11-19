@@ -163,7 +163,7 @@ import { lossTextClass, pnlSignTextClass } from '../../lib/pnlDisplay'
 import { formatMoneyWithCode } from '../../lib/currency'
 import { platformIconSrc } from '../../lib/activityRoute'
 import { interpolate } from '../../i18n/interpolate'
-import { ListenerLeaseOfflineBanner } from '../../components/dashboard/ListenerLeaseOfflineBanner'
+import { CopierHealthBanner } from '../../components/dashboard/CopierHealthBanner'
 import {
   getLiveFeedGeneration,
   isAuthSessionError,
@@ -219,7 +219,7 @@ interface DashboardStats {
   openTrades: number
   tradesCopiedToday: number
   activeChannels: number
-  copierHealth: 'Stable' | 'Degraded' | 'Offline'
+  brokerCopierTone: 'Stable' | 'Degraded' | 'Offline'
   totalSignals: number
   yesterdayTotalSignals: number
   totalVolume: number
@@ -540,7 +540,7 @@ const DEFAULT_DASHBOARD_STATS: DashboardStats = {
   openTrades: 0,
   tradesCopiedToday: 0,
   activeChannels: 0,
-  copierHealth: 'Stable',
+  brokerCopierTone: 'Stable',
   totalSignals: 0,
   yesterdayTotalSignals: 0,
   totalVolume: 0,
@@ -691,7 +691,7 @@ function mergeDashboardStats(
         accounts: next.accounts,
         activeChannels: next.activeChannels,
         tradesCopiedToday: next.tradesCopiedToday,
-        copierHealth: next.copierHealth,
+        brokerCopierTone: next.brokerCopierTone,
         totalSignals: next.totalSignals,
         yesterdayTotalSignals: next.yesterdayTotalSignals,
         ...(opts.trustOpenTrades
@@ -2009,7 +2009,7 @@ export function DashboardPage() {
       openTrades: resolvedOpenTradesCount,
       tradesCopiedToday: copiedToday,
       activeChannels: channelsRes.data?.length ?? 0,
-      copierHealth: !hasActiveSubscription ? 'Offline' : (activeBrokerCount > 0 ? 'Stable' : 'Offline'),
+      brokerCopierTone: !hasActiveSubscription ? 'Offline' : (activeBrokerCount > 0 ? 'Stable' : 'Offline'),
       totalSignals: (todaySignalsRes.data ?? []).length,
       yesterdayTotalSignals: (yesterdaySignalsRes.data ?? []).length,
       totalVolume,
@@ -3080,9 +3080,9 @@ export function DashboardPage() {
       setStats(s => ({
         ...s,
         accounts: activeCount,
-        copierHealth: !hasActiveSubscription
+        brokerCopierTone: !hasActiveSubscription
           ? 'Offline'
-          : (activeCount > 0 ? (s.copierHealth === 'Offline' ? 'Stable' : s.copierHealth) : 'Offline'),
+          : (activeCount > 0 ? (s.brokerCopierTone === 'Offline' ? 'Stable' : s.brokerCopierTone) : 'Offline'),
       }))
     }
     applyActiveStats(snapshot.map(a => (a.id === id ? { ...a, is_active } : a)))
@@ -3108,7 +3108,7 @@ export function DashboardPage() {
         <DashboardMetricsSkeleton message={t.dashboard.loadingMetrics} />
       ) : (
         <>
-      <ListenerLeaseOfflineBanner />
+      <CopierHealthBanner />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatBlock

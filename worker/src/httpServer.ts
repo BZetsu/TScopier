@@ -234,6 +234,14 @@ export function startHttpServer(
 
       const body = (await readJson(req)) as Body
 
+      // Auth routes must hit the listener shard that owns the user (Edge
+      // LISTENER_SHARD_URLS). Reject early so a mis-routed proxy cannot open a
+      // second MTProto path on the wrong process.
+      if (url.startsWith('/auth/') && body.user_id && !userBelongsToShard(body.user_id)) {
+        console.warn(`[httpServer] wrong_shard auth path=${url} user=${body.user_id}`)
+        return sendJson(res, 200, { ok: false, reason: 'wrong_shard', error: 'wrong_shard' })
+      }
+
       if (url === '/auth/send_code') {
         if (!body.user_id || !body.phone) {
           console.warn(`[httpServer] send_code missing fields user_id=${!!body.user_id} phone=${!!body.phone}`)

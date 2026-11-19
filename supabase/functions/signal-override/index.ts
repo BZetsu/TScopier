@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
+import { pickTradeWorkerUrl } from "../_shared/workerShard.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -48,47 +49,9 @@ async function upsertChannelActiveTradeParams(
   if (error) console.warn(`[signal-override] channel params upsert failed: ${error.message}`)
 }
 
-/** Stable per-user shard hash — must match worker `shardForUserId`. */
-function shardForUserId(userId: string, shardCount: number): number {
-  let h = 0
-  for (let i = 0; i < userId.length; i++) {
-    h = (h * 31 + userId.charCodeAt(i)) | 0
-  }
-  return Math.abs(h) % Math.max(1, shardCount)
-}
-
-function parseShardUrls(raw: string | undefined): string[] {
-  if (!raw?.trim()) return []
-  return raw.split(",").map(s => s.trim().replace(/\/+$/, "")).filter(Boolean)
-}
-
-/**
- * Pick the worker URL for a user, mirroring `pickTradeWorkerUrl` for management
- * actions. Override apply is management-style (modifies open legs), so prefer the
- * mgmt fleet and shard by user so we hit the worker that owns this user's session.
- */
+/** Override apply is management-style — prefer mgmt fleet, else entry shards. */
 function pickWorkerUrl(userId: string): string {
-  const mgmtShardUrls = parseShardUrls(Deno.env.get("TRADE_MGMT_WORKER_SHARD_URLS"))
-  if (mgmtShardUrls.length > 1) {
-    return mgmtShardUrls[shardForUserId(userId, mgmtShardUrls.length)] ?? ""
-  }
-  if (mgmtShardUrls.length === 1) return mgmtShardUrls[0]!
-
-  const mgmtUrl = (Deno.env.get("TRADE_MGMT_WORKER_URL") ?? "").trim().replace(/\/+$/, "")
-  const shardUrls = parseShardUrls(Deno.env.get("TRADE_WORKER_SHARD_URLS"))
-  if (shardUrls.length > 1) {
-    if (mgmtUrl) return mgmtUrl
-    return shardUrls[shardForUserId(userId, shardUrls.length)] ?? ""
-  }
-  if (mgmtUrl) return mgmtUrl
-  if (shardUrls.length === 1) return shardUrls[0]!
-
-  return (
-    Deno.env.get("TRADE_WORKER_URL")
-    ?? Deno.env.get("WORKER_URL")
-    ?? Deno.env.get("WORKER_PUBLIC_URL")
-    ?? ""
-  ).trim().replace(/\/+$/, "")
+  return pickTradeWorkerUrl(userId, { management: true })
 }
 
 type BrokerOutcome = { broker_id: string; applied: number; skipped: number; failed: number }
