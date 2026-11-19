@@ -86,6 +86,42 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: "Unknown action" }, { status: 400, headers: corsHeaders })
     }
 
+    // TEMPORARY TRACE (remove after the 2026-11-19 Telegram disconnect investigation).
+    // Request bodies and actions were invisible in the gateway log, so a burst of
+    // disconnects could not be attributed to a client. Logs the action plus what the
+    // caller sent: a per-tab client id (when the app is built with it), user agent and
+    // the edge-visible client IP.
+    {
+      const forwarded = req.headers.get("x-forwarded-for") ?? ""
+      const clientIp = (req.headers.get("cf-connecting-ip") ?? forwarded.split(",")[0] ?? "").trim()
+      const clientId = (req.headers.get("x-client-id") ?? "").trim() || "-"
+      const ua = (req.headers.get("user-agent") ?? "").trim().slice(0, 120)
+      console.log(
+        `[telegram-auth] action=${action} user=${user.id} client=${clientId} ip=${clientIp || "-"} ua=${ua || "-"}`,
+      )
+      // Only the actions a support conversation would ask about. Polling actions
+      // (qr_status, list_channels) would bury them.
+      const traced = new Set([
+        "send_code",
+        "verify_code",
+        "start_qr_login",
+        "reconnect_telegram",
+        "disconnect_telegram",
+      ])
+      if (traced.has(action)) {
+        logAssistantEvent({
+          userId: user.id,
+          eventType: "telegram_auth_action",
+          detail: {
+            action,
+            client: clientId,
+            ip: clientIp || null,
+            ua: ua || null,
+          },
+        }).catch(() => {}) // fire-and-forget
+      }
+    }
+
     const rest = { ...body }
     delete rest.action
     delete rest.phone_code_hash
