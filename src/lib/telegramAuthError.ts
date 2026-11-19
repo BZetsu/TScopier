@@ -32,6 +32,9 @@ export function resolveTelegramAuthError(
     return messages.noPendingPhoneAuth
       ?? 'Login session expired. Go back and request a new verification code.'
   }
+  if (error === 'wrong_shard' || (typeof error === 'string' && /wrong_shard/i.test(error))) {
+    return 'Telegram listener routing is misconfigured (wrong shard). Contact support.'
+  }
   if (typeof error === 'string' && error.trim()) {
     return error
   }
