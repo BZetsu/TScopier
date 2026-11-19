@@ -2,6 +2,16 @@
 
 ## Changelog
 
+### 2026-11-19 — Fix CopierHealth realtime double-subscribe + wrong_shard auth copy
+
+- **Context:** Production console: `cannot add postgres_changes callbacks for realtime:copier_listener_health:… after subscribe()`; user also reported no Telegram login code after shard fleet cutover.
+- **Plain English:** Dashboard was opening the same Realtime channel twice (status card + banner). That threw in the browser. Separately, login codes only arrive if Edge `LISTENER_SHARD_URLS` count matches every listener’s `WORKER_SHARD_COUNT` and points at listeners (not trade workers).
+- **Root cause (technical):** `useCopierHealth` used a fixed channel name per user; second mount called `.on()` on an already-subscribed channel. Auth returns `wrong_shard` (HTTP 200) when hash routing and listener `WORKER_SHARD_*` disagree.
+- **Fix (files):** `src/hooks/useCopierHealth.ts` unique channel topic + cancel-safe remove; `src/lib/telegramAuthError.ts` clearer `wrong_shard` message.
+- **Tests/verification:** Lint clean on touched files. Ops: confirm prod `LISTENER_SHARD_URLS` length === N and each URL is a listener.
+- **Deploy state:** Frontend fix local until Netlify ship; Edge shard routing already on production.
+- **Follow-ups:** Ship frontend; verify Edge secrets vs Railway listener shard env for this user (`a23f24d9-…` → shard 0 when N=6, shard 4 when N=5).
+
 ### 2026-11-19 — Deploy Edge: shard routing + public-status (production)
 
 - **Context:** User asked to deploy the shard-routing and public-status Edge functions to production.

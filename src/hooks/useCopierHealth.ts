@@ -58,12 +58,16 @@ export function useCopierHealth(userId: string | null | undefined): UseCopierHea
     if (!userId) return
 
     let cancelled = false
+    // Unique topic per hook instance — Dashboard mounts banner + status card
+    // together; reusing `copier_listener_health:${userId}` throws
+    // "cannot add postgres_changes callbacks … after subscribe()".
+    const topic = `copier_listener_health:${userId}:${Math.random().toString(36).slice(2, 9)}`
     let rt: ReturnType<typeof supabase.channel> | null = null
 
     void whenRealtimeReady(userId).then(() => {
       if (cancelled) return
-      rt = supabase
-        .channel(`copier_listener_health:${userId}`)
+      const channel = supabase
+        .channel(topic)
         .on(
           'postgres_changes',
           {
@@ -82,7 +86,12 @@ export function useCopierHealth(userId: string | null | undefined): UseCopierHea
             setSnapshots(count => count + 1)
           },
         )
-        .subscribe()
+      rt = channel
+      channel.subscribe()
+      if (cancelled) {
+        void supabase.removeChannel(channel)
+        rt = null
+      }
     })
 
     return () => {
