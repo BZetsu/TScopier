@@ -92,7 +92,7 @@ const APP_ONLY_SEND_CODE_DEBOUNCE_MS = 90 * 1000
 /** How long to reuse an in-flight phone pending instead of calling Telegram again. */
 export function sendCodeReuseWindowMs(pending: {
   delivery: TelegramCodeDelivery
-  canResend: boolean
+  canResend?: boolean
   nextDelivery?: TelegramCodeDelivery | null
   timeoutSeconds?: number | null
   resendAvailableAt?: number | null

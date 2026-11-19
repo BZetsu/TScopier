@@ -7,8 +7,8 @@
 - **Context:** User: if UI/API says code was sent, why isn’t it on the device — something must be broken.
 - **Plain English:** Our servers honestly reported Telegram’s answer (“code sent via Telegram app, not SMS”). Telegram accepted four `send_code` calls for `a23f24d9-…` (`delivery=app`, `can_resend=false`) after disconnect; the user never tried `verify_code`, then linked with QR. Same day, other users with `delivery=app` *did* verify successfully. So the break is Telegram app-push delivery for some API logins — not a false “sent” from our Edge/worker. Repeated “Send a new code” also **cancels** the previous code.
 - **Root cause (technical):** Known since Aug 2026: GramJS `auth.SendCode` from Railway often returns `SentCodeTypeApp` with no `next_type` SMS/call. App notifications are unreliable for some accounts/regions; each fresh SendCode mints a new `phone_code_hash`. Timeline: disconnect 14:20:25Z → four ok app sends 14:20–14:35Z → QR success 14:36Z. Fleet note: listener shard 5 still missing (`?/6`).
-- **Fix (files):** `authService.sendCodeReuseWindowMs` — 90s reuse for app-only pending; frontend `MIN_RESEND_COOLDOWN_MS=90s`; clearer `tgConnectCodeAppHint` (official Telegram chat + QR preference).
-- **Tests/verification:** `authService.redaction.test.ts` reuse-window cases; ConnectFlow still asserts app hint + QR.
+- **Fix (files):** `authService.sendCodeReuseWindowMs` — 90s reuse for app-only pending (`canResend?` so `PhonePending` typechecks); frontend `MIN_RESEND_COOLDOWN_MS=90s`; clearer `tgConnectCodeAppHint` (official Telegram chat + QR preference).
+- **Tests/verification:** `authService.redaction.test.ts` reuse-window cases; ConnectFlow still asserts app hint + QR; worker `tsc --noEmit` green after optional `canResend`.
 - **Deploy state:** Code local until worker + Netlify ship; prod diagnosis from `listener_events`.
 - **Follow-ups:** Ship listener/frontend; provision listener shard 5 or set N=5; prefer QR for reconnect UX if app OTP keeps failing.
 
