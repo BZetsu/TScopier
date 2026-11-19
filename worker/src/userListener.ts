@@ -615,6 +615,13 @@ export class UserListener {
   private pollEventThrottle = new PollEventThrottle(
     envNumber(process.env.POLL_EVENT_THROTTLE_WINDOW_MS, POLL_EVENT_WINDOW_MS, 5_000, 3_600_000),
   )
+  /**
+   * Clean reconcile passes ("checked N signals, no mismatch") used to write one row
+   * per channel per sweep — roughly 3,500 rows a day for a twelve-channel account,
+   * with no diagnostic value. One row per channel per hour still proves the sweep
+   * is running.
+   */
+  private reconcileCheckedThrottle = new PollEventThrottle(60 * 60 * 1000)
   private lastAuthKeyDupLogAt = 0
   private lastSavedSession: string
   private readonly canRecreateClient: boolean
@@ -3914,14 +3921,7 @@ export class UserListener {
       })
     }
     if (!mismatches.length) {
-      if (stats.checked > 0) {
-        void persistListenerEvent(this.supabase, {
-          userId: this.userId,
-          eventType: 'signal_reconcile_checked',
-          channelRowId: channelRow.id,
-          detail: { source, checked: stats.checked, mismatches: 0 },
-        })
-      }
+      this.persistReconcileChecked(channelRow, source, stats.checked, 0)
       return stats
     }
 
@@ -3948,14 +3948,7 @@ export class UserListener {
     }
     stats.mismatches = actionableMismatches.length
     if (!actionableMismatches.length) {
-      if (stats.checked > 0) {
-        void persistListenerEvent(this.supabase, {
-          userId: this.userId,
-          eventType: 'signal_reconcile_checked',
-          channelRowId: channelRow.id,
-          detail: { source, checked: stats.checked, mismatches: 0, blocked: blockedRevisionIds.length },
-        })
-      }
+      this.persistReconcileChecked(channelRow, source, stats.checked, blockedRevisionIds.length)
       return stats
     }
 
@@ -4825,6 +4818,40 @@ export class UserListener {
         await this.requestReconnect('watchdog')
       }
     }
+  }
+
+  /**
+   * Record a clean reconcile pass at most once an hour per channel.
+   *
+   * These rows exist only to prove the sweep is running, so writing one per channel
+   * per minute made the audit trail unusable: ~3,500 rows a day for one account.
+   * `repeats` carries how many passes were folded in since the previous row.
+   */
+  private persistReconcileChecked(
+    channelRow: ChannelRow,
+    source: string,
+    checked: number,
+    blocked: number,
+  ): void {
+    if (checked <= 0) return
+    const decision = this.reconcileCheckedThrottle.shouldEmit(
+      `signal_reconcile_checked|${channelRow.id}`,
+      Date.now(),
+      channelRow.id,
+    )
+    if (!decision.emit) return
+    void persistListenerEvent(this.supabase, {
+      userId: this.userId,
+      eventType: 'signal_reconcile_checked',
+      channelRowId: channelRow.id,
+      detail: {
+        source,
+        checked,
+        mismatches: 0,
+        ...(blocked > 0 ? { blocked } : {}),
+        ...(decision.repeats > 0 ? { repeats: decision.repeats } : {}),
+      },
+    })
   }
 
   /**
