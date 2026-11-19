@@ -20,7 +20,10 @@ import { logAssistantEvent } from "../_shared/listenerEvents.ts"
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  // `x-client-id` is sent by the app (one id per browser tab) so events written by
+  // the worker can name the caller. A custom header forces a preflight, so it must
+  // be listed here or the browser blocks every Telegram auth call.
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-Client-Id",
 }
 
 /** Base URL of the Railway worker (public). Accepts with or without https:// — fetch requires a scheme. */
@@ -86,16 +89,15 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: "Unknown action" }, { status: 400, headers: corsHeaders })
     }
 
-    // TEMPORARY TRACE (remove after the 2026-11-19 Telegram disconnect investigation).
-    // Request bodies and actions were invisible in the gateway log, so a burst of
-    // disconnects could not be attributed to a client. Logs the action plus what the
-    // caller sent: a per-tab client id (when the app is built with it), user agent and
-    // the edge-visible client IP.
+    // Who is calling: a per-tab client id (when the app is built with it), the
+    // edge-visible client IP and the browser. Forwarded to the worker so events it
+    // writes (for example a disconnect) name the caller, and logged here because
+    // request bodies and actions were previously invisible in the gateway log.
+    const forwardedFor = req.headers.get("x-forwarded-for") ?? ""
+    const clientIp = (req.headers.get("cf-connecting-ip") ?? forwardedFor.split(",")[0] ?? "").trim()
+    const clientId = (req.headers.get("x-client-id") ?? "").trim() || "-"
+    const ua = (req.headers.get("user-agent") ?? "").trim().slice(0, 120)
     {
-      const forwarded = req.headers.get("x-forwarded-for") ?? ""
-      const clientIp = (req.headers.get("cf-connecting-ip") ?? forwarded.split(",")[0] ?? "").trim()
-      const clientId = (req.headers.get("x-client-id") ?? "").trim() || "-"
-      const ua = (req.headers.get("user-agent") ?? "").trim().slice(0, 120)
       console.log(
         `[telegram-auth] action=${action} user=${user.id} client=${clientId} ip=${clientIp || "-"} ua=${ua || "-"}`,
       )
@@ -136,6 +138,10 @@ Deno.serve(async (req: Request) => {
       headers: {
         "content-type": "application/json",
         "x-internal-token": WORKER_INTERNAL_TOKEN,
+        // Caller identity for the events the worker writes (e.g. a disconnect).
+        ...(clientId !== "-" ? { "x-client-id": clientId } : {}),
+        ...(clientIp ? { "x-client-ip": clientIp } : {}),
+        ...(ua ? { "x-client-ua": ua } : {}),
       },
       body: JSON.stringify({ user_id: user.id, ...rest }),
     })

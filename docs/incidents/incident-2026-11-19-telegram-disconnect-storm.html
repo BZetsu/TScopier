@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Incident 2026-11-19 — Telegram disconnected 13 times in six minutes</title>
+<style>
+  @page { size: A4; margin: 22mm 20mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 10.5px; line-height: 1.5; color: #1f2937; margin: 0; }
+  h1 { font-size: 20px; margin: 0 0 4px; color: #111827; letter-spacing: -0.2px; }
+  .subtitle { font-size: 11.5px; color: #6b7280; margin: 0 0 14px; }
+  h2 { font-size: 13.5px; color: #111827; margin: 20px 0 8px; padding-bottom: 3px; border-bottom: 2px solid #2563eb; }
+  h3 { font-size: 11.5px; color: #111827; margin: 14px 0 6px; }
+  p { margin: 6px 0; }
+  ul, ol { margin: 6px 0; padding-left: 18px; }
+  li { margin: 3px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.8px; }
+  th, td { border: 1px solid #d1d5db; padding: 5px 7px; text-align: left; vertical-align: top; }
+  th { background: #f3f4f6; font-weight: 600; color: #374151; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.3px; background: #f3f4f6; padding: 0 3px; border-radius: 3px; }
+  pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 4px; padding: 8px 10px; overflow-x: auto; }
+  .meta { margin: 10px 0 4px; }
+  .meta td { border: none; border-bottom: 1px solid #e5e7eb; padding: 4px 10px 4px 0; }
+  .meta .lbl { color: #6b7280; font-size: 9.3px; text-transform: uppercase; letter-spacing: 0.4px; width: 16%; }
+  .meta .val { font-weight: 600; color: #111827; width: 34%; }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 9.3px; font-weight: 700; color: #fff; }
+  .pill.mitigated { background: #d97706; }
+  .pill.open { background: #dc2626; }
+  .box { border-left: 4px solid #2563eb; background: #eff6ff; padding: 8px 10px; margin: 10px 0; border-radius: 0 4px 4px 0; }
+  .box.green { border-left-color: #16a34a; background: #f0fdf4; }
+  .box.amber { border-left-color: #d97706; background: #fffbeb; }
+  .box b.tag { display: block; font-size: 9.3px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; color: #374151; }
+  .muted { color: #6b7280; }
+  .bad { color: #b91c1c; font-weight: 700; }
+  .good { color: #15803d; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<h1>Telegram disconnected 13 times in six minutes — repeated Disconnect calls, plus two worker defects</h1>
+<p class="subtitle">Incident report · one customer unable to stay linked · 19 November 2026</p>
+
+<table class="meta">
+  <tr>
+    <td class="lbl">Severity</td><td class="val">Medium — customer cannot stay connected; no money at risk</td>
+    <td class="lbl">Status</td><td class="val"><span class="pill mitigated">MITIGATED</span> status row corrected; worker fixes open</td>
+  </tr>
+  <tr>
+    <td class="lbl">Window</td><td class="val">19 Nov 2026, 09:38:57 → 09:44:09 UTC</td>
+    <td class="lbl">Recurrence</td><td class="val">17 Nov 2026, 14:12:15 UTC — same pattern, 3 calls in 21 ms</td>
+  </tr>
+  <tr>
+    <td class="lbl">Customer</td><td class="val">Toky RAKOTOBE · <code>029ab2db…</code></td>
+    <td class="lbl">Root cause</td><td class="val">Several Disconnect calls inside one second from the client side; worker reconnected a deliberately stopped listener and rejected the "not linked" status write</td>
+  </tr>
+</table>
+
+<h2>1. Executive summary (plain English)</h2>
+<div class="box green">
+  <b class="tag">Plain English</b>
+  A customer spent the morning trying to link his Telegram account. It linked three times and was disconnected thirteen times in six minutes.
+  The long list of identical <b>“Telegram disconnected”</b> lines in the admin is what alarmed support, and it is worth being precise about what those lines mean.
+  Each one is produced by a call to the <b>Disconnect</b> action. A dropped connection never writes this line. In two of the bursts the calls arrived
+  <b>4 times in 314 milliseconds</b> and <b>8 times in 729 milliseconds</b> — far faster than a person can press a button, so more than one client was acting at once.
+  <br><br>
+  We cannot yet name the client, because the logging that records the caller (IP address, browser, per-tab identifier) was switched on at <b>10:59 UTC</b>,
+  seventy-five minutes after his last attempt. The same pattern occurred on <b>17 November</b> — three calls in 21 milliseconds — so this repeats, and it is not a one-off.
+  <br><br>
+  Two problems on our side made the aftermath worse. First, after the account was deliberately disconnected, the worker still tried to bring the listener back.
+  Second, the status write that should have marked the account <b>not linked</b> was refused as <i>stale ownership</i>, so the admin kept saying <b>linked</b>
+  while the database held no Telegram session at all. That mismatch is exactly what invites a customer to keep pressing Disconnect.
+  <br><br>
+  The account is now in a truthful state. Nothing was traded, no position was opened and no money is at risk. The customer needs to link once more,
+  from a single tab, on a freshly loaded page.
+</div>
+
+<h2>2. Issue encountered</h2>
+<table>
+  <tr><th style="width:30%">Time (UTC)</th><th>What happened</th></tr>
+  <tr><td>09:38:09</td><td>Link #1 by phone code — session <code>0fb59f03</code></td></tr>
+  <tr><td>09:38:33</td><td>Worker stops the listener for a reconnect attempt</td></tr>
+  <tr><td>09:38:57</td><td>Disconnect ×1</td></tr>
+  <tr><td>09:42:15</td><td>Link #2 — session <code>beca85f1</code></td></tr>
+  <tr><td>09:42:21.818 – 09:42:22.132</td><td><span class="bad">Disconnect ×4 in 314 ms</span></td></tr>
+  <tr><td>09:43:46</td><td>Link #3 — session <code>3462302b</code></td></tr>
+  <tr><td>09:44:08.643 – 09:44:09.371</td><td><span class="bad">Disconnect ×8 in 729 ms</span></td></tr>
+  <tr><td>09:47:07</td><td>Session deleted, listener stopped — 0 sessions</td></tr>
+</table>
+
+<p>Same customer, two days earlier:</p>
+<table>
+  <tr><th style="width:40%">Time (UTC)</th><th>Calls</th></tr>
+  <tr><td>17 Nov 2026, 14:12:15.581 / .592 / .601</td><td><span class="bad">3 Disconnect calls in 21 ms</span></td></tr>
+  <tr><td>18 Nov 2026, 15:27:41</td><td>1 Disconnect call</td></tr>
+</table>
+
+<p>Link activity per day: 17 Nov — 5 attempts, 1 success, 3 disconnects; 18 Nov — 2 / 1 / 1; 19 Nov — <b>17 / 3 / 13</b>.</p>
+
+<h2>3. Affected user</h2>
+<table>
+  <tr><th>User</th><th>Plan</th><th>Broker</th><th>Channels</th><th>Link attempts (19 Nov)</th><th>Telegram sessions now</th></tr>
+  <tr>
+    <td>Toky RAKOTOBE<br><span class="muted">029ab2db…</span></td>
+    <td>basic, active</td>
+    <td>1, connected</td>
+    <td>2, active (kept on disconnect)</td>
+    <td>17</td>
+    <td><span class="bad">0</span></td>
+  </tr>
+</table>
+<p>No trades were placed for this account during the window: no position was opened and no money was affected.</p>
+
+<h2>4. Root cause (technical)</h2>
+<h3>4.1 One writer, one row per call</h3>
+<p>
+  <code>telegram_link_disconnect</code> is written only by <code>disconnectTelegramSession</code>
+  (<code>worker/src/sessionManager.ts</code>, ~1303–1351). It is reached only through
+  <code>/auth/disconnect_telegram</code> (<code>worker/src/httpServer.ts:374</code>), which the app calls from the
+  Disconnect button (<code>src/pages/dashboard/CopierEnginePage.tsx:373–397</code>, <code>953–955</code>) via the
+  <code>telegram-auth</code> edge function. The edge function forwards with one <code>fetch</code> and no retry, and the
+  client wrapper has no retry either, so N rows means N separate calls.
+</p>
+<h3>4.2 The bursts are not human input</h3>
+<p>
+  4 calls in 314 ms, 8 calls in 729 ms, and 3 calls in 21 ms on 17 November. A connection drop never writes this event;
+  drops appear in <code>copier_listener_health</code> (<code>last_disconnected_at</code>) and the connection trace.
+</p>
+<h3>4.3 Not attributable retrospectively</h3>
+<p>
+  The <code>telegram_auth_action</code> trace (action, client id, IP, user agent) was deployed to production at 10:59 UTC,
+  after the last call at 09:44. There are no trace rows for this user, so the responsible client(s) cannot be named from
+  today's data. The next attempt will be attributable.
+</p>
+<h3>4.4 Worker defect A — reconnect after an intentional disconnect</h3>
+<p>
+  At 09:42:25 the lease loop logged <code>listener disconnected but renewing lease anyway … kicking reconnect in background</code>
+  for an account whose session had just been deleted. The reconnect cannot succeed (there is no session) and it races the disconnect.
+</p>
+<h3>4.5 Worker defect B — the "not linked" status write was refused</h3>
+<p>
+  <code>[copierHealth] upsert rejected (stale ownership)</code> at 09:38:34 and 09:43:55. The disconnect path writes
+  <code>telegramAccountStatus: 'not_linked'</code>, but the write was refused, so the row kept
+  <code>telegram_account_status = 'linked'</code> while <code>telegram_sessions</code> was empty. That is the state the app reads.
+</p>
+
+<h2>5. The fix</h2>
+<p>Applied immediately at 14:23 UTC — one row, no code:</p>
+<pre>update copier_listener_health
+set telegram_account_status = 'not_linked',
+    listener_status         = 'disconnected',
+    copier_engine_status    = 'stopped',
+    worker_ownership_status = 'unowned',
+    mtproto_connected       = false,
+    health_reason           = 'user_disconnected_telegram',
+    updated_at              = now()
+where user_id = '029ab2db-98ed-4abe-8704-5c09959b91b8';</pre>
+<div class="box amber">
+  <b class="tag">Still open</b>
+  <ol>
+    <li>Make <code>/auth/disconnect_telegram</code> idempotent and debounced, so repeated calls collapse into one operation and one row.</li>
+    <li>Do not reconnect a listener whose session was deleted on purpose — the lease loop must respect a deliberate stop.</li>
+    <li>Let the disconnect health write succeed without a lease, so <code>not_linked</code> always lands.</li>
+    <li>Consider an admin action “reset Telegram state” that clears session, pending auth, leases and health in one step.</li>
+  </ol>
+</div>
+
+<h2>6. Files changed</h2>
+<p>None in code for this incident. The only change is the corrected <code>copier_listener_health</code> row.</p>
+<table>
+  <tr><th style="width:46%">File</th><th>Relevance</th></tr>
+  <tr><td><code>worker/src/sessionManager.ts</code></td><td><code>disconnectTelegramSession</code>; lease renew loop (“renewing lease anyway”)</td></tr>
+  <tr><td><code>worker/src/httpServer.ts</code></td><td><code>/auth/disconnect_telegram</code></td></tr>
+  <tr><td><code>supabase/functions/telegram-auth/index.ts</code></td><td>Proxy and the temporary <code>telegram_auth_action</code> trace</td></tr>
+  <tr><td><code>src/pages/dashboard/CopierEnginePage.tsx</code></td><td>Disconnect button and <code>clearTelegramConnection</code></td></tr>
+</table>
+
+<h2>7. Verification</h2>
+<table>
+  <tr><th style="width:52%">Check</th><th>Value after the correction</th></tr>
+  <tr><td><code>copier_listener_health.telegram_account_status</code></td><td class="good">not_linked</td></tr>
+  <tr><td><code>health_reason</code></td><td>user_disconnected_telegram</td></tr>
+  <tr><td><code>telegram_sessions</code> rows for the user</td><td>0 (unchanged)</td></tr>
+  <tr><td><code>telegram_auth_pending</code> rows</td><td>0</td></tr>
+  <tr><td><code>worker_session_leases</code> rows</td><td>0</td></tr>
+  <tr><td>Telegram account claim</td><td>kept (<code>+26138…</code>)</td></tr>
+  <tr><td>Channels</td><td>2, both active and kept</td></tr>
+</table>
+
+<h2>8. Deployment status</h2>
+<p>
+  Status correction applied to production (<code>sxkpcovbyaficvtkpsdo</code>) at 14:23 UTC. No code deployed for this
+  incident. The <code>telegram_auth_action</code> trace that will identify the calling client is already live in
+  production since 10:59 UTC.
+</p>
+
+<h2>9. Follow-ups</h2>
+<ol>
+  <li>Ask the customer to close every other tab and device, hard-refresh, then link once. Record the exact time.</li>
+  <li>On the next attempt, read <code>telegram_auth_action</code> rows for the user: one row per call with <code>client</code>, <code>ip</code> and <code>ua</code>. That names the source of any burst.</li>
+  <li>Ship the three worker/app fixes above as one change.</li>
+  <li>Consider disabling the Disconnect button while its call is in flight, and ignoring repeat presses for a few seconds.</li>
+</ol>
+
+<p class="muted" style="margin-top:14px;font-size:9px;">
+  Sources: <code>listener_events</code> and <code>copier_listener_health</code> (production), Railway service logs for
+  <code>Listener-shared-0</code> (09:37–09:45 UTC), and the code paths listed in section 6.
+</p>
+
+</body>
+</html>
