@@ -82,6 +82,26 @@ const CLEANUP_INTERVAL_MS = 60 * 1000
 const PENDING_DB_TTL_MS = 12 * 60 * 1000
 /** Ignore a second Send Code click this soon; after this, request a new Telegram code. */
 const SEND_CODE_DEBOUNCE_MS = 15 * 1000
+/**
+ * App-only delivery (no SMS/call next_type) is fragile: each fresh auth.SendCode
+ * invalidates the previous phone_code_hash. Reuse the pending attempt longer so
+ * "Send a new code" does not cancel a code that is still in flight to the device.
+ */
+const APP_ONLY_SEND_CODE_DEBOUNCE_MS = 90 * 1000
+
+/** How long to reuse an in-flight phone pending instead of calling Telegram again. */
+export function sendCodeReuseWindowMs(pending: {
+  delivery: TelegramCodeDelivery
+  canResend: boolean
+  nextDelivery?: TelegramCodeDelivery | null
+  timeoutSeconds?: number | null
+  resendAvailableAt?: number | null
+}): number {
+  if (pending.delivery === 'app' && !pendingCanResend(pending)) {
+    return APP_ONLY_SEND_CODE_DEBOUNCE_MS
+  }
+  return SEND_CODE_DEBOUNCE_MS
+}
 /** Longer DB TTL while waiting for Two-Step Verification password. */
 const PENDING_DB_PASSWORD_TTL_MS = 20 * 60 * 1000
 const QR_FIRST_TOKEN_WAIT_MS = 15_000
@@ -949,7 +969,8 @@ export class AuthService {
         throw new Error('Telegram Two-Step Verification password is already required for this login.')
       }
       const ageMs = this.now() - existingPending.createdAt
-      if (existingPending.createdAt > 0 && ageMs >= 0 && ageMs < SEND_CODE_DEBOUNCE_MS) {
+      const reuseMs = sendCodeReuseWindowMs(existingPending)
+      if (existingPending.createdAt > 0 && ageMs >= 0 && ageMs < reuseMs) {
         const status = pendingCodeStatus(existingPending, this.now())
         logAuthEvent('send_code_existing_pending', {
           userId,
@@ -958,6 +979,7 @@ export class AuthService {
           nextDelivery: status.next_delivery,
           resendWaitSeconds: status.resend_wait_seconds,
           pendingAgeMs: ageMs,
+          reuseWindowMs: reuseMs,
         })
         return status
       }
@@ -965,6 +987,7 @@ export class AuthService {
         userId,
         correlationId,
         pendingAgeMs: existingPending.createdAt > 0 ? ageMs : null,
+        reuseWindowMs: reuseMs,
       })
     }
 

@@ -60,7 +60,8 @@ describe('TelegramConnectFlow phone-code fallback state', () => {
     const html = renderFlow({ codeDelivery: 'app', nextCodeDelivery: null, canResend: false })
 
     expect(html).toContain('Telegram sent the login code through the Telegram app.')
-    expect(html).toContain('The code is NOT sent by SMS.')
+    expect(html).toContain('It is NOT an SMS.')
+    expect(html).toContain('Connect with QR')
     expect(html).toContain('Send a new code')
     expect(html).toContain('Connect with QR instead')
     expect(html).not.toContain('Request another delivery method')

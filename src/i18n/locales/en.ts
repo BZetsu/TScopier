@@ -1937,7 +1937,7 @@ export const en: Translations = {
     verificationPlaceholder: '12345',
     sentTo: 'Sent to {phone}',
     tgConnectCodeAppHint:
-      'Open Telegram on your phone and look for a message from Telegram containing the 5-digit login code. The code is NOT sent by SMS.',
+      'Open Telegram on your phone → open the chat with the official “Telegram” account (or Saved Messages) and look for the 5-digit login code. It is NOT an SMS. Requesting another code cancels the previous one — prefer Connect with QR if the code never appears.',
     sendNewCode: 'Send a new code',
     twoFaPassword: '2FA password',
     twoFaPlaceholder: 'Your Telegram password',

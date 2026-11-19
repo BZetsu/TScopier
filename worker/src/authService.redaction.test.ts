@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { redactAuthLogValue, sentCodeDelivery, sentCodeStatus } from './authService'
+import {
+  redactAuthLogValue,
+  sendCodeReuseWindowMs,
+  sentCodeDelivery,
+  sentCodeStatus,
+} from './authService'
 
 describe('redactAuthLogValue', () => {
   it('redacts phone numbers with a stable non-reversible identifier', () => {
@@ -17,6 +22,28 @@ describe('redactAuthLogValue', () => {
     assert.equal(redactAuthLogValue('auth_session_string', 'session-secret'), '[redacted]')
     assert.equal(redactAuthLogValue('password', 'cloud-password'), '[redacted]')
     assert.equal(redactAuthLogValue('code', '12345'), '[redacted]')
+  })
+})
+
+describe('sendCodeReuseWindowMs', () => {
+  it('keeps app-only pending codes alive longer so retries do not invalidate them', () => {
+    assert.equal(
+      sendCodeReuseWindowMs({ delivery: 'app', canResend: false }),
+      90_000,
+    )
+  })
+
+  it('uses the short window when Telegram offers another delivery method', () => {
+    assert.equal(
+      sendCodeReuseWindowMs({
+        delivery: 'app',
+        canResend: true,
+        nextDelivery: 'sms',
+        timeoutSeconds: 30,
+        resendAvailableAt: Date.now() + 30_000,
+      }),
+      15_000,
+    )
   })
 })
 
