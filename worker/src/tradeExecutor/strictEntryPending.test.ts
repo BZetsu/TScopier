@@ -107,7 +107,7 @@ function makePrep(overrides: {
     // expose for assertions
     __sends: sends,
     __inserts: inserts,
-  } as PreparedEntry & { __sends: unknown[]; __inserts: unknown[] }
+  } as unknown as PreparedEntry & { __sends: unknown[]; __inserts: unknown[] }
 }
 
 describe('placeStrictSignalEntryPending percent-split', () => {
@@ -118,7 +118,7 @@ describe('placeStrictSignalEntryPending percent-split', () => {
         { volume: 1.5, takeprofit: 64000, comment: 'UniCopier:test:sig-1:tp2' },
         { volume: 1.0, takeprofit: 63900, comment: 'UniCopier:test:sig-1:tp3' },
       ],
-    }) as PreparedEntry & { __sends: Array<Record<string, unknown>>; __inserts: Array<{ table: string; row: Record<string, unknown> }> }
+    }) as unknown as PreparedEntry & { __sends: Array<Record<string, unknown>>; __inserts: Array<{ table: string; row: Record<string, unknown> }> }
 
     const ok = await placeStrictSignalEntryPending(prep.ctx, prep, true)
     assert.equal(ok, true)
@@ -148,7 +148,7 @@ describe('placeStrictSignalEntryPending percent-split', () => {
         { volume: 0.5, takeprofit: 64000, comment: 'UniCopier:test:sig-1:tp1' },
         { volume: 0.5, takeprofit: 64000, comment: 'UniCopier:test:sig-1:tp1' },
       ],
-    }) as PreparedEntry & { __sends: Array<Record<string, unknown>> }
+    }) as unknown as PreparedEntry & { __sends: Array<Record<string, unknown>> }
 
     // multi without TP_BUNDLE → isTpPercentSplitBasket false → aggregate path
     const ok = await placeStrictSignalEntryPending(prep.ctx, prep, false)

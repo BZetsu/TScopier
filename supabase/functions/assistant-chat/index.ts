@@ -2649,7 +2649,7 @@ Deno.serve(async (req: Request) => {
     if (!EXECUTABLE_MUTATIONS.has(tool)) {
       return bad(400, "Tool cannot be executed directly");
     }
-    const args = sanitizeToolArgs({ ...(execute.args ?? {}), confirmed: true });
+    const args = sanitizeToolArgs({ ...(execute.args ?? {}), confirmed: true }) as Record<string, unknown>;
     const result = verifyToolResult(tool, await executeTool(supabase, userId, tool, args));
     let parsed: { ok?: boolean; error?: string } = {};
     try {

@@ -195,11 +195,8 @@ test('expired trial with a live extension keeps running', () => {
   assert.equal(subscriptionBlocksSignalExecution(basic, basicSettings, false, future), null)
 })
 
-test('a live extension keeps plan limits: basic cannot use advanced features', () => {
-  assert.equal(
-    subscriptionBlocksSignalExecution(basic, advancedSettings, false, future),
-    'plan_advanced_feature_required',
-  )
+test('a live extension grants advanced features regardless of the stored plan', () => {
+  assert.equal(subscriptionBlocksSignalExecution(basic, advancedSettings, false, future), null)
 })
 
 test('a live extension keeps plan limits: advanced keeps advanced features', () => {
@@ -209,12 +206,17 @@ test('a live extension keeps plan limits: advanced keeps advanced features', () 
   )
 })
 
-test('a user with no subscription row passes only with a live extension', () => {
-  assert.equal(subscriptionBlocksSignalExecution(null, basicSettings, false, future), null)
+test('an active basic subscription still cannot use advanced features', () => {
+  const liveBasic: UserSubscriptionRow = { ...basic, status: 'active' }
   assert.equal(
-    subscriptionBlocksSignalExecution(null, advancedSettings, false, future),
+    subscriptionBlocksSignalExecution(liveBasic, advancedSettings, false, null),
     'plan_advanced_feature_required',
   )
+})
+
+test('a user with no subscription row passes only with a live extension', () => {
+  assert.equal(subscriptionBlocksSignalExecution(null, basicSettings, false, future), null)
+  assert.equal(subscriptionBlocksSignalExecution(null, advancedSettings, false, future), null)
   assert.equal(subscriptionBlocksSignalExecution(null, basicSettings, false, null), 'subscription_inactive')
 })
 

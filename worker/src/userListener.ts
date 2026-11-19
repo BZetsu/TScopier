@@ -90,6 +90,7 @@ import {
   snapshotsFromTelegramMessages,
   telegramEditDateSec,
   telegramMessageText,
+  revisionBlockedForManagement,
 } from './signalTelegramReconcile'
 import { handleSignalMessageDeleted } from './signalDeletedClose'
 import { evaluateParsedSignalExecutionEligibility, deterministicEntryNeedsAiRepair } from './signalExecutionEligibility'
@@ -591,6 +592,12 @@ export class UserListener {
   private sessionRevoked = false
   private lastEventAt = 0
   private lastSuccessfulPollAt = 0
+  /**
+   * Last time a poll cycle ran to completion, including cycles that found no
+   * new messages. The watchdog probe never touches it, so it is the only
+   * honest signal that the listener is still reading channels.
+   */
+  private lastPollCycleCompletedAt = 0
   private lastReconnectAt = 0
   private lastReconnectEndedAt = 0
   private deferredRetryTimer: NodeJS.Timeout | null = null
@@ -1135,6 +1142,7 @@ export class UserListener {
     this.startedAt = Date.now()
     this.lastEventAt = Date.now()
     this.lastSuccessfulPollAt = Date.now()
+    this.lastPollCycleCompletedAt = Date.now()
     this.updateHealth('listener_started', { force: true })
 
     // Do not await getDialogs warmup here — flood-wait / hung dialogs blocked
@@ -1319,11 +1327,45 @@ export class UserListener {
     return this.resolveChannelPeer(row)
   }
 
-  /** Used by session manager to skip lease renew when listener is stale. */
+  /**
+   * Probe-level health: "the socket answered recently".
+   *
+   * Kept for the health ladder (`resolveCopierEngineState`) and the parked-renew
+   * check. Do NOT use it to decide whether the listener is working: the watchdog
+   * refreshes the same timestamp on every successful `updates.GetState`, so a
+   * listener whose poll loops are wedged still reads as healthy here. Poll
+   * progress is `isPollLoopStalled()`.
+   */
   isListenerHealthy(staleMs: number): boolean {
     const now = Date.now()
     const lastActivity = Math.max(this.lastEventAt, this.lastSuccessfulPollAt)
     return this.isConnected && (lastActivity === 0 || now - lastActivity < staleMs)
+  }
+
+  /**
+   * True when the poll loops have stopped completing cycles.
+   *
+   * Deliberately separate from `isListenerHealthy`: that value is refreshed by
+   * the watchdog probe every 30 s, so a listener whose socket still answers
+   * probes while its polling is wedged looks perfectly healthy there. During
+   * the 2026-11-18 outage the poll loops stopped at 08:27 and nothing noticed
+   * for 82 minutes; this timestamp only advances when a real poll cycle runs.
+   */
+  isPollLoopStalled(staleMs: number): boolean {
+    if (!this.isConnected) return false
+    if (this.lastPollCycleCompletedAt === 0) return false
+    return Date.now() - this.lastPollCycleCompletedAt >= staleMs
+  }
+
+  /**
+   * True while the session is deliberately paused after a Telegram flood wait.
+   *
+   * Used by the session manager's stall heal: a paused listener is silent
+   * because Telegram told it to be, not because it is wedged, so it must never
+   * be hard-reset (that would swap one throttled session for another).
+   */
+  isPollBackoffActive(): boolean {
+    return Date.now() < this.pollBackoffUntil
   }
 
   private async refreshChannelListenerState(): Promise<void> {
@@ -2180,6 +2222,25 @@ export class UserListener {
       telegramMessageId: messageId,
     })
     if (!existing) return false
+    // Management commands are point-in-time: a reconcile revision re-parses the
+    // text and can only lose specificity (a re-parsed "CLOSE TP2" becomes a
+    // full "close" and wipes the basket). Never revise them — and never run a
+    // revision from an empty fetched text.
+    if (revisionBlockedForManagement(existing.parsed_data)) {
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'message_revision_management_skipped',
+        channelRowId: channelRow.id,
+        telegramMessageId: messageId,
+        detail: {
+          signal_id: existing.id,
+          source,
+          action: String((existing.parsed_data as { action?: unknown } | null)?.action ?? ''),
+        },
+      })
+      return false
+    }
+    if (!rawMessage.trim()) return false
     if (isIncomingRevisionStale(existing.telegram_edit_date_seen, args.telegramEditDateSeen)) {
       void persistListenerEvent(this.supabase, {
         userId: this.userId,
@@ -3851,8 +3912,41 @@ export class UserListener {
       return stats
     }
 
-    stats.mismatches = mismatches.length
+    // Blocked revisions (management actions, empty fetched text) are not real
+    // mismatches: settle them silently so the sweep neither re-flags them every
+    // cycle nor re-parses them. Management commands are point-in-time.
+    const actionableMismatches: typeof mismatches = []
+    const blockedRevisionIds: string[] = []
     for (const candidate of mismatches) {
+      if (
+        revisionBlockedForManagement(candidate.signal.parsed_data)
+        || !candidate.rawMessage.trim()
+      ) {
+        blockedRevisionIds.push(candidate.signal.id)
+      } else {
+        actionableMismatches.push(candidate)
+      }
+    }
+    if (blockedRevisionIds.length) {
+      await markSignalsReconciled(this.supabase, {
+        signalIds: blockedRevisionIds,
+        editDateBySignalId,
+      })
+    }
+    stats.mismatches = actionableMismatches.length
+    if (!actionableMismatches.length) {
+      if (stats.checked > 0) {
+        void persistListenerEvent(this.supabase, {
+          userId: this.userId,
+          eventType: 'signal_reconcile_checked',
+          channelRowId: channelRow.id,
+          detail: { source, checked: stats.checked, mismatches: 0, blocked: blockedRevisionIds.length },
+        })
+      }
+      return stats
+    }
+
+    for (const candidate of actionableMismatches) {
       void persistListenerEvent(this.supabase, {
         userId: this.userId,
         eventType: 'signal_reconcile_mismatch',
@@ -4118,20 +4212,30 @@ export class UserListener {
     if (!this.isConnected) return
     if (Date.now() < this.pollBackoffUntil) return
     const floodAtCycleStart = this.floodErrorsThisCycle
-    const { data: rows } = await this.supabase
-      .from('telegram_channels')
-      .select('id, channel_id, channel_username, display_name, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
-      .eq('user_id', this.userId)
-      .eq('is_active', true)
-      .eq('source_kind', 'telegram')
+    let rows: ChannelRow[]
+    try {
+      const res = await this.supabase
+        .from('telegram_channels')
+        .select('id, channel_id, channel_username, display_name, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
+        .eq('user_id', this.userId)
+        .eq('is_active', true)
+        .eq('source_kind', 'telegram')
+      rows = (res.data ?? []) as ChannelRow[]
+    } catch (err) {
+      // Database trouble must never look like a Telegram stall: the cycle is
+      // still alive, so it is stamped below and the listener is not reset.
+      console.warn(`[userListener] channel list read failed user=${this.userId}:`, err)
+      rows = []
+    }
 
-    const activeRows = ((rows ?? []) as ChannelRow[]).filter(row => !this.isChannelLocallyDisabled(row))
+    const activeRows = rows.filter(row => !this.isChannelLocallyDisabled(row))
     await this.mapWithConcurrency(activeRows, CHANNEL_POLL_CONCURRENCY, async row => {
       await this.pollChannelNewMessages(row).catch(err =>
         console.warn(`[userListener] poll failed channel=${row.id}:`, err),
       )
     })
     this.endPollCycle(floodAtCycleStart)
+    this.lastPollCycleCompletedAt = Date.now()
   }
 
   /**
@@ -5022,6 +5126,9 @@ export class UserListener {
         this.isConnected = true
         this.resetTelegramBackoffState()
         this.lastSuccessfulPollAt = Date.now()
+        // Deliberately NOT seeding lastPollCycleCompletedAt here: a reconnect
+        // must not buy a blind window. If the poll loops fail to resume after
+        // this point (the 2026-11-18 shape), the stall heal has to see it.
         if (reason === 'malformed_rpc_result') {
           this.malformedRpcRecoveryCount = 0
           this.lastMalformedRpcRecoveryAt = 0
@@ -5207,14 +5314,20 @@ export class UserListener {
     try {
       const now = Date.now()
       if (now - this.fastPollRowsAt > SAFETY_POLL_INTERVAL_MS) {
-        const { data } = await this.supabase
-          .from('telegram_channels')
-          .select('id, channel_id, channel_username, display_name, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
-          .eq('user_id', this.userId)
-          .eq('is_active', true)
-          .eq('source_kind', 'telegram')
-        this.fastPollRows = ((data ?? []) as ChannelRow[]).filter(row => !this.isChannelLocallyDisabled(row))
-        this.fastPollRowsAt = now
+        try {
+          const { data } = await this.supabase
+            .from('telegram_channels')
+            .select('id, channel_id, channel_username, display_name, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
+            .eq('user_id', this.userId)
+            .eq('is_active', true)
+            .eq('source_kind', 'telegram')
+          this.fastPollRows = ((data ?? []) as ChannelRow[]).filter(row => !this.isChannelLocallyDisabled(row))
+          this.fastPollRowsAt = now
+        } catch (err) {
+          // Keep the cached rows and let the cycle complete: a failed channel
+          // list read is not a Telegram stall and must not trigger a reset.
+          console.warn(`[userListener] fast poll channel list read failed user=${this.userId}:`, err)
+        }
       }
 
       const floodAtCycleStart = this.floodErrorsThisCycle
@@ -5247,6 +5360,7 @@ export class UserListener {
         )
       })
       this.endPollCycle(floodAtCycleStart)
+      this.lastPollCycleCompletedAt = Date.now()
     } finally {
       this.fastPollInFlight = false
     }

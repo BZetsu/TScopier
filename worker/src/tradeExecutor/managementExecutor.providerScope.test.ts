@@ -97,6 +97,7 @@ function makeSupabase(state: ProviderState) {
     from(table: string) {
       const eqs: Record<string, unknown> = {}
       const ins: Record<string, unknown[]> = {}
+      const iss: Record<string, unknown> = {}
       let limitN = Infinity
       let patch: Row | null = null
 
@@ -104,6 +105,9 @@ function makeSupabase(state: ProviderState) {
         let rows = [...(state.tables[table] ?? [])]
         for (const [key, value] of Object.entries(eqs)) rows = rows.filter(row => row[key] === value)
         for (const [key, values] of Object.entries(ins)) rows = rows.filter(row => values.includes(row[key]))
+        for (const [key, value] of Object.entries(iss)) {
+          rows = rows.filter(row => (value === null ? row[key] == null : row[key] === value))
+        }
         return rows.slice(0, limitN)
       }
       const resolve = () => {
@@ -120,7 +124,7 @@ function makeSupabase(state: ProviderState) {
         eq(key: string, value: unknown) { eqs[key] = value; return query },
         in(key: string, values: unknown[]) { ins[key] = values; return query },
         not() { return query },
-        is() { return query },
+        is(key: string, value: unknown) { iss[key] = value; return query },
         gte() { return query },
         lte() { return query },
         or() { return query },

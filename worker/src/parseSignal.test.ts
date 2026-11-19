@@ -328,7 +328,11 @@ SL: 4577`
     assert.deepEqual(result.parsed.tp, [4557, 4527])
   })
 
-  it('infers TP/SL from bare prices on sell now signal', () => {
+  it('infers an entry zone and SL from a bare A / B pair on a sell now signal', () => {
+    // 2026-11-15 (Martins's entry-preference work): a bare "A / B" pair after
+    // "sell now" is read as a sell entry zone (low/high); the single price
+    // below it becomes the take-profit and the highest price the stop loss.
+    // Previously both pair prices were consumed as separate take-profits.
     const msg = `Gold Sell now:
 4557 / 4527
 4577`
@@ -336,7 +340,9 @@ SL: 4577`
     assert.equal(result.status, 'parsed')
     assert.equal(result.parsed.action, 'sell')
     assert.equal(result.parsed.sl, 4577)
-    assert.deepEqual(result.parsed.tp, [4557, 4527])
+    assert.equal(result.parsed.entry_zone_low, 4527)
+    assert.equal(result.parsed.entry_zone_high, 4557)
+    assert.deepEqual(result.parsed.tp, [4527])
   })
 
   it('parses follow-up sell with @ entry and numbered TPs', () => {
