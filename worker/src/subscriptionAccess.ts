@@ -128,10 +128,10 @@ export function subscriptionBlocksSignalExecution(
   if (isAdmin) return null
   const active = isSubscriptionActive(sub?.status, sub?.trial_ends_at)
   if (!active && !extensionAccessActive(extensionEndMs)) return 'subscription_inactive'
-  // While a trial or an extension keeps access alive, plan limits follow the stored plan.
+  // A live admin extension is granted as Advanced while it is the reason access is alive.
   const plan = active
     ? effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at)
-    : (sub?.plan ?? 'basic')
+    : 'advanced'
   if (plan === 'basic' && brokerManualSettingsUseAdvancedFeatures(manualSettings)) {
     return 'plan_advanced_feature_required'
   }

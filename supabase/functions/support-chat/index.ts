@@ -16,6 +16,8 @@ import {
   normalizeSupportLocale,
   supportReplyLanguageAddon,
 } from "../_shared/supportLocales.ts";
+import { SUPPORT_PRODUCT_MAP, SUPPORT_UI_RULES } from "../_shared/supportProductMap.ts";
+import { READ_ONLY_TOOL_SCHEMAS, runReadOnlyTool } from "../_shared/readOnlyTools.ts";
 import { eagerEnsureTranslation } from "../_shared/supportTranslate.ts";
 
 const corsHeaders = {
@@ -44,7 +46,16 @@ Your job:
 - If the user is frustrated, blocked, asks for a human, or the issue needs account-specific investigation you cannot do, call escalate_to_human.
 - Never invent billing charges, credentials, or internal system details you do not know.
 - Do not discuss unrelated topics; politely steer back to UniCopier support.
-- When escalating, tell the user a human agent will join shortly.`;
+- When escalating, tell the user a human agent will join shortly.
+- For a signed-in customer you can check their real data: list_brokers (is the account
+  connected, is copying on), get_recent_trades (did a trade execute, is it open, what is
+  the ticket) and get_copier_logs (why was a signal skipped or failed). Use the tool
+  before asking the customer to check something, and never ask for a broker password or
+  MT login: the tools already know. Guests have no tools — ask them to sign in for
+  account-specific questions.
+
+${SUPPORT_PRODUCT_MAP}
+${SUPPORT_UI_RULES}`;
 
 type ContentPart =
   | { type: "text"; text: string }
@@ -572,7 +583,12 @@ async function handleSend(
     }
   }
 
+  // Account lookups are only offered to signed-in customers: a guest has no
+  // account to read, and every query is scoped to the authenticated user id.
+  const accountTools = actor.kind === "user" ? [...READ_ONLY_TOOL_SCHEMAS] : [];
+
   const tools = [
+    ...accountTools,
     {
       type: "function",
       function: {
@@ -649,6 +665,13 @@ async function handleSend(
                 ? "Escalated. A human agent will join shortly."
                 : esc.error,
             }),
+          });
+        } else if (actor.kind === "user") {
+          const result = await runReadOnlyTool(admin, actor.userId, name, args);
+          history.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: result ? result.content : JSON.stringify({ error: "Unknown tool" }),
           });
         } else {
           history.push({

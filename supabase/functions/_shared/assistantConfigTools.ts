@@ -127,7 +127,10 @@ export function mergeManualSettings(
   current: Record<string, unknown>,
   patch: Record<string, unknown>,
 ): Record<string, unknown> {
-  const merged = {
+  // Annotated explicitly: spreading Record<string, unknown> into a literal with a
+  // later fixed property made TypeScript drop the index signature, so the two
+  // assignments below failed to type-check.
+  const merged: Record<string, unknown> = {
     ...DEFAULT_MANUAL_SETTINGS,
     ...current,
     ...patch,

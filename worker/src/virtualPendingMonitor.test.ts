@@ -211,7 +211,9 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: null; count?: num
     }
     if (this.table === 'range_pending_legs' && this.selected === 'stoploss,takeprofit,cwe_close_price') {
       this.db.operations.push('sltp-refresh')
-      return { data: { stoploss: 99, takeprofit: 105, cwe_close_price: null }, error: null }
+      // No newer row than the tick snapshot: in production this re-read returns
+      // the same pending row the caller passed, so the snapshot stands.
+      return { data: null, error: null }
     }
     if (this.table === 'signals' && this.selected === 'channel_id') {
       this.db.operations.push('layer-till-close')
@@ -537,7 +539,7 @@ test('VirtualPendingMonitor.fireLeg: stale basket cleanup is skipped, not fired'
   assert.equal(fired.has('signal-1|broker-1'), false)
 })
 
-test('VirtualPendingMonitor.fireLeg: override SL 80 is from fill, not shared basket SL (buy)', async () => {
+test('VirtualPendingMonitor.fireLeg: planned SL is sent frozen, not restamped from the fill (buy)', async () => {
   const h = makeFireLegHarness({
     manual: { use_predefined_sl_pips: true, predefined_sl_pips: 80 },
     openPrice: 1990,
@@ -550,11 +552,13 @@ test('VirtualPendingMonitor.fireLeg: override SL 80 is from fill, not shared bas
   }), 1989.9, 1990)
   assert.equal(result.outcome, 'fired')
   assert.equal(h.brokerSends, 1)
-  assert.equal(h.sendArgs[0]?.stoploss, 1982)
+  // Frozen planned SL 1992 is only nudged by the clamp (ref - minDist), never
+  // restamped to fill - 80 pips (which would be 1982).
+  assert.equal(h.sendArgs[0]?.stoploss, 1989.98)
   assert.ok((h.sendArgs[0]?.stoploss ?? 0) < 1990)
 })
 
-test('VirtualPendingMonitor.fireLeg: override SL 80 is from fill, not shared basket SL (sell)', async () => {
+test('VirtualPendingMonitor.fireLeg: planned SL is sent frozen, not restamped from the fill (sell)', async () => {
   const h = makeFireLegHarness({
     manual: { use_predefined_sl_pips: true, predefined_sl_pips: 80 },
     openPrice: 2010,
@@ -568,11 +572,13 @@ test('VirtualPendingMonitor.fireLeg: override SL 80 is from fill, not shared bas
   }), 2010, 2010.1)
   assert.equal(result.outcome, 'fired')
   assert.equal(h.brokerSends, 1)
-  assert.equal(h.sendArgs[0]?.stoploss, 2018)
+  // Frozen planned SL 2008 is only nudged by the clamp (ref + minDist), never
+  // restamped to fill + 80 pips (which would be 2018).
+  assert.equal(h.sendArgs[0]?.stoploss, 2010.02)
   assert.ok((h.sendArgs[0]?.stoploss ?? 0) > 2010)
 })
 
-test('VirtualPendingMonitor.fireLeg: override TP 30 is from fill, not shared basket TP (buy)', async () => {
+test('VirtualPendingMonitor.fireLeg: planned TP is sent frozen, not restamped from the fill (buy)', async () => {
   const h = makeFireLegHarness({
     manual: { use_predefined_tp_pips: true, predefined_tp_pips: [30] },
     openPrice: 2005,
@@ -585,11 +591,13 @@ test('VirtualPendingMonitor.fireLeg: override TP 30 is from fill, not shared bas
   }), 2004.9, 2005)
   assert.equal(result.outcome, 'fired')
   assert.equal(h.brokerSends, 1)
-  assert.equal(h.sendArgs[0]?.takeprofit, 2008)
+  // Frozen planned TP 2003 is only nudged by the clamp (ref + minDist), never
+  // restamped to fill + 30 pips (which would be 2008).
+  assert.equal(h.sendArgs[0]?.takeprofit, 2005.02)
   assert.ok((h.sendArgs[0]?.takeprofit ?? 0) > 2005)
 })
 
-test('VirtualPendingMonitor.fireLeg: override TP 30 is from fill, not shared basket TP (sell)', async () => {
+test('VirtualPendingMonitor.fireLeg: planned TP is sent frozen, not restamped from the fill (sell)', async () => {
   const h = makeFireLegHarness({
     manual: { use_predefined_tp_pips: true, predefined_tp_pips: [30] },
     openPrice: 1990,
@@ -603,7 +611,9 @@ test('VirtualPendingMonitor.fireLeg: override TP 30 is from fill, not shared bas
   }), 1990, 1990.1)
   assert.equal(result.outcome, 'fired')
   assert.equal(h.brokerSends, 1)
-  assert.equal(h.sendArgs[0]?.takeprofit, 1987)
+  // Frozen planned TP 1997 is only nudged by the clamp (ref - minDist), never
+  // restamped to fill - 30 pips (which would be 1987).
+  assert.equal(h.sendArgs[0]?.takeprofit, 1989.98)
   assert.ok((h.sendArgs[0]?.takeprofit ?? 0) < 1990)
 })
 

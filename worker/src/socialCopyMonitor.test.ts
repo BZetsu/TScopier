@@ -37,7 +37,6 @@ class Query implements PromiseLike<{ data: unknown; error: Row | null }> {
   order(): this { return this }
   eq(key: string, value: unknown): this { this.filters.push(row => row[key] === value); return this }
   in(key: string, values: unknown[]): this { this.filters.push(row => values.includes(row[key])); return this }
-  order(): this { return this }
   limit(): this { return this }
   gte(): this { return this }
   single(): this { this.wantsSingle = true; return this }

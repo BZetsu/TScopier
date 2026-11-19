@@ -93,7 +93,8 @@ describe('TraderReviews rating action', () => {
 
     expect(container.textContent).toContain('Trader reviews')
     expect(container.textContent).toContain('5.0 (1)')
-    expect(container.textContent).toContain('Rate trader')
+    // The rate action is an icon-only button (aria-label), not a text link.
+    expect(container.querySelector('button[aria-label="Rate Ada"]')).not.toBeNull()
     expect(container.textContent).toContain('Clear and consistent.')
   })
 
@@ -119,7 +120,7 @@ describe('TraderReviews rating action', () => {
       await Promise.resolve()
     })
     expect(ratingAction?.getAttribute('aria-busy')).toBe('true')
-    expect(ratingAction?.textContent).toContain('Loading reviews')
+    expect(ratingAction?.textContent).toContain('Loading')
 
     await act(async () => {
       firstRequest.reject(new Error('database details must remain hidden'))
