@@ -39,11 +39,18 @@ function bad(status: number, message: string) {
   return Response.json({ error: message }, { status, headers: corsHeaders });
 }
 
-function isServiceRole(authHeader: string | null): boolean {
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  if (!serviceKey || !authHeader) return false;
+function isAuthorized(authHeader: string | null): boolean {
+  if (!authHeader) return false;
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-  return token === serviceKey;
+  if (!token) return false;
+  // Same multi-key pattern as support-notify: the platform service role may
+  // differ from the Vault key pg_net/cron actually send (ALERT_EVALUATOR_SERVICE_KEY).
+  const accepted = [
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    Deno.env.get("ALERT_EVALUATOR_SERVICE_KEY") ?? "",
+    Deno.env.get("SUPPORT_PUSH_SERVICE_KEY") ?? "",
+  ];
+  return accepted.some((key) => key.length > 0 && token === key);
 }
 
 type ExpoTicket = {
@@ -98,7 +105,8 @@ Deno.serve(async (req) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
   if (req.method !== "POST") return bad(405, "Method not allowed");
-  if (!isServiceRole(req.headers.get("Authorization"))) {
+  const authHeader = req.headers.get("Authorization");
+  if (!isAuthorized(authHeader)) {
     return bad(401, "Unauthorized");
   }
 
@@ -116,10 +124,12 @@ Deno.serve(async (req) => {
     event: payload.event ?? "support",
   };
 
-  const admin = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
+  const callerKey = (authHeader ?? "").replace(/^Bearer\s+/i, "").trim();
+  const dbKey =
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ||
+    Deno.env.get("ALERT_EVALUATOR_SERVICE_KEY") ||
+    callerKey;
+  const admin = createClient(Deno.env.get("SUPABASE_URL")!, dbKey);
 
   let tokenQuery = admin
     .from("support_agent_push_tokens")

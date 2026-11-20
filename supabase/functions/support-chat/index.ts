@@ -625,7 +625,7 @@ async function handleSend(
           messages: history,
           tools,
           tool_choice: "auto",
-          temperature: 0.4,
+          temperature: 0.2,
         }),
       });
 

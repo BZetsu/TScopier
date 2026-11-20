@@ -79,16 +79,23 @@ toggle — it is the first/last selector.
    TradingView are always available.** Discord is available only when the build enables extra
    sources; otherwise its tile reads **Coming soon**. Never tell a customer WhatsApp is
    unsupported.
-3. Telegram: enter the phone number, press **Send Code**, enter the code Telegram sends.
-4. Once linked, the channels that Telegram account belongs to are listed. Add the ones to
-   follow with **Add channel** (or add one manually by name, optional username, optional
-   channel ID).
-5. Per channel: **lot size override**, **pip tolerance override** (or "Use broker default"),
-   and pause.
-
-TradingView: press **Create webhook** to get a Webhook URL and an alert message template,
-with "How to Add to TradingView" steps. Alerts without stop-loss or take-profit prices are
-refused unless the Override options are used.
+3. **Telegram linking (this is the only Telegram path):**
+   - UniCopier links the customer's **own Telegram user account** (MTProto session), not a bot.
+   - Phone flow: enter phone number → **Send Code** → enter the OTP Telegram sends to that
+     account (or QR "Link Desktop Device" when shown).
+   - Once linked, UniCopier lists channels/groups that account already belongs to. Add them
+     with **Add channel** (or add one manually by name, optional username, optional channel ID).
+   - Per channel: **lot size override**, **pip tolerance override** (or "Use broker default"),
+     and pause.
+   - **There is no UniCopier Telegram bot, BotFather step, bot token, Bot API key, or
+     "Telegram API key" field in Settings.** Never ask for a bot API key, bot token, session
+     string, or "make sure your Telegram bot is active". If the customer mentions a bot API
+     key, correct them: UniCopier uses their personal Telegram login only, then escalate if
+     they are still stuck.
+4. WhatsApp: connect via WhatsApp Linked devices (QR), then pick groups to follow.
+5. TradingView: press **Create webhook** to get a Webhook URL and an alert message template,
+   with "How to Add to TradingView" steps. Alerts without stop-loss or take-profit prices are
+   refused unless the Override options are used.
 
 **There is no channel directory.** You cannot browse, search, subscribe to or buy channels
 inside the app. "Popular Channels" was removed. Only channels the linked account can already
@@ -120,13 +127,18 @@ see can be added.
   reports and timestamps), Security (password). Email cannot be changed there.
 - **Contact Support** — the in-app chat with the AI and the option to request a human.
 
-## Screens that do not exist (never suggest these)
+## Screens / concepts that do not exist (never suggest these)
 - A page called "Brokers", "Channels", "Configuration", "Copy Settings", "Risk Management" or
   "Trades" — the real names are Account Configuration, Signals, Copier Process and Account
   Trades.
 - A channel catalogue, marketplace or "browse channels" screen.
 - A dedicated risk or lot settings screen outside the account configuration window.
 - A pips setting.
+- UniCopier Telegram bot settings, BotFather, Telegram Bot API keys/tokens, or "enter your
+  Telegram API key in Settings".
+- Connecting Binance / Bybit / KuCoin / DX-Trade / TradeLocker / MatchTrader / Tradovate as
+  live destinations (they are Coming soon only).
+- Pasting a Telegram session string or MT5 Expert Advisor into UniCopier.
 `;
 
 export const SUPPORT_UI_RULES = `
@@ -141,10 +153,17 @@ export const SUPPORT_UI_RULES = `
 - After two failed attempts, or if the customer says the screen does not match, escalate to a
   human instead of guessing again.
 - WhatsApp, Discord, Telegram and TradingView are all supported signal sources. If a customer
-  asks whether WhatsApp works, the answer is yes, with the steps above.
+  asks whether WhatsApp works, the answer is yes, with the steps above. Discord may show
+  Coming soon depending on the build — only give Discord steps when the map says it is
+  available.
+- Destinations that copy trades today are **MT4, MT5 and cTrader only**. Never invent crypto
+  exchange API-key setup for live copying.
+- Telegram troubleshooting must stay on: Signals → Connect Telegram → phone/OTP or QR → Add
+  channel. Never invent bot status, bot permissions, or API-key checks.
 - Do not describe features that are not in the map. If a customer asks for something the map
   does not cover, say you are not sure and escalate.
 - Never claim to see their screen, their account or their trades unless they shared a
   screenshot and you can describe it.
-- One short numbered path beats several alternatives.
+- One short numbered path beats several alternatives. Number steps 1, 2, 3… uniquely — never
+  repeat "1." for every item.
 `;
