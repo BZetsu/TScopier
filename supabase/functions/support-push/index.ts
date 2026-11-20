@@ -46,8 +46,15 @@ function isServiceRole(authHeader: string | null): boolean {
   return token === serviceKey;
 }
 
+type ExpoTicket = {
+  status?: string;
+  id?: string;
+  message?: string;
+  details?: { error?: string };
+};
+
 async function sendExpo(messages: ExpoMessage[]) {
-  if (messages.length === 0) return { data: [] };
+  if (messages.length === 0) return { data: [] as ExpoTicket[] };
   const res = await fetch("https://exp.host/--/api/v2/push/send", {
     method: "POST",
     headers: {
@@ -64,7 +71,26 @@ async function sendExpo(messages: ExpoMessage[]) {
         : `Expo push failed (${res.status})`,
     );
   }
-  return json;
+  return json as { data?: ExpoTicket[] };
+}
+
+function collectDeadTokens(
+  messages: ExpoMessage[],
+  tickets: ExpoTicket[] | undefined,
+): string[] {
+  if (!tickets?.length) return [];
+  const dead: string[] = [];
+  for (let i = 0; i < tickets.length; i++) {
+    const ticket = tickets[i];
+    const errorCode = ticket?.details?.error;
+    // Only drop tokens that are gone on the device. InvalidCredentials is a
+    // project FCM/APNs misconfig and must not wipe every registered agent.
+    if (ticket?.status === "error" && errorCode === "DeviceNotRegistered") {
+      const token = messages[i]?.to;
+      if (token) dead.push(token);
+    }
+  }
+  return dead;
 }
 
 Deno.serve(async (req) => {
@@ -131,12 +157,29 @@ Deno.serve(async (req) => {
   }
 
   const results = [];
+  const deadTokens = new Set<string>();
   for (const chunk of chunks) {
-    results.push(await sendExpo(chunk));
+    const result = await sendExpo(chunk);
+    results.push(result);
+    for (const token of collectDeadTokens(chunk, result.data)) {
+      deadTokens.add(token);
+    }
+  }
+
+  if (deadTokens.size > 0) {
+    await admin
+      .from("support_agent_push_tokens")
+      .delete()
+      .in("expo_push_token", [...deadTokens]);
   }
 
   return Response.json(
-    { ok: true, sent: messages.length, results },
+    {
+      ok: true,
+      sent: messages.length,
+      pruned: deadTokens.size,
+      results,
+    },
     { headers: corsHeaders },
   );
 });

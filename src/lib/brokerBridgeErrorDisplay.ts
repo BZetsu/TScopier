@@ -25,6 +25,8 @@ export function isBrokerBridgeUnavailableMessage(message: string | null | undefi
 export type BrokerBridgeErrorLabels = {
   bridgeUnavailable: string
   tradeEaNotReady: string
+  /** Optional — falls back to a fixed English sentence when omitted. */
+  mtapiOldVersion?: string
 }
 
 /** Map broker/bridge error snippets to actionable user text. */
@@ -37,6 +39,10 @@ export function formatBrokerBridgeErrorMessage(
   if (HTTP_503_RE.test(m)) return labels.bridgeUnavailable
   if (/trade\s*ea\s*not\s*ready/i.test(m) || /bridge.*not\s*ready/i.test(m)) {
     return labels.tradeEaNotReady
+  }
+  if (/\bold_version\b/i.test(m)) {
+    return labels.mtapiOldVersion
+      ?? 'Trading bridge needs an update (broker refused OLD_VERSION) — platform issue, not your account.'
   }
   return null
 }

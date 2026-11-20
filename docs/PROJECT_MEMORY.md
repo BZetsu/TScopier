@@ -6,6 +6,16 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-20 — OLD_VERSION “failed trades for no reason” (historical) + clearer UX
+
+- **Context:** Users reported many failed XAUUSD entries showing `OLD_VERSION (:0)` in Copier Process.
+- **Plain English:** Those failures were from the **19 Nov morning** MTAPI bridge incident (outdated Manager API build). Production has **0** `OLD_VERSION` rows since the bridge recreate at **10:15 UTC** (last refusal 10:13 UTC). Copying is fine again; the log still shows the old failures.
+- **Root cause (technical):** `mt5rest` `MT5API.Connect()` → `ServerException: OLD_VERSION` (documented in `docs/incidents/incident-2026-11-19-mtapi-old-version.md`). Not a parser or account setting issue.
+- **Fix (files):** Classify `OLD_VERSION` as `MTAPI_OLD_VERSION` in `classifyBrokerFailureReason` / `tradeFailureReasonFromBrokerMessage` / `brokerTradeError`; map in `tradeFailureDisplay` + `brokerBridgeErrorDisplay` so historical logs show “trading bridge needs an update” instead of the raw bridge string.
+- **Tests/verification:** Prod query — last_2h OLD_VERSION=0, after 10:15 UTC=0; worker + vitest cases for the new mapping.
+- **Deploy state:** Code local until worker/frontend ship. Bridge already fixed in production on 2026-11-19.
+- **Follow-ups:** If OLD_VERSION returns, page via existing `mtapi_old_version` alert and recreate Contabo `timurila/mt5rest`.
+
 ### 2026-11-20 — Prod wrong_shard blocking Telegram link (N=5 Edge vs N=6 listeners)
 
 - **Context:** Users see “Telegram listener routing is misconfigured (wrong shard)” on QR/phone link.

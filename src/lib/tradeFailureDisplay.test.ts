@@ -65,6 +65,17 @@ describe('resolveTradeFailureDisplay', () => {
     assert.equal(display?.reasonCode, 'BROKER_SYMBOL_NOT_FOUND')
     assert.match(display?.explanation ?? '', /XAUUSDM/)
   })
+
+  it('maps legacy OLD_VERSION bridge refusals to a platform message', () => {
+    const display = resolveTradeFailureDisplay({
+      legacyMessage: 'OLD_VERSION (:0)',
+    })
+    assert.equal(display?.reasonCode, 'MTAPI_OLD_VERSION')
+    assert.match(display?.title ?? '', /bridge needs an update/i)
+    assert.match(display?.explanation ?? '', /platform issue/i)
+    assert.equal(display?.retryable, false)
+    assert.equal(display?.userActionRequired, false)
+  })
 })
 
 describe('buildTradeFailureAssistantPrompt', () => {
