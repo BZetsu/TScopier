@@ -6,6 +6,16 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-20 — Prod wrong_shard blocking Telegram link (N=5 Edge vs N=6 listeners)
+
+- **Context:** Users see “Telegram listener routing is misconfigured (wrong shard)” on QR/phone link.
+- **Plain English:** Listeners run as `0/6`–`4/6` but **no listener shard 5**. Edge `LISTENER_SHARD_URLS` length disagrees with worker `WORKER_SHARD_COUNT=6`, so auth hits the wrong Railway service and is rejected (`wrong_shard`).
+- **Root cause (technical):** Fleet cutover: five live listeners, six-way hash. Recent `listener_events` wrong_shard rows all had `hash%5 ≠ hash%6`.
+- **Fix (files):** `telegram-auth` retries other `LISTENER_SHARD_URLS` on `wrong_shard` (`listenerWorkerUrlCandidates` / `isWrongShardPayload` in `_shared/workerShard.ts`). Deployed to production `sxkpcovbyaficvtkpsdo`.
+- **Tests/verification:** Deno `workerShard.test.ts` 3/3; CLI deploy succeeded.
+- **Deploy state:** `telegram-auth` → production. Ops must still align N (add listener-5 **or** set all workers + Edge to N=5).
+- **Follow-ups:** Fastest permanent fix — N=5: `WORKER_SHARD_COUNT=5` on all listener+trade services; Edge `LISTENER_SHARD_URLS` = five listener bases in order 0–4; trim trade URL list to 5.
+
 ### 2026-11-19 — Zone signals that state their own stop and targets no longer need Override SL/TP
 
 - **Context:** Robert Clarke (`9189d3a4-…`, support chat `823da9ab-…`) reported that the copier "executes 1 or 2 trades and skips the rest". Production data for his account: 21 skips were `no_broker_channel_match` (Synergy channel not linked while the channel filter is on) and 23 were `entry_missing_predefined_stops`. Across all customers the same skip had blocked 89 signals for 8 users since 2026-11-16.
