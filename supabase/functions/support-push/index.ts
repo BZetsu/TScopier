@@ -6,6 +6,8 @@
  *
  * Auth: service_role Bearer (called from DB triggers via pg_net).
  * verify_jwt: false (Authorization checked manually).
+ *
+ * Recipients are filtered by support_agent_notification_prefs (missing row = all on).
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -35,6 +37,24 @@ type ExpoMessage = {
   channelId: "support";
 };
 
+type PrefCategory =
+  | "agent_request"
+  | "assigned_chat"
+  | "tickets"
+  | "issues"
+  | "suggestions"
+  | "feedback";
+
+type PrefRow = {
+  user_id: string;
+  agent_request: boolean;
+  assigned_chat: boolean;
+  tickets: boolean;
+  issues: boolean;
+  suggestions: boolean;
+  feedback: boolean;
+};
+
 function bad(status: number, message: string) {
   return Response.json({ error: message }, { status, headers: corsHeaders });
 }
@@ -51,6 +71,36 @@ function isAuthorized(authHeader: string | null): boolean {
     Deno.env.get("SUPPORT_PUSH_SERVICE_KEY") ?? "",
   ];
   return accepted.some((key) => key.length > 0 && token === key);
+}
+
+function categoryForEvent(event: string | undefined): PrefCategory | null {
+  switch (event) {
+    case "chat_queued":
+      return "agent_request";
+    case "chat_message":
+      return "assigned_chat";
+    case "ticket_created":
+    case "ticket_message":
+      return "tickets";
+    case "flag_issue":
+      return "issues";
+    case "flag_suggestion":
+      return "suggestions";
+    case "feedback":
+      return "feedback";
+    default:
+      return null;
+  }
+}
+
+function allowsCategory(
+  prefs: PrefRow | undefined,
+  category: PrefCategory | null,
+): boolean {
+  // Unknown events keep previous behavior (notify everyone with a token).
+  if (!category) return true;
+  if (!prefs) return true;
+  return Boolean(prefs[category]);
 }
 
 type ExpoTicket = {
@@ -119,9 +169,11 @@ Deno.serve(async (req) => {
 
   const title = (payload.title ?? "uni Support").trim() || "uni Support";
   const body = (payload.body ?? "New activity").trim() || "New activity";
+  const event = payload.event ?? "support";
+  const category = categoryForEvent(event);
   const data = {
     ...(payload.data ?? {}),
-    event: payload.event ?? "support",
+    event,
   };
 
   const callerKey = (authHeader ?? "").replace(/^Bearer\s+/i, "").trim();
@@ -139,19 +191,34 @@ Deno.serve(async (req) => {
     tokenQuery = tokenQuery.neq("user_id", payload.excludeUserId);
   }
 
-  const { data: tokens, error } = await tokenQuery;
+  const [{ data: tokens, error }, { data: prefRows, error: prefError }] =
+    await Promise.all([
+      tokenQuery,
+      admin.from("support_agent_notification_prefs").select(
+        "user_id, agent_request, assigned_chat, tickets, issues, suggestions, feedback",
+      ),
+    ]);
 
   if (error) return bad(500, error.message);
+  if (prefError) return bad(500, prefError.message);
 
-  const unique = [
-    ...new Set(
-      (tokens ?? [])
-        .map((row) => String(row.expo_push_token ?? "").trim())
-        .filter((t) => t.startsWith("ExponentPushToken")),
-    ),
-  ];
+  const prefsByUser = new Map<string, PrefRow>();
+  for (const row of (prefRows ?? []) as PrefRow[]) {
+    prefsByUser.set(String(row.user_id), row);
+  }
 
-  const messages: ExpoMessage[] = unique.map((to) => ({
+  const uniqueTokens: string[] = [];
+  const seen = new Set<string>();
+  for (const row of tokens ?? []) {
+    const token = String(row.expo_push_token ?? "").trim();
+    const userId = String(row.user_id ?? "");
+    if (!token.startsWith("ExponentPushToken") || seen.has(token)) continue;
+    if (!allowsCategory(prefsByUser.get(userId), category)) continue;
+    seen.add(token);
+    uniqueTokens.push(token);
+  }
+
+  const messages: ExpoMessage[] = uniqueTokens.map((to) => ({
     to,
     title,
     body,
@@ -186,6 +253,8 @@ Deno.serve(async (req) => {
   return Response.json(
     {
       ok: true,
+      event,
+      category,
       sent: messages.length,
       pruned: deadTokens.size,
       results,
