@@ -47,6 +47,7 @@ type PrefCategory =
 
 type PrefRow = {
   user_id: string;
+  available: boolean;
   agent_request: boolean;
   assigned_chat: boolean;
   tickets: boolean;
@@ -97,6 +98,8 @@ function allowsCategory(
   prefs: PrefRow | undefined,
   category: PrefCategory | null,
 ): boolean {
+  // Missing prefs row = available + all categories on.
+  if (prefs && prefs.available === false) return false;
   // Unknown events keep previous behavior (notify everyone with a token).
   if (!category) return true;
   if (!prefs) return true;
@@ -195,7 +198,7 @@ Deno.serve(async (req) => {
     await Promise.all([
       tokenQuery,
       admin.from("support_agent_notification_prefs").select(
-        "user_id, agent_request, assigned_chat, tickets, issues, suggestions, feedback",
+        "user_id, available, agent_request, assigned_chat, tickets, issues, suggestions, feedback",
       ),
     ]);
 

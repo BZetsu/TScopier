@@ -6,6 +6,15 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-20 — Support widget Home/Messages redesign
+
+- **Context:** Widget Home felt cluttered (avatars left, Recent on Home); sample called for Intercom-style layout.
+- **Plain English:** Brand icon stays left; team avatars move right next to close. Home is greeting + “Send us a message” (ticket secondary). Recent conversations live on the Messages tab. Home/Messages tabs show red counters (open chats / unread).
+- **Fix (files):** `src/components/support/SupportWidget.tsx` (taller gradient header, UniCopier mark, reply-ETA RTL slide, avatars right, home CTA, messages inbox, tab badges, `preferNewThread` / `backToInbox`); `src/index.css` `support-reply-slide`; guest refresh no longer wipes the conversation list (that broke “All messages”); `src/i18n/supportWidget/en.ts` copy.
+- **Tests/verification:** Local UI; no backend change.
+- **Deploy state:** Local only (frontend).
+- **Follow-ups:** None.
+
 ### 2026-11-20 — OLD_VERSION “failed trades for no reason” (historical) + clearer UX
 
 - **Context:** Users reported many failed XAUUSD entries showing `OLD_VERSION (:0)` in Copier Process.

@@ -1003,3 +1003,40 @@ html[dir="rtl"] .marketing-feature-log-row {
     animation: none;
   }
 }
+
+/*
+ * Support widget reply-ETA under the title: slide right→left to reveal clipped text,
+ * hold on the end, jump back to the start (no reverse slide), repeat.
+ * --support-reply-slide = overflow px (scrollWidth - clientWidth).
+ */
+@keyframes support-reply-slide {
+  0%,
+  12% {
+    transform: translateX(0);
+  }
+  50%,
+  72% {
+    transform: translateX(calc(-1 * var(--support-reply-slide, 0px)));
+  }
+  72.01%,
+  100% {
+    transform: translateX(0);
+  }
+}
+.support-reply-slide-track {
+  display: inline-block;
+  width: max-content;
+  max-width: none;
+  will-change: transform;
+  animation: support-reply-slide 10s linear infinite;
+}
+.support-reply-slide-track[data-needs-slide='false'] {
+  animation: none;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .support-reply-slide-track {
+    animation: none;
+    transform: none;
+  }
+}
