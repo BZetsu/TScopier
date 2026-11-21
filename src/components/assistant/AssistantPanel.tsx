@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { History, ImagePlus, Loader2, Plus, RefreshCw, Send, Sparkles, Trash2, X } from 'lucide-react'
 import { useAssistant } from '../../context/useAssistant'
 import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
-import { useLiveChat } from '../../context/LiveChatContext'
+import { useSupportChat } from '../../context/SupportChatContext'
 import { useUserProfile } from '../../context/UserProfileContext'
 import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import { useAuth } from '../../context/AuthContext'
@@ -44,6 +44,11 @@ import { AssistantChatBubble, AssistantTypingIndicator } from './AssistantChatBu
 import { AssistantTelegramLinkCard } from './AssistantTelegramLinkCard'
 import { AssistantBrokerConnectCard } from './AssistantBrokerConnectCard'
 import { AssistantTradesCard, type AssistantTradeRow } from './AssistantTradesCard'
+import {
+  AssistantCsvDownloadCard,
+  type AssistantCsvDownloadPayload,
+} from './AssistantCsvDownloadCard'
+import { exportAccountTradesCsv } from '../../lib/accountTradesCsv'
 import { CopierLogDetailModal } from '../dashboard/CopierLogDetailModal'
 import { Button } from '../ui/Button'
 import clsx from 'clsx'
@@ -79,7 +84,7 @@ export function AssistantPanel() {
   const navigate = useNavigate()
   const { session, user } = useAuth()
   const { openAddTradingAccount, requestConfigureBroker } = useAddTradingAccount()
-  const { openLiveChat } = useLiveChat()
+  const { openSupportWidget } = useSupportChat()
   const { refreshProfile } = useUserProfile()
   const { upsertBroker, refreshBrokers } = useBrokerAccounts()
   const {
@@ -115,6 +120,7 @@ export function AssistantPanel() {
   const [error, setError] = useState('')
   const [confirmBusy, setConfirmBusy] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [csvDownloads, setCsvDownloads] = useState<AssistantCsvDownloadPayload[]>([])
   const [detailInfo, setDetailInfo] = useState<{
     signal: Signal
     channelName: string
@@ -229,6 +235,24 @@ export function AssistantPanel() {
     }
   }
 
+  const handleExportAccountTradesCsv = async (args: Record<string, unknown>) => {
+    if (!user?.id) {
+      setError(a.csvCard.exportFailed)
+      return
+    }
+    try {
+      const result = await exportAccountTradesCsv(user.id, {
+        day: args.day != null ? String(args.day) : 'today',
+        broker_account_id: args.broker_account_id != null ? String(args.broker_account_id) : null,
+        account_login: args.account_login != null ? String(args.account_login) : null,
+        label: args.label != null ? String(args.label) : null,
+      })
+      setCsvDownloads(prev => [...prev, result])
+    } catch {
+      setError(a.csvCard.exportFailed)
+    }
+  }
+
   const applySideEffects = async (
     clientActions: Parameters<typeof runPendingClientActions>[0],
     confirmations: PendingConfirmation[],
@@ -239,11 +263,12 @@ export function AssistantPanel() {
       runPendingClientActions(clientActions, {
         navigate,
         openAddTradingAccount,
-        openLiveChat,
+        openLiveChat: openSupportWidget,
         refreshProfile,
         startTelegramLinkFlow,
         startBrokerConnectFlow,
         requestConfigureBroker,
+        exportAccountTradesCsv: handleExportAccountTradesCsv,
       })
     }
   }
@@ -777,6 +802,20 @@ export function AssistantPanel() {
                   ))
                 : null}
             </Fragment>
+          ))}
+
+          {csvDownloads.map((payload, i) => (
+            <AssistantCsvDownloadCard
+              key={`${payload.filename}-${payload.day}-${i}`}
+              payload={payload}
+              copy={{
+                title: a.csvCard.title,
+                ready: a.csvCard.ready,
+                empty: a.csvCard.empty,
+                download: a.csvCard.download,
+                countLabel: a.csvCard.countLabel,
+              }}
+            />
           ))}
 
           {showBrokerCard ? (

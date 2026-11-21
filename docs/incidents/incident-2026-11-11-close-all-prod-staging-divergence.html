@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Incident 2026-11-11 — Same signal, two outcomes</title>
+<style>
+  @page { size: A4; margin: 22mm 20mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 10.5px; line-height: 1.5; color: #1f2937; margin: 0; }
+  h1 { font-size: 21px; margin: 0 0 4px; color: #111827; letter-spacing: -0.2px; }
+  .subtitle { font-size: 11.5px; color: #6b7280; margin: 0 0 14px; }
+  h2 { font-size: 13.5px; color: #111827; margin: 20px 0 8px; padding-bottom: 3px; border-bottom: 2px solid #2563eb; }
+  h3 { font-size: 11.5px; color: #111827; margin: 14px 0 6px; }
+  p { margin: 6px 0; }
+  ul, ol { margin: 6px 0; padding-left: 18px; }
+  li { margin: 3px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.8px; }
+  th, td { border: 1px solid #d1d5db; padding: 5px 7px; text-align: left; vertical-align: top; }
+  th { background: #f3f4f6; font-weight: 600; color: #374151; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.3px; background: #f3f4f6; padding: 0 3px; border-radius: 3px; }
+  .meta { margin: 10px 0 4px; }
+  .meta td { border: none; border-bottom: 1px solid #e5e7eb; padding: 4px 10px 4px 0; }
+  .meta .lbl { color: #6b7280; font-size: 9.3px; text-transform: uppercase; letter-spacing: 0.4px; width: 16%; }
+  .meta .val { font-weight: 600; color: #111827; width: 34%; }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 9.3px; font-weight: 700; color: #fff; }
+  .pill.fixed { background: #16a34a; }
+  .pill.open { background: #dc2626; }
+  .box { border-left: 4px solid #2563eb; background: #eff6ff; padding: 8px 10px; margin: 10px 0; border-radius: 0 4px 4px 0; }
+  .box.green { border-left-color: #16a34a; background: #f0fdf4; }
+  .box.amber { border-left-color: #d97706; background: #fffbeb; }
+  .box b.tag { display: block; font-size: 9.3px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; color: #374151; }
+  .win { color: #15803d; font-weight: 700; }
+  .lose { color: #b91c1c; font-weight: 700; }
+  .muted { color: #6b7280; }
+  .foot { margin-top: 16px; padding-top: 6px; border-top: 1px solid #e5e7eb; font-size: 8.8px; color: #9ca3af; }
+  .chain { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.2px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 4px; padding: 7px 9px; margin: 6px 0; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<h1>Same signal, two outcomes — and the AI-arbitration fix</h1>
+<p class="subtitle">Incident report · “Close all trades now” executed on staging, skipped on production · Signal parsing pipeline</p>
+
+<table class="meta">
+  <tr>
+    <td class="lbl">Severity</td><td class="val">Medium — one real instruction dropped; no incorrect trades</td>
+    <td class="lbl">Status</td><td class="val"><span class="pill fixed">FIXED</span> staging live &amp; verified · production pending</td>
+  </tr>
+  <tr>
+    <td class="lbl">Detected</td><td class="val">2026-11-11, 10:28:54 WAT</td>
+    <td class="lbl">Fixed &amp; deployed</td><td class="val">2026-11-12, 23:26 WAT (staging)</td>
+  </tr>
+  <tr>
+    <td class="lbl">Component</td><td class="val">Signal pipeline: rules engine → stage-2 AI → GPT-4o reviewer</td>
+    <td class="lbl">Root cause</td><td class="val">A 50 %-confidence AI answer became final — no review trigger for conflicts or low confidence</td>
+  </tr>
+</table>
+
+<h2>1. Executive summary</h2>
+<div class="box green">
+  <b class="tag">Plain English</b>
+  On 11 November at 10:28:54, one message — <b>“Close all trades now”</b> — was posted to a test channel that both production and staging follow.
+  <b>Staging closed the open trades. Production did nothing</b> and reported “Must be a reply to the original signal”.
+  The keyword rules read the message correctly in both places. The difference came from the AI that double-checks every message:
+  it agreed with the rules on staging, but on production it misread the instruction as a <i>cancel</i> — and it was only <b>50 % sure</b>.
+  Because the wrong answer still looked like something the system could act on, the third, stronger reviewer (GPT-4o) was never called,
+  and the coin-flip guess became the final answer. We fixed it by forcing the reviewer to run whenever the rules and the AI disagree,
+  whenever the AI claims a cancellation the rules never saw, and whenever an actionable answer is under 70 % certain — plus two
+  unbreakable rules written into the AI’s own instructions. <b>The fix is deployed to staging and proven with live tests.</b>
+</div>
+
+<h2>2. Issue encountered</h2>
+<p>Same second, same channel, same message text (Telegram message id 642):</p>
+<table>
+  <tr><th style="width:16%"></th><th>Staging</th><th>Production</th></tr>
+  <tr><td><b>Received</b></td><td>11-11, 10:28:54 WAT</td><td>11-11, 10:28:54 WAT</td></tr>
+  <tr><td><b>Stage 1 — rules</b></td><td><code>close</code> · confidence 0.92</td><td><code>close</code> · confidence 0.92</td></tr>
+  <tr><td><b>Stage 2 — AI</b></td><td><code>close</code> · confidence 0.95 · XAUUSDM <span class="win">✓ correct</span></td><td><b><code>cancel_pending</code> · confidence 0.50</b> <span class="lose">✗ misread</span></td></tr>
+  <tr><td><b>Stage 3 — GPT-4o reviewer</b></td><td>not needed</td><td><b>never called</b> — “cancel” counts as executable, so no trigger fired</td></tr>
+  <tr><td><b>Final decision</b></td><td><code>close</code> → <span class="win"><b>EXECUTED</b></span> (2 successful closes)</td><td><code>cancel_pending</code> → <span class="lose"><b>SKIPPED</b></span> (<code>delete_pendings_requires_reply</code>)</td></tr>
+</table>
+<div class="box">
+  <b class="tag">Why this proves it was not an environment or code difference</b>
+  Production itself parsed the <i>same message correctly five other times that day</i> (05:55, 06:23, 10:01, 10:16, 10:26 UTC).
+  Only this single run diverged — the AI’s answer simply varies between runs.
+</div>
+
+<h2>3. Affected user(s)</h2>
+<table>
+  <tr><th style="width:30%">Scope</th><th style="width:40%">Signal / period</th><th>Outcome</th></tr>
+  <tr><td>Test account <code>b97eebf3</code> · SIGNALS TESTER (prod)</td><td>“Close all trades now”, 11-11 10:28:54</td><td>Skipped — no trades closed</td></tr>
+  <tr><td>Prod-wide · last 30 days</td><td>“close read as cancel” family</td><td>5 messages dropped</td></tr>
+  <tr><td>Prod-wide · last 30 days</td><td>“rules-unread read as cancel” (<code>BUY LIMITS GOLD @ …</code>, French cancels)</td><td>91 messages · up to 8 users/day — entries never placed, real cancels dropped</td></tr>
+  <tr><td>Prod-wide · last 30 days</td><td>Actionable AI answers &lt; 70 % accepted alone</td><td>108 signals (83 skipped / 23 executed)</td></tr>
+  <tr><td>Prod-wide · last 7 days</td><td>Final answers of <code>uncertain</code> (human review off)</td><td>298 silent skips</td></tr>
+</table>
+<p class="muted">No incorrect trades were opened and no funds were lost. The damage was dropped or mis-scoped instructions.</p>
+
+<h2>4. Root cause</h2>
+<ol>
+  <li><b>The rules engine scores management messages 0.92, but the fast-path threshold was 0.99</b> — so a plain “Close all trades now” always went to the AI for a final answer it did not need.</li>
+  <li><b>The AI is not deterministic.</b> Same message, two answers: <code>close</code> 0.95 on staging, <code>cancel_pending</code> 0.50 on prod.</li>
+  <li><b>The reviewer had a hole.</b> GPT-4o only ran when the AI was “uncertain” or blocked a trade the rules had parsed. <code>cancel_pending</code> counts as executable, so a 50 % guess became final with no second opinion — and there was no confidence floor.</li>
+  <li><b>The executor then behaved correctly:</b> a cancel that is not a reply cannot know which order to cancel, so it skipped with <code>delete_pendings_requires_reply</code>. The skip was honest; the misclassification upstream was the fault.</li>
+  <li><b>Contributing:</b> Cerebras (stage-2 provider) was returning HTTP 402 “payment required” on <i>both</i> environments, so every parse silently fell back to OpenAI.</li>
+</ol>
+<div class="box amber">
+  <b class="tag">Wider pattern</b>
+  The same hole produced the families in §3 — notably 91 messages in 30 days where <code>BUY LIMITS GOLD @ …</code> entry posts were read as cancellations and thrown away (same failure class as the documented 2026-09-19 incident).
+</div>
+
+<h2>5. The fix</h2>
+<p>Four coordinated changes (plus a complementary change already shipped by the performance workstream):</p>
+<table>
+  <tr><th style="width:5%"></th><th style="width:27%">What</th><th>Exactly what it does</th></tr>
+  <tr><td><b>1</b></td><td><b>Confidence floor</b><br><span class="muted">parseConfig.ts</span></td>
+      <td>Any <i>actionable</i> AI answer below <b>70 % certainty</b> must go to the reviewer instead of being trusted as final. Setting <code>UNIVERSAL_PARSE_RECONCILE_MIN_CONF</code> (default 0.70, clamped 0–1, safe on empty values) tunes it without code changes. <i>Kills the 0.50-guess incident.</i></td></tr>
+  <tr><td><b>2</b></td><td><b>Four review triggers</b><br><span class="muted">parseRouting.ts</span></td>
+      <td>GPT-4o is now also called when: <b>(a)</b> rules and AI disagree on what kind of message it is; <b>(b)</b> the AI flips a trade’s direction (buy ↔ sell); <b>(c)</b> the AI claims a cancellation the rules never confirmed (the <code>BUY LIMITS</code> family); <b>(d)</b> any actionable answer is below the 70 % floor. Agreed, confident answers still skip the reviewer — normal traffic is unaffected.</td></tr>
+  <tr><td><b>3</b></td><td><b>Two hard prompt rules</b><br><span class="muted">universalSignalParser.ts</span></td>
+      <td>Written into both the AI’s and the reviewer’s instruction sheets: <b>“close all / close everything / flatten” can only ever mean <i>close</i></b>, never a cancel; and <b>a message that merely lists pending limit/stop entries with no cancel verb is an <i>entry</i></b>, never a cancellation.</td></tr>
+  <tr><td><b>4</b></td><td><b>Standalone cancels act</b><br><span class="muted">managementExecutor.ts</span></td>
+      <td>A parentless “cancel pending orders” now sweeps <b>every resting pending order on the channel</b> — broker-pending entries, resting LIMIT/STOP trades (each verified against the live broker list first, so a filled order can never be “cancelled”), and range legs. Per-account channel filters still apply; reply-scoped and order-linked cancels are unchanged; runs in bounded batches with an honest <code>truncated</code> flag.</td></tr>
+  <tr><td><b>+</b></td><td><b>Complementary (performance workstream)</b><br><span class="muted">commit 5cd1580f</span></td>
+      <td>Recognised management phrases now bypass the AI entirely and use the rules result directly — this alone closes the original incident at its source. Our four triggers guard everything that still reaches the AI.</td></tr>
+</table>
+
+<h2>6. Files changed</h2>
+<ul>
+  <li><code>worker/src/signalIntent/parseConfig.ts</code> — 70 % floor helper</li>
+  <li><code>worker/src/signalIntent/parseRouting.ts</code> — four stage-3 triggers in <code>shouldReconcileSignal()</code></li>
+  <li><code>worker/src/signalIntent/universalSignalParser.ts</code> — two hard prompt rules (stage 2 + stage 3)</li>
+  <li><code>worker/src/tradeExecutor/managementExecutor.ts</code> — channel-wide sweep for standalone <code>delete_pendings</code></li>
+  <li><code>worker/src/signalIntent/parseRouting.test.ts</code> — 8 arbitration test cases (1 updated)</li>
+  <li><code>worker/src/deletePendingsManagement.test.ts</code> — 2 channel-sweep tests + rebuilt DB mock</li>
+</ul>
+<p>Commit <code>871199a8</code> — “fix(worker): arbitrate conflicting AI parses and sweep channel pendings for standalone cancels”.</p>
+
+<h2>7. Verification</h2>
+<h3>Automated</h3>
+<ul>
+  <li>Worker build (tsc): <b>0 errors</b> · ESLint clean on all six files.</li>
+  <li>Targeted suite: <b>162 / 165</b> — the 3 failures are a separate workstream’s repairs sitting in a stash (unrelated, import-disjoint).</li>
+</ul>
+<h3>Live on staging, after deploy (in-house pipeline test tool)</h3>
+<table>
+  <tr><th style="width:38%">Case</th><th style="width:10%">Result</th><th>Evidence</th></tr>
+  <tr><td><code>BUY LIMITS GOLD @ 3875/3873 AREA</code> — the misread family</td><td class="win">PASS</td><td>Parsed as a real entry and dispatched; broker refused only for market hours</td></tr>
+  <tr><td><code>cancel pending orders</code> — standalone</td><td class="win">PASS</td><td>Channel sweep: <code>delete_pendings_none</code>, <code>mgmt_scope: channel</code> — never <code>requires_reply</code></td></tr>
+  <tr><td><code>Close all trades now</code> — the incident message</td><td class="win">PASS</td><td>Deterministic fast-lane, AI bypassed, correct close intent</td></tr>
+  <tr><td>BTCUSD entry (24/7 market)</td><td class="win">PASS</td><td>Opened, stops persisted; closed in cleanup (0 open trades left)</td></tr>
+  <tr><td>French rules-unread cancel — forced arbitration</td><td class="win">PASS</td><td><b>Stage 3 fired (<code>ai_source: gpt4o</code>) and overruled stage 2</b></td></tr>
+  <tr><td>Full pipeline suite</td><td>4/5</td><td>Single failure = broker <code>MARKET_CLOSED</code> (gold rollover at test time), not code</td></tr>
+</table>
+
+<h2>8. Deployment status</h2>
+<div class="box">
+  <b class="tag">Staging — live</b>
+  Pushed to <code>upstream/staging</code> (tip <code>b37bda50</code>, containing <code>871199a8</code>) · Railway staging build <b>SUCCESS</b>, 2026-11-12 22:26 UTC · every live test above ran against this build.
+</div>
+<div class="box amber">
+  <b class="tag">Production — not deployed</b>
+  Prod still runs the 2026-11-10 build (its deploy attempts on 11-11 were failing at the time of investigation). Promoting this fix to production is a separate, explicit decision.
+</div>
+
+<h2>9. Follow-ups</h2>
+<ol>
+  <li>Decide production promotion of this fix; re-check why prod deploys were failing.</li>
+  <li>Turn on <code>HUMAN_REVIEW_ESCALATION_ENABLED</code> so <code>uncertain</code> results (298/week on prod) become approval prompts instead of silent skips — product decision.</li>
+  <li>Side-inference rule: infer direction from TP/SL geometry when a message omits buy/sell (12–13 Nov case: identical format executed once, skipped once — pure model variance).</li>
+  <li>Persist the <code>_verification</code> decision chain on the live ingest path (events show it ran; signal rows store null — observability gap).</li>
+  <li>Investigate phantom <code>message_revision_applied</code> events that fire without an edit (no behavioural impact observed).</li>
+  <li>Cerebras billing (HTTP 402, both environments) — restore or remove the provider.</li>
+  <li>Re-run the pipeline suite when gold reopens for a clean 5/5.</li>
+</ol>
+
+<div class="foot">Incident 2026-11-11 · close-all prod/staging divergence · signal parsing pipeline · internal engineering report</div>
+
+</body>
+</html>

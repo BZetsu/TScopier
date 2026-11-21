@@ -11,6 +11,7 @@ import {
   resolvedParsedEntryZone,
   signalEntryPriceStrictEnabled,
   signalEntryRangeStrictEnabled,
+  narrowRangeWaitToNearestZoneLevel,
   SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
   SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED,
   SKIP_REASON_LEVEL_ALREADY_PASSED,
@@ -33,6 +34,8 @@ import {
 } from '../signalEntryZoneSanity'
 import {
   ENTRY_PRICE_MOVED_ADVERSE_REASON,
+  ENTRY_TPS_BEYOND_MARKET_REASON,
+  allTakeProfitsBeyondMarket,
   entryPriceMovedAdverse,
 } from '../signalEntryPriceGuard'
 import { ENTRY_TP_WITHOUT_SL_REASON } from '../signalEntryNowRequirement'
@@ -54,7 +57,7 @@ import {
   shouldPreferParsedStopsOnEntry,
   type ChannelActiveTradeParams,
 } from '../channelActiveTradeParams'
-import { resolveTscopierCommentPrefix } from '../tradeComment'
+import { parseOrderCommentTpIndex, resolveTscopierCommentPrefix } from '../tradeComment'
 import { writeExecutionLog } from '../observability/executionLog'
 import type { TradeExecutorContext } from './context'
 import { applySymbolMapping, computeLot, isBuySideOp, isExcluded, isMt5OnlyOperation, roundLot, triggerPriceFor, brokerSessionUuid, type Leg } from './helpers'
@@ -269,20 +272,27 @@ export async function prepareEntryExecution(
     sendOpts?.commentPrefix,
   )
 
+  // Live-fast market entries always need one Quote for TP/zone/limit guards.
+  // Prefetch once here so later guards reuse `strictEntryPrefetch` instead of
+  // serial background-lane round-trips that inflate send_plan_ms.
   const needsQuotePrefetch =
     isManual
     && (
-      (signalEntryPriceStrictEnabled(manual) && parsedHasExplicitEntryAnchor(parsed))
+      liveEntryFast
+      || (signalEntryPriceStrictEnabled(manual) && parsedHasExplicitEntryAnchor(parsed))
       || signalEntryRangeStrictEnabled(manual)
       || manual.reverse_signal === true
       || manual.use_predefined_sl_pips === true
       || manual.use_predefined_tp_pips === true
+      || signal.dispatch_source === 'ai_parsed'
+      || signal.dispatch_source === 'ai_reconciled'
     )
 
   if (signal.pipeline_ts) {
     setPipelineTimestamp(signal.pipeline_ts, 'broker_resolution_started_at', Date.now())
   }
   const stampOnResolve = liveEntryFast && !!signal.pipeline_ts
+  const sameSignalRefresh = sendOpts?.sameSignalRefresh === true
   const sessionPromise = ctx.ensureBrokerSessionLiveFast(api, uuid, broker).then(r => {
     if (stampOnResolve && signal.pipeline_ts && signal.pipeline_ts.t_session_resolved == null) {
       signal.pipeline_ts.t_session_resolved = Date.now()
@@ -299,15 +309,32 @@ export async function prepareEntryExecution(
     }
     return r
   })
+  // Message revisions overlap materialization with session/symbol so we can take
+  // the modify-only fast path without waiting on a cold SymbolParams round-trip.
+  const materializationPromise = sameSignalRefresh
+    ? ctx.manualDispatchAlreadyMaterialized(signal.id, broker.id)
+    : Promise.resolve(false)
   const paramsPromise = ctx.getSymbolParams(uuid, requestedSymbol).catch(() => null)
-  const [sessionOk, symbol, paramsFromRequested] = await Promise.all([
+  const [sessionOk, symbol, paramsFromRequested, revisionAlreadyMaterialized] = await Promise.all([
     sessionPromise,
     symbolPromise,
     paramsPromise,
+    materializationPromise,
   ])
   let params = paramsFromRequested
   if (symbol.toUpperCase() !== requestedSymbol.toUpperCase()) {
-    params = await ctx.getSymbolParams(uuid, symbol).catch(() => params)
+    const cachedResolved = ctx.peekCachedSymbolParams(uuid, symbol)
+    if (cachedResolved) {
+      params = cachedResolved
+      // Keep cache warm without blocking the edit/modify path.
+      void ctx.getSymbolParams(uuid, symbol).catch(() => null)
+    } else if (sameSignalRefresh && revisionAlreadyMaterialized && liveEntryFast) {
+      // Modify-only revision: keep requested-symbol params (usually same pip/lot
+      // geometry) and refresh broker symbol params in the background.
+      void ctx.getSymbolParams(uuid, symbol).catch(() => null)
+    } else {
+      params = await ctx.getSymbolParams(uuid, symbol).catch(() => params)
+    }
   }
   if (stampOnResolve && signal.pipeline_ts && signal.pipeline_ts.t_params_resolved == null) {
     signal.pipeline_ts.t_params_resolved = Date.now()
@@ -333,10 +360,6 @@ export async function prepareEntryExecution(
     )
   }
   const baseLot = roundLot(computeLot(broker, parsed), params)
-  const sameSignalRefresh = sendOpts?.sameSignalRefresh === true
-  const revisionAlreadyMaterialized = sameSignalRefresh
-    ? await ctx.manualDispatchAlreadyMaterialized(signal.id, broker.id)
-    : false
   const missingSl = shouldRunMissingRequiredSlPolicy(isManual, revisionAlreadyMaterialized)
     ? missingRequiredSlFailure(parsed, manual)
     : null
@@ -369,6 +392,18 @@ export async function prepareEntryExecution(
   // edited signal can never trade.
   if (sameSignalRefresh) {
     if (revisionAlreadyMaterialized) {
+      let revisionQuote: { bid: number; ask: number } | null = null
+      const warmQuote = ctx.entryBrokerReadCache.get(uuid)?.quote
+      const warmFresh = warmQuote != null && Date.now() - warmQuote.at < 5_000
+      if (warmFresh) {
+        revisionQuote = { bid: warmQuote.bid, ask: warmQuote.ask }
+      } else {
+        try {
+          revisionQuote = await api.quote(uuid, symbol)
+        } catch {
+          /* modify path falls back to entry refs */
+        }
+      }
       const paramOutcome = await ctx.tryParameterFollowUpMergeModifyOnly({
         signal,
         parsed,
@@ -378,27 +413,42 @@ export async function prepareEntryExecution(
         params,
         symbol,
         uuid,
-        strictEntryPrefetch: null,
+        strictEntryPrefetch: revisionQuote,
         commentPrefix,
         sameSignalRefresh: true,
         liveMgmtFast: sendOpts?.liveMgmtFast === true,
+        liveEntryFast,
       })
       return {
         ok: false,
-        outcome: { openedOrMerged: paramOutcome.handled === true && paramOutcome.success === true },
+        outcome: {
+          openedOrMerged: paramOutcome.handled === true && paramOutcome.success === true,
+          ...(paramOutcome.handled === true && paramOutcome.failureReason
+            ? {
+              failureReason: paramOutcome.failureReason,
+              failureReasonCode: 'basket_modify_failed',
+            }
+            : {}),
+        },
       }
     }
   }
 
   let strictEntryPrefetch: { bid: number; ask: number } | null = null
   if (needsQuotePrefetch) {
-    try {
-      strictEntryPrefetch = await api.quote(uuid, symbol)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.warn(
-        `[tradeExecutor] /Quote prefetch failed ${symbol} signal=${signal.id} broker=${broker.id}: ${msg}`,
-      )
+    const warmQuote = ctx.entryBrokerReadCache.get(uuid)?.quote
+    const warmFresh = warmQuote != null && Date.now() - warmQuote.at < 2_500
+    if (warmFresh) {
+      strictEntryPrefetch = { bid: warmQuote.bid, ask: warmQuote.ask }
+    } else {
+      try {
+        strictEntryPrefetch = await api.quote(uuid, symbol)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `[tradeExecutor] /Quote prefetch failed ${symbol} signal=${signal.id} broker=${broker.id}: ${msg}`,
+        )
+      }
     }
   }
 
@@ -486,7 +536,7 @@ export async function prepareEntryExecution(
         }
       }
     } catch {
-      // Best-effort guard — proceed when quote is unavailable.
+      // Best-effort guard — proceed when the quote is unavailable.
     }
   }
 
@@ -512,12 +562,19 @@ export async function prepareEntryExecution(
       commentPrefix,
       sameSignalRefresh,
       liveMgmtFast: sendOpts?.liveMgmtFast === true,
+      liveEntryFast,
     })
     if (sameSignalRefresh && paramOutcome.handled) {
       return {
         ok: false,
         outcome: {
           openedOrMerged: paramOutcome.success === true,
+          ...(paramOutcome.failureReason
+            ? {
+              failureReason: paramOutcome.failureReason,
+              failureReasonCode: 'basket_modify_failed',
+            }
+            : {}),
         },
       }
     }
@@ -556,11 +613,25 @@ export async function prepareEntryExecution(
       uuid,
       strictEntryPrefetch,
       commentPrefix,
+      liveEntryFast,
     })
     if (teaserOutcome.handled) {
+      // Carry the reason through so the pipeline records why, instead of falling back to the
+      // generic entry_not_opened that reads like a broker problem (incident 2026-11-18).
+      const teaserFailureCode = teaserOutcome.failureReason === 'basket_modify_skipped_by_channel_filter'
+        ? 'basket_modify_skipped_by_channel_filter'
+        : 'basket_modify_failed'
       return {
         ok: false,
-        outcome: { openedOrMerged: teaserOutcome.success === true },
+        outcome: {
+          openedOrMerged: teaserOutcome.success === true,
+          ...(teaserOutcome.failureReason
+            ? {
+              failureReason: teaserOutcome.failureReason,
+              failureReasonCode: teaserFailureCode,
+            }
+            : {}),
+        },
       }
     }
   }
@@ -913,6 +984,65 @@ export async function prepareEntryExecution(
     }
   }
 
+  // ── All-TPs-beyond-market guard (all lanes) ─────────────────────────────
+  // When every signal take-profit already sits on the wrong side of the live
+  // market (price ran past the whole ladder before the order was sent), a
+  // market entry would open with no usable take-profit — skip it instead of
+  // silently stripping the ladder (2026-11-09, Luis / Gold PRO: BUY entry 4017
+  // filled at 4116.7 with TPs 4020/4024/4026).
+  //
+  // Deliberately placed AFTER the modify-only / refresh / teaser / merge
+  // routing — those update an existing basket and must never be swallowed by
+  // a new-entry guard — and only for plans that open NOW at market: broker
+  // pendings and virtual waits fill at the signal level, where the ladder is
+  // still valid. Strict/range-strict brokers stay excluded, like the
+  // AI-lane guard.
+  const guardOpensAtMarket = capped.length > 0
+    && capped.every(o => o.operation === 'Buy' || o.operation === 'Sell')
+    && virtualPendings.length === 0
+  if (
+    guardOpensAtMarket
+    && (entryDirection === 'buy' || entryDirection === 'sell')
+    && !signalEntryPriceStrictEnabled(manual)
+    && !signalEntryRangeStrictEnabled(manual)
+    && !plan.strictEntry
+    // Reversed accounts flip the operation AND mirror the stops inside the
+    // planner, so the original direction/ladder this guard reads is not what
+    // would open — judging it would both skip valid reversed trades and miss
+    // naked reversed ladders. Excluded until the guard evaluates the mirrored
+    // ladder (follow-up, 2026-11-09 review).
+    && manual.reverse_signal !== true
+    && sendOpts?.sameSignalRefresh !== true
+    && api
+  ) {
+    try {
+      const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
+      strictEntryPrefetch = q
+      if (allTakeProfitsBeyondMarket({
+        action: entryDirection as 'buy' | 'sell',
+        tpLevels: parsed.tp,
+        tpUnit: parsed.tp_unit,
+        bid: q.bid,
+        ask: q.ask,
+        symbol,
+      })) {
+        await ctx.logSendSkipped(signal, broker, ENTRY_TPS_BEYOND_MARKET_REASON, {
+          symbol,
+          quote_bid: q.bid,
+          quote_ask: q.ask,
+          tp_levels: parsed.tp ?? null,
+          dispatch_source: signal.dispatch_source ?? null,
+        })
+        return {
+          ok: false,
+          outcome: { finalizeSkipReason: ENTRY_TPS_BEYOND_MARKET_REASON },
+        }
+      }
+    } catch {
+      // Best-effort guard — proceed when the quote is unavailable.
+    }
+  }
+
   // ── Strict signal entry (post-delay live quote) ───────────────────────
   // Buy: immediate market only when ask ≤ entry; else one virtual pending at entry.
   // Sell: immediate only when bid ≥ entry; else virtual at entry. Quote failure → defer.
@@ -957,16 +1087,32 @@ export async function prepareEntryExecution(
   ) {
     const wait = plan.rangeEntryWait
     const zoneFromParsed = resolvedParsedEntryZone(parsed)
-    const waitToStore = zoneFromParsed
+    let waitToStore = zoneFromParsed
       ? { ...wait, zoneLo: zoneFromParsed.lo, zoneHi: zoneFromParsed.hi }
       : wait
+    let parsedForRange = parsed
     const pipSize = plan.pip ?? params?.point ?? 0.00001
     const fromWake = signal.dispatch_source === SIGNAL_RANGE_WAKE_DISPATCH_SOURCE
     try {
       const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
       strictEntryPrefetch = q
+      const narrowed = narrowRangeWaitToNearestZoneLevel({
+        wait: waitToStore,
+        parsed: parsedForRange as PlannerParsedSignal,
+        bid: q.bid,
+        ask: q.ask,
+        pipSize,
+      })
+      waitToStore = narrowed.wait
+      parsedForRange = narrowed.parsed as ParsedSignal
+      if (narrowed.collapsed) {
+        console.log(
+          `[tradeExecutor] zone levels collapsed to nearest signal=${signal.id} broker=${broker.id}`
+          + ` zone=${waitToStore.zoneLo}-${waitToStore.zoneHi} bid=${q.bid} ask=${q.ask}`,
+        )
+      }
       const stale = evaluatePreEntryStaleness({
-        parsed,
+        parsed: parsedForRange,
         bid: q.bid,
         ask: q.ask,
         isBuy: wait.isBuy,
@@ -1011,7 +1157,7 @@ export async function prepareEntryExecution(
           symbol,
           wait: waitToStore,
           manual,
-          parsed,
+          parsed: parsedForRange,
         })
         if (fromWake) {
           await logSignalRangeEntryWakeRetry(ctx.supabase, signal, broker.id, symbol, q.bid, q.ask)
@@ -1044,7 +1190,7 @@ export async function prepareEntryExecution(
         symbol,
         wait: waitToStore,
         manual,
-        parsed,
+        parsed: parsedForRange,
       })
     }
   }
@@ -1074,41 +1220,25 @@ export async function prepareEntryExecution(
   // `capped.length === 1` (single mode → one order). We attach it to that
   // single leg so the post-INSERT path can fan out the partials.
   const volumeRounded = effectiveCapped.map(o => ({ ...o, volume: roundLot(o.volume, params) }))
-  const legs: Leg[] = volumeRounded.map((args, idx) => ({
-    args,
-    idx,
-    ...(idx === 0 && plan.partialTps?.length ? { partialTps: plan.partialTps } : {}),
-    ...(plan.autoBeTpHitTriggerPrice != null
-      ? { autoBeTpHitTriggerPrice: plan.autoBeTpHitTriggerPrice }
-      : {}),
-  }))
-
-  // Single trade style: one broker order only (partials ride on partial_tp_legs).
-  // If the planner somehow emitted multiple immediates, hard-block rather than
-  // silently sending the first leg (that masked config/planner bugs).
-  if (isManual && manual.trade_style !== 'multi' && legs.length > 1) {
-    console.error(
-      `[tradeExecutor] single trade_style multi_leg_blocked ${legs.length} legs`
-      + ` signal=${signal.id} broker=${broker.id}`,
-    )
-    await writeExecutionLog(ctx.supabase, {
-      user_id: signal.user_id,
-      signal_id: signal.id,
-      broker_account_id: broker.id,
-      action: 'single_style_multi_leg_blocked',
-      status: 'failed',
-      request_payload: { leg_count: legs.length },
-      error_message: `single trade_style refused ${legs.length} immediate legs`,
-    })
+  const singlePercentSplit = manual.trade_style !== 'multi'
+    && manual.range_trading !== true
+    && volumeRounded.length > 1
+  const legs: Leg[] = volumeRounded.map((args, idx) => {
+    const plannedTpIndex = parseOrderCommentTpIndex(args.comment)
+      ?? (singlePercentSplit ? idx : null)
     return {
-      ok: false,
-      outcome: {
-        channelDelayMs,
-        channelDelaySkipped,
-        failureReason: 'single_style_multi_leg_blocked',
-      },
+      args,
+      idx,
+      ...(plannedTpIndex != null ? { plannedTpIndex } : {}),
+      ...(idx === 0 && plan.partialTps?.length ? { partialTps: plan.partialTps } : {}),
+      ...(plan.autoBeTpHitTriggerPrice != null
+        ? { autoBeTpHitTriggerPrice: plan.autoBeTpHitTriggerPrice }
+        : {}),
     }
-  }
+  })
+
+  // Single trade style may emit multiple immediates (one per Targets % TP).
+  // Legacy hard-block removed — percent-split Single is intentional.
 
   // ── Anchor resolution ────────────────────────────────────────────────
   // Priority: parsed signal entry → live /Quote (Ask for buy, Bid for sell).

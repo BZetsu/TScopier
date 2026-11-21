@@ -4,10 +4,12 @@ import {
   bundleSteadyLegTps,
   bundleTpOrderMap,
   remapBundleLegTpsByTpOrder,
+  resolveBundleLegTpIndexes,
 } from './tpBundleIdentity'
 
 // Ladder ordered nearest → farthest as parsed (buy: ascending).
 const buyLadder = [1900, 1910, 1920]
+const sellLadder = [65200, 65000, 64900]
 
 test('steady state keeps each leg own TP', () => {
   const tps = bundleSteadyLegTps({ currentTps: [1900, 1910, 1920], ladder: buyLadder })
@@ -17,6 +19,79 @@ test('steady state keeps each leg own TP', () => {
 test('steady state backfills naked legs positionally', () => {
   const tps = bundleSteadyLegTps({ currentTps: [0, null, undefined], ladder: buyLadder })
   assert.deepEqual(tps, [1900, 1910, 1920])
+})
+
+test('steady state backfills naked legs by planned :tpN index (not open order)', () => {
+  // Migration BTC teaser: fills completed as tp3, tp1, tp2 by opened_at.
+  const tps = bundleSteadyLegTps({
+    currentTps: [0, 0, 0],
+    ladder: sellLadder,
+    legTpIndexes: [2, 0, 1],
+  })
+  assert.deepEqual(tps, [64900, 65200, 65000])
+})
+
+test('resolveBundleLegTpIndexes prefers comment over opened_at', () => {
+  const indexes = resolveBundleLegTpIndexes({
+    legs: [
+      { lot_size: 1.0, comment: 'UniCopier:x:abc:tp3' },
+      { lot_size: 2.5, comment: 'UniCopier:x:abc:tp1' },
+      { lot_size: 1.5, comment: 'UniCopier:x:abc:tp2' },
+    ],
+    ladderLength: 3,
+    tpLots: [
+      { label: 'TP1', lot: 0, percent: 50, enabled: true },
+      { label: 'TP2', lot: 0, percent: 30, enabled: true },
+      { label: 'TP3', lot: 0, percent: 20, enabled: true },
+    ],
+  })
+  assert.deepEqual(indexes, [2, 0, 1])
+})
+
+test('resolveBundleLegTpIndexes falls back to volume when comments missing', () => {
+  const indexes = resolveBundleLegTpIndexes({
+    legs: [
+      { lot_size: 1.0 },
+      { lot_size: 2.5 },
+      { lot_size: 1.5 },
+    ],
+    ladderLength: 3,
+    tpLots: [
+      { label: 'TP1', lot: 0, percent: 50, enabled: true },
+      { label: 'TP2', lot: 0, percent: 30, enabled: true },
+      { label: 'TP3', lot: 0, percent: 20, enabled: true },
+    ],
+  })
+  assert.deepEqual(indexes, [2, 0, 1])
+})
+
+test('resolveBundleLegTpIndexes ignores default next_tp_index=1 on every leg', () => {
+  const indexes = resolveBundleLegTpIndexes({
+    legs: [
+      { lot_size: 1.0, next_tp_index: 1 },
+      { lot_size: 2.5, next_tp_index: 1 },
+      { lot_size: 1.5, next_tp_index: 1 },
+    ],
+    ladderLength: 3,
+    tpLots: [
+      { label: 'TP1', lot: 0, percent: 50, enabled: true },
+      { label: 'TP2', lot: 0, percent: 30, enabled: true },
+      { label: 'TP3', lot: 0, percent: 20, enabled: true },
+    ],
+  })
+  assert.deepEqual(indexes, [2, 0, 1])
+})
+
+test('resolveBundleLegTpIndexes trusts distinct next_tp_index values', () => {
+  const indexes = resolveBundleLegTpIndexes({
+    legs: [
+      { lot_size: 1.0, next_tp_index: 3 },
+      { lot_size: 2.5, next_tp_index: 1 },
+      { lot_size: 1.5, next_tp_index: 2 },
+    ],
+    ladderLength: 3,
+  })
+  assert.deepEqual(indexes, [2, 0, 1])
 })
 
 test('steady state keeps own TP when a middle level is missing', () => {

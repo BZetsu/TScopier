@@ -36,12 +36,121 @@ export function staleEntryNotice(
   return { signalEntry: entry, fillPrice: fill, deltaPct }
 }
 
+export interface StrippedTpNotice {
+  levels: number[]
+  fillPrice: number
+}
+
+/**
+ * Take-profits the worker stripped as wrong-side at send time
+ * (`stripInvalidStopsForSide`): the trade has no broker take-profit and at
+ * least one signal TP level sits on the wrong side of the fill — a buy's
+ * take-profits at or below its fill, a sell's at or above. Applying such a
+ * level would close the trade immediately, so the order went out without it
+ * (single take-profit per leg, so one wrong-side level leaves the trade with
+ * no broker TP even when other levels were still valid — only the wrong-side
+ * levels are listed).
+ *
+ * Scope: signal-carried TPs only (channel active-trade overlays are not in
+ * `parsed_data.tp`). Pip-denominated levels (`tpUnit === 'pips'`) and
+ * magnitudes that cannot be prices for this fill (pip offsets like 15/30) are
+ * never reported — they are not price levels to compare.
+ * Null in every other case (trade carries a broker TP, no wrong-side level,
+ * missing data, unknown direction).
+ */
+export function strippedTpNotice(args: {
+  tpLevels: unknown
+  fillPrice: unknown
+  brokerTp: unknown
+  direction: unknown
+  tpUnit?: unknown
+}): StrippedTpNotice | null {
+  if (finitePositive(args.brokerTp) != null) return null
+  if (String(args.tpUnit ?? '').toLowerCase() === 'pips') return null
+  const fill = finitePositive(args.fillPrice)
+  if (fill == null) return null
+  const dir = String(args.direction ?? '').toLowerCase()
+  if (dir !== 'buy' && dir !== 'sell') return null
+  const levels = (Array.isArray(args.tpLevels) ? args.tpLevels : [])
+    .map(v => Number(v))
+    .filter(n => Number.isFinite(n) && n > 0)
+  if (!levels.length) return null
+  // A price level for this fill must be in the same order of magnitude;
+  // anything far off (e.g. pip offsets 15/30 against a fill of 4104) is not a
+  // price and must never be printed as one.
+  const plausiblePrice = (t: number) => t > fill / 2 && t < fill * 2
+  const wrongSide = levels.filter(t =>
+    plausiblePrice(t) && (dir === 'buy' ? t <= fill : t >= fill)
+  )
+  if (!wrongSide.length) return null
+  return { levels: wrongSide, fillPrice: fill }
+}
+
 /**
  * The `plan_fallback` reason recorded when one or more partial take-profit
  * slices fall below the broker's minimum lot (e.g. a 0.01 lot split 50/30/20).
  */
 export function isTpSplitSkippedReason(reason: unknown): boolean {
   return String(reason ?? '') === 'partial_tp_below_min_lot'
+}
+
+/**
+ * Latest partial-close outcome for THIS position (broker account + ticket) on
+ * this entry signal and its child management signals:
+ *  - true when the most recent `mgmt_partial_profit` row for that ticket was
+ *    skipped because the position was too small to split
+ *    (`partial_close_unavailable_for_position_size`);
+ *  - false when that ticket's most recent row is not the size refusal — a
+ *    later success, failure, or unrelated skip clears the note — or when
+ *    nothing was recorded.
+ *
+ * Scoped per leg on purpose: one management instruction can cover several
+ * accounts, and a 0.01-lot leg refused next to a 0.5-lot leg that closed must
+ * not paint both trades with the same note. Best-effort like the other notes:
+ * any query error → false (the note must never block the modal).
+ *
+ * Limitation: a channel-wide (non-reply) instruction has no parent signal, so
+ * it is never found here — the log and copier surfaces still explain it.
+ */
+export async function fetchPartialCloseTooSmall(
+  supabase: SupabaseClient,
+  args: { userId: string; signalId: string; brokerAccountId: string; ticket: number },
+): Promise<boolean> {
+  const { data: children } = await supabase
+    .from('signals')
+    .select('id')
+    .eq('user_id', args.userId)
+    .eq('parent_signal_id', args.signalId)
+    .limit(50)
+  const signalIds = [args.signalId, ...((children ?? []) as Array<{ id: string }>).map(c => c.id)]
+
+  const { data, error } = await supabase
+    .from('trade_execution_logs')
+    .select('status, request_payload, created_at')
+    .in('signal_id', signalIds)
+    .eq('user_id', args.userId)
+    .eq('broker_account_id', args.brokerAccountId)
+    .eq('action', 'mgmt_partial_profit')
+    .order('created_at', { ascending: false })
+    .limit(50)
+  if (error || !data?.length) return false
+
+  for (const row of data as Array<{
+    status: string
+    request_payload: unknown
+    created_at: string
+  }>) {
+    const payload = row.request_payload
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) continue
+    const p = payload as Record<string, unknown>
+    if (Number(p.ticket) !== Number(args.ticket)) continue
+    // Newest row for this ticket decides: a later success clears the note.
+    return (
+      row.status === 'skipped'
+      && String(p.skip_reason ?? '') === 'partial_close_unavailable_for_position_size'
+    )
+  }
+  return false
 }
 
 /**

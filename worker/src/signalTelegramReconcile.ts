@@ -5,6 +5,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { isIncomingRevisionStale, messageTextChanged } from './signalRevision'
 import { normalizeTelegramMessageText } from './normalizeTelegramMessageText'
+import { isManagementAction } from './tradeSignalActions'
 
 export const RECONCILE_SWEEP_WINDOW_MS = Math.max(
   60_000,
@@ -79,8 +80,23 @@ export function telegramEditDateSec(message: unknown): number | null {
 
 export function telegramMessageText(message: unknown): string {
   if (message == null || typeof message !== 'object') return ''
-  const m = message as { text?: unknown; message?: unknown }
-  return normalizeTelegramMessageText(String(m.text ?? m.message ?? ''))
+  const m = message as { text?: unknown; message?: unknown; rawText?: unknown; caption?: unknown }
+  // First non-empty shape wins: gramjs may expose an empty `text` while the
+  // real content lives in `message`/`caption` (media/reply shapes).
+  const raw = [m.text, m.message, m.rawText, m.caption]
+    .find(v => typeof v === 'string' && v.trim() !== '')
+  return normalizeTelegramMessageText(String(raw ?? ''))
+}
+
+/**
+ * Management instructions are point-in-time commands (close TP2, breakeven,
+ * cancel pendings, …). A reconcile revision re-parses them and can only lose
+ * specificity — a "CLOSE TP2" re-parsed as "close" wiped whole bundled
+ * baskets on staging (2026-11-13). Never revise management actions.
+ */
+export function revisionBlockedForManagement(parsed: unknown): boolean {
+  const action = String((parsed as { action?: unknown } | null)?.action ?? '').toLowerCase().trim()
+  return action !== '' && isManagementAction(action)
 }
 
 export function shouldReconcileSignal(
@@ -210,12 +226,24 @@ export function chunkTelegramMessageIds(ids: string[]): string[][] {
   return chunks
 }
 
+export function isTelegramMessageEmpty(message: unknown): boolean {
+  if (message == null || typeof message !== 'object') return true
+  const className = String((message as { className?: unknown }).className ?? '')
+  if (className === 'MessageEmpty') return true
+  // GramJS sometimes returns a stub with only an id and no body/date.
+  const m = message as { message?: unknown; text?: unknown; date?: unknown; media?: unknown }
+  const hasBody = String(m.message ?? m.text ?? '').trim().length > 0 || m.media != null
+  const hasDate = m.date != null && Number(m.date) > 0
+  return !hasBody && !hasDate && className.toLowerCase().includes('empty')
+}
+
 export function snapshotsFromTelegramMessages(
   messages: unknown[],
 ): Map<string, TelegramMessageSnapshot> {
   const out = new Map<string, TelegramMessageSnapshot>()
   for (const message of messages) {
     if (message == null || typeof message !== 'object') continue
+    if (isTelegramMessageEmpty(message)) continue
     const idRaw = (message as { id?: unknown }).id
     if (idRaw == null) continue
     const id = String(idRaw).trim()
@@ -226,6 +254,32 @@ export function snapshotsFromTelegramMessages(
     })
   }
   return out
+}
+
+/**
+ * Message IDs requested from Telegram that are gone (deleted) or returned as
+ * MessageEmpty. Only call after a successful getMessages for that chunk.
+ */
+export function deletedTelegramMessageIds(
+  requestedIds: string[],
+  messages: unknown[],
+): string[] {
+  const present = new Set<string>()
+  for (const message of messages) {
+    if (message == null || typeof message !== 'object') continue
+    if (isTelegramMessageEmpty(message)) continue
+    const idRaw = (message as { id?: unknown }).id
+    if (idRaw == null) continue
+    const id = String(idRaw).trim()
+    if (id) present.add(id)
+  }
+  const deleted: string[] = []
+  for (const raw of requestedIds) {
+    const id = String(raw ?? '').trim()
+    if (!id) continue
+    if (!present.has(id)) deleted.push(id)
+  }
+  return deleted
 }
 
 export async function loadSignalsForReconcile(

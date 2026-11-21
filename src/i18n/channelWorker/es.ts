@@ -190,6 +190,8 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
       'puente del bróker no disponible — active Algo Trading en MT5 y confirme que Trade EA esté listo',
     entry_requires_imperative_or_labeled_stops:
       'el mensaje no incluía una frase de entrada (p. ej. buy now, gold sell now) ni SL/TP etiquetados',
+    tradingview_missing_sl_tp:
+      'la alerta de TradingView no tenía precios de SL y TP — añádalos al mensaje, o active Override SL y Override TP en la configuración',
     entry_tp_without_sl: 'SL no indicado — use pips de SL predefinidos en la configuración del bróker',
     signal_missing_required_sl: 'SL no indicado — use pips de SL predefinidos en la configuración del bróker',
     delete_pendings_no_parent:
@@ -197,6 +199,8 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
     delete_pendings_requires_reply:
       'las instrucciones de cancelación deben enviarse como respuesta al mensaje de la señal original',
     delete_pendings_none: 'no se encontraron órdenes pendientes para cancelar en esta operación',
+    delete_pendings_cancel_failed: 'se encontraron órdenes pendientes, pero no se pudo cancelar ninguna (el broker rechazó la operación o no estaba disponible) — inténtalo de nuevo o ciérralas desde la página de Operaciones',
+    partial_close_unavailable_for_position_size: 'no se pudo ejecutar el cierre parcial: la posición es demasiado pequeña para dividirla (la parte solicitada quedaría por debajo del lote mínimo del broker); no se cerró nada y la operación permaneció abierta con su tamaño completo',
   },
   dispatchSkipped: 'No se copió la señal ({reason}).',
   rangeRebalanceSkippedNamed: 'Se omitió el rebalanceo de take profit de {symbol} ({reason})',
@@ -212,6 +216,10 @@ export const channelWorkerEs: ChannelWorkerTranslations = {
     'El EA de trading no está listo en MT5 — active Algo Trading, mantenga el terminal abierto y actualice la salud del bróker',
   errorBrokerNotConnected:
     'Broker no conectado — en Configuración de cuenta, use Reconnect e ingrese su contraseña MT',
+  errorBrokerBusy:
+    'Broker ocupado — demasiadas órdenes en curso; las señales posteriores se ejecutarán cuando baje la carga',
+  errorOrderSendTimedOut:
+    'OrderSend timed out — compruebe las posiciones abiertas; la orden puede haberse ejecutado',
   errorInvalidStops:
     'El broker rechazó estos niveles de stop — compruebe que SL/TP están del lado correcto del mercado y cumplen la distancia mínima.',
   errorBridgeGlitch:

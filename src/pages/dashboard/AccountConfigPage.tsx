@@ -4,8 +4,8 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Plus, Trash2, Server, Activity, GitBranch, Eye, DollarSign, RefreshCw,
   SlidersHorizontal, Radio, Target, Filter, Wallet, Link2,
-  ChevronLeft, ChevronRight, Search, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
-  Infinity as InfinityIcon, Coins, X, MessageSquareText, FileUp, FileDown, Clock,
+  ChevronLeft, ChevronRight, ChevronDown, Search, Settings2, Bookmark, Pencil, ScrollText, AlertTriangle,
+  Infinity as InfinityIcon, Coins, X, MessageSquareText, FileUp, FileDown, Clock, Sparkles,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { supabase } from '../../lib/supabase'
@@ -13,7 +13,7 @@ import { platformIconSrc } from '../../lib/activityRoute'
 import { humanizeMirrorDeleteError } from '../../lib/brokerCopyLink'
 import { useAuth } from '../../context/AuthContext'
 import { useConfirm } from '../../context/ConfirmDialogContext'
-import { useT } from '../../context/LocaleContext'
+import { useLocale, useT } from '../../context/LocaleContext'
 import { interpolate } from '../../i18n/interpolate'
 import { Toggle } from '../../components/ui/Toggle'
 import { PageHeader } from '../../components/layout/PageHeader'
@@ -24,6 +24,9 @@ import { Alert } from '../../components/ui/Alert'
 import { useAddTradingAccount } from '../../context/AddTradingAccountContext'
 import { BrokerConfigurationsModal } from '../../components/configure/BrokerConfigurationsModal'
 import { RiskLotCalculatorModal } from '../../components/configure/RiskLotCalculatorModal'
+import { ConfigureWithAiModal } from '../../components/configure/ConfigureWithAiModal'
+import { sanitizeConfigureAiPatch } from '../../lib/configureWithAiPatch'
+import { configureModalEn } from '../../i18n/locales/configureModal/en'
 import { CopyLimitsTargetsSection } from '../../components/configure/CopyLimitsTargetsSection'
 import { ChannelSignalExamplesSection } from '../../components/configure/ChannelSignalExamplesSection'
 import { useUserProfile } from '../../context/UserProfileContext'
@@ -54,11 +57,17 @@ import { useBrokerAccounts } from '../../context/BrokerAccountsContext'
 import { useMirrorSlaveChannelGuard } from '../../hooks/useMirrorSlaveChannelGuard'
 import { useSubscription } from '../../context/SubscriptionContext'
 import {
+  advancedOnlySettingsInUse,
   effectivePlan as resolveEffectivePlan,
   normalizeManualSettingsForPlan,
   planContextForManualSettings,
 } from '../../lib/planLimits'
 import type { SubscriptionPlan } from '../../lib/planLimits'
+import {
+  isExtensionActive,
+  latestExtensionEndMs,
+  type SubscriptionExtensionGrant,
+} from '../../lib/subscriptionExtensions'
 import { PaywallErrorAlert } from '../../components/billing/PaywallErrorAlert'
 import { UpgradePrompt } from '../../components/billing/UpgradePrompt'
 import {
@@ -162,14 +171,23 @@ interface ChannelOption {
   source_kind?: 'telegram' | 'tradingview' | 'discord' | 'whatsapp' | null
 }
 
-function SourceKindLogo({ sourceKind }: { sourceKind?: ChannelOption['source_kind'] }) {
+const BROKER_LINKED_SOURCE_LOGO_MAX = 3
+
+function SourceKindLogo({
+  sourceKind,
+  className,
+}: {
+  sourceKind?: ChannelOption['source_kind']
+  className?: string
+}) {
+  const base = clsx('h-4 w-4 shrink-0', className)
   if (sourceKind === 'tradingview') {
     return (
       <img
         src="/tradingview-logo.png"
         alt=""
         aria-hidden
-        className="h-4 w-4 shrink-0 rounded-full object-cover"
+        className={clsx(base, 'rounded-full object-cover')}
       />
     )
   }
@@ -179,7 +197,7 @@ function SourceKindLogo({ sourceKind }: { sourceKind?: ChannelOption['source_kin
         src="/discord-logo.png"
         alt=""
         aria-hidden
-        className="h-4 w-4 shrink-0 rounded-full object-cover"
+        className={clsx(base, 'rounded-full object-cover')}
       />
     )
   }
@@ -189,7 +207,7 @@ function SourceKindLogo({ sourceKind }: { sourceKind?: ChannelOption['source_kin
         src="/whatsapp-icon.png"
         alt=""
         aria-hidden
-        className="h-4 w-4 shrink-0 rounded-full object-cover"
+        className={clsx(base, 'rounded-full object-cover')}
       />
     )
   }
@@ -198,8 +216,48 @@ function SourceKindLogo({ sourceKind }: { sourceKind?: ChannelOption['source_kin
       src="/Telegram.svg"
       alt=""
       aria-hidden
-      className="h-4 w-4 shrink-0 object-contain"
+      className={clsx(base, 'rounded-full object-contain bg-white dark:bg-neutral-900')}
     />
+  )
+}
+
+/** Compact linked-sources row: up to 3 overlapping logos + truncated summary. */
+function BrokerLinkedSources({
+  channels,
+  noneLabel,
+  countLabel,
+}: {
+  channels: ChannelOption[]
+  noneLabel: string
+  countLabel: (count: number) => string
+}) {
+  if (channels.length === 0) {
+    return <span className="text-xs text-neutral-500 dark:text-neutral-400">{noneLabel}</span>
+  }
+  const shown = channels.slice(0, BROKER_LINKED_SOURCE_LOGO_MAX)
+  const title = channels.map(ch => ch.display_name?.trim() || noneLabel).join(', ')
+  const summary = channels.length === 1
+    ? (channels[0]?.display_name?.trim() || noneLabel)
+    : countLabel(channels.length)
+
+  return (
+    <span className="mt-1 flex min-w-0 max-w-[13.5rem] items-center gap-1.5" title={title}>
+      <span className="inline-flex shrink-0 items-center" aria-hidden>
+        {shown.map((channel, index) => (
+          <span
+            key={channel.id}
+            className={clsx(
+              'relative inline-flex rounded-full ring-1 ring-white dark:ring-neutral-950',
+              index > 0 && '-ms-1.5',
+            )}
+            style={{ zIndex: shown.length - index }}
+          >
+            <SourceKindLogo sourceKind={channel.source_kind} />
+          </span>
+        ))}
+      </span>
+      <span className="min-w-0 truncate text-xs text-neutral-900 dark:text-neutral-50">{summary}</span>
+    </span>
   )
 }
 
@@ -567,6 +625,10 @@ function normalizeManualSettings(
     close_worse_entries_pips: closeWorseEntriesPips,
     single_tp_target: singleTpTarget,
     use_signal_entry_price: (j as Record<string, unknown>).use_signal_entry_price === true,
+    signal_entry_prefer:
+      String((j as Record<string, unknown>).signal_entry_prefer ?? 'first_price').toLowerCase() === 'last_price'
+        ? 'last_price'
+        : 'first_price',
     signal_entry_pip_tolerance: Math.max(0, readNumber('signal_entry_pip_tolerance', DEFAULT_MANUAL_SETTINGS.signal_entry_pip_tolerance ?? 10)),
     symbol_mapping: Object.fromEntries(Object.entries(map).map(([k, v]) => [String(k).toUpperCase(), String(v).toUpperCase()])),
     symbol_prefix: '',
@@ -620,15 +682,18 @@ function normalizeManualSettings(
   }
 }
 
-function PlatformIcon({ platform }: { platform: string }) {
+function PlatformIcon({ platform, className }: { platform: string; className?: string }) {
   const [failed, setFailed] = useState(false)
   const iconPath = platformIconSrc(platform)
-  if (!iconPath || failed) return <Server className="w-4 h-4 text-green-400" />
+  if (!iconPath || failed) {
+    return <Server className={clsx('shrink-0 text-green-400', className ?? 'h-4 w-4')} />
+  }
   return (
     <img
       src={iconPath}
-      alt={`${platform} icon`}
-      className="w-8 h-8 object-contain"
+      alt=""
+      aria-hidden
+      className={clsx('shrink-0 object-contain', className ?? 'h-8 w-8')}
       loading="lazy"
       onError={() => setFailed(true)}
     />
@@ -701,12 +766,6 @@ function accountTypeLabelsFromBrokerList(bl: {
 }
 
 type ManualSubTabId = 'symbols' | 'channel_instructions' | 'signal_examples' | 'risk' | 'stops' | 'management' | 'filters'
-
-interface ManualSubTabDef {
-  id: ManualSubTabId
-  label: string
-  icon: typeof SlidersHorizontal
-}
 
 function defaultChannelConfigDraft(keywordFiltersEnabled = true): ChannelConfigDraft {
   return {
@@ -811,7 +870,7 @@ async function resolveLatestManualSettingsPlanContext(args: {
 
   const { data, error } = await supabase
     .from('subscriptions')
-    .select('plan,status')
+    .select('plan,status,trial_ends_at,current_period_end')
     .eq('user_id', args.userId)
     .maybeSingle()
 
@@ -823,8 +882,33 @@ async function resolveLatestManualSettingsPlanContext(args: {
     }
   }
 
-  const subscription = data as { plan?: SubscriptionPlan; status?: string | null } | null
-  const effective = resolveEffectivePlan(subscription?.plan, subscription?.status ?? null)
+  const subscription = data as {
+    plan?: SubscriptionPlan
+    status?: string | null
+    trial_ends_at?: string | null
+    current_period_end?: string | null
+  } | null
+  const effective = resolveEffectivePlan(
+    subscription?.plan,
+    subscription?.status ?? null,
+    subscription?.trial_ends_at ?? null,
+  )
+
+  // A live admin extension is an Advanced entitlement, exactly as the context,
+  // the edge functions and the trade worker treat it.
+  if (!effective) {
+    const { data: extRows } = await supabase
+      .from('subscription_extensions')
+      .select('days, granted_at')
+      .eq('user_id', args.userId)
+    if (isExtensionActive(latestExtensionEndMs(
+      extRows as SubscriptionExtensionGrant[],
+      subscription,
+    ))) {
+      return { plan: 'advanced', status: 'active', effectivePlan: 'advanced' }
+    }
+  }
+
   const planCtx = planContextForManualSettings(effective, subscription ?? null)
   return {
     ...planCtx,
@@ -834,32 +918,12 @@ async function resolveLatestManualSettingsPlanContext(args: {
 
 export function AccountConfigPage() {
   const t = useT()
+  const { locale } = useLocale()
   const confirm = useConfirm()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const cm = t.accountConfig.configureModal
   const bl = t.accountConfig.brokerList
-
-  const manualSubTabs = useMemo<ManualSubTabDef[]>(
-    () => [
-      { id: 'signal_examples', label: cm.manualSubTabs.aiTraining, icon: MessageSquareText },
-      { id: 'symbols', label: cm.manualSubTabs.symbols, icon: Coins },
-      { id: 'channel_instructions', label: cm.manualSubTabs.channelInstructions, icon: ScrollText },
-      { id: 'risk', label: cm.manualSubTabs.risk, icon: Wallet },
-      { id: 'stops', label: cm.manualSubTabs.stops, icon: Target },
-      { id: 'management', label: cm.manualSubTabs.management, icon: Settings2 },
-      { id: 'filters', label: cm.manualSubTabs.filters, icon: Filter },
-    ],
-    [
-      cm.manualSubTabs.aiTraining,
-      cm.manualSubTabs.symbols,
-      cm.manualSubTabs.channelInstructions,
-      cm.manualSubTabs.risk,
-      cm.manualSubTabs.stops,
-      cm.manualSubTabs.management,
-      cm.manualSubTabs.filters,
-    ],
-  )
 
   const channelFilterCategories = useMemo(
     () => getChannelFilterCategories(cm),
@@ -972,39 +1036,28 @@ export function AccountConfigPage() {
     selectedChannelId: null,
     channelConfigs: {},
   })
-  const [activeManualSubTab, setActiveManualSubTab] = useState<ManualSubTabId>('signal_examples')
+  /** FAQ-style: which Configure Trading panels are expanded. */
+  const [openConfigSections, setOpenConfigSections] = useState<Partial<Record<ManualSubTabId, boolean>>>(() => ({
+    risk: true,
+  }))
   const configScrollRef = useRef<HTMLDivElement | null>(null)
   const sectionRefs = useRef<Partial<Record<ManualSubTabId, HTMLElement | null>>>({})
-  const tabButtonRefs = useRef<Partial<Record<ManualSubTabId, HTMLButtonElement | null>>>({})
-  const programmaticScrollRef = useRef(false)
-  const programmaticScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const setSectionRef = useCallback((id: ManualSubTabId, el: HTMLElement | null) => {
     sectionRefs.current[id] = el
   }, [])
 
-  const setTabButtonRef = useCallback((id: ManualSubTabId, el: HTMLButtonElement | null) => {
-    tabButtonRefs.current[id] = el
+  const isConfigSectionOpen = useCallback(
+    (id: ManualSubTabId) => openConfigSections[id] === true,
+    [openConfigSections],
+  )
+
+  const toggleConfigSection = useCallback((id: ManualSubTabId) => {
+    setOpenConfigSections(prev => ({ ...prev, [id]: !prev[id] }))
   }, [])
 
-  const scrollToConfigSection = useCallback((id: ManualSubTabId) => {
-    const el = sectionRefs.current[id]
-    if (!el) {
-      setActiveManualSubTab(id)
-      return
-    }
-    programmaticScrollRef.current = true
-    if (programmaticScrollTimerRef.current) clearTimeout(programmaticScrollTimerRef.current)
-    setActiveManualSubTab(id)
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    programmaticScrollTimerRef.current = setTimeout(() => {
-      programmaticScrollRef.current = false
-      programmaticScrollTimerRef.current = null
-    }, 700)
-  }, [])
-
-  const resetConfigSectionScroll = useCallback((id: ManualSubTabId = 'signal_examples') => {
-    setActiveManualSubTab(id)
+  const resetConfigSectionScroll = useCallback((id: ManualSubTabId = 'risk') => {
+    setOpenConfigSections({ [id]: true })
     const scroller = configScrollRef.current
     if (scroller) scroller.scrollTop = 0
   }, [])
@@ -1052,6 +1105,7 @@ export function AccountConfigPage() {
   const [riskNumberDrafts, setRiskNumberDrafts] = useState<RiskNumberDrafts>({})
   const [symbolsExcludeDraft, setSymbolsExcludeDraft] = useState<string | null>(null)
   const [riskCalcOpen, setRiskCalcOpen] = useState(false)
+  const [configureWithAiOpen, setConfigureWithAiOpen] = useState(false)
   const brokerHealthSyncKey = useMemo(
     () => brokers
       .filter(b => hasLinkedBrokerForUi(b))
@@ -1176,12 +1230,6 @@ export function AccountConfigPage() {
     [channelOptions, configDraft.selectedChannelId],
   )
   const selectedIsTradingView = selectedChannelOption?.source_kind === 'tradingview'
-  const visibleManualSubTabs = useMemo(
-    () => (selectedIsTradingView
-      ? manualSubTabs.filter(tab => tab.id !== 'signal_examples' && tab.id !== 'symbols' && tab.id !== 'channel_instructions')
-      : manualSubTabs),
-    [manualSubTabs, selectedIsTradingView],
-  )
 
   const configureAccountType = useMemo((): LinkedAccountType | undefined => {
     if (!configAccount) return undefined
@@ -1190,6 +1238,23 @@ export function AccountConfigPage() {
 
   const keywordFiltersEnabled = canUsePlanFeature('channel_keyword_filters')
   const multiTradeStyleEnabled = canUsePlanFeature('multi_trade_style')
+  /**
+   * A Basic account cannot run advanced-only settings, and the worker skips those
+   * signals instead of copying them. Name the exact settings in use so the customer
+   * can see why a channel they just configured will not trade.
+   */
+  const advancedOnlyItems = useMemo(() => {
+    const labels = cm.advancedOnlyNotice.items
+    return advancedOnlySettingsInUse(channelManualSettings as Record<string, unknown>).map(key => ({
+      multi_trade: labels.multiTrade,
+      range_trading: labels.rangeTrading,
+      move_sl_to_entry: labels.moveSlToEntry,
+      reverse_signal: labels.reverseSignal,
+      close_worse_entries: labels.closeWorseEntries,
+      risk_reward: labels.riskReward,
+    }[key]))
+  }, [channelManualSettings, cm])
+  const showAdvancedOnlyNotice = !multiTradeStyleEnabled && advancedOnlyItems.length > 0
   const autoManagementPlanEnabled = canUsePlanFeature('auto_management')
   // Static/dynamic layering modes stay legacy-only in the UI for now.
   const selectedLayeringMode = 'legacy' as const
@@ -1457,7 +1522,6 @@ export function AccountConfigPage() {
     if ((channelManualSettings.trade_style ?? 'single') === 'multi') return null
     const slices = computeSingleTpLotBreakdown({
       manualLot: previewManualLot,
-      singleTpTarget: channelManualSettings.single_tp_target ?? 'farthest',
       tpLots: channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS,
     })
     if (!slices.length) return null
@@ -1470,26 +1534,23 @@ export function AccountConfigPage() {
       .join(join)
   }, [
     channelManualSettings.trade_style,
-    channelManualSettings.single_tp_target,
     channelManualSettings.tp_lots,
     previewManualLot,
     cm.risk.singleTpLotBreakdownJoin,
     cm.risk.singleTpLotBreakdownSlice,
   ])
 
-  /** Levels whose partial close the worker will drop at this lot (partial_tp_below_min_lot). */
+  /** Levels that cannot open as separate trades at this lot (share below min lot). */
   const partialTpShortfall = useMemo(() => {
     if (!configDraft.selectedChannelId) return null
     if ((channelManualSettings.trade_style ?? 'single') !== 'single') return null
     return computeSingleTpPartialShortfall({
       manualLot: previewManualLot,
-      singleTpTarget: channelManualSettings.single_tp_target ?? 'farthest',
       tpLots: channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS,
     })
   }, [
     configDraft.selectedChannelId,
     channelManualSettings.trade_style,
-    channelManualSettings.single_tp_target,
     channelManualSettings.tp_lots,
     previewManualLot,
   ])
@@ -1665,72 +1726,6 @@ export function AccountConfigPage() {
     return () => clearTimeout(t)
   }, [presetStatusMessage])
 
-  useEffect(() => {
-    if (!selectedChannelLinked) return
-    const root = configScrollRef.current
-    if (!root) return
-
-    const sectionIds = visibleManualSubTabs.map(s => s.id)
-    let observer: IntersectionObserver | null = null
-    let cancelled = false
-    let attempts = 0
-
-    const attach = () => {
-      if (cancelled) return
-      const els = sectionIds
-        .map(id => sectionRefs.current[id])
-        .filter((el): el is HTMLElement => Boolean(el))
-      if (els.length < sectionIds.length && attempts < 10) {
-        attempts += 1
-        requestAnimationFrame(attach)
-        return
-      }
-      if (els.length === 0) return
-      observer = new IntersectionObserver(
-        entries => {
-          if (programmaticScrollRef.current) return
-          const visible = entries
-            .filter(e => e.isIntersecting)
-            .map(e => {
-              const id = (e.target as HTMLElement).dataset.configSection as ManualSubTabId | undefined
-              return id ? { id, top: e.boundingClientRect.top } : null
-            })
-            .filter((v): v is { id: ManualSubTabId; top: number } => Boolean(v))
-          if (visible.length === 0) return
-          visible.sort((a, b) => a.top - b.top)
-          const next = visible[0]?.id
-          if (!next) return
-          setActiveManualSubTab(prev => (prev === next ? prev : next))
-        },
-        {
-          root,
-          rootMargin: '-10% 0px -65% 0px',
-          threshold: [0, 0.1, 0.25],
-        },
-      )
-      for (const el of els) observer.observe(el)
-    }
-
-    attach()
-
-    return () => {
-      cancelled = true
-      observer?.disconnect()
-    }
-  }, [visibleManualSubTabs, selectedChannelLinked, configDraft.selectedChannelId])
-
-  useEffect(() => {
-    if (!selectedChannelLinked) return
-    const btn = tabButtonRefs.current[activeManualSubTab]
-    btn?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
-  }, [activeManualSubTab, selectedChannelLinked])
-
-  useEffect(() => {
-    return () => {
-      if (programmaticScrollTimerRef.current) clearTimeout(programmaticScrollTimerRef.current)
-    }
-  }, [])
-
   const startBackgroundAiTraining = useCallback((channelId: string, opts?: { force?: boolean }) => {
     if (!userId) {
       return Promise.resolve({ trained: false, error: 'Not signed in' })
@@ -1834,8 +1829,7 @@ export function AccountConfigPage() {
       ? channelIds.find(id => normalizeChannelUuid(id) === preferred) ?? null
       : null
     const selectedId = preferredMatch ?? draft.selectedChannelId ?? channelOptions[0]?.id ?? null
-    const openingTradingView = channelOptions.find(channel => channel.id === selectedId)?.source_kind === 'tradingview'
-    resetConfigSectionScroll(openingTradingView ? 'risk' : 'signal_examples')
+    resetConfigSectionScroll('risk')
     const nextDraft = {
       ...draft,
       selectedChannelId: selectedId,
@@ -1924,8 +1918,7 @@ export function AccountConfigPage() {
 
   const selectConfigureChannel = (channelId: string) => {
     setConfigDraft(prev => ({ ...prev, selectedChannelId: channelId }))
-    const tradingView = channelOptions.find(channel => channel.id === channelId)?.source_kind === 'tradingview'
-    resetConfigSectionScroll(tradingView ? 'risk' : 'signal_examples')
+    resetConfigSectionScroll('risk')
   }
 
   const connectSelectedChannelToBroker = async () => {
@@ -2045,6 +2038,8 @@ export function AccountConfigPage() {
     setEditingPreset(null)
     setPendingDeletePreset(null)
     setChannelLinkEditMode(false)
+    setConfigureWithAiOpen(false)
+    setRiskCalcOpen(false)
     setError('')
     return true
   }
@@ -2700,24 +2695,21 @@ export function AccountConfigPage() {
 
   // ── Channel summary helper for cards ───────────────────────────────────
 
-  const getBrokerSignalChannelsLabel = (brokerId: string): ReactNode => {
-    if (channelOptions.length === 0) return bl.channelsNoneSelected
+  const getBrokerLinkedChannels = (brokerId: string): ChannelOption[] => {
+    if (channelOptions.length === 0) return []
     const brokerRow = brokers.find(b => b.id === brokerId)
     const persistedIds = normalizeSignalChannelIds(brokerRow)
-    if (persistedIds.length === 0) return bl.channelsNoneSelected
-    const selected = channelOptions.filter(ch => persistedIds.includes(ch.id))
-    if (selected.length === 0) return bl.channelsNoneSelected
-    return (
-      <span className="inline-flex max-w-full items-center gap-2 align-middle">
-        {selected.map(channel => (
-          <span key={channel.id} className="inline-flex min-w-0 items-center gap-1">
-            <SourceKindLogo sourceKind={channel.source_kind} />
-            <span className="truncate">{channel.display_name || bl.channelsNoneSelected}</span>
-          </span>
-        ))}
-      </span>
-    )
+    if (persistedIds.length === 0) return []
+    return channelOptions.filter(ch => persistedIds.includes(ch.id))
   }
+
+  const renderBrokerLinkedSources = (brokerId: string) => (
+    <BrokerLinkedSources
+      channels={getBrokerLinkedChannels(brokerId)}
+      noneLabel={bl.channelsNoneSelected}
+      countLabel={count => interpolate(bl.channelsLinkedCount, { count: String(count) })}
+    />
+  )
 
   // ── Delete broker ──────────────────────────────────────────────────────
 
@@ -2904,67 +2896,105 @@ export function AccountConfigPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[920px] text-sm">
-            <thead>
-              <tr className="border-y border-neutral-100 text-left text-neutral-900 dark:border-neutral-800 dark:text-neutral-50">
-                <th className="px-4 py-3 font-medium">{bl.colName}</th>
-                <th className="px-3 py-3 font-medium">{bl.colAccount}</th>
-                <th className="px-3 py-3 font-medium">{bl.colPlatform}</th>
-                <th className="px-3 py-3 font-medium">{bl.colBalance}</th>
-                <th className="px-3 py-3 font-medium">{bl.colConnection}</th>
-                <th className="px-3 py-3 font-medium">{bl.colStatus}</th>
-                <th className="px-4 py-3 text-end font-medium">{bl.colActions}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {brokers.length === 0 || filteredBrokers.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-16 text-center">
-                    {brokers.length === 0 ? <AccountsEmptyState label={bl.noData} /> : (
-                      <p className="text-sm text-neutral-900 dark:text-neutral-50">
-                        {brokerSearchQuery.trim() ? bl.accountSearchNoMatch : bl.brokerFilterNoMatch}
+        {brokers.length === 0 || filteredBrokers.length === 0 ? (
+          <div className="px-4 py-16 text-center">
+            {brokers.length === 0 ? <AccountsEmptyState label={bl.noData} /> : (
+              <p className="text-sm text-neutral-900 dark:text-neutral-50">
+                {brokerSearchQuery.trim() ? bl.accountSearchNoMatch : bl.brokerFilterNoMatch}
+              </p>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Mobile cards */}
+            <div className="md:hidden divide-y divide-neutral-100 dark:divide-neutral-800">
+              {paginatedBrokers.map(broker => {
+                const statusVariant = brokerConnectionBadgeVariant(broker)
+                const isReconnecting = isBrokerReconnecting(broker.id)
+                const statusLabel = brokerConnectionStatusLabel(broker, bl)
+                const healthVariant = brokerTerminalHealthBadgeVariant(broker)
+                const healthLabel = brokerTerminalHealthLabel(broker, bl)
+                const brokerLabel = broker.broker_name
+                  || inferBrokerLabelFromServer(broker.broker_server ?? null)
+                  || broker.broker_server
+                  || ''
+                const accountType = resolveLinkedAccountTypeForBroker(broker)
+                return (
+                  <article
+                    key={`m-${broker.id}`}
+                    role="link"
+                    tabIndex={0}
+                    aria-label={`${t.configurationsPage.title} ${broker.label}`}
+                    onClick={() => { void openBrokerConfigurations(broker) }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        void openBrokerConfigurations(broker)
+                      }
+                    }}
+                    className="cursor-pointer px-4 py-4 hover:bg-neutral-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-green-400 dark:hover:bg-neutral-900"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-neutral-900 dark:text-neutral-50 truncate">{broker.label}</p>
+                        {brokerLabel ? (
+                          <p className="mt-0.5 truncate text-xs text-neutral-500 dark:text-neutral-400">{brokerLabel}</p>
+                        ) : null}
+                        {renderBrokerLinkedSources(broker.id)}
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1.5">
+                        <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+                        {healthVariant && healthLabel ? (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation()
+                              setStatusModalBroker(broker)
+                            }}
+                            className="inline-flex rounded-full focus:outline-hidden focus-visible:ring-2 focus-visible:ring-green-400"
+                            aria-label={bl.statusHealthView}
+                          >
+                            <Badge variant={healthVariant} size="sm">{healthLabel}</Badge>
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex items-center gap-2 text-sm text-neutral-900 dark:text-neutral-50">
+                      <PlatformIcon platform={broker.platform} />
+                      <span>{broker.platform}</span>
+                      <span className="text-neutral-300 dark:text-neutral-600">·</span>
+                      <span className="tabular-nums">{broker.account_login || '—'}</span>
+                      <span className={clsx('text-xs', linkedAccountTypeValueClass(accountType))}>
+                        {formatLinkedAccountTypeLabel(accountType, accountTypeLabelsFromBrokerList(bl))}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold tabular-nums text-neutral-900 dark:text-neutral-50">
+                        {formatBrokerMoney(resolveBrokerTotalBalance(broker), broker.last_currency)}
                       </p>
-                    )}
-                  </td>
-                </tr>
-              ) : paginatedBrokers.map(broker => {
-              const statusVariant = brokerConnectionBadgeVariant(broker)
-              const isReconnecting = isBrokerReconnecting(broker.id)
-              const statusLabel = brokerConnectionStatusLabel(broker, bl)
-              const healthVariant = brokerTerminalHealthBadgeVariant(broker)
-              const healthLabel = brokerTerminalHealthLabel(broker, bl)
-              const brokerLabel = broker.broker_name
-                || inferBrokerLabelFromServer(broker.broker_server ?? null)
-                || broker.broker_server
-                || ''
-              const channelsLabel = getBrokerSignalChannelsLabel(broker.id)
-              const accountType = resolveLinkedAccountTypeForBroker(broker)
-              return (
-                <tr
-                  key={broker.id}
-                  role="link"
-                  tabIndex={0}
-                  aria-label={`${t.configurationsPage.title} ${broker.label}`}
-                  onClick={() => { void openBrokerConfigurations(broker) }}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      void openBrokerConfigurations(broker)
-                    }
-                  }}
-                  className="cursor-pointer border-t border-neutral-100 hover:bg-neutral-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-green-400 dark:border-neutral-800 dark:hover:bg-neutral-900"
-                >
-                  <td className="px-4 py-3">
-                    <p className="font-medium text-neutral-900 dark:text-neutral-50">{broker.label}</p>
-                    {brokerLabel ? (
-                      <p className="mt-0.5 truncate text-xs text-neutral-900 dark:text-neutral-50">{brokerLabel}</p>
-                    ) : null}
-                    {channelsLabel ? (
-                      <p className="mt-0.5 truncate text-xs text-neutral-900 dark:text-neutral-50">{channelsLabel}</p>
-                    ) : null}
+                      <span
+                        className="inline-flex items-center gap-2"
+                        onClick={e => e.stopPropagation()}
+                        onKeyDown={e => e.stopPropagation()}
+                      >
+                        <span className={clsx(
+                          'text-xs font-medium',
+                          broker.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-500 dark:text-neutral-400',
+                        )}>
+                          {broker.is_active ? bl.statusActive : bl.statusInactive}
+                        </span>
+                        <Toggle
+                          checked={broker.is_active}
+                          onChange={is_active => { void toggleBrokerActive(broker.id, is_active) }}
+                          disabled={togglingBrokerId === broker.id}
+                        />
+                      </span>
+                    </div>
+
                     {broker.connection_error ? (
-                      <p className="mt-1 text-xs leading-relaxed text-error-600 dark:text-error-400">
+                      <p className="mt-2 text-xs leading-relaxed text-error-600 dark:text-error-400">
                         {brokerConnectErrorText(
                           classifyBrokerConnectError(broker.connection_error),
                           broker.connection_error,
@@ -2972,59 +3002,12 @@ export function AccountConfigPage() {
                         )}
                       </p>
                     ) : null}
-                  </td>
-                  <td className="px-3 py-3">
-                    <p className="text-neutral-900 dark:text-neutral-100">{broker.account_login || '—'}</p>
-                    <p className={clsx('mt-0.5 text-xs', linkedAccountTypeValueClass(accountType))}>
-                      {formatLinkedAccountTypeLabel(accountType, accountTypeLabelsFromBrokerList(bl))}
-                    </p>
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-7 w-7 items-center justify-center">
-                        <PlatformIcon platform={broker.platform} />
-                      </span>
-                      <span className="text-neutral-900 dark:text-neutral-100">{broker.platform}</span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 text-neutral-900 dark:text-neutral-100">
-                    {formatBrokerMoney(resolveBrokerTotalBalance(broker), broker.last_currency)}
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
-                      {healthVariant && healthLabel ? (
-                        <button
-                          type="button"
-                          onClick={e => {
-                            e.stopPropagation()
-                            setStatusModalBroker(broker)
-                          }}
-                          className="inline-flex rounded-full focus:outline-hidden focus-visible:ring-2 focus-visible:ring-green-400"
-                          aria-label={bl.statusHealthView}
-                        >
-                          <Badge variant={healthVariant} size="sm">{healthLabel}</Badge>
-                        </button>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="px-3 py-3" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
-                    <div className="flex items-center gap-2">
-                      <span className={clsx(
-                        'text-xs font-medium',
-                        broker.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-900 dark:text-neutral-50',
-                      )}>
-                        {broker.is_active ? bl.statusActive : bl.statusInactive}
-                      </span>
-                      <Toggle
-                        checked={broker.is_active}
-                        onChange={is_active => { void toggleBrokerActive(broker.id, is_active) }}
-                        disabled={togglingBrokerId === broker.id}
-                      />
-                    </div>
-                  </td>
-                  <td className="px-4 py-3" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
-                    <div className="flex items-center justify-end gap-1.5">
+
+                    <div
+                      className="mt-3 flex flex-wrap items-center justify-end gap-1.5"
+                      onClick={e => e.stopPropagation()}
+                      onKeyDown={e => e.stopPropagation()}
+                    >
                       {brokerCanReconnect(broker) ? (
                         <Button
                           type="button"
@@ -3053,13 +3036,168 @@ export function AccountConfigPage() {
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
-                  </td>
-                </tr>
-              )
-            })}
-            </tbody>
-          </table>
-        </div>
+                  </article>
+                )
+              })}
+            </div>
+
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full min-w-[880px] table-fixed text-sm">
+                <colgroup>
+                  <col className="w-[22%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[16%]" />
+                </colgroup>
+                <thead>
+                  <tr className="border-y border-neutral-100 text-left text-neutral-900 dark:border-neutral-800 dark:text-neutral-50">
+                    <th className="px-4 py-3 font-medium">{bl.colName}</th>
+                    <th className="px-3 py-3 font-medium">{bl.colAccount}</th>
+                    <th className="px-3 py-3 font-medium">{bl.colPlatform}</th>
+                    <th className="px-3 py-3 font-medium">{bl.colBalance}</th>
+                    <th className="px-3 py-3 font-medium">{bl.colConnection}</th>
+                    <th className="px-3 py-3 font-medium">{bl.colStatus}</th>
+                    <th className="px-4 py-3 text-end font-medium">{bl.colActions}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedBrokers.map(broker => {
+                    const statusVariant = brokerConnectionBadgeVariant(broker)
+                    const isReconnecting = isBrokerReconnecting(broker.id)
+                    const statusLabel = brokerConnectionStatusLabel(broker, bl)
+                    const healthVariant = brokerTerminalHealthBadgeVariant(broker)
+                    const healthLabel = brokerTerminalHealthLabel(broker, bl)
+                    const brokerLabel = broker.broker_name
+                      || inferBrokerLabelFromServer(broker.broker_server ?? null)
+                      || broker.broker_server
+                      || ''
+                    const accountType = resolveLinkedAccountTypeForBroker(broker)
+                    return (
+                      <tr
+                        key={broker.id}
+                        role="link"
+                        tabIndex={0}
+                        aria-label={`${t.configurationsPage.title} ${broker.label}`}
+                        onClick={() => { void openBrokerConfigurations(broker) }}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            void openBrokerConfigurations(broker)
+                          }
+                        }}
+                        className="cursor-pointer border-t border-neutral-100 hover:bg-neutral-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-green-400 dark:border-neutral-800 dark:hover:bg-neutral-900"
+                      >
+                        <td className="px-4 py-3 align-top">
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-neutral-900 dark:text-neutral-50">{broker.label}</p>
+                            {brokerLabel ? (
+                              <p className="mt-0.5 truncate text-xs text-neutral-500 dark:text-neutral-400">{brokerLabel}</p>
+                            ) : null}
+                            {renderBrokerLinkedSources(broker.id)}
+                            {broker.connection_error ? (
+                              <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-error-600 dark:text-error-400">
+                                {brokerConnectErrorText(
+                                  classifyBrokerConnectError(broker.connection_error),
+                                  broker.connection_error,
+                                  connectErrorLabels,
+                                )}
+                              </p>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 align-top">
+                          <p className="truncate text-neutral-900 dark:text-neutral-100">{broker.account_login || '—'}</p>
+                          <p className={clsx('mt-0.5 text-xs', linkedAccountTypeValueClass(accountType))}>
+                            {formatLinkedAccountTypeLabel(accountType, accountTypeLabelsFromBrokerList(bl))}
+                          </p>
+                        </td>
+                        <td className="px-3 py-3 align-top">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center">
+                              <PlatformIcon platform={broker.platform} />
+                            </span>
+                            <span className="truncate text-neutral-900 dark:text-neutral-100">{broker.platform}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 align-top tabular-nums text-neutral-900 dark:text-neutral-100">
+                          {formatBrokerMoney(resolveBrokerTotalBalance(broker), broker.last_currency)}
+                        </td>
+                        <td className="px-3 py-3 align-top">
+                          <div className="flex flex-col items-start gap-1">
+                            <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+                            {healthVariant && healthLabel ? (
+                              <button
+                                type="button"
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  setStatusModalBroker(broker)
+                                }}
+                                className="inline-flex rounded-full focus:outline-hidden focus-visible:ring-2 focus-visible:ring-green-400"
+                                aria-label={bl.statusHealthView}
+                              >
+                                <Badge variant={healthVariant} size="sm">{healthLabel}</Badge>
+                              </button>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 align-top" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+                          <div className="flex items-center gap-2">
+                            <span className={clsx(
+                              'text-xs font-medium',
+                              broker.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-900 dark:text-neutral-50',
+                            )}>
+                              {broker.is_active ? bl.statusActive : bl.statusInactive}
+                            </span>
+                            <Toggle
+                              checked={broker.is_active}
+                              onChange={is_active => { void toggleBrokerActive(broker.id, is_active) }}
+                              disabled={togglingBrokerId === broker.id}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 align-top" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+                          <div className="flex flex-wrap items-center justify-end gap-1.5">
+                            {brokerCanReconnect(broker) ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                loading={isReconnecting}
+                                onClick={() => void reconnectBroker(broker.id)}
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                                {bl.reconnect}
+                              </Button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => { void openConfigureModal(broker) }}
+                              className="rounded-lg border border-green-400 bg-green-400 px-3 py-1.5 text-xs font-medium text-neutral-950 transition-colors hover:bg-green-500 dark:border-green-400 dark:bg-green-400 dark:text-neutral-950 dark:hover:bg-green-500"
+                            >
+                              {bl.configure}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setError(''); setBrokerPendingDelete(broker) }}
+                              className="rounded-lg p-1.5 text-neutral-900 transition-colors hover:bg-error-50 hover:text-error-600 dark:text-neutral-50 dark:hover:bg-error-950/40 dark:hover:text-error-400"
+                              aria-label={interpolate(bl.removeAria, { label: broker.label })}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
 
         {filteredBrokers.length > 0 && (
           <div className="border-t border-neutral-100 px-4 py-3 dark:border-neutral-800">
@@ -3099,6 +3237,61 @@ export function AccountConfigPage() {
         fieldErrors={cm.risk.fieldErrors}
         cancelLabel={cm.cancel}
       />
+
+      {configAccount && configDraft.selectedChannelId ? (
+        <ConfigureWithAiModal
+          open={configureWithAiOpen}
+          onClose={() => setConfigureWithAiOpen(false)}
+          locale={locale}
+          copy={cm.configureWithAi ?? configureModalEn.configureWithAi}
+          onApplyPatch={raw => {
+            const patch = sanitizeConfigureAiPatch(raw)
+            if (!Object.keys(patch).length) return
+            const merged = {
+              ...channelManualSettings,
+              ...patch,
+            } as ManualSettings
+            const normalized = normalizeManualSettingsForPlan(
+              manualSettingsPlanCtx.plan,
+              manualSettingsPlanCtx.status,
+              merged as unknown as Record<string, unknown>,
+              subscription?.trial_ends_at,
+            ) as ManualSettings
+            setManual(normalized)
+            setRiskNumberDrafts({})
+          }}
+          context={{
+            broker_account_id: configAccount.id,
+            channel_id: configDraft.selectedChannelId,
+            channel_name: selectedChannelOption?.display_name,
+            source_kind: selectedChannelOption?.source_kind ?? null,
+            manual_settings: channelManualSettings as unknown as Record<string, unknown>,
+            plan_features: {
+              multi_trade_style: multiTradeStyleEnabled,
+              range_trading: canUsePlanFeature('range_trading'),
+              auto_management: autoManagementPlanEnabled,
+              reverse_signal: canUsePlanFeature('reverse_signal'),
+            },
+            plan_limits: {
+              max_tp_rows: limits.maxTpRows,
+            },
+            broker: {
+              balance: configAccountTotalBalance,
+              equity: configAccount.last_equity != null ? Number(configAccount.last_equity) : null,
+              currency: configAccount.last_currency,
+              label: configAccount.label,
+            },
+          }}
+          onTrainChannel={
+            configDraft.selectedChannelId && !selectedIsTradingView
+              ? () => {
+                  startBackgroundAiTraining(configDraft.selectedChannelId!, { force: true })
+                  setConfigureWithAiOpen(false)
+                }
+              : undefined
+          }
+        />
+      ) : null}
 
       <BrokerStatusModal
         open={statusModalBroker != null}
@@ -3172,9 +3365,9 @@ export function AccountConfigPage() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="configure-trading-title"
-            className="relative z-1 w-full max-w-5xl h-dvh sm:h-[88vh] max-h-dvh sm:max-h-[88vh] flex flex-col rounded-none sm:rounded-2xl bg-white dark:bg-neutral-900 shadow-xl border-0 sm:border border-neutral-200/65 dark:border-neutral-800/55 overflow-hidden"
+            className="relative z-1 w-full max-w-5xl h-dvh sm:h-[88vh] max-h-dvh sm:max-h-[88vh] flex flex-col rounded-none sm:rounded-2xl bg-neutral-100 dark:bg-neutral-900 shadow-xl border-0 sm:border border-neutral-200/65 dark:border-neutral-800/55 overflow-hidden"
           >
-            <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-neutral-100 dark:border-neutral-800 flex items-start justify-between gap-3 shrink-0">
+            <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-neutral-200/80 dark:border-neutral-800 flex items-start justify-between gap-3 shrink-0 bg-neutral-100 dark:bg-neutral-900">
               <div className="min-w-0 flex-1">
                 <h3 id="configure-trading-title" className="text-base sm:text-lg font-semibold text-neutral-900 dark:text-neutral-50 truncate">
                   {cm.title}
@@ -3206,18 +3399,32 @@ export function AccountConfigPage() {
                   ) : null}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => closeConfigureModal()}
-                className="shrink-0 min-h-[44px] px-3 py-2 text-sm font-medium text-neutral-900 dark:text-neutral-50 hover:text-neutral-900 dark:hover:text-neutral-50 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800"
-              >
-                {cm.close}
-              </button>
+              <div className="flex shrink-0 items-center gap-1">
+                {configDraft.selectedChannelId ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="min-h-[44px]"
+                    onClick={() => setConfigureWithAiOpen(true)}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    {(cm.configureWithAi ?? configureModalEn.configureWithAi).button}
+                  </Button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => closeConfigureModal()}
+                  className="shrink-0 min-h-[44px] px-3 py-2 text-sm font-medium text-neutral-900 dark:text-neutral-50 hover:text-neutral-900 dark:hover:text-neutral-50 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                >
+                  {cm.close}
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-col sm:flex-row flex-1 min-h-0 min-w-0">
               {/* Channel sidebar */}
-              <nav className="shrink-0 flex sm:flex-col w-full sm:w-56 border-b sm:border-b-0 sm:border-e border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 p-2 sm:p-3 gap-2 sm:gap-1 overflow-x-auto sm:overflow-y-auto overscroll-x-contain">
+              <nav className="shrink-0 flex sm:flex-col w-full sm:w-56 border-b sm:border-b-0 sm:border-e border-neutral-200/80 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800/50 p-2 sm:p-3 gap-2 sm:gap-1 overflow-x-auto sm:overflow-y-auto overscroll-x-contain">
                 <div className="flex items-center justify-between gap-2 px-2 shrink-0 sm:w-full">
                   <p className="text-xs font-semibold uppercase tracking-wide text-neutral-900 dark:text-neutral-50">
                     {cm.channelsSidebar}
@@ -3318,34 +3525,6 @@ export function AccountConfigPage() {
 
               {/* Config body column */}
               <div className="flex-1 flex flex-col min-h-0 min-w-0">
-                {selectedChannelLinked ? (
-                  <div className="shrink-0 px-4 sm:px-6 pt-3 sm:pt-4 bg-white dark:bg-neutral-950 border-b border-neutral-100 dark:border-neutral-800 overflow-x-auto overscroll-x-contain">
-                    <div className="flex flex-nowrap items-center gap-1 min-w-max sm:min-w-0 sm:flex-wrap pb-px">
-                      {visibleManualSubTabs.map(sub => {
-                        const SubIcon = sub.icon
-                        const active = sub.id === activeManualSubTab
-                        return (
-                          <button
-                            key={sub.id}
-                            ref={el => setTabButtonRef(sub.id, el)}
-                            type="button"
-                            onClick={() => scrollToConfigSection(sub.id)}
-                            className={clsx(
-                                'shrink-0 flex items-center gap-1.5 px-3 py-2.5 sm:py-2 text-sm transition-colors border-b-2 -mb-px min-h-[44px] sm:min-h-0 whitespace-nowrap',
-                              active
-                                  ? 'border-green-400 text-green-500 dark:text-green-400'
-                                  : 'border-transparent text-neutral-900 dark:text-neutral-50 hover:text-neutral-900 dark:hover:text-neutral-100',
-                            )}
-                          >
-                              <SubIcon className={clsx('w-3.5 h-3.5 shrink-0', active ? 'text-green-400' : 'text-neutral-900 dark:text-neutral-50')} />
-                            {sub.label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-
                 <div
                   ref={configScrollRef}
                   className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 sm:py-5 min-h-0 overscroll-y-contain"
@@ -3422,6 +3601,22 @@ export function AccountConfigPage() {
                       </div>
                     </div> */}
 
+                    {showAdvancedOnlyNotice ? (
+                      <div className="rounded-xl border border-amber-300/80 bg-amber-50 dark:border-amber-700/70 dark:bg-amber-900/20 p-3">
+                        <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                          {cm.advancedOnlyNotice.title}
+                        </p>
+                        <p className="mt-1 text-xs leading-snug text-amber-900/90 dark:text-amber-100/90">
+                          {cm.advancedOnlyNotice.body}
+                        </p>
+                        <ul className="mt-2 list-disc ps-5 text-xs leading-snug text-amber-900/90 dark:text-amber-100/90">
+                          {advancedOnlyItems.map(item => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+
                     {AI_CONFIGURATION_ENABLED && channelMode === 'ai' ? (
                       <div className="rounded-xl border border-neutral-200/65 dark:border-neutral-800/55 p-4 space-y-3">
                         <ConfigTitle variant="semibold" info={cm.ai.intro}>{cm.ai.title}</ConfigTitle>
@@ -3433,162 +3628,49 @@ export function AccountConfigPage() {
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-8">
-                        {selectedIsTradingView ? null : (
-                        <section
-                          id="config-section-signal_examples"
-                          data-config-section="signal_examples"
-                          ref={el => setSectionRef('signal_examples', el)}
-                          className="scroll-mt-3 space-y-4"
-                        >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.aiTraining}
-                          </h3>
-                          
-                          {
-                          selectedChannelOption && configDraft.selectedChannelId && userId ? (
-                            <ChannelSignalExamplesSection
-                              channelId={configDraft.selectedChannelId}
-                              userId={userId}
-                              labels={cm.aiTraining}
-                              trainingActive={activeChannelTrainingRunning || activeChannelTrainingSaving}
-                              onRetrain={() => startBackgroundAiTraining(configDraft.selectedChannelId!, { force: true })}
-                            />
-                          ) : (
-                            <p className="text-sm text-neutral-900 dark:text-neutral-50">{cm.channels.selectChannelFirst}</p>
-                          )
-                        }
-                        </section>
-                        )}
-
-                        {selectedIsTradingView ? null : (
-                        <section
-                          id="config-section-symbols"
-                          data-config-section="symbols"
-                          ref={el => setSectionRef('symbols', el)}
-                          className="scroll-mt-3 space-y-4"
-                        >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.symbols}
-                          </h3>
-                          
-                          {
-                          selectedChannelOption && configDraft.selectedChannelId ? (
-                            <section className="rounded-xl border border-neutral-200/65 dark:border-neutral-800/55 p-4 space-y-4">
-                              <ConfigTitle variant="semibold" info={cm.channelSymbols.intro}>
-                                {cm.channelSymbols.title}
-                              </ConfigTitle>
-                              <ConfigureInput
-                                label={cm.channelSymbols.tradeOnlyLabel}
-                                hint={cm.channelSymbols.tradeOnlyHint}
-                                placeholder={cm.channelSymbols.tradeOnlyPlaceholder}
-                                value={symbolWhitelistToInput(channelManualSettings.symbol_to_trade)}
-                                onChange={e => {
-                                  const raw = e.target.value
-                                  setManual({ symbol_to_trade: raw.trim() === '' ? null : raw })
-                                }}
-                                onBlur={e => setManual({
-                                  symbol_to_trade: symbolWhitelistFromInput(e.target.value),
-                                })}
-                              />
-                              <ConfigureInput
-                                label={cm.channelSymbols.avoidLabel}
-                                hint={cm.channelSymbols.avoidHint}
-                                placeholder={cm.channelSymbols.avoidPlaceholder}
-                                value={
-                                  symbolsExcludeDraft
-                                  ?? symbolsExcludeToInput(channelManualSettings.symbols_exclude)
-                                }
-                                onChange={e => setSymbolsExcludeDraft(e.target.value)}
-                                onBlur={() => {
-                                  if (symbolsExcludeDraft === null) return
-                                  setManual({ symbols_exclude: symbolsExcludeFromInput(symbolsExcludeDraft) })
-                                  setSymbolsExcludeDraft(null)
-                                }}
-                              />
-                            </section>
-                          ) : (
-                            <p className="text-sm text-neutral-900 dark:text-neutral-50">{cm.channels.selectChannelFirst}</p>
-                          )
-                        }
-                        </section>
-                        )}
-
-                        {selectedIsTradingView ? null : (
-                        <section
-                          id="config-section-channel_instructions"
-                          data-config-section="channel_instructions"
-                          ref={el => setSectionRef('channel_instructions', el)}
-                          className="scroll-mt-3 space-y-4"
-                        >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.channelInstructions}
-                          </h3>
-                          
-                          {
-                          selectedChannelOption && configDraft.selectedChannelId ? (
-                            <div className="relative">
-                              <section
-                                className={clsx(
-                                  'space-y-3',
-                                  !keywordFiltersEnabled && 'pointer-events-none select-none opacity-60',
-                                )}
-                                aria-disabled={!keywordFiltersEnabled}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <ConfigTitle variant="semibold" info={`${cm.channels.filtersIntro}\n\n${cm.channelFilters.footer}`}>{cm.channels.keywordFilters}</ConfigTitle>
-                                  <p className="text-xs text-neutral-900 dark:text-neutral-50">
-                                    {(() => {
-                                      const f = normalizeChannelFilters(
-                                        configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters
-                                          ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
-                                      )
-                                      const total = channelFilterCategories.reduce(
-                                        (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
-                                      )
-                                      return total === 0
-                                        ? cm.channels.allAllowed
-                                        : interpolate(cm.channels.ignoredAcross, { total: String(total) })
-                                    })()}
-                                  </p>
-                                </div>
-                                
-                                <ChannelFiltersCard
-                                  filters={normalizeChannelFilters(
-                                    configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters
-                                      ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
-                                  )}
-                                  categories={channelFilterCategories}
-                                  labels={cm.channelFilters}
-                                  disabled={!keywordFiltersEnabled}
-                                  onChange={(key, value) => setChannelFilter(configDraft.selectedChannelId!, key, value)}
-                                  onReset={() => resetChannelFilters(configDraft.selectedChannelId!)}
-                                />
-                              </section>
-                              {!keywordFiltersEnabled ? (
-                                <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
-                                  <div className="pointer-events-auto w-full max-w-md">
-                                    <UpgradePrompt reason={pw.advancedFeature} />
-                                  </div>
-                                </div>
+                      <div className="space-y-3">
+                        <h4 className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base sm:text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">
+                          {cm.configureChannelOnBroker.split(/(\{channel\}|\{broker\})/g).map((part, index) => {
+                            if (part === '{channel}') {
+                              return (
+                                <span key={index} className="inline-flex min-w-0 items-center gap-1.5">
+                                  {selectedChannelOption ? (
+                                    <SourceKindLogo
+                                      sourceKind={selectedChannelOption.source_kind}
+                                      className="h-5 w-5"
+                                    />
+                                  ) : null}
+                                  <span className="truncate">
+                                    {selectedChannelOption?.display_name ?? cm.channelFilters.unnamedChannel}
+                                  </span>
+                                </span>
+                              )
+                            }
+                            if (part === '{broker}') {
+                              return (
+                                <span key={index} className="inline-flex min-w-0 items-center gap-1.5">
+                                  {configAccount?.platform ? (
+                                    <PlatformIcon platform={configAccount.platform} className="h-5 w-5" />
                               ) : null}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-neutral-900 dark:text-neutral-50">{cm.channels.selectChannelFirst}</p>
-                          )
-                        }
-                        </section>
-                        )}
+                                  <span className="truncate">
+                                    {configAccount ? getBrokerDisplayLabel(configAccount) : '—'}
+                                  </span>
+                                </span>
+                              )
+                            }
+                            return part ? <span key={index}>{part}</span> : null
+                          })}
+                        </h4>
 
-                        <section
-                          id="config-section-risk"
-                          data-config-section="risk"
-                          ref={el => setSectionRef('risk', el)}
-                          className="scroll-mt-3 space-y-4"
+                        <ConfigAccordionSection
+                          id="risk"
+                          title={cm.manualSubTabs.risk}
+                          description={cm.manualSubTabDescriptions.risk}
+                          icon={Wallet}
+                          open={isConfigSectionOpen('risk')}
+                          onToggle={() => toggleConfigSection('risk')}
+                          sectionRef={el => setSectionRef('risk', el)}
                         >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.risk}
-                          </h3>
                           <div className="space-y-4">
                             {channelManualSettings.risk_mode === 'fixed_lot' && (
                               <div className="flex justify-end">
@@ -3679,25 +3761,6 @@ export function AccountConfigPage() {
 
                             {channelManualSettings.trade_style !== 'multi' && (
                               <div className="space-y-4">
-                              <ConfigureSelect
-                                label={cm.risk.singleTpTarget}
-                                hint={cm.risk.singleTpTargetHint}
-                                value={channelManualSettings.single_tp_target ?? 'farthest'}
-                                onChange={e => {
-                                  const v = e.target.value as ManualSettings['single_tp_target']
-                                  setManual({ single_tp_target: v })
-                                }}
-                                options={[
-                                  { value: 'farthest', label: cm.risk.singleTpTargetFarthest },
-                                  ...(channelManualSettings.tp_lots ?? DEFAULT_MANUAL_TP_LOTS)
-                                    .map((row, i) => ({ row, origIdx: i }))
-                                    .filter(({ row }) => row.enabled !== false)
-                                    .map(({ row, origIdx }) => ({
-                                      value: `tp${origIdx + 1}` as const,
-                                      label: row.label?.trim() || `TP${origIdx + 1}`,
-                                    })),
-                                ]}
-                              />
                               {singleTpLotBreakdownText ? (
                                 <div className="rounded-md border border-neutral-200/65 dark:border-neutral-800/55 bg-neutral-50 dark:bg-neutral-900/60 px-3 py-2.5 space-y-1">
                                   <p className="text-xs font-medium text-neutral-900 dark:text-neutral-50">
@@ -3728,6 +3791,21 @@ export function AccountConfigPage() {
                                   </div>
                                   {channelManualSettings.use_signal_entry_price && (
                                     <div className="border-t border-neutral-200/65 dark:border-neutral-800/55 bg-neutral-50 dark:bg-neutral-800/80 px-3 py-3 space-y-2">
+                                      <ConfigureSelect
+                                        label={cm.risk.signalEntryPrefer}
+                                        hint={cm.risk.signalEntryPreferHint}
+                                        value={channelManualSettings.signal_entry_prefer ?? 'first_price'}
+                                        onChange={e =>
+                                          setManual({
+                                            signal_entry_prefer:
+                                              e.target.value === 'last_price' ? 'last_price' : 'first_price',
+                                          })
+                                        }
+                                        options={[
+                                          { value: 'first_price', label: cm.risk.signalEntryPreferFirst },
+                                          { value: 'last_price', label: cm.risk.signalEntryPreferLast },
+                                        ]}
+                                      />
                                       <ConfigureInput
                                         label={cm.risk.pipToleranceLegacy}
                                         hint={cm.risk.pipToleranceHint}
@@ -3915,18 +3993,17 @@ export function AccountConfigPage() {
                             )}
 
                           </div>
-                        </section>
+                        </ConfigAccordionSection>
 
-                        <section
-                          id="config-section-stops"
-                          data-config-section="stops"
-                          ref={el => setSectionRef('stops', el)}
-                          className="scroll-mt-3 space-y-4"
+                        <ConfigAccordionSection
+                          id="stops"
+                          title={cm.manualSubTabs.stops}
+                          description={cm.manualSubTabDescriptions.stops}
+                          icon={Target}
+                          open={isConfigSectionOpen('stops')}
+                          onToggle={() => toggleConfigSection('stops')}
+                          sectionRef={el => setSectionRef('stops', el)}
                         >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.stops}
-                          </h3>
-
                           {
                           (() => {
                           const ms = channelManualSettings
@@ -4109,18 +4186,17 @@ export function AccountConfigPage() {
                           )
                         })()
                         }
-                        </section>
+                        </ConfigAccordionSection>
 
-                        <section
-                          id="config-section-management"
-                          data-config-section="management"
-                          ref={el => setSectionRef('management', el)}
-                          className="scroll-mt-3 space-y-4"
+                        <ConfigAccordionSection
+                          id="management"
+                          title={cm.manualSubTabs.management}
+                          description={cm.manualSubTabDescriptions.management}
+                          icon={Settings2}
+                          open={isConfigSectionOpen('management')}
+                          onToggle={() => toggleConfigSection('management')}
+                          sectionRef={el => setSectionRef('management', el)}
                         >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.management}
-                          </h3>
-
                           {
                           (() => {
                           const ms = channelManualSettings
@@ -4424,6 +4500,13 @@ export function AccountConfigPage() {
                                   onChange={e => setManual({ close_on_opposite_signal: e.target.value === 'yes' })}
                                   options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
                                 />
+                                <ConfigureSelect
+                                  label={cm.strategy.closeOnSignalDeleted}
+                                  hint={cm.strategy.closeOnSignalDeletedHint}
+                                  value={ms.close_on_signal_deleted ? 'yes' : 'no'}
+                                  onChange={e => setManual({ close_on_signal_deleted: e.target.value === 'yes' })}
+                                  options={[{ value: 'no', label: cm.common.no }, { value: 'yes', label: cm.common.yes }]}
+                                />
                               </div>
                                 </div>
 
@@ -4508,17 +4591,17 @@ export function AccountConfigPage() {
                           )
                         })()
                         }
-                        </section>
+                        </ConfigAccordionSection>
 
-                        <section
-                          id="config-section-filters"
-                          data-config-section="filters"
-                          ref={el => setSectionRef('filters', el)}
-                          className="scroll-mt-3 space-y-4"
+                        <ConfigAccordionSection
+                          id="filters"
+                          title={cm.manualSubTabs.filters}
+                          description={cm.manualSubTabDescriptions.filters}
+                          icon={Filter}
+                          open={isConfigSectionOpen('filters')}
+                          onToggle={() => toggleConfigSection('filters')}
+                          sectionRef={el => setSectionRef('filters', el)}
                         >
-                          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                            {cm.manualSubTabs.filters}
-                          </h3>
                           <div className="space-y-6">
                             <section className="rounded-lg border border-neutral-200/65 dark:border-neutral-800/55 p-4 space-y-3">
                               <ConfigTitle info={cm.filters.timeSubtitle}>{cm.filters.timeTitle}</ConfigTitle>
@@ -4639,7 +4722,182 @@ export function AccountConfigPage() {
                         )}
                             </section>
                       </div>
+                        </ConfigAccordionSection>
+
+
+                        {selectedIsTradingView ? null : (
+                        <ConfigAccordionSection
+                          id="signal_examples"
+                          title={cm.manualSubTabs.aiTraining}
+                          description={cm.manualSubTabDescriptions.aiTraining}
+                          icon={MessageSquareText}
+                          open={isConfigSectionOpen('signal_examples')}
+                          onToggle={() => toggleConfigSection('signal_examples')}
+                          sectionRef={el => setSectionRef('signal_examples', el)}
+                        >
+                          {
+                          selectedChannelOption && configDraft.selectedChannelId && userId ? (
+                            <ChannelSignalExamplesSection
+                              channelId={configDraft.selectedChannelId}
+                              userId={userId}
+                              labels={cm.aiTraining}
+                              trainingActive={activeChannelTrainingRunning || activeChannelTrainingSaving}
+                              onRetrain={() => startBackgroundAiTraining(configDraft.selectedChannelId!, { force: true })}
+                            />
+                          ) : (
+                            <p className="text-sm text-neutral-900 dark:text-neutral-50">{cm.channels.selectChannelFirst}</p>
+                          )
+                        }
+                        </ConfigAccordionSection>
+                        )}
+
+                        {selectedIsTradingView ? null : (
+                        <ConfigAccordionSection
+                          id="symbols"
+                          title={cm.manualSubTabs.symbols}
+                          description={cm.manualSubTabDescriptions.symbols}
+                          icon={Coins}
+                          open={isConfigSectionOpen('symbols')}
+                          onToggle={() => toggleConfigSection('symbols')}
+                          sectionRef={el => setSectionRef('symbols', el)}
+                        >
+                          {
+                          selectedChannelOption && configDraft.selectedChannelId ? (
+                            <div className="space-y-4">
+                              <ConfigTitle variant="semibold" info={cm.channelSymbols.intro}>
+                                {cm.channelSymbols.title}
+                              </ConfigTitle>
+                              <ConfigureInput
+                                label={cm.channelSymbols.tradeOnlyLabel}
+                                hint={cm.channelSymbols.tradeOnlyHint}
+                                placeholder={cm.channelSymbols.tradeOnlyPlaceholder}
+                                value={symbolWhitelistToInput(channelManualSettings.symbol_to_trade)}
+                                onChange={e => {
+                                  const raw = e.target.value
+                                  setManual({ symbol_to_trade: raw.trim() === '' ? null : raw })
+                                }}
+                                onBlur={e => setManual({
+                                  symbol_to_trade: symbolWhitelistFromInput(e.target.value),
+                                })}
+                              />
+                              <ConfigureInput
+                                label={cm.channelSymbols.avoidLabel}
+                                hint={cm.channelSymbols.avoidHint}
+                                placeholder={cm.channelSymbols.avoidPlaceholder}
+                                value={
+                                  symbolsExcludeDraft
+                                  ?? symbolsExcludeToInput(channelManualSettings.symbols_exclude)
+                                }
+                                onChange={e => setSymbolsExcludeDraft(e.target.value)}
+                                onBlur={() => {
+                                  if (symbolsExcludeDraft === null) return
+                                  setManual({ symbols_exclude: symbolsExcludeFromInput(symbolsExcludeDraft) })
+                                  setSymbolsExcludeDraft(null)
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <p className="text-sm text-neutral-900 dark:text-neutral-50">{cm.channels.selectChannelFirst}</p>
+                          )
+                        }
+                        </ConfigAccordionSection>
+                        )}
+
+                        {selectedIsTradingView ? null : (
+                        <ConfigAccordionSection
+                          id="channel_instructions"
+                          title={cm.manualSubTabs.channelInstructions}
+                          description={cm.manualSubTabDescriptions.channelInstructions}
+                          icon={ScrollText}
+                          open={isConfigSectionOpen('channel_instructions')}
+                          onToggle={() => toggleConfigSection('channel_instructions')}
+                          sectionRef={el => setSectionRef('channel_instructions', el)}
+                        >
+                          {
+                          selectedChannelOption && configDraft.selectedChannelId ? (
+                            <div className="relative">
+                              <section
+                                className={clsx(
+                                  'space-y-3',
+                                  !keywordFiltersEnabled && 'pointer-events-none select-none opacity-60',
+                                )}
+                                aria-disabled={!keywordFiltersEnabled}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <ConfigTitle variant="semibold" info={`${cm.channels.filtersIntro}\n\n${cm.channelFilters.footer}`}>{cm.channels.keywordFilters}</ConfigTitle>
+                                  <p className="text-xs text-neutral-900 dark:text-neutral-50">
+                                    {(() => {
+                                      const f = normalizeChannelFilters(
+                                        configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters
+                                          ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
+                                      )
+                                      const total = channelFilterCategories.reduce(
+                                        (n, c) => n + (f[c.key] === 'ignore' ? 1 : 0), 0,
+                                      )
+                                      return total === 0
+                                        ? cm.channels.allAllowed
+                                        : interpolate(cm.channels.ignoredAcross, { total: String(total) })
+                                    })()}
+                                  </p>
+                                </div>
+                                
+                                <ChannelFiltersCard
+                                  filters={normalizeChannelFilters(
+                                    configDraft.channelConfigs[configDraft.selectedChannelId]?.channelFilters
+                                      ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
+                                  )}
+                                  categories={channelFilterCategories}
+                                  labels={cm.channelFilters}
+                                  disabled={!keywordFiltersEnabled}
+                                  onChange={(key, value) => setChannelFilter(configDraft.selectedChannelId!, key, value)}
+                                  onReset={() => resetChannelFilters(configDraft.selectedChannelId!)}
+                                />
                         </section>
+                              {!keywordFiltersEnabled ? (
+                                <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
+                                  <div className="pointer-events-auto w-full max-w-md space-y-2">
+                                    <div className="rounded-lg border border-neutral-200/70 dark:border-neutral-800/60 bg-neutral-50 dark:bg-neutral-900 px-3 py-2">
+                                      {(() => {
+                                        const applied = normalizeChannelFilters(
+                                          configDraft.channelConfigs[configDraft.selectedChannelId!]?.channelFilters
+                                            ?? defaultChannelFiltersForPlan(keywordFiltersEnabled),
+                                        )
+                                        const ignored = channelFilterCategories.filter(
+                                          c => applied[c.key] === 'ignore',
+                                        )
+                                        return ignored.length === 0 ? (
+                                          <p className="text-xs leading-snug text-neutral-900 dark:text-neutral-100">
+                                            No channel instructions are ignored for this channel. Every instruction
+                                            the channel sends is applied to your account.
+                                          </p>
+                                        ) : (
+                                          <>
+                                            <p className="text-xs leading-snug text-neutral-700 dark:text-neutral-300">
+                                              Your plan applies these channel instructions automatically as
+                                              <span className="font-semibold"> Ignore</span>:
+                                            </p>
+                                            <p className="mt-1 text-xs leading-snug text-neutral-900 dark:text-neutral-100">
+                                              {ignored.map(c => c.label).join(' · ')}
+                                            </p>
+                                            <p className="mt-1 text-[11px] leading-snug text-neutral-500 dark:text-neutral-400">
+                                              Entries from this channel still open normally. Only changes to trades
+                                              you already have open are skipped.
+                                            </p>
+                                          </>
+                                        )
+                                      })()}
+                                    </div>
+                                    <UpgradePrompt reason={pw.advancedFeature} />
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-neutral-900 dark:text-neutral-50">{cm.channels.selectChannelFirst}</p>
+                          )
+                        }
+                        </ConfigAccordionSection>
+                        )}
 
 
                   </div>
@@ -4652,7 +4910,7 @@ export function AccountConfigPage() {
                           </div>
                     </div>
 
-            <div className="shrink-0 px-4 sm:px-6 py-3 sm:py-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-row flex-wrap items-center justify-center gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-4">
+            <div className="shrink-0 px-4 sm:px-6 py-3 sm:py-4 border-t border-neutral-200/80 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-900 flex flex-row flex-wrap items-center justify-center gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-4">
               <div className="flex flex-row items-center gap-1 sm:gap-3 text-center sm:text-start">
                 {configSavedAt != null && (
                   <span className="text-xs text-success-600 transition-opacity">{cm.saved}</span>
@@ -5122,6 +5380,71 @@ export function AccountConfigPage() {
 }
 
 // ── Tab subcomponents ────────────────────────────────────────────────────
+
+/** FAQ-style collapsible panel for Configure Trading sections. */
+function ConfigAccordionSection({
+  id,
+  title,
+  description,
+  icon: Icon,
+  open,
+  onToggle,
+  sectionRef,
+  children,
+}: {
+  id: ManualSubTabId
+  title: string
+  description?: string
+  icon: typeof SlidersHorizontal
+  open: boolean
+  onToggle: () => void
+  sectionRef?: (el: HTMLElement | null) => void
+  children: ReactNode
+}) {
+  return (
+    <section
+      id={`config-section-${id}`}
+      data-config-section={id}
+      ref={sectionRef}
+      className="scroll-mt-3 rounded-xl border border-neutral-200/80 dark:border-neutral-800/55 overflow-hidden bg-white dark:bg-neutral-950 shadow-xs"
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="w-full flex items-start gap-3 px-4 py-3.5 text-start min-h-[48px] bg-white hover:bg-neutral-50 dark:bg-neutral-950 dark:hover:bg-neutral-900/60 transition-colors"
+      >
+        <Icon
+          className={clsx(
+            'w-4 h-4 shrink-0 mt-0.5',
+            open ? 'text-green-500 dark:text-green-400' : 'text-neutral-900 dark:text-neutral-50',
+          )}
+        />
+        <span className="flex-1 min-w-0">
+          <span className="block text-sm font-semibold text-neutral-900 dark:text-neutral-50">
+            {title}
+          </span>
+          {description ? (
+            <span className="mt-0.5 block text-xs font-normal leading-snug text-neutral-500 dark:text-neutral-400">
+              {description}
+            </span>
+          ) : null}
+        </span>
+        <ChevronDown
+          className={clsx(
+            'w-4 h-4 shrink-0 mt-0.5 text-neutral-900 dark:text-neutral-50 transition-transform duration-200',
+            open && 'rotate-180',
+          )}
+        />
+      </button>
+      {open ? (
+        <div className="border-t border-neutral-100 dark:border-neutral-800 px-4 py-4 space-y-4 bg-white dark:bg-neutral-950">
+          {children}
+        </div>
+      ) : null}
+    </section>
+  )
+}
 
 function FeatureBullet({ icon: Icon, title, body }: { icon: typeof DollarSign; title: string; body: string }) {
   return (

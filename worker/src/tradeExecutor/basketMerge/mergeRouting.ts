@@ -5,7 +5,6 @@ import { isChannelSlTpUpdateBlocked, normalizeChannelMessageFiltersMap } from '.
 import {
   parsedHasExplicitEntryAnchor,
   signalEntryPriceStrictEnabled,
-  signalEntryRangeStrictEnabled,
   type ChannelKeywords,
   type ManualSettings
 } from '../../manualPlanner'
@@ -182,12 +181,15 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
     commentPrefix: string
     sameSignalRefresh?: boolean
     liveMgmtFast?: boolean
+    /** Live entry: one-shot anchor lookup — do not burn 3s waiting for a teaser. */
+    liveEntryFast?: boolean
   }): Promise<MergeOutcome> {
     const {
       signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid,
       strictEntryPrefetch, commentPrefix,
     } = args
     const sameSignalRefresh = args.sameSignalRefresh === true
+    const liveEntryFast = args.liveEntryFast === true
     const manual = (broker.manual_settings ?? {}) as ManualSettings
     const revisionSafeSkip = (): MergeOutcome => revisionRefreshSafeSkipOutcome()
     if (parsedHasReEnterIntent(parsed)) return sameSignalRefresh ? revisionSafeSkip() : { handled: false }
@@ -214,7 +216,11 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
           symbol,
         } as unknown as Record<string, unknown>,
       })
-      return { handled: true, success: false }
+      return {
+        handled: true,
+        success: false,
+        failureReason: 'basket_modify_skipped_by_channel_filter',
+      }
     }
 
     const a = String(parsed.action ?? '').toLowerCase()
@@ -242,6 +248,8 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       }, {
         currentSignalId: signal.id,
         currentSignalCreatedAt: signal.created_at ?? null,
+        // Bare live-fast entries must not wait 3s for a teaser that is not coming.
+        retryMs: liveEntryFast ? 0 : undefined,
       })
     }
     if (!anchor) {
@@ -264,17 +272,22 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       return revisionRefreshWithoutOpenBasketOutcome(sameSignalRefresh)
     }
 
-    const openLegDeadline = Date.now() + 3_000
-    while (Date.now() < openLegDeadline) {
+    // Live-fast: single open/pending-leg probe. Queued path may briefly wait for
+    // the entry claim holder's trades row to land before modify-only refresh.
+    // Pending (strict-entry limits) must count — otherwise a Demo-only pending
+    // basket never refreshes on Telegram message edit.
+    const openLegDeadline = Date.now() + (liveEntryFast ? 0 : 3_000)
+    while (Date.now() <= openLegDeadline) {
       const { count } = await ctx.supabase
         .from('trades')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', signal.user_id)
         .eq('broker_account_id', broker.id)
         .eq('signal_id', anchor.anchorSignalId)
-        .eq('status', 'open')
+        .in('status', ['open', 'pending'])
         .eq('direction', direction)
       if ((count ?? 0) > 0) break
+      if (liveEntryFast || Date.now() >= openLegDeadline) break
       await new Promise(resolve => setTimeout(resolve, 150))
     }
 
@@ -373,7 +386,8 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
       `[tradeExecutor] merge_anchor_selected signal=${signal.id} broker=${broker.id}`
       + ` anchor=${anchor.anchorSignalId} symbol=${symbol} direction=${direction}`,
     )
-    await writeExecutionLog(ctx.supabase, {
+    // Fire-and-forget on the live edit path — awaiting this log added 50–150ms.
+    void writeExecutionLog(ctx.supabase, {
       user_id: signal.user_id,
       signal_id: signal.id,
       broker_account_id: broker.id,
@@ -387,18 +401,22 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
         newest_opened_at: anchor.newestOpenedAt,
       } as unknown as Record<string, unknown>,
     })
-    const ghostCheck = await reconcileGhostBasketLegs(ctx, {
-      signal,
-      broker,
-      uuid,
-      anchorSignalId: anchor.anchorSignalId,
-      symbol,
-      familyTrades: anchorFamily,
-    })
-    if (ghostCheck.isGhostBasket) {
-      return { handled: false }
+    // Live message-revision SL/TP refresh just opened these legs — skip a full
+    // OpenedOrders ghost sweep (often multi-second under MTAPI load).
+    const skipGhostReconcile = args.liveMgmtFast === true && sameSignalRefresh
+    if (!skipGhostReconcile) {
+      const ghostCheck = await reconcileGhostBasketLegs(ctx, {
+        signal,
+        broker,
+        uuid,
+        anchorSignalId: anchor.anchorSignalId,
+        symbol,
+        familyTrades: anchorFamily,
+      })
+      if (ghostCheck.isGhostBasket) {
+        return { handled: false }
+      }
     }
-
 
     const outcome = await applyBasketSlTpRefresh(ctx, {
       signal,
@@ -430,7 +448,11 @@ export async function tryParameterFollowUpMergeModifyOnly(ctx: TradeExecutorCont
         legacy_merge_linking: legacyMergeLinkingEnabled(),
       },
     })
-    return { handled: true, success: outcome.success }
+    return {
+      handled: true,
+      success: outcome.success,
+      ...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
+    }
   }
 
 export async function tryMergeSignalIntoExistingOpenTrade(ctx: TradeExecutorContext, args: {
@@ -570,7 +592,11 @@ export async function tryMergeSignalIntoExistingOpenTrade(ctx: TradeExecutorCont
         legacy_merge_linking: legacyMergeLinkingEnabled(),
       },
     })
-    return { handled: true, success: refresh.success }
+    return {
+      handled: true,
+      success: refresh.success,
+      ...(refresh.failureReason ? { failureReason: refresh.failureReason } : {}),
+    }
   }
 
 /**
@@ -588,12 +614,14 @@ export async function tryTeaserCompletionMerge(ctx: TradeExecutorContext, args: 
     uuid: string
     strictEntryPrefetch: { bid: number; ask: number } | null
     commentPrefix: string
+    /** Live entry: one-shot anchor lookup — skip the 3s teaser wait. */
+    liveEntryFast?: boolean
   }): Promise<MergeOutcome> {
     const {
       signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid,
       strictEntryPrefetch, commentPrefix,
     } = args
-    const manual = (broker.manual_settings ?? {}) as ManualSettings
+    const liveEntryFast = args.liveEntryFast === true
     if (!parsedSignalHasExplicitStops(parsed)) return { handled: false }
     if (!messageHasMarketNowIntent(String(parsed.raw_instruction ?? ''))) return { handled: false }
     if (shouldRouteAsBasketParameterRefresh(parsed)) return { handled: false }
@@ -604,14 +632,11 @@ export async function tryTeaserCompletionMerge(ctx: TradeExecutorContext, args: 
     if (a !== 'buy' && a !== 'sell') return { handled: false }
     const direction = a === 'buy' ? 'buy' : 'sell'
 
-    if (isChannelSlTpUpdateBlocked(
-      normalizeChannelMessageFiltersMap(broker.channel_message_filters),
-      signal.channel_id,
-      parsed,
-    )) {
-      return { handled: true, success: false }
-    }
-
+    // The channel's "ignore SL/TP changes" filters decide whether an EXISTING basket may be
+    // modified. They must never decide whether a NEW entry may open, and they used to, because
+    // this check ran before the anchor lookup: a fresh entry carrying stops was consumed as a
+    // modification and dropped with no order and no reason (incident 2026-11-18, Basic plan).
+    // So the lookup comes first: no anchor means no basket to modify, and the entry continues.
     const anchor = await resolveOpenBasketAnchorForParameterFollowUp(
       ctx.supabase,
       {
@@ -625,6 +650,7 @@ export async function tryTeaserCompletionMerge(ctx: TradeExecutorContext, args: 
       {
         currentSignalId: signal.id,
         currentSignalCreatedAt: signal.created_at ?? null,
+        retryMs: liveEntryFast ? 0 : undefined,
       },
     )
     if (!anchor) return { handled: false }
@@ -677,6 +703,40 @@ export async function tryTeaserCompletionMerge(ctx: TradeExecutorContext, args: 
     })
     if (ghostCheck.isGhostBasket) return { handled: false }
 
+    // The channel's "ignore SL/TP changes" filters decide whether an EXISTING basket may be
+    // modified. They must never decide whether a NEW entry may open (incident 2026-11-18: a
+    // Basic-plan account lost every entry because this ran before anything proved a leg existed).
+    // This is the first point where open legs are certain — the anchor alone can come from the
+    // recent-signals fallback and proves nothing.
+    if (isChannelSlTpUpdateBlocked(
+      normalizeChannelMessageFiltersMap(broker.channel_message_filters),
+      signal.channel_id,
+      parsed,
+    )) {
+      // The channel asked us to ignore SL/TP edits, so the teaser completion is skipped — recorded,
+      // never silent. The reason is its own code: `channel_filter_ignored` is a keyword-filter code
+      // the customer log hides, which would recreate the original "no explanation" complaint.
+      void writeExecutionLog(ctx.supabase, {
+        user_id: signal.user_id,
+        signal_id: signal.id,
+        broker_account_id: broker.id,
+        action: 'merge_routed_modify_only',
+        status: 'skipped',
+        request_payload: {
+          skip_reason: 'channel_filter_ignored',
+          channel_id: signal.channel_id,
+          symbol,
+          anchor_signal_id: anchor.anchorSignalId,
+          open_legs: anchorFamily.length,
+        } as unknown as Record<string, unknown>,
+      })
+      return {
+        handled: true,
+        success: false,
+        failureReason: 'basket_modify_skipped_by_channel_filter',
+      }
+    }
+
     console.log(
       `[tradeExecutor] teaser_completion_merge signal=${signal.id} anchor=${anchor.anchorSignalId}`
       + ` symbol=${symbol} direction=${direction}`,
@@ -720,5 +780,9 @@ export async function tryTeaserCompletionMerge(ctx: TradeExecutorContext, args: 
       }).then(() => undefined, () => undefined)
     }
 
-    return { handled: true, success: outcome.success }
+    return {
+      handled: true,
+      success: outcome.success,
+      ...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
+    }
   }

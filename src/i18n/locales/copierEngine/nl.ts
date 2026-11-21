@@ -74,6 +74,7 @@ export const copierEngineNl: CopierEngineBundleTranslations = {
     yourTelegramChannels: 'Je Telegram-kanalen',
     telegramConnectedHint: 'Voeg hieronder kanalen toe om signalen te kopiëren',
     connected: 'Verbonden',
+    linkedNotReceiving: 'Linked, not receiving',
     listenerLeaseLive: 'Kopieermotor actief',
     listenerLeaseExpired: 'Kopieermotor offline',
     listenerLeaseExpiredHint:

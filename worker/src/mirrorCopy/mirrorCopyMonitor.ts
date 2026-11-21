@@ -42,13 +42,19 @@ import {
   LEGACY_COPY_BROKER_COLUMNS,
   missingProviderIdColumn,
   normalizeSourcePosition,
+  normalizeSourcePositions,
   sessionId,
   symbolLimits,
   type NormalizedSourcePosition,
 } from '../copyShared/copyHelpers'
 import { mirrorCopyAccountModeSupported } from './mirrorCopyAccountMode'
 import { accountModeFromBrokerRow, type BrokerAccountMode } from '../copyShared/brokerAccountMode'
-import { mirrorCopyStops, planMirrorCopy, type MirrorCopyPlan } from './mirrorCopyPlan'
+import {
+  mirrorCopyStops,
+  planMirrorCopy,
+  type MirrorCopyAccountMetrics,
+  type MirrorCopyPlan,
+} from './mirrorCopyPlan'
 import {
   MIRROR_CLOSE_REASON,
   parseMirrorCopySettings,
@@ -461,9 +467,7 @@ export class MirrorCopyMonitor {
     if (!await destinationApi.verifyTradingReady(sessionId(context.destination))) throw new Error('DESTINATION_DISCONNECTED')
 
     const sourceRaw = await sourceApi.openedOrders(sessionId(context.source))
-    const sourcePositions = sourceRaw
-      .map(normalizeSourcePosition)
-      .filter((row): row is NormalizedSourcePosition => row != null)
+    const sourcePositions = normalizeSourcePositions(sourceRaw)
     const destinationOrders = await destinationApi.openedOrders(sessionId(context.destination))
     const { data: mappings, error: mappingError } = await this.supabase.from('mirror_copy_trade_mappings').select('*')
       .eq('link_id', link.id).in('state', OPEN_MAPPING_STATES)
@@ -567,6 +571,26 @@ export class MirrorCopyMonitor {
     }
   }
 
+  private async loadAccountMetrics(context: BrokerContext): Promise<MirrorCopyAccountMetrics> {
+    const sourceApi = this.provider(context.source, false)
+    const destinationApi = this.provider(context.destination, true)
+    if (!sourceApi || !destinationApi) throw new Error('UNSUPPORTED_PROVIDER')
+    const [sourceSummary, destinationSummary] = await Promise.all([
+      sourceApi.accountSummary(sessionId(context.source)),
+      destinationApi.accountSummary(sessionId(context.destination)),
+    ])
+    const finite = (value: unknown): number | null => {
+      const n = typeof value === 'number' ? value : Number(value)
+      return Number.isFinite(n) ? n : null
+    }
+    return {
+      sourceBalance: finite(sourceSummary.balance),
+      destinationBalance: finite(destinationSummary.balance),
+      sourceEquity: finite(sourceSummary.equity),
+      destinationEquity: finite(destinationSummary.equity),
+    }
+  }
+
   private async openPosition(
     link: LinkRow,
     settings: MirrorCopySettings,
@@ -575,7 +599,25 @@ export class MirrorCopyMonitor {
     destinationOrders: unknown[],
     position: NormalizedSourcePosition,
   ): Promise<void> {
-    const planned = planMirrorCopy(settings, position)
+    const needsAccountMetrics =
+      settings.sizingMode === 'balance_ratio' || settings.sizingMode === 'equity_ratio'
+    const accountMetrics = needsAccountMetrics ? await this.loadAccountMetrics(context) : null
+    if (needsAccountMetrics) {
+      if (settings.sizingMode === 'balance_ratio') {
+        const source = accountMetrics?.sourceBalance
+        const dest = accountMetrics?.destinationBalance
+        if (source == null || source <= 0 || dest == null || dest <= 0) {
+          throw new Error('BALANCE_UNAVAILABLE')
+        }
+      } else {
+        const source = accountMetrics?.sourceEquity
+        const dest = accountMetrics?.destinationEquity
+        if (source == null || source <= 0 || dest == null || dest <= 0) {
+          throw new Error('EQUITY_UNAVAILABLE')
+        }
+      }
+    }
+    const planned = planMirrorCopy(settings, position, accountMetrics)
     if (!planned) return
     const linkMapped = Object.prototype.hasOwnProperty.call(
       settings.symbolMap,

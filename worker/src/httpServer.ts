@@ -19,8 +19,57 @@ import { forceCloseSignalById, forceCloseSignalTrades } from './forceCloseSignal
 import { retryTradeActivity } from './retryActivity'
 import { retrySignal } from './retrySignal'
 import { getBrokerExecutionCapability } from './brokerExecutionMode'
+import { configuredInternalToken, internalTokenMatches } from './internalToken'
+import { workerConfig } from './workerConfig'
+import {
+  processTradingViewIngest,
+  tradingViewClientIp,
+  tradingViewPathToken,
+  tradingViewWebhookIpAllowed,
+} from './tradingViewIngest'
 
-const INTERNAL_TOKEN = process.env.WORKER_INTERNAL_TOKEN ?? ''
+/** Shared public TradingView routes for auth + trade HTTP servers. */
+async function tryHandleTradingViewHttp(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: string,
+  sessionManager: UserSessionManager,
+): Promise<boolean> {
+  if (url === '/webhooks/tradingview/_warm' && (req.method === 'GET' || req.method === 'POST')) {
+    sendJson(res, 200, { ok: true, warm: true })
+    return true
+  }
+
+  if (url.startsWith('/webhooks/tradingview/') && req.method === 'POST') {
+    const token = tradingViewPathToken(url)
+    if (!token) {
+      sendJson(res, 404, { ok: false, status: 'error' })
+      return true
+    }
+    const ip = tradingViewClientIp(req.headers)
+    if (!tradingViewWebhookIpAllowed(ip)) {
+      sendJson(res, 403, { ok: false, status: 'error' })
+      return true
+    }
+    const raw = await readText(req)
+    void processTradingViewIngest(
+      sessionManager.getSupabase(),
+      token,
+      raw,
+      sessionManager.getTradeExecutor(),
+    ).catch(err => {
+      console.warn(
+        `[httpServer] tradingview ingest failed: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    })
+    sendJson(res, 200, { ok: true, status: 'accepted' })
+    return true
+  }
+
+  return false
+}
+
+const INTERNAL_TOKEN = configuredInternalToken()
 const PORT = parseInt(process.env.WORKER_PORT ?? '8080', 10)
 
 interface Body {
@@ -171,16 +220,27 @@ export function startHttpServer(
         return sendJson(res, payload.ok ? 200 : 503, payload)
       }
 
+      if (await tryHandleTradingViewHttp(req, res, url, sessionManager)) {
+        return
+      }
+
       if (req.method !== 'POST') {
         return sendJson(res, 404, { error: 'Not found' })
       }
 
-      const token = req.headers['x-internal-token']
-      if (token !== INTERNAL_TOKEN) {
+      if (!internalTokenMatches(req.headers['x-internal-token'])) {
         return sendJson(res, 401, { error: 'Unauthorized' })
       }
 
       const body = (await readJson(req)) as Body
+
+      // Auth routes must hit the listener shard that owns the user (Edge
+      // LISTENER_SHARD_URLS). Reject early so a mis-routed proxy cannot open a
+      // second MTProto path on the wrong process.
+      if (url.startsWith('/auth/') && body.user_id && !userBelongsToShard(body.user_id)) {
+        console.warn(`[httpServer] wrong_shard auth path=${url} user=${body.user_id}`)
+        return sendJson(res, 200, { ok: false, reason: 'wrong_shard', error: 'wrong_shard' })
+      }
 
       if (url === '/auth/send_code') {
         if (!body.user_id || !body.phone) {
@@ -324,7 +384,14 @@ export function startHttpServer(
           return sendJson(res, 400, { error: 'user_id is required' })
         }
         try {
-          const result = await sessionManager.disconnectTelegramSession(body.user_id)
+          // Who pressed Disconnect, forwarded by the telegram-auth edge function.
+          // Without this the event said "disconnected" and nothing about the caller,
+          // which is exactly what made the 2026-11-19 burst unattributable.
+          const result = await sessionManager.disconnectTelegramSession(body.user_id, {
+            client: headerValue(req.headers['x-client-id']),
+            ip: headerValue(req.headers['x-client-ip']),
+            ua: headerValue(req.headers['x-client-ua']),
+          })
           return sendJson(res, 200, result)
         } catch (err: unknown) {
           return handleTelegramRpcError(res, body.user_id, sessionManager, err, 'Failed to disconnect Telegram')
@@ -467,7 +534,7 @@ export function startHttpServer(
 }
 
 /**
- * Trade workers: `/health` + optional `/internal/dispatch-signal` (listener push).
+ * Trade workers: `/health` + public TradingView ingest + `/internal/dispatch-signal`.
  */
 export function startTradeHttpServer(
   sessionManager: UserSessionManager,
@@ -488,12 +555,15 @@ export function startTradeHttpServer(
         })
       }
 
+      if (await tryHandleTradingViewHttp(req, res, url, sessionManager)) {
+        return
+      }
+
       if (url === '/internal/parse-signal' && req.method === 'POST') {
         if (!INTERNAL_TOKEN) {
           return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' })
         }
-        const token = req.headers['x-internal-token']
-        if (token !== INTERNAL_TOKEN) {
+        if (!internalTokenMatches(req.headers['x-internal-token'])) {
           return sendJson(res, 401, { error: 'Unauthorized' })
         }
         const body = (await readJson(req)) as {
@@ -528,8 +598,7 @@ export function startTradeHttpServer(
         if (!INTERNAL_TOKEN) {
           return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' })
         }
-        const token = req.headers['x-internal-token']
-        if (token !== INTERNAL_TOKEN) {
+        if (!internalTokenMatches(req.headers['x-internal-token'])) {
           return sendJson(res, 401, { error: 'Unauthorized' })
         }
         const body = (await readJson(req)) as {
@@ -581,12 +650,29 @@ export function startTradeHttpServer(
         }
       }
 
+      if (url === '/internal/dispatch-ping' && (req.method === 'GET' || req.method === 'POST')) {
+        if (!INTERNAL_TOKEN) {
+          return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' })
+        }
+        if (!internalTokenMatches(req.headers['x-internal-token'])) {
+          return sendJson(res, 401, { error: 'Unauthorized' })
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          role: workerConfig.role,
+          trade_executor_mode: workerConfig.tradeExecutorMode,
+          shard_id: workerConfig.shardId,
+          shard_count: workerConfig.shardCount,
+          trade_executor: Boolean(tradeExecutor),
+          accepts_dispatch: Boolean(tradeExecutor),
+        })
+      }
+
       if (url === '/internal/dispatch-signal' && req.method === 'POST') {
         if (!INTERNAL_TOKEN) {
           return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' })
         }
-        const token = req.headers['x-internal-token']
-        if (token !== INTERNAL_TOKEN) {
+        if (!internalTokenMatches(req.headers['x-internal-token'])) {
           return sendJson(res, 401, { error: 'Unauthorized' })
         }
         if (!tradeExecutor) {
@@ -626,8 +712,7 @@ export function startTradeHttpServer(
         if (!INTERNAL_TOKEN) {
           return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' })
         }
-        const token = req.headers['x-internal-token']
-        if (token !== INTERNAL_TOKEN) {
+        if (!internalTokenMatches(req.headers['x-internal-token'])) {
           return sendJson(res, 401, { error: 'Unauthorized' })
         }
         if (!tradeExecutor) {
@@ -658,8 +743,7 @@ export function startTradeHttpServer(
         if (!INTERNAL_TOKEN) {
           return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' })
         }
-        const token = req.headers['x-internal-token']
-        if (token !== INTERNAL_TOKEN) {
+        if (!internalTokenMatches(req.headers['x-internal-token'])) {
           return sendJson(res, 401, { error: 'Unauthorized' })
         }
         if (!tradeExecutor) {
@@ -690,8 +774,7 @@ export function startTradeHttpServer(
         if (!INTERNAL_TOKEN) {
           return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' })
         }
-        const token = req.headers['x-internal-token']
-        if (token !== INTERNAL_TOKEN) {
+        if (!internalTokenMatches(req.headers['x-internal-token'])) {
           return sendJson(res, 401, { error: 'Unauthorized' })
         }
         if (!tradeExecutor) {
@@ -700,30 +783,41 @@ export function startTradeHttpServer(
         const body = (await readJson(req)) as {
           user_id?: string
           signal_id?: string
+          force_apply?: boolean
         }
         const userId = body.user_id?.trim()
         const signalId = body.signal_id?.trim()
+        const forceApply = body.force_apply === true
         if (!userId || !signalId) {
           return sendJson(res, 400, { error: 'user_id and signal_id required' })
         }
         if (!userBelongsToShard(userId)) {
           return sendJson(res, 200, { applied_legs: 0, skipped_legs: 0, failed_legs: 0, reason: 'wrong_shard' })
         }
-        try {
-          const result = await applySignalOverride(tradeExecutor.supabase, { userId, signalId })
-          return sendJson(res, 200, result)
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'apply failed'
-          return sendJson(res, 500, { error: msg })
-        }
+        // Apply runs in the background so Manage Trades / Resend Parameters can
+        // return immediately instead of blocking on OrderModify across every leg.
+        void applySignalOverride(tradeExecutor.supabase, {
+          userId,
+          signalId,
+          forceApply,
+        }).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err)
+          console.error(`[http] apply-signal-override background failed signal=${signalId}: ${msg}`)
+        })
+        return sendJson(res, 200, {
+          accepted: true,
+          queued: true,
+          applied_legs: 0,
+          skipped_legs: 0,
+          failed_legs: 0,
+        })
       }
 
       if (url === '/internal/force-close-trades' && req.method === 'POST') {
         if (!INTERNAL_TOKEN) {
           return sendJson(res, 503, { error: 'WORKER_INTERNAL_TOKEN not configured' })
         }
-        const token = req.headers['x-internal-token']
-        if (token !== INTERNAL_TOKEN) {
+        if (!internalTokenMatches(req.headers['x-internal-token'])) {
           return sendJson(res, 401, { error: 'Unauthorized' })
         }
         if (!tradeExecutor) {
@@ -734,10 +828,14 @@ export function startTradeHttpServer(
           broker_account_id?: string
           channel_id?: string | null
           signal_id?: string | null
+          close_reason?: string | null
         }
         const userId = body.user_id?.trim()
         const brokerAccountId = body.broker_account_id?.trim()
         const signalId = body.signal_id?.trim() || null
+        const closeReason = body.close_reason?.trim() === 'signal_deleted'
+          ? 'signal_deleted' as const
+          : undefined
         if (!userId || (!brokerAccountId && !signalId)) {
           return sendJson(res, 400, { error: 'user_id and broker_account_id (or signal_id) required' })
         }
@@ -754,7 +852,11 @@ export function startTradeHttpServer(
         }
         try {
           const result = signalId
-            ? await forceCloseSignalById(tradeExecutor.supabase, { userId, signalId })
+            ? await forceCloseSignalById(tradeExecutor.supabase, {
+                userId,
+                signalId,
+                ...(closeReason ? { closeReason } : {}),
+              })
             : await forceCloseSignalTrades(tradeExecutor.supabase, {
                 userId,
                 brokerAccountId: brokerAccountId!,
@@ -782,10 +884,22 @@ export function startTradeHttpServer(
   return server
 }
 
-async function readJson(req: IncomingMessage): Promise<unknown> {
+async function readText(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = []
   for await (const c of req) chunks.push(c as Buffer)
-  const raw = Buffer.concat(chunks).toString('utf8')
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+/** First string value of a request header, trimmed and capped; undefined when absent. */
+function headerValue(value: string | string[] | undefined, maxLength = 160): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value
+  const trimmed = (raw ?? '').trim()
+  if (!trimmed) return undefined
+  return trimmed.slice(0, maxLength)
+}
+
+async function readJson(req: IncomingMessage): Promise<unknown> {
+  const raw = await readText(req)
   if (!raw) return {}
   try { return JSON.parse(raw) } catch { return {} }
 }

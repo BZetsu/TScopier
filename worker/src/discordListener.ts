@@ -17,15 +17,28 @@ import {
   type Message,
   type TextChannel,
 } from 'discord.js'
+import WebSocket from 'ws'
 import { flattenDiscordMessage } from './discordMessage'
 import { discordReadyWatchdogAction } from './discordReadyWatchdog'
 import { installRelayFetch } from './relayFetch'
 import { parseRawChannelMessage } from './parseSignal'
-import { pushParsedSignalToTradeWorker } from './tradeSignalPush'
+import type { PipelineTimestamps } from './pipelineTimestamps'
+import {
+  pushParsedSignalToTradeWorkerAccept,
+  warnDiscordTradePushConfig,
+} from './tradeSignalPush'
+import { handleDiscordMessageDeleted } from './signalDeletedClose'
+
+// Node.js 20 has no native WebSocket; supabase-js realtime refuses to construct
+// without one. Same polyfill as index.ts / whatsappListener (noop on Node 22+).
+if (!globalThis.WebSocket) {
+  globalThis.WebSocket = WebSocket as unknown as typeof globalThis.WebSocket
+}
 
 type Subscriber = {
   user_id: string
   channel_id: string
+  source_display_name: string
 }
 
 export type DiscordListenerHandle = {
@@ -99,7 +112,7 @@ async function loadSubscribers(
 ): Promise<Subscriber[]> {
   const { data, error } = await supabase
     .from('discord_channels')
-    .select('user_id, channel_id, is_active, telegram_channels!inner(is_active, source_kind)')
+    .select('user_id, channel_id, is_active, telegram_channels!inner(is_active, source_kind, display_name, channel_username)')
     .eq('guild_id', guildId)
     .eq('discord_channel_id', discordChannelId)
   if (error) {
@@ -110,36 +123,83 @@ async function loadSubscribers(
     user_id: string
     channel_id: string
     is_active: boolean
-    telegram_channels: { is_active?: boolean; source_kind?: string } | { is_active?: boolean; source_kind?: string }[]
+    telegram_channels: {
+      is_active?: boolean
+      source_kind?: string
+      display_name?: string | null
+      channel_username?: string | null
+    } | Array<{
+      is_active?: boolean
+      source_kind?: string
+      display_name?: string | null
+      channel_username?: string | null
+    }>
   }>
   return rows.flatMap(row => {
     const shadow = Array.isArray(row.telegram_channels) ? row.telegram_channels[0] : row.telegram_channels
     if (!row.is_active || !shadow?.is_active || shadow.source_kind !== 'discord') return []
-    return [{ user_id: row.user_id, channel_id: row.channel_id }]
+    const name = shadow.display_name?.trim()
+      || (shadow.channel_username?.trim() ? `@${shadow.channel_username.trim().replace(/^@/, '')}` : '')
+      || 'Discord'
+    return [{ user_id: row.user_id, channel_id: row.channel_id, source_display_name: name }]
   })
 }
 
 async function copyMessage(supabase: SupabaseClient, message: Message): Promise<void> {
   if (!message.guild || message.author.id === message.client.user?.id) return
   if (message.channel.type !== ChannelType.GuildText) return
+  const tMsgReceived = Date.now()
   const text = flattenDiscordMessage(message.content ?? '', message.embeds.map(embed => ({
     title: embed.title,
     description: embed.description,
     fields: embed.fields,
   })))
-  if (!text.trim()) return
+  if (!text.trim()) {
+    console.log(
+      `[discord] skip empty message guild=${message.guild.id} channel=${message.channel.id}`
+      + ` embeds=${message.embeds.length} (enable Message Content Intent if body should be readable)`,
+    )
+    return
+  }
 
   const subscribers = await loadSubscribers(supabase, message.guild.id, message.channel.id)
+  if (subscribers.length === 0) {
+    console.log(
+      `[discord] no active UniCopier links for guild=${message.guild.id} channel=${message.channel.id}`
+      + ` — check discord_channels on this SUPABASE_URL`,
+    )
+    return
+  }
   for (const subscriber of subscribers) {
     try {
+      const tParseStarted = Date.now()
       const parsed = await parseRawChannelMessage(supabase, subscriber.channel_id, text)
-      if (parsed.status !== 'parsed' || parsed.parsed.action === 'ignore') continue
+      const tParseDone = Date.now()
+      if (parsed.status !== 'parsed' || parsed.parsed.action === 'ignore') {
+        console.log(
+          `[discord] parse skipped user=${subscriber.user_id} status=${parsed.status}`
+          + ` action=${parsed.status === 'parsed' ? parsed.parsed.action : 'n/a'}`
+          + ` text=${JSON.stringify(text.slice(0, 120))}`,
+        )
+        continue
+      }
       const signalId = crypto.randomUUID()
       const createdAt = new Date().toISOString()
+      const pipelineTs: PipelineTimestamps = {
+        t_listener_received: tMsgReceived,
+        telegram_message_received_at: tMsgReceived,
+        parse_started_at: tParseStarted,
+        parse_completed_at: tParseDone,
+        t_parse_done: tParseDone,
+        signal_persist_started_at: Date.now(),
+        ingest_path: 'live',
+      }
       const { error } = await supabase.from('signals').insert({
         id: signalId,
         user_id: subscriber.user_id,
         channel_id: subscriber.channel_id,
+        source_kind: 'discord',
+        source_display_name: subscriber.source_display_name,
         raw_message: text,
         parsed_data: parsed.parsed,
         status: 'parsed',
@@ -147,13 +207,17 @@ async function copyMessage(supabase: SupabaseClient, message: Message): Promise<
         telegram_message_id: message.id,
         is_modification: false,
         created_at: createdAt,
+        pipeline_ts: pipelineTs,
       })
       if (error) {
         if (error.code === '23505') continue
         console.warn(`[discord] signal insert failed user=${subscriber.user_id}: ${error.message}`)
         continue
       }
-      pushParsedSignalToTradeWorker({
+      pipelineTs.signal_persist_completed_at = Date.now()
+      pipelineTs.t_dispatch_sent = Date.now()
+      const pushStarted = Date.now()
+      const accepted = await pushParsedSignalToTradeWorkerAccept({
         id: signalId,
         user_id: subscriber.user_id,
         channel_id: subscriber.channel_id,
@@ -162,8 +226,22 @@ async function copyMessage(supabase: SupabaseClient, message: Message): Promise<
         telegram_message_id: message.id,
         is_modification: false,
         created_at: createdAt,
+        pipeline_ts: pipelineTs,
         dispatch_source: 'discord',
       }, { source: 'discord' })
+      const pushMs = Date.now() - pushStarted
+      if (accepted) {
+        console.log(
+          `[discord] push accepted signal=${signalId} user=${subscriber.user_id}`
+          + ` push_ms=${pushMs} ingest_ms=${Date.now() - tMsgReceived}`,
+        )
+      } else {
+        console.warn(
+          `[discord] push NOT accepted signal=${signalId} user=${subscriber.user_id}`
+          + ` push_ms=${pushMs} — falling back to trade-worker sweep/realtime`
+          + ` (set TRADE_WORKER_URL + WORKER_INTERNAL_TOKEN on discord_listener)`,
+        )
+      }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
       console.warn(`[discord] copy failed user=${subscriber.user_id}: ${detail}`)
@@ -172,6 +250,7 @@ async function copyMessage(supabase: SupabaseClient, message: Message): Promise<
 }
 
 export async function startDiscordListener(): Promise<DiscordListenerHandle> {
+  warnDiscordTradePushConfig()
   const token = requireEnv('DISCORD_BOT_TOKEN')
   const supabase = createClient(requireEnv('SUPABASE_URL'), requireEnv('SUPABASE_SERVICE_ROLE_KEY'))
   const client = new Client({
@@ -249,6 +328,18 @@ export async function startDiscordListener(): Promise<DiscordListenerHandle> {
   })
   client.on(Events.MessageCreate, message => {
     void copyMessage(supabase, message)
+  })
+  client.on(Events.MessageDelete, message => {
+    const channelId = 'channelId' in message ? String(message.channelId ?? '') : ''
+    const messageId = String(message.id ?? '')
+    if (!channelId || !messageId) return
+    void handleDiscordMessageDeleted(supabase, {
+      discordMessageId: messageId,
+      discordChannelId: channelId,
+    }).catch(err => {
+      const detail = err instanceof Error ? err.message : String(err)
+      console.warn(`[discord] delete-close failed message=${messageId}: ${detail}`)
+    })
   })
 
   try {

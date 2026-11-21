@@ -4,6 +4,7 @@ export const chromePl: AppChromeTranslations = {
   nav: {
     sections: {
       general: 'OGÓLNE',
+      copy: 'KOPIOWANIE',
       signals: 'SYGNAŁY',
       discover: 'ODKRYJ',
       tradingTools: 'NARZĘDZIA TRADINGOWE',
@@ -133,10 +134,10 @@ export const chromePl: AppChromeTranslations = {
       cancel: 'Cancel',
       welcomeTitle: 'I can help you set up and run UniCopier.',
       suggestions: [
-        'Is my Telegram linked?',
+        'Are my Signals connected?',
+        'Add an account in Account Configuration',
+        'Show my Account Trades',
         'Pause the copier',
-        'Connect an MT5 account',
-        'What are trading presets?',
       ],
       emptyReply: 'How else can I help?',
       actionDone: 'Done.',
@@ -205,6 +206,14 @@ export const chromePl: AppChromeTranslations = {
         positionClosed: 'Closed',
         reportStatusOpen: 'Otwarte',
         reportStatusResolved: 'Rozwiązane',
+      },
+      csvCard: {
+        title: 'Eksport CSV',
+        ready: 'Twój CSV z transakcjami konta jest gotowy.',
+        empty: 'Brak transakcji konta dla tego dnia.',
+        download: 'Pobierz CSV',
+        countLabel: '{count} transakcji',
+        exportFailed: 'Nie udało się wyeksportować transakcji. Spróbuj Transakcje konta w aplikacji.',
       },
 
     },

@@ -1,6 +1,8 @@
 import type { AuthTranslations } from '../auth/types'
 import type { ChannelWorkerTranslations } from '../channelWorker/types'
 import type { ContactSupportPageTranslations } from '../contactSupport/types'
+import type { StatusPageTranslations } from '../statusPage/types'
+import type { SupportWidgetTranslations } from '../supportWidget/types'
 import type { RiskDisclaimerPageTranslations } from '../riskDisclaimer/types'
 import type { LegalDocumentPageTranslations } from '../legal/types'
 import type { TradeNotificationsTranslations } from '../tradeNotifications/types'
@@ -20,6 +22,7 @@ export interface GlobalSearchTranslations {
 export interface NavTranslations {
   sections: {
     general: string
+    copy: string
     signals: string
     discover: string
     tradingTools: string
@@ -200,6 +203,14 @@ export interface NavTranslations {
       reportStatusOpen: string
       reportStatusResolved: string
     }
+    csvCard: {
+      title: string
+      ready: string
+      empty: string
+      download: string
+      countLabel: string
+      exportFailed: string
+    }
     broker: {
       title: string
       hint: string
@@ -379,6 +390,7 @@ export interface DashboardTranslations {
   activeSignalChannels: string
   connectedTelegramChannels: string
   manageChannels: string
+  manageTrades: string
   openTrades: string
   activeBrokerPositions: string
   tradingAccountsConnected: string
@@ -409,7 +421,9 @@ export interface DashboardTranslations {
     checksFailed: string
     signalSources: string
     notConnected: string
+    connectSource: string
     connected: string
+    linkedNotReceiving: string
     reconnectRequired: string
     reconnecting: string
     operational: string
@@ -422,6 +436,7 @@ export interface DashboardTranslations {
     telegramReconnectMessage: string
     telegramReconnectingMessage: string
     telegramOfflineMessage: string
+    telegramLinkedNotReceivingMessage: string
     otherSourcesStillCopying: string
     listenerOfflineMessage: string
     whatsappOfflineMessage: string
@@ -493,6 +508,7 @@ export interface SignalHistoryPageTranslations {
   statusClosed: string
   editSignal: string
   updateLiveTrades: string
+  resendParameters: string
   saving: string
   originalSignal: string
   overrideSignal: string
@@ -501,6 +517,7 @@ export interface SignalHistoryPageTranslations {
   accountsHolding: string
   closeOneAccount: string
   applySuccess: string
+  applyQueued: string
   applyBrokerSummary: string
   applyPartialBrokers: string
   applyFailed: string
@@ -580,12 +597,15 @@ export interface CopierLogsTranslations {
   subtitle: string
   filterAll: string
   filterExecuted: string
+  filterOpen: string
+  filterClosed: string
   filterSkipped: string
   filterFailed: string
   filterPending: string
   colStatus: string
   colReason: string
   colChannel: string
+  colDestination: string
   colSymbol: string
   colMessage: string
   colType: string
@@ -593,10 +613,40 @@ export interface CopierLogsTranslations {
   emptyTitle: string
   emptySubtitle: string
   statusExecuted: string
+  statusOpen: string
+  statusClosed: string
+  /** One leg of a multi-TP basket closed; siblings still open. */
+  statusPartialClose: string
   statusSkipped: string
   statusFailed: string
   statusPending: string
   statusParsed: string
+  reasonParsed: string
+  reasonExecuted: string
+  reasonOpen: string
+  reasonFallback: string
+  /** Message for a synthetic partial-close row, e.g. "Partial close {symbol}". */
+  messagePartialClose: string
+  closeReasons: {
+    news_pre_close: string
+    signal_close: string
+    signal_revision: string
+    opposite_signal: string
+    partial_tp: string
+    auto_management: string
+    close_worse_entries: string
+    copy_limit_flatten: string
+    user_force_close: string
+    signal_deleted: string
+    position_gone: string
+    mirror_source_closed: string
+    mirror_copy_closed: string
+    stop_loss: string
+    take_profit: string
+    /** e.g. "TP {n} hit." */
+    take_profit_level: string
+    unknown: string
+  }
   retry: string
   retrySuccess: string
   retryFailedGeneric: string
@@ -646,6 +696,7 @@ export interface CopierLogsTranslations {
     reason: string
     whatHappened: string
     channel: string
+    destination: string
     symbol: string
     action: string
     levels: string
@@ -659,7 +710,13 @@ export interface CopierLogsTranslations {
     noTimeline: string
     viewDetails: string
     receivedAt: string
+    closedAt: string
     explainWithAi: string
+    /** Auto-sent to the assistant; asks for a clear explanation in the UI language. */
+    explainSignalPrompt: string
+    /** Auto-sent for structured broker failure explain; reply in the UI language. */
+    explainFailurePrompt: string
+    askAiAboutIssue: string
   }
 }
 
@@ -871,6 +928,8 @@ export interface AccountConfigBrokerListTranslations {
   detailBalance: string
   detailEquity: string
   channelsNoneSelected: string
+  /** Compact broker-list summary when 2+ sources are linked, e.g. "3 sources". */
+  channelsLinkedCount: string
   channelsEmptySaveWarning: string
   channelsEmptySaveTitle?: string
   channelsSaveChannelListNotReady: string
@@ -1012,6 +1071,11 @@ export interface MirrorTradingPageTranslations {
   addMaster: string
   addSlave: string
   mastersEmpty: string
+  emptyTitle: string
+  emptyBody: string
+  emptyStep1: string
+  emptyStep2: string
+  emptyStep3: string
   slavesEmpty: string
   connectNew: string
   noAccounts: string
@@ -1264,6 +1328,8 @@ export interface SocialTradingPageTranslations {
   avgHoldingTime: string
   profitFactor: string
   pnlCalendar: string
+  previousMonth: string
+  nextMonth: string
   noTrades: string
   tradeCount: string
   holdingDays: string
@@ -1449,7 +1515,9 @@ export interface TradesTranslations {
   closeCopyErrorFallback?: string
   execNotesTitle?: string
   execNoteTpSplit?: string
+  execNotePartialCloseTooSmall?: string
   execNoteStaleEntry?: string
+  execNoteTpStripped?: string
   loadingSignal: string
   loadSignalError: string
   viewDetails: string
@@ -1506,6 +1574,7 @@ export interface TradesTranslations {
   reasonCloseWorseEntries: string
   reasonCopyLimitFlatten: string
   reasonUserForceClose: string
+  reasonSignalDeleted: string
   reasonPositionGone: string
   reasonMirrorSourceClosed: string
   reasonMirrorCopyClosed: string
@@ -1859,6 +1928,7 @@ export interface CopierEnginePageTranslations {
   yourTelegramChannels: string
   telegramConnectedHint: string
   connected: string
+  linkedNotReceiving: string
   listenerLeaseLive: string
   listenerLeaseExpired: string
   listenerLeaseExpiredHint: string
@@ -1950,7 +2020,17 @@ export interface ChannelsPageTranslations {
   tradingViewName: string
   tradingViewUrl: string
   tradingViewTemplate: string
+  tradingViewTemplateStrategy: string
+  tradingViewTemplateIndicators: string
+  tradingViewTemplateBuy: string
+  tradingViewTemplateSell: string
+  tradingViewTemplateSymbolHint: string
   tradingViewTemplateHelp: string
+  tradingViewHowToTitle: string
+  tradingViewHowTo1: string
+  tradingViewHowTo2: string
+  tradingViewHowTo3: string
+  tradingViewHowTo4: string
   tradingViewCopy: string
   tradingViewCopied: string
   tradingViewRotate: string
@@ -1959,6 +2039,23 @@ export interface ChannelsPageTranslations {
   tradingViewDelete: string
   tradingViewDeleteConfirm?: string
   tradingViewShowDetails: string
+  tradingViewConfigure: string
+  tradingViewConfigureTitle: string
+  tradingViewConfigureHint: string
+  tradingViewConfigureCta: string
+  tradingViewAlertType: string
+  tradingViewAlertTypeIndicator: string
+  tradingViewAlertTypeStrategy: string
+  tradingViewIncludeSl: string
+  tradingViewIncludeSlHint: string
+  tradingViewIncludeTp: string
+  tradingViewIncludeTpHint: string
+  tradingViewTpCount: string
+  tradingViewSymbol: string
+  tradingViewSymbolHint: string
+  tradingViewJsonPreview: string
+  tradingViewJsonPlaceholderHint: string
+  tradingViewSaveConfig: string
   tradingViewEmpty: string
   tradingViewHeroTitle: string
   tradingViewHeroSubtitle: string
@@ -1974,6 +2071,8 @@ export interface ChannelsPageTranslations {
   tradingViewNoDeliveries: string
   tradingViewAccepted: string
   tradingViewSkipped: string
+  tradingViewSkipUnresolvedSymbol: string
+  tradingViewSkipUnresolvedAction: string
   tradingViewError: string
   tradingViewDuplicate: string
   tradingViewCopyTo: string
@@ -1985,6 +2084,7 @@ export interface ChannelsPageTranslations {
   discordHow2: string
   discordHow3: string
   discordConnect: string
+  discordDisconnect: string
   discordListTitle: string
   discordEmptyChannels: string
   discordPickChannels: string
@@ -2402,6 +2502,8 @@ export interface Translations {
   brokersPage: BrokersPageTranslations
   economicCalendar: EconomicCalendarTranslations
   contactSupportPage: ContactSupportPageTranslations
+  statusPage: StatusPageTranslations
+  supportWidget: SupportWidgetTranslations
   riskDisclaimerPage: RiskDisclaimerPageTranslations
   termsOfServicePage: LegalDocumentPageTranslations
   privacyPolicyPage: LegalDocumentPageTranslations

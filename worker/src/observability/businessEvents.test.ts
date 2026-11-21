@@ -247,3 +247,17 @@ test('classifyBrokerFailureReason separates trading-disabled from missing symbol
     'BROKER_SYMBOL_NOT_FOUND',
   )
 })
+
+test('classifyBrokerFailureReason maps OrderSendSafe broker busy', () => {
+  assert.equal(
+    classifyBrokerFailureReason('MTAPI OrderSendSafe broker busy'),
+    'BROKER_BUSY',
+  )
+})
+
+test('classifyBrokerFailureReason maps MT5 Manager OLD_VERSION refusals', () => {
+  assert.equal(
+    classifyBrokerFailureReason('OLD_VERSION (:0)'),
+    'MTAPI_OLD_VERSION',
+  )
+})

@@ -56,6 +56,28 @@ describe('copierSourceStatus', () => {
     expect(resolveCopierProcessState(links)).toBe('operational')
   })
 
+  it('requires mtproto + fresh probe for Telegram connected', () => {
+    const leaseOnly = resolveCopierSourceLinks({
+      ...idle,
+      hasTelegramSession: true,
+      telegramAccountStatus: 'linked',
+      signalListenerStatus: 'connected',
+      mtprotoConnected: false,
+      probeFresh: false,
+    })
+    expect(leaseOnly.telegram).toBe('linked_not_receiving')
+
+    const live = resolveCopierSourceLinks({
+      ...idle,
+      hasTelegramSession: true,
+      telegramAccountStatus: 'linked',
+      signalListenerStatus: 'connected',
+      mtprotoConnected: true,
+      probeFresh: true,
+    })
+    expect(live.telegram).toBe('connected')
+  })
+
   it('reports an issue when the only source is a disconnected Telegram listener', () => {
     const links = resolveCopierSourceLinks({
       ...idle,

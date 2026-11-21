@@ -13,6 +13,8 @@ import { takeProfitForSplitBasketLeg } from './manualPlanning/tpBucketDistributi
 import {
   bundleSteadyLegTps,
   remapBundleLegTpsByTpOrder,
+  resolveBundleLegTpIndexes,
+  type BundleLegIdentity,
 } from './manualPlanning/tpBundleIdentity'
 import { isTpBundleEnabled } from './manualPlanning/tpBundleRollout'
 import type { ManualTpLot } from './manualPlanning/types'
@@ -112,12 +114,18 @@ export function buildPerLegStopTargets(args: {
   tpLots?: ManualTpLot[] | null
   /**
    * Bundled multi baskets (TP_BUNDLE_ENABLED): each leg's own TP, with naked
-   * legs backfilled positionally — never a count-weighted re-derivation.
-   * Positional with the open legs (oldest → newest).
+   * legs backfilled by planned TP identity — never a count-weighted re-derivation.
    */
   currentLegTps?: Array<number | null | undefined>
+  /** Comment / next_tp_index / lot metadata aligned with currentLegTps. */
+  legIdentities?: ReadonlyArray<BundleLegIdentity>
   /** Bundled basket receiving an explicit TP change — 1:1 remap by TP order. */
   bundleReladder?: boolean
+  /**
+   * Force per-leg TP identity (Single percent-split or bundled Multi) even when
+   * TP_BUNDLE_ENABLED is off.
+   */
+  forceSteadyTps?: boolean
   /** Trade direction for the reladder sort; falls back to the plan's direction. */
   isBuy?: boolean
 }): PerLegStopTarget[] {
@@ -149,24 +157,35 @@ export function buildPerLegStopTargets(args: {
   const total = Math.max(n, totalPlannedLegCount ?? n)
   const rangeCount = Math.max(0, total - immCount)
 
-  // Bundled (non-range) baskets: identity rules, never count weights. The plan
-  // ladder (one order per level) wins when it covers every leg; otherwise the
-  // parsed ladder is used positionally (leg i ↔ level i).
+  // Percent-split / bundled (non-range) baskets: identity rules, never count
+  // weights. Prefer planned `:tpN` / next_tp_index over opened_at position.
   if (
-    isTpBundleEnabled()
+    (isTpBundleEnabled() || args.forceSteadyTps === true)
     && args.currentLegTps != null
     && args.currentLegTps.length >= n
     && rangeCount === 0
   ) {
     const planLadder = fromPlan.map(o => o.takeprofit).filter(tp => tp > 0)
     const ladder = finalTps.length ? finalTps : planLadder
+    const identities = (args.legIdentities ?? []).slice(0, n)
+    while (identities.length < n) identities.push({})
+    const legTpIndexes = resolveBundleLegTpIndexes({
+      legs: identities,
+      ladderLength: ladder.length,
+      tpLots,
+    })
     const tps = args.bundleReladder === true
       ? remapBundleLegTpsByTpOrder({
         legs: args.currentLegTps.slice(0, n),
         ladder,
         isBuy: args.isBuy ?? plan.isBuy !== false,
+        legTpIndexes,
       })
-      : bundleSteadyLegTps({ currentTps: args.currentLegTps.slice(0, n), ladder })
+      : bundleSteadyLegTps({
+        currentTps: args.currentLegTps.slice(0, n),
+        ladder,
+        legTpIndexes,
+      })
     return tps.map(tp => ({ stoploss: sl, takeprofit: tp }))
   }
 
@@ -294,7 +313,8 @@ const PARAMETER_FOLLOW_UP_ANCHOR_POLL_MS = 150
 
 /**
  * Same-signal revision re-parses the existing `signals` row — anchor SL/TP refresh
- * on that signal's open legs, not the newest unrelated basket on the channel.
+ * on that signal's open **or pending** legs (strict-entry BuyLimit/SellLimit),
+ * not the newest unrelated basket on the channel.
  */
 export async function resolveOpenBasketAnchorForSameSignal(
   supabase: SupabaseClient,
@@ -314,7 +334,7 @@ export async function resolveOpenBasketAnchorForSameSignal(
     .eq('user_id', args.userId)
     .eq('broker_account_id', args.brokerAccountId)
     .eq('signal_id', args.signalId)
-    .eq('status', 'open')
+    .in('status', ['open', 'pending'])
     .eq('direction', args.direction)
     .order('opened_at', { ascending: false })
     .limit(500)
@@ -359,15 +379,20 @@ export async function resolveOpenBasketAnchorForParameterFollowUp(
   opts?: {
     currentSignalId?: string
     currentSignalCreatedAt?: string | null
+    /** 0 = single lookup (live-fast bare entry). Default polls ~3s. */
     retryMs?: number
   },
 ): Promise<LatestBasketAnchor | null> {
   const retryMs = opts?.retryMs ?? PARAMETER_FOLLOW_UP_ANCHOR_RETRY_MS
+  const first = await resolveLatestOpenBasketAnchor(supabase, args)
+  if (first || retryMs <= 0) {
+    return first ?? resolveRecentEntrySignalAnchor(supabase, args, opts)
+  }
   const deadline = Date.now() + retryMs
   while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, PARAMETER_FOLLOW_UP_ANCHOR_POLL_MS))
     const anchor = await resolveLatestOpenBasketAnchor(supabase, args)
     if (anchor) return anchor
-    await new Promise(resolve => setTimeout(resolve, PARAMETER_FOLLOW_UP_ANCHOR_POLL_MS))
   }
   return resolveRecentEntrySignalAnchor(supabase, args, opts)
 }

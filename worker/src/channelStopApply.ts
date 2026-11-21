@@ -15,7 +15,12 @@ import {
 import {
   loadChannelActiveTradeParamsForSymbol
 } from './channelActiveTradeParams'
-import { bundleTpOrderMap, isBundleBasket } from './manualPlanning/tpBundleIdentity'
+import {
+  bundleSteadyLegTps,
+  bundleTpOrderMap,
+  isTpPercentSplitBasket,
+  resolveBundleLegTpIndexes,
+} from './manualPlanning/tpBundleIdentity'
 import {
   buildEntryQualityTakeProfitMap,
   type EntryQualityLeg,
@@ -64,6 +69,9 @@ export type ChannelStopLeg = {
    *  skipped for them. */
   status?: string
   lot_size?: number
+  /** 1-based planned TP level — required so pending/naked legs are not
+   *  backfilled with the farthest ladder TP. */
+  next_tp_index?: number | null
 }
 
 export type ChannelStopBroker = {
@@ -439,6 +447,7 @@ function mgmtRowToLeg(row: MgmtTradeRow): ChannelStopLeg {
     telegram_channel_id: null,
     status: row.status,
     lot_size: row.lot_size,
+    next_tp_index: row.next_tp_index ?? null,
   }
 }
 
@@ -689,7 +698,13 @@ function legToBasketOpenLeg(leg: ChannelStopLeg): BasketOpenLeg {
     entry_price: leg.entry_price,
     direction: leg.direction,
     symbol: leg.symbol,
+    next_tp_index: leg.next_tp_index ?? null,
   }
+}
+
+export type ChannelStopPrewarm = {
+  quote?: { bid: number; ask: number } | null
+  orders?: { tickets: Set<number>; ordersByTicket: Map<number, unknown> } | null
 }
 
 export type ApplyChannelStopsArgs = {
@@ -712,6 +727,17 @@ export type ApplyChannelStopsArgs = {
   manualPush?: boolean
   verifyOnBroker?: boolean
   fxsocketOnly?: boolean
+  /**
+   * Live Telegram management (Adjust SL / Set TP): skip the blocking OpenedOrders
+   * preflight when verify-after-modify is off — OrderModify fails closed on ghost
+   * tickets, and the reconciler repairs drift. Cuts multi-second "before first
+   * modify" stalls measured on Adjust SL (e.g. 0784c972 ~12s prep).
+   */
+  liveFast?: boolean
+  /** Optional quote / OpenedOrders warmed during scope expand. */
+  prewarmedByUuid?: Map<string, ChannelStopPrewarm>
+  /** Stamp first broker OrderModify wall-clock onto the live signal pipeline. */
+  onFirstBrokerSend?: () => void
 }
 
 export async function applyChannelStopsToBaskets(
@@ -733,10 +759,23 @@ export async function applyChannelStopsToBaskets(
     manualPush = false,
     verifyOnBroker = true,
     fxsocketOnly = false,
+    liveFast = false,
+    prewarmedByUuid,
+    onFirstBrokerSend,
   } = args
 
   const slOnly = args.slOnly === true || (hasNewSl && !hasNewTp)
   const tpOnly = args.tpOnly === true || (hasNewTp && !hasNewSl)
+  // Live SL/TP pushes don't need a pre-modify OpenedOrders round-trip when
+  // verify-after-modify is off — missing tickets fail at OrderModify and the
+  // basket reconciler repairs residual drift.
+  const skipOpenedOrdersPreflight = liveFast === true && verifyOnBroker !== true
+  let firstBrokerSendStamped = false
+  const stampFirstBrokerSend = () => {
+    if (firstBrokerSendStamped || !onFirstBrokerSend) return
+    firstBrokerSendStamped = true
+    try { onFirstBrokerSend() } catch { /* best-effort */ }
+  }
 
   const brokerResults: BrokerBasketStopResult[] = []
   let totalModified = 0
@@ -814,25 +853,6 @@ export async function applyChannelStopsToBaskets(
 
     api?.seedPlatformCache(uuid, mtPlatformFrom(broker.platform ?? 'mt5'))
 
-    // The live-quote guard only runs when a new SL is requested. A failed quote
-    // read must not silently disable it — an unverifiable stop is a stop we
-    // cannot confirm is on the correct side of market, so the leg is skipped
-    // (fail-closed) instead of being modified blind.
-    let basketQuote: { bid: number; ask: number } | null = null
-    let quoteFailed = false
-    if (api && !tpOnly && hasNewSl) {
-      try {
-        const q = await api.quote(uuid, symbol)
-        basketQuote = { bid: q.bid, ask: q.ask }
-      } catch (e) {
-        quoteFailed = true
-        const msg = e instanceof Error ? e.message : String(e)
-        console.warn(
-          `[channelStopApply] quote read failed broker=${broker.id} symbol=${symbol}: ${msg}; skipping SL apply (fail-closed)`,
-        )
-      }
-    }
-
     const legs = brokerRows
       .filter(r => {
         const ticket = Number(r.metaapi_order_id)
@@ -864,55 +884,137 @@ export async function applyChannelStopsToBaskets(
         isBuy,
       })
       : 0
+
+    const prewarm = prewarmedByUuid?.get(uuid)
+    // The live-quote guard only runs when a new SL is requested. A failed quote
+    // read must not silently disable it — an unverifiable stop is a stop we
+    // cannot confirm is on the correct side of market, so the leg is skipped
+    // (fail-closed) instead of being modified blind.
+    let basketQuote: { bid: number; ask: number } | null = prewarm?.quote ?? null
+    let quoteFailed = false
     // Freeze: once a TP has been hit (a leg closed OR a sticky TP-touch lock),
     // never repaint TP across remaining legs. Keep each leg's existing TP and
     // only backfill a naked leg with the deepest TP — mirrors the
     // rebalance/reconcile freeze, which this live modify path previously bypassed.
+    // SL-only Adjust never remaps TP, so skip the two DB round-trips.
     let tpFrozen = false
-    if (!dryRun && anchorSignalId) {
-      try {
-        tpFrozen = (await hasClosedBasketLegs(supabase, brokerId, anchorSignalId))
-          || (await hasTpTouchedLock(supabase, { signalId: anchorSignalId, brokerAccountId: brokerId, symbol }))
-      } catch {
-        tpFrozen = false
-      }
+    let openedTickets: Set<number> | null = prewarm?.orders?.tickets ?? null
+    let ordersByTicket = prewarm?.orders?.ordersByTicket ?? new Map<number, unknown>()
+
+    const needQuote = Boolean(api && !tpOnly && hasNewSl && basketQuote == null)
+    const needFreeze = Boolean(!dryRun && anchorSignalId && !slOnly && !tpOnly)
+    const needOrders = Boolean(
+      api
+      && !skipOpenedOrdersPreflight
+      && openedTickets == null
+    )
+
+    const quotePromise = needQuote
+      ? api!.quote(uuid, symbol).then(q => ({ bid: q.bid, ask: q.ask })).catch((e: unknown) => {
+          quoteFailed = true
+          const msg = e instanceof Error ? e.message : String(e)
+          console.warn(
+            `[channelStopApply] quote read failed broker=${broker.id} symbol=${symbol}: ${msg}; skipping SL apply (fail-closed)`,
+          )
+          return null
+        })
+      : Promise.resolve(basketQuote)
+
+    const freezePromise = needFreeze
+      ? Promise.all([
+          hasClosedBasketLegs(supabase, brokerId, anchorSignalId),
+          hasTpTouchedLock(supabase, { signalId: anchorSignalId, brokerAccountId: brokerId, symbol }),
+        ]).then(([closed, locked]) => closed || locked).catch(() => false)
+      : Promise.resolve(false)
+
+    const ordersPromise = needOrders
+      ? fetchBrokerOrdersSnapshot(api!, uuid).catch(() => null)
+      : Promise.resolve(
+          openedTickets
+            ? { tickets: openedTickets, ordersByTicket }
+            : null,
+        )
+
+    const [quoteResult, freezeResult, ordersResult] = await Promise.all([
+      quotePromise,
+      freezePromise,
+      ordersPromise,
+    ])
+    if (needQuote) {
+      basketQuote = quoteResult
     }
+    tpFrozen = freezeResult
+    if (ordersResult) {
+      openedTickets = ordersResult.tickets
+      ordersByTicket = ordersResult.ordersByTicket
+    } else if (skipOpenedOrdersPreflight) {
+      openedTickets = null
+      ordersByTicket = new Map()
+    }
+
     const frozenDeepestTp = deepestFinalTp(plausibleTpLevels, isBuy)
-    const tpMap = slOnly || tpOnly || tpFrozen
-      ? new Map<string, number>()
-      : isBundleBasket(broker.manual_settings)
-        // Bundled multi basket: explicit TP change re-maps levels 1:1 by TP
-        // order — never the count-weighted entry-quality slots (D3).
-        ? bundleTpOrderMap({
-            legs: legs.map(tr => ({ id: tr.id, tp: tr.tp })),
-            ladder: plausibleTpLevels,
-            isBuy,
+    const percentSplit = isTpPercentSplitBasket(broker.manual_settings)
+    // Identity map for percent-split (incl. pending SellLimit/BuyLimit legs):
+    // never fall back to farthest/deepest when a leg is naked.
+    const percentSplitIdentityMap = percentSplit
+      ? (() => {
+          const identityLegs = legs.map(tr => ({
+            id: tr.id,
+            tp: tr.tp,
+            lot_size: tr.lot_size,
+            next_tp_index: tr.next_tp_index,
+          }))
+          const legTpIndexes = resolveBundleLegTpIndexes({
+            legs: identityLegs,
+            ladderLength: plausibleTpLevels.length,
+            tpLots: tpLots ?? null,
           })
-        : buildEntryQualityTakeProfitMap({
+          const tps = bundleSteadyLegTps({
+            currentTps: legs.map(tr => tr.tp),
+            ladder: plausibleTpLevels,
+            legTpIndexes,
+          })
+          const out = new Map<string, number>()
+          legs.forEach((tr, i) => {
+            const tp = tps[i]
+            if (typeof tp === 'number' && tp > 0) out.set(tr.id, tp)
+          })
+          return out
+        })()
+      : null
+    const percentSplitReladderMap = percentSplit
+      ? bundleTpOrderMap({
           legs: legs.map(tr => ({
             id: tr.id,
-            entryPrice: Number(tr.entry_price ?? 0),
-            openedAt: tr.opened_at ?? '',
-          })) satisfies EntryQualityLeg[],
+            tp: tr.tp,
+            lot_size: tr.lot_size,
+            next_tp_index: tr.next_tp_index,
+          })),
+          ladder: plausibleTpLevels,
           isBuy,
-          slotLegCount: legs.length,
-          finalTps: plausibleTpLevels,
           tpLots: tpLots ?? null,
-          chosenTp,
         })
-
-    let openedTickets: Set<number> | null = null
-    let ordersByTicket = new Map<number, unknown>()
-    if (api) {
-      try {
-        // Single OpenedOrders snapshot serves both preflight and SL verification.
-        const snapshot = await fetchBrokerOrdersSnapshot(api, uuid)
-        openedTickets = snapshot.tickets
-        ordersByTicket = snapshot.ordersByTicket
-      } catch {
-        openedTickets = null
-      }
-    }
+      : null
+    // Freeze / SL-only: keep identity (never deepest). TP-only or full refresh:
+    // reladder percent-split 1:1; classic single keeps prior empty-map + keepTp.
+    const tpMap = tpFrozen || slOnly
+      ? (percentSplitIdentityMap ?? new Map<string, number>())
+      : tpOnly
+        ? (percentSplitReladderMap ?? new Map<string, number>())
+        : percentSplit
+          ? (percentSplitReladderMap ?? new Map<string, number>())
+          : buildEntryQualityTakeProfitMap({
+            legs: legs.map(tr => ({
+              id: tr.id,
+              entryPrice: Number(tr.entry_price ?? 0),
+              openedAt: tr.opened_at ?? '',
+            })) satisfies EntryQualityLeg[],
+            isBuy,
+            slotLegCount: legs.length,
+            finalTps: plausibleTpLevels,
+            tpLots: tpLots ?? null,
+            chosenTp,
+          })
 
     const slCache = new Map<string, number>()
     const perLegTargets: Array<{ stoploss: number; takeprofit: number }> = []
@@ -933,13 +1035,16 @@ export async function applyChannelStopsToBaskets(
       const ticket = Number(tr.metaapi_order_id)
       const keepTp = positiveNum(tr.tp)
       const keepSl = positiveNum(tr.sl)
+      // Percent-split (incl. pending): identity/ladder before deepest. Deepest
+      // is only for classic single/range freeze backfill of truly naked legs.
+      const identityTp = percentSplitIdentityMap?.get(tr.id) ?? null
       const targetTp = tpFrozen
-        ? (keepTp ?? (frozenDeepestTp > 0 ? frozenDeepestTp : null))
+        ? (keepTp ?? identityTp ?? (percentSplit ? null : (frozenDeepestTp > 0 ? frozenDeepestTp : null)))
         : tpOnly
-          ? (tpMap.get(tr.id) ?? keepTp)
+          ? (tpMap.get(tr.id) ?? keepTp ?? identityTp)
           : slOnly
             ? keepTp
-            : (tpMap.get(tr.id) ?? keepTp)
+            : (tpMap.get(tr.id) ?? keepTp ?? identityTp)
 
       let targetSl: number | null = tpOnly ? keepSl : null
       if (!tpOnly && hasNewSl) {
@@ -1053,8 +1158,11 @@ export async function applyChannelStopsToBaskets(
       if (dryRun) continue
 
       const modifyArgs: { ticket: number; stoploss?: number; takeprofit?: number } = { ticket }
-      if (!tpOnly && target.stoploss > 0) modifyArgs.stoploss = target.stoploss
-      if (!slOnly && target.takeprofit > 0) modifyArgs.takeprofit = target.takeprofit
+      // Always send both sides: MTAPI treats an omitted field as "clear to 0",
+      // so an SL-only modify would wipe the TP (and a TP-only modify the SL).
+      // `target` already carries the side not being changed (keepSl/keepTp).
+      if (target.stoploss > 0) modifyArgs.stoploss = target.stoploss
+      if (target.takeprofit > 0) modifyArgs.takeprofit = target.takeprofit
       if (modifyArgs.stoploss == null && modifyArgs.takeprofit == null) {
         baseResult.skipped += 1
         totalSkipped += 1
@@ -1078,6 +1186,7 @@ export async function applyChannelStopsToBaskets(
     const execOne = async (plan: LegModPlan): Promise<LegModOutcome> => {
       const { tr, ticket, target, modifyArgs } = plan
       try {
+        stampFirstBrokerSend()
         // SL-first with split fallback: an invalid/late TP must never block the
         // protective SL (previously a rejected combined modify left the leg naked).
         const safe = await modifyLegSlTpWithFallback(
@@ -1174,6 +1283,12 @@ export async function applyChannelStopsToBaskets(
         const dbPatch: { sl?: number | null; tp?: number | null } = {}
         if (!tpOnly && target.stoploss > 0 && safe.slApplied) dbPatch.sl = safe.appliedSl
         if (!slOnly && target.takeprofit > 0 && safe.tpApplied) dbPatch.tp = safe.appliedTp
+        // An SL-only instruction carried keepTp along; when the split fallback
+        // reassigned a deeper candidate, the broker holds a different TP than
+        // the DB — record what actually landed (reconcile still heals gaps).
+        if (slOnly && safe.tpApplied && safe.appliedTp > 0 && safe.appliedTp !== (modifyArgs.takeprofit ?? 0)) {
+          dbPatch.tp = safe.appliedTp
+        }
         if (Object.keys(dbPatch).length > 0) {
           await supabase.from('trades').update(dbPatch).eq('id', tr.id)
         }

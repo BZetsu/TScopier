@@ -48,9 +48,24 @@ describe('describeChannelConfiguration', () => {
       use_signal_entry_price: false,
     } as ManualSettings
 
-    expect(riskValue(settings, 'Trade Style')).toBe('Single Entry')
+    expect(riskValue(settings, 'Trade Style')).toBe('Single Entries')
     expect(riskValue(settings, 'Lot Size')).toBe('0.1')
     expect(riskValue(settings, 'Range Layering')).toBeUndefined()
     expect(riskValue(settings, 'Use Signal Entry Price')).toBe('OFF')
+  })
+
+  it('lists First/Last entry prefer when Use Signal Entry Price is on', () => {
+    const settings = {
+      risk_mode: 'fixed_lot',
+      fixed_lot: 0.1,
+      trade_style: 'single',
+      use_signal_entry_price: true,
+      signal_entry_prefer: 'last_price',
+      signal_entry_pip_tolerance: 10,
+    } as ManualSettings
+
+    expect(riskValue(settings, 'Use Signal Entry Price')).toBe('ON')
+    expect(riskValue(settings, 'Entry price')).toBe('Last Price (Best)')
+    expect(riskValue(settings, 'Pip tolerance')).toBe('10')
   })
 })

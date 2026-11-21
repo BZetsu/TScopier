@@ -4,6 +4,7 @@ export const chromeRu: AppChromeTranslations = {
   nav: {
     sections: {
       general: 'ОБЩЕЕ',
+      copy: 'КОПИРОВАНИЕ',
       signals: 'СИГНАЛЫ',
       discover: 'ОТКРЫТЬ',
       tradingTools: 'ТОРГОВЫЕ ИНСТРУМЕНТЫ',
@@ -133,10 +134,10 @@ export const chromeRu: AppChromeTranslations = {
       cancel: 'Cancel',
       welcomeTitle: 'I can help you set up and run UniCopier.',
       suggestions: [
-        'Is my Telegram linked?',
+        'Are my Signals connected?',
+        'Add an account in Account Configuration',
+        'Show my Account Trades',
         'Pause the copier',
-        'Connect an MT5 account',
-        'What are trading presets?',
       ],
       emptyReply: 'How else can I help?',
       actionDone: 'Done.',
@@ -205,6 +206,14 @@ export const chromeRu: AppChromeTranslations = {
         positionClosed: 'Closed',
         reportStatusOpen: 'Открыто',
         reportStatusResolved: 'Решено',
+      },
+      csvCard: {
+        title: 'Экспорт CSV',
+        ready: 'CSV со сделками счёта готов.',
+        empty: 'Сделок счёта за этот день не найдено.',
+        download: 'Скачать CSV',
+        countLabel: '{count} сделок',
+        exportFailed: 'Не удалось экспортировать сделки. Откройте «Сделки счёта» в приложении.',
       },
 
     },

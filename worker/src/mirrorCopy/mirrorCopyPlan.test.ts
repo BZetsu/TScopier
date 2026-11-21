@@ -55,7 +55,7 @@ test('reads the real copy_risk.sizing shape for both supported modes', () => {
 })
 
 test('unimplemented sizing modes become unsupported (no silent 1x copy)', () => {
-  for (const mode of ['equity_ratio', 'balance_ratio', 'percent_risk', 'cash_risk', 'stop_distance']) {
+  for (const mode of ['percent_risk', 'cash_risk', 'stop_distance']) {
     const settings = parseMirrorCopySettings(stored({ copy_risk: { sizing: { mode } } }))
     assert.equal(settings.sizingMode, 'unsupported', mode)
     assert.equal(mirrorCopyVolume(settings, 1), null, mode)
@@ -64,13 +64,45 @@ test('unimplemented sizing modes become unsupported (no silent 1x copy)', () => 
   assert.equal(fixedWithoutSize.sizingMode, 'unsupported')
 })
 
-test('falls back to the legacy top-level sizing only for a supported fixed_lot', () => {
+test('balance_ratio and equity_ratio size from account metrics (proportional)', () => {
+  const balance = parseMirrorCopySettings(stored({
+    copy_risk: { sizing: { mode: 'balance_ratio', balance_multiplier: 1 } },
+  }))
+  assert.equal(balance.sizingMode, 'balance_ratio')
+  assert.equal(mirrorCopyVolume(balance, 1), null, 'needs metrics')
+  assert.equal(
+    mirrorCopyVolume(balance, 1, undefined, {
+      sourceBalance: 10_000,
+      destinationBalance: 1_000,
+      sourceEquity: null,
+      destinationEquity: null,
+    }),
+    0.1,
+  )
+
+  const equity = parseMirrorCopySettings(stored({
+    copy_risk: { sizing: { mode: 'equity_ratio', equity_multiplier: 2 } },
+  }))
+  assert.equal(equity.sizingMode, 'equity_ratio')
+  assert.equal(
+    mirrorCopyVolume(equity, 0.5, undefined, {
+      sourceBalance: null,
+      destinationBalance: null,
+      sourceEquity: 100_000,
+      destinationEquity: 10_000,
+    }),
+    0.1,
+  )
+})
+
+test('falls back to the legacy top-level sizing for fixed_lot and proportional', () => {
   const legacy = parseMirrorCopySettings({ risk_mode: 'fixed_lot', fixed_lot: 0.5 })
   assert.equal(legacy.sizingMode, 'fixed_lot')
   assert.equal(legacy.fixedLot, 0.5)
 
   const dynamic = parseMirrorCopySettings({ risk_mode: 'dynamic_balance_percent', dynamic_balance_percent: 2 })
-  assert.equal(dynamic.sizingMode, 'unsupported')
+  assert.equal(dynamic.sizingMode, 'balance_ratio')
+  assert.equal(dynamic.balanceMultiplier, 2)
 })
 
 test('applies the max_lot cap inside the plan so the cap holds for any caller', () => {

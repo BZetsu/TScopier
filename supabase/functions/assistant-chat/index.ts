@@ -10,6 +10,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import {
   ASSISTANT_SYSTEM_PROMPT,
   FEATURE_TOPICS,
+  assistantReplyLanguageAddon,
 } from "../_shared/assistantKnowledge.ts";
 import {
   guardAssistantUserMessage,
@@ -598,6 +599,27 @@ const TOOL_DEFS = [
       description:
         "Open the live trades page (/account-trades) so the user can see their open/closed broker positions. Navigation-only — it does NOT return trade data. Use get_recent_trades or get_trade_detail to actually report a trade's status/ticket. Use when they ask to see their trades or navigate to the trades page.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "export_account_trades_csv",
+      description:
+        "Export the user's Account Trades (broker positions/history from /account-trades) as a downloadable CSV. Use when they ask to export/download trades for analysis (e.g. today's trades as CSV). Defaults to today (local calendar). Optional broker filter via broker_account_id, account_login, or label. The UI downloads the file — do NOT invent trade rows; briefly confirm the export started.",
+      parameters: {
+        type: "object",
+        properties: {
+          day: {
+            type: "string",
+            description: '"today" (default) or YYYY-MM-DD for the local calendar day of trades opened',
+          },
+          broker_account_id: { type: "string" },
+          account_login: { type: "string", description: "MT account login, e.g. 928883" },
+          label: { type: "string", description: "Broker display label" },
+        },
+        additionalProperties: false,
+      },
     },
   },
   {
@@ -2421,6 +2443,65 @@ function runClientActionTool(name: string, args: Record<string, unknown>): ToolR
   }
 }
 
+async function toolExportAccountTradesCsv(
+  supabase: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const dayRaw = String(args.day ?? "today").trim() || "today";
+  const day =
+    dayRaw.toLowerCase() === "today" || /^\d{4}-\d{2}-\d{2}$/.test(dayRaw)
+      ? dayRaw.toLowerCase() === "today"
+        ? "today"
+        : dayRaw
+      : "today";
+
+  let brokerId: string | null = null;
+  let accountLogin: string | null = null;
+  let brokerLabel: string | null = null;
+
+  const wantsBroker =
+    String(args.broker_account_id ?? "").trim() ||
+    String(args.account_login ?? args.broker_login ?? "").trim() ||
+    String(args.label ?? args.broker_label ?? "").trim();
+
+  if (wantsBroker) {
+    const brokerRes = await resolveBroker(supabase, userId, args);
+    if ("error" in brokerRes) {
+      return { content: JSON.stringify({ error: brokerRes.error }) };
+    }
+    brokerId = brokerRes.broker.id;
+    accountLogin = brokerRes.broker.account_login;
+    brokerLabel = brokerRes.broker.label;
+  }
+
+  const summary = brokerLabel
+    ? `Export account trades CSV for ${day} (${brokerLabel})`
+    : `Export account trades CSV for ${day}`;
+
+  return {
+    content: JSON.stringify({
+      ok: true,
+      day,
+      broker_account_id: brokerId,
+      account_login: accountLogin,
+      broker_label: brokerLabel,
+      hint:
+        "The app downloads Account Trades for that local calendar day as CSV (opened that day). Confirm briefly that the export started / a download card is shown. Do NOT invent trade rows or invent a file. If they need the page, offer open_trades.",
+    }),
+    pendingClientAction: {
+      type: "export_account_trades_csv",
+      summary,
+      args: {
+        day,
+        broker_account_id: brokerId,
+        account_login: accountLogin,
+        label: brokerLabel,
+      },
+    },
+  };
+}
+
 async function executeTool(
   supabase: SupabaseClient,
   userId: string,
@@ -2452,6 +2533,8 @@ async function executeTool(
       return toolGetCopierLogs(supabase, userId, args);
     case "get_trade_detail":
       return toolGetTradeDetail(supabase, userId, args);
+    case "export_account_trades_csv":
+      return toolExportAccountTradesCsv(supabase, userId, args);
     case "report_trade":
       return toolReportTrade(supabase, userId, args);
     case "list_trade_reports":
@@ -2566,7 +2649,7 @@ Deno.serve(async (req: Request) => {
     if (!EXECUTABLE_MUTATIONS.has(tool)) {
       return bad(400, "Tool cannot be executed directly");
     }
-    const args = sanitizeToolArgs({ ...(execute.args ?? {}), confirmed: true });
+    const args = sanitizeToolArgs({ ...(execute.args ?? {}), confirmed: true }) as Record<string, unknown>;
     const result = verifyToolResult(tool, await executeTool(supabase, userId, tool, args));
     let parsed: { ok?: boolean; error?: string } = {};
     try {
@@ -2603,8 +2686,12 @@ Deno.serve(async (req: Request) => {
   }
 
   const incoming = Array.isArray(body.messages) ? body.messages : [];
+  const uiLocale = typeof body.locale === "string" ? body.locale : undefined;
   const messages: ChatMessage[] = [
-    { role: "system", content: ASSISTANT_SYSTEM_PROMPT },
+    {
+      role: "system",
+      content: ASSISTANT_SYSTEM_PROMPT + assistantReplyLanguageAddon(uiLocale),
+    },
     ...incoming
       .filter((m: { role?: string; content?: string }) =>
         m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string"

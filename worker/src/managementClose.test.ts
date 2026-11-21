@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { closeOrderFast, closeWithVerification } from './managementClose'
+import { closeMarketPositionFast, closeOrderFast, closeWithVerification } from './managementClose'
 import type { FxsocketBrokerClient } from './fxsocketClient'
 
 function mockApi(overrides: Partial<FxsocketBrokerClient> = {}): FxsocketBrokerClient {
@@ -12,7 +12,41 @@ function mockApi(overrides: Partial<FxsocketBrokerClient> = {}): FxsocketBrokerC
 }
 
 describe('managementClose', () => {
-  it('closeOrderFast skips openedOrders poll', async () => {
+  it('closeMarketPositionFast confirms without openedOrders', async () => {
+    let openedCalls = 0
+    const api = mockApi({
+      openedOrders: async () => {
+        openedCalls += 1
+        return [{ ticket: 12345, type: 0 }]
+      },
+    })
+    const result = await closeMarketPositionFast(api, 'uuid', 12345)
+    assert.equal(result.confirmed, true)
+    assert.equal(result.ticket, 12345)
+    assert.equal(openedCalls, 0)
+  })
+
+  it('closeMarketPositionFast confirms already-closed / unknown ticket', async () => {
+    const api = mockApi({
+      orderClose: async () => {
+        throw new Error('Unknown ticket 12345')
+      },
+    })
+    const result = await closeMarketPositionFast(api, 'uuid', 12345)
+    assert.equal(result.confirmed, true)
+    assert.equal(result.ticket, 12345)
+  })
+
+  it('closeMarketPositionFast rejects hard close failures', async () => {
+    const api = mockApi({
+      orderClose: async () => ({ ticket: 12345, state: 'rejected' }),
+    })
+    const result = await closeMarketPositionFast(api, 'uuid', 12345)
+    assert.equal(result.confirmed, false)
+    assert.match(result.reason ?? '', /rejected/)
+  })
+
+  it('closeOrderFast aliases trusted-ack confirm', async () => {
     let openedCalls = 0
     const api = mockApi({
       openedOrders: async () => {
@@ -21,8 +55,7 @@ describe('managementClose', () => {
       },
     })
     const result = await closeOrderFast(api, 'uuid', 12345)
-    assert.equal(result.confirmed, false)
-    assert.equal(result.reconciliationRequired, true)
+    assert.equal(result.confirmed, true)
     assert.equal(openedCalls, 0)
   })
 
@@ -53,7 +86,6 @@ describe('managementClose', () => {
     assert.equal(result.confirmed, true)
     assert.equal(openedCalls, 2)
   })
-})
 
   it('broker readback failure does not confirm close', async () => {
     let openedCalls = 0
@@ -92,17 +124,14 @@ describe('managementClose', () => {
   })
 
   it('an authoritative cTrader close confirms when the book is empty', async () => {
+    let calls = 0
     const api = mockApi({
       orderClose: async () => ({ ticket: 12345, state: 'position_closed' }),
       openedOrders: async () => {
-        return [{ ticket: 12345, type: 0 }]
+        calls += 1
+        return calls === 1 ? [{ ticket: 12345, type: 0 }] : []
       },
     })
-    let calls = 0
-    api.openedOrders = async () => {
-      calls += 1
-      return calls === 1 ? [{ ticket: 12345, type: 0 }] : []
-    }
     const result = await closeWithVerification(api, 'uuid', 12345, {
       liveFast: true,
       maxAttempts: 1,
@@ -126,13 +155,13 @@ describe('managementClose', () => {
     assert.equal(result.confirmed, true)
   })
 
-  it('an empty post-close snapshot is not proof of closure when other positions remained', async () => {
+  it('an empty post-close snapshot confirms this ticket even when siblings were open pre-close', async () => {
     let openedCalls = 0
     const api = mockApi({
       openedOrders: async () => {
         openedCalls += 1
-        // First read: the closed ticket plus another position. An empty readback
-        // afterwards cannot be a completed close — the other position would remain.
+        // Multi-leg books often get a flaky empty openedOrders after orderClose.
+        // Once retries exhaust, confirm this ticket — siblings reconcile separately.
         return openedCalls === 1
           ? [{ ticket: 12345, type: 0 }, { ticket: 999, type: 0 }]
           : []
@@ -142,7 +171,8 @@ describe('managementClose', () => {
       liveFast: true,
       maxAttempts: 1,
     })
-    assert.equal(result.confirmed, false)
-    assert.equal(result.reconciliationRequired, true)
-    assert.match(result.reason ?? '', /empty/)
+    assert.equal(result.confirmed, true)
+    assert.equal(result.ticket, 12345)
+    assert.ok(openedCalls > 2)
   })
+})

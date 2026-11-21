@@ -190,6 +190,8 @@ export const channelWorkerRu: ChannelWorkerTranslations = {
       'этот канал работает в режиме одного слота (Add to Existing Trades отключен), поэтому новые входы должны включать параметры TP/SL',
     entry_requires_imperative_or_labeled_stops:
       'в сообщении не было фразы входа (например buy now, gold sell now) или помеченных SL/TP',
+    tradingview_missing_sl_tp:
+      'В алерте TradingView не было цен SL и TP — добавьте их в сообщение алерта или включите Override SL и Override TP в настройках',
     entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
     signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
     delete_pendings_no_parent:
@@ -197,6 +199,8 @@ export const channelWorkerRu: ChannelWorkerTranslations = {
     delete_pendings_requires_reply:
       'инструкции по отмене должны отправляться в ответ на исходное сообщение сигнала',
     delete_pendings_none: 'не найдено ожидающих ордеров для отмены в этой сделке',
+    delete_pendings_cancel_failed: 'ожидающие ордера найдены, но ни один не удалось отменить (брокер отклонил запрос или был недоступен) — повторите попытку или закройте их на странице сделок',
+    partial_close_unavailable_for_position_size: 'частичное закрытие невозможно: позиция слишком мала для разделения (запрошенная часть была бы меньше минимального лота брокера) — ничего не закрыто, сделка осталась открытой в полном объёме',
   },
   dispatchSkipped: 'Этот сигнал не был скопирован ({reason}).',
   rangeRebalanceSkippedNamed: 'Пропущен ребаланс тейк-профита {symbol} ({reason})',
@@ -212,6 +216,10 @@ export const channelWorkerRu: ChannelWorkerTranslations = {
     'Trade EA is not ready on your MT5 terminal — enable Algo Trading and refresh broker health',
   errorBrokerNotConnected:
     'Брокер не подключен — в Account Configuration используйте Reconnect и введите ваш MT-пароль для этого аккаунта',
+  errorBrokerBusy:
+    'Брокер занят — слишком много ордеров в полёте; следующие сигналы выполнятся при снижении нагрузки',
+  errorOrderSendTimedOut:
+    'OrderSend timed out — проверьте открытые позиции; ордер мог всё же исполниться',
   errorInvalidStops:
     'Брокер отклонил эти уровни стопа — проверьте, что SL/TP находятся с правильной стороны рынка и соответствуют минимальной дистанции.',
   errorBridgeGlitch:

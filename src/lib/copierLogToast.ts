@@ -42,39 +42,94 @@ export function copierLogSourceLabel(
 
 export function copierLogSourceIcon(
   channel: { source_kind?: string | null } | null | undefined,
+  fallbackKind?: string | null,
 ): string | null {
-  if (!channel) return null
-  const kind = normalizeSignalSourceKind(channel.source_kind) ?? 'telegram'
+  const kind = normalizeSignalSourceKind(channel?.source_kind)
+    ?? normalizeSignalSourceKind(fallbackKind)
+    ?? (channel || fallbackKind ? 'telegram' : null)
+  if (!kind) return null
   return SIGNAL_SOURCE_MARKS[kind].iconSrc
 }
 
+export type CopierLogDestination = {
+  label: string
+  iconSrc: string | null
+}
+
+/** Max logos shown in stacked Destination UI (label may still list every broker). */
+export const COPIER_DESTINATION_LOGO_MAX = 3
+
+function asBrokerList(brokers: readonly BrokerAccount[] | null | undefined): BrokerAccount[] {
+  return Array.isArray(brokers) ? [...brokers] : []
+}
+
+/** Brokers linked to copy this channel — used by Copier Log Destination column + toasts. */
+export function copierLogDestinations(
+  brokers: readonly BrokerAccount[] | null | undefined,
+  channelId: string | null | undefined,
+): CopierLogDestination[] {
+  if (!channelId) return []
+  return brokersMatchingChannel(asBrokerList(brokers), channelId.toLowerCase()).map(broker => ({
+    label: getBrokerDisplayLabel(broker),
+    iconSrc: platformIconSrc(broker.platform ?? ''),
+  }))
+}
+
 export function copierLogDestinationLabel(
-  brokers: readonly BrokerAccount[],
+  brokers: readonly BrokerAccount[] | null | undefined,
   channelId: string | null | undefined,
 ): string {
   return copierLogDestinations(brokers, channelId).map(item => item.label).join(', ')
 }
 
 export function copierLogDestinationIcons(
-  brokers: readonly BrokerAccount[],
+  brokers: readonly BrokerAccount[] | null | undefined,
   channelId: string | null | undefined,
 ): string[] {
   const icons: string[] = []
   for (const item of copierLogDestinations(brokers, channelId)) {
     if (item.iconSrc && !icons.includes(item.iconSrc)) icons.push(item.iconSrc)
+    if (icons.length >= COPIER_DESTINATION_LOGO_MAX) break
   }
   return icons
 }
 
-function copierLogDestinations(
-  brokers: readonly BrokerAccount[],
-  channelId: string | null | undefined,
-): Array<{ label: string; iconSrc: string | null }> {
-  if (!channelId) return []
-  return brokersMatchingChannel([...brokers], channelId.toLowerCase()).map(broker => ({
-    label: getBrokerDisplayLabel(broker),
-    iconSrc: platformIconSrc(broker.platform ?? ''),
-  }))
+/**
+ * Destination for mirror/social rows that already carry an account label
+ * (e.g. `MT5 • 477608729`). Match a linked broker when possible for the logo.
+ */
+export function copierLogDestinationsFromAccountLabel(
+  label: string | null | undefined,
+  brokers: readonly BrokerAccount[] | null | undefined = [],
+): CopierLogDestination[] {
+  const trimmed = label?.trim()
+  if (!trimmed) return []
+  const match = asBrokerList(brokers).find(broker => getBrokerDisplayLabel(broker) === trimmed)
+  if (match) {
+    return [{
+      label: trimmed,
+      iconSrc: platformIconSrc(match.platform ?? ''),
+    }]
+  }
+  const platformGuess = trimmed.split(/[•·|]/)[0]?.trim() ?? ''
+  return [{
+    label: trimmed,
+    iconSrc: platformGuess ? platformIconSrc(platformGuess) : null,
+  }]
+}
+
+export function copierLogDestinationSummary(
+  destinations: readonly CopierLogDestination[],
+): { label: string; icons: string[] } {
+  const icons: string[] = []
+  for (const item of destinations) {
+    if (item.iconSrc && !icons.includes(item.iconSrc)) icons.push(item.iconSrc)
+    if (icons.length >= COPIER_DESTINATION_LOGO_MAX) break
+  }
+  return {
+    label: destinations.map(item => item.label).join(', ') || '—',
+    icons,
+  }
 }
 
 const EMPTY_SYMBOL_CONTEXT = {
@@ -84,6 +139,72 @@ const EMPTY_SYMBOL_CONTEXT = {
 
 export function copierLogToastFingerprint(signal: Pick<Signal, 'id' | 'status' | 'skip_reason'>): string {
   return `${signal.id}|${signal.status}|${signal.skip_reason ?? ''}`
+}
+
+/** Seed/merge fingerprints so refresh + non-status updates (e.g. reconcile) do not re-toast. */
+export function mergeCopierLogToastSeen(
+  seen: Map<string, string>,
+  rows: Array<Pick<Signal, 'id' | 'status' | 'skip_reason'>>,
+): void {
+  for (const row of rows) {
+    seen.set(row.id, copierLogToastFingerprint(row))
+  }
+}
+
+/**
+ * Decide whether a realtime signal row should open a toast.
+ * - INSERT: announce when fingerprint is new/changed (fresh signals).
+ * - UPDATE: if we have never seen the id, seed silently — reconcile and other
+ *   metadata patches must not resurrect Executed toasts for rows outside the
+ *   hydrate window. Announce only when status/skip_reason actually changed.
+ */
+export function shouldAnnounceCopierLogToast(
+  seen: Map<string, string>,
+  signal: Pick<Signal, 'id' | 'status' | 'skip_reason'>,
+  event: 'INSERT' | 'UPDATE',
+): 'show' | 'skip' | 'seed' {
+  const fingerprint = copierLogToastFingerprint(signal)
+  const previous = seen.get(signal.id)
+  if (previous === fingerprint) return 'skip'
+  if (event === 'UPDATE' && previous === undefined) {
+    seen.set(signal.id, fingerprint)
+    return 'seed'
+  }
+  seen.set(signal.id, fingerprint)
+  return 'show'
+}
+
+const SEEN_STORAGE_PREFIX = 'tsc_copier_log_toasts_seen:'
+const SEEN_STORAGE_MAX = 200
+
+export function readCopierLogToastSeen(userId: string): Map<string, string> {
+  if (typeof sessionStorage === 'undefined') return new Map()
+  try {
+    const raw = sessionStorage.getItem(`${SEEN_STORAGE_PREFIX}${userId}`)
+    if (!raw) return new Map()
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return new Map()
+    const out = new Map<string, string>()
+    for (const entry of parsed) {
+      if (!Array.isArray(entry) || entry.length < 2) continue
+      const id = entry[0]
+      const fingerprint = entry[1]
+      if (typeof id === 'string' && typeof fingerprint === 'string') out.set(id, fingerprint)
+    }
+    return out
+  } catch {
+    return new Map()
+  }
+}
+
+export function writeCopierLogToastSeen(userId: string, seen: Map<string, string>): void {
+  if (typeof sessionStorage === 'undefined') return
+  try {
+    const entries = [...seen.entries()].slice(-SEEN_STORAGE_MAX)
+    sessionStorage.setItem(`${SEEN_STORAGE_PREFIX}${userId}`, JSON.stringify(entries))
+  } catch {
+    // Quota / private mode — in-memory seen still works for this page life.
+  }
 }
 
 export function copierLogToastFromSignal(

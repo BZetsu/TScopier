@@ -3,17 +3,22 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { TRADE_CLOSE_REASON } from './tradeCloseReasons'
+import { TRADE_CLOSE_REASON, type TradeCloseReason } from './tradeCloseReasons'
 import { applyCloseUpdate } from './tradeCloseUpdate'
 import { clearChannelActiveTradeParamsWhenFlat } from './channelActiveTradeParams'
 import { normalizeSignalChannelIds } from './brokerChannelFilter'
+import { resolveChannelTradingConfig } from './channelTradingConfig'
 import { apiForBrokerAccount } from './providerResolver'
 import { authorityFromBrokerRow } from './brokerWriteAuthority'
-import { closeWithVerification } from './managementClose'
+import { closeMarketPositionFast } from './managementClose'
 import { cancelPendingOrderAtBroker } from './pendingOrderCancel'
 import { resolveCanonicalOpenPosition } from './livePositionIdentity'
 import { isMarketClosedMessage } from './brokerTradeError'
-import { rawOrderTicket } from './signalEntryPendingHelpers'
+import {
+  cancelSignalEntryRowAtBroker,
+  rawOrderTicket,
+  type SignalEntryPendingRow,
+} from './signalEntryPendingHelpers'
 import {
   cancelChannelBrokerPendingOrders,
   tryBrokerFallbackClose,
@@ -75,7 +80,29 @@ type BrokerRow = {
   provider_transition_state?: 'stable' | 'transition' | null
   provider_transition_target?: 'fxsocket' | 'mtapi' | null
   metaapi_account_id?: string | null
+  ctrader_account_id?: string | null
+  binance_account_id?: string | null
+  bybit_account_id?: string | null
+  kucoin_account_id?: string | null
+  dxtrade_account_id?: string | null
+  tradelocker_account_id?: string | null
+  matchtrader_account_id?: string | null
   signal_channel_ids?: string[] | null
+  manual_settings?: Record<string, unknown> | null
+  channel_trading_configs?: unknown
+  copier_mode?: string | null
+}
+
+/** Columns needed to resolve every provider session for force-close. */
+const BROKER_FORCE_CLOSE_SELECT =
+  'id,user_id,provider,platform,mtapi_session_id,fxsocket_account_id,metaapi_account_id,ctrader_account_id,binance_account_id,bybit_account_id,kucoin_account_id,dxtrade_account_id,tradelocker_account_id,matchtrader_account_id,signal_channel_ids,manual_settings,channel_trading_configs,copier_mode,writer_epoch,provider_transition_state,provider_transition_target'
+
+function brokerHasCloseOnSignalDeleted(
+  broker: BrokerRow,
+  channelId: string | null,
+): boolean {
+  const manual = resolveChannelTradingConfig(broker, channelId).manual_settings
+  return (manual as { close_on_signal_deleted?: boolean }).close_on_signal_deleted === true
 }
 
 type ChannelCloseAccum = {
@@ -202,6 +229,7 @@ async function insertForceCloseLog(
     virtualLegsDeleted: number
     /** Broker wording for the first failure, so a stale row is diagnosable later. */
     errorMessage?: string
+    action?: string
   },
 ): Promise<void> {
   if (!args.signalId) return
@@ -210,7 +238,7 @@ async function insertForceCloseLog(
     user_id: args.userId,
     signal_id: args.signalId,
     broker_account_id: args.brokerAccountId,
-    action: 'user_force_close',
+    action: args.action ?? 'user_force_close',
     status,
     error_message: args.errorMessage ?? (status === 'failed' ? 'force_close_failed' : null),
     request_payload: {
@@ -340,7 +368,7 @@ async function forceCloseChannelOnBroker(
         }
       }
       if (!failure) {
-        const closeResult = await closeWithVerification(api, uuid, ticket, { liveFast: true })
+        const closeResult = await closeMarketPositionFast(api, uuid, ticket)
         if (closeResult.confirmed) {
           await settle()
           result.closed += 1
@@ -370,14 +398,17 @@ async function forceCloseChannelOnBroker(
     if (!result.failure_detail) result.failure_detail = failure.slice(0, 200)
   }
 
-  // += : the per-trade pending branch above already counted the trades-row
-  // cancels; this sweep only adds the signal_entry_pending_orders ones.
+  // += : the per-trade pending branch above already settled the trades-row
+  // cancels it could handle; this sweep adds the signal_entry_pending_orders
+  // ones and retries any trades-pending row the branch left behind (the
+  // counters can overlap for a row retried within the same run).
   result.pending_cancelled += await cancelChannelBrokerPendingOrders({
     supabase,
     userId: args.userId,
     channelId: args.channelId,
     brokerAccountIds: [broker.id],
     apiFor: () => api,
+    resolve: brokerAccountId => (brokerAccountId === broker.id ? { api, sessionId: uuid } : null),
     reason: 'user_force_close',
   })
 
@@ -427,7 +458,7 @@ async function forceCloseChannelOnBroker(
       brokers: [broker as unknown as ExecutorBrokerRow],
       channelDisplayName: commentSlug,
       channelUsername: null,
-      closeWithVerification: (a, u, ticket) => closeWithVerification(a, u, ticket, { liveFast: true }),
+      closeWithVerification: (a, u, ticket) => closeMarketPositionFast(a, u, ticket),
     })
     result.closed += fallback.closed
     result.failed += fallback.failed
@@ -480,7 +511,7 @@ export async function forceCloseSignalTrades(
 
   const { data: broker, error: brokerErr } = await supabase
     .from('broker_accounts')
-    .select('id,user_id,platform,provider,mtapi_session_id,fxsocket_account_id,metaapi_account_id,signal_channel_ids,writer_epoch,provider_transition_state,provider_transition_target')
+    .select(BROKER_FORCE_CLOSE_SELECT)
     .eq('id', brokerAccountId)
     .eq('user_id', userId)
     .maybeSingle()
@@ -561,7 +592,12 @@ export async function forceCloseSignalTrades(
  */
 export async function forceCloseSignalById(
   supabase: SupabaseClient,
-  args: { userId: string; signalId: string },
+  args: {
+    userId: string
+    signalId: string
+    /** When `signal_deleted`, only brokers with close_on_signal_deleted close. */
+    closeReason?: TradeCloseReason
+  },
 ): Promise<ForceCloseSignalTradesResult> {
   const empty: ForceCloseSignalTradesResult = {
     ok: false,
@@ -577,6 +613,10 @@ export async function forceCloseSignalById(
   if (!userId || !signalId) {
     return { ...empty, reason: 'missing_ids' }
   }
+  const closeReason = args.closeReason ?? TRADE_CLOSE_REASON.USER_FORCE_CLOSE
+  const requireDeletedSetting = closeReason === TRADE_CLOSE_REASON.SIGNAL_DELETED
+  const logAction = requireDeletedSetting ? 'signal_deleted_close' : 'user_force_close'
+  const legCancelReason = requireDeletedSetting ? 'signal_deleted' : 'user_force_close'
 
   const { data: signal, error: sigErr } = await supabase
     .from('signals')
@@ -625,6 +665,20 @@ export async function forceCloseSignalById(
     const id = String((r as { broker_account_id?: string | null }).broker_account_id ?? '').trim()
     if (id) brokerIdSet.add(id)
   }
+  // Strict-entry broker pendings may exist before / beside a trades row.
+  const { data: entryPendingCells, error: entryPendingErr } = await supabase
+    .from('signal_entry_pending_orders')
+    .select('broker_account_id')
+    .eq('user_id', userId)
+    .eq('signal_id', signalId)
+    .eq('status', 'broker_pending')
+  if (entryPendingErr) {
+    return { ...empty, ok: false, reason: 'close_failed', error: entryPendingErr.message }
+  }
+  for (const r of (entryPendingCells ?? [])) {
+    const id = String((r as { broker_account_id?: string | null }).broker_account_id ?? '').trim()
+    if (id) brokerIdSet.add(id)
+  }
   const brokerIds = [...brokerIdSet]
   if (brokerIds.length === 0) {
     if (orphanLegs > 0) {
@@ -645,11 +699,18 @@ export async function forceCloseSignalById(
 
   const { data: brokerRows, error: brokerRowsErr } = await supabase
     .from('broker_accounts')
-    .select('id,user_id,provider,platform,mtapi_session_id,fxsocket_account_id,metaapi_account_id,writer_epoch,provider_transition_state,provider_transition_target')
+    .select(BROKER_FORCE_CLOSE_SELECT)
     .eq('user_id', userId)
     .in('id', brokerIds)
   if (brokerRowsErr) {
     return { ...empty, ok: false, reason: 'close_failed', error: brokerRowsErr.message }
+  }
+
+  const eligibleBrokers = requireDeletedSetting
+    ? (brokerRows ?? []).filter(b => brokerHasCloseOnSignalDeleted(b as BrokerRow, channelId))
+    : (brokerRows ?? [])
+  if (requireDeletedSetting && eligibleBrokers.length === 0) {
+    return { ...empty, ok: true, reason: 'setting_disabled' }
   }
 
   let closed = 0
@@ -659,7 +720,7 @@ export async function forceCloseSignalById(
   let virtualLegsDeleted = 0
   let brokersProcessed = 0
 
-  for (const broker of (brokerRows ?? [])) {
+  for (const broker of eligibleBrokers) {
     const brokerId = (broker as { id: string }).id
     const legs = rows.filter(r => r.broker_account_id === brokerId)
     const uuid = brokerSessionUuid(broker)
@@ -672,7 +733,7 @@ export async function forceCloseSignalById(
       const skippedVirtualDeleted = await deleteRangePendingLegsForBasket(
         supabase,
         { signalId, brokerAccountId: brokerId },
-        'user_force_close',
+        legCancelReason,
       )
       virtualLegsDeleted += skippedVirtualDeleted
       if (legs.length > 0 || skippedVirtualDeleted > 0) {
@@ -686,6 +747,7 @@ export async function forceCloseSignalById(
           failed: legs.length,
           pendingCancelled: 0,
           virtualLegsDeleted: skippedVirtualDeleted,
+          action: logAction,
         })
       }
       continue
@@ -730,7 +792,7 @@ export async function forceCloseSignalById(
           {
             status: terminalStatus,
             closed_at: now,
-            close_reason: TRADE_CLOSE_REASON.USER_FORCE_CLOSE,
+            close_reason: closeReason,
           },
           patch => supabase
             .from('trades')
@@ -776,7 +838,7 @@ export async function forceCloseSignalById(
           }
         }
         if (!failure) {
-          const closeResult = await closeWithVerification(api, uuid, ticket, { liveFast: true })
+          const closeResult = await closeMarketPositionFast(api, uuid, ticket)
           if (closeResult.confirmed) {
             brokerClosed += 1
             await markDone()
@@ -806,10 +868,21 @@ export async function forceCloseSignalById(
       if (!brokerFailureDetail) brokerFailureDetail = failure.slice(0, 200)
     }
 
+    const { data: seRows } = await supabase
+      .from('signal_entry_pending_orders')
+      .select('id,signal_id,user_id,broker_account_id,metaapi_account_id,symbol,trade_id,broker_ticket,is_buy')
+      .eq('signal_id', signalId)
+      .eq('broker_account_id', brokerId)
+      .eq('status', 'broker_pending')
+    for (const row of (seRows ?? []) as SignalEntryPendingRow[]) {
+      const result = await cancelSignalEntryRowAtBroker(supabase, api, row, legCancelReason)
+      if (result.ok) brokerPendingCancelled += 1
+    }
+
     const brokerVirtualDeleted = await deleteRangePendingLegsForBasket(
       supabase,
       { signalId, brokerAccountId: brokerId },
-      'user_force_close',
+      legCancelReason,
     )
     virtualLegsDeleted += brokerVirtualDeleted
 
@@ -825,6 +898,7 @@ export async function forceCloseSignalById(
         pendingCancelled: brokerPendingCancelled,
         virtualLegsDeleted: brokerVirtualDeleted,
         errorMessage: brokerFailureDetail || undefined,
+        action: logAction,
       })
     }
 
@@ -842,7 +916,8 @@ export async function forceCloseSignalById(
 
   console.log(
     `[forceCloseSignalById] signal=${signalId} closed=${closed} failed=${failed}`
-    + ` pending_cancelled=${pendingCancelledTotal} virtual_deleted=${virtualLegsDeleted} brokers=${brokersProcessed}`,
+    + ` pending_cancelled=${pendingCancelledTotal} virtual_deleted=${virtualLegsDeleted} brokers=${brokersProcessed}`
+    + ` reason=${closeReason}`,
   )
 
   return {

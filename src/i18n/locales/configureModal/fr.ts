@@ -1,7 +1,8 @@
 import type { ConfigureModalTranslations } from './types'
 
 export const configureModalFr: ConfigureModalTranslations = {
-  title: 'Configurer le trading',
+  title: 'Trading',
+  configureChannelOnBroker: 'Configurer {channel} sur {broker}',
   close: 'Fermer',
   saved: 'Enregistré',
   cancel: 'Annuler',
@@ -75,6 +76,15 @@ export const configureModalFr: ConfigureModalTranslations = {
     management: 'Gestion',
     filters: 'Filtres',
     aiTraining: 'Exemples de signaux',
+  },
+  manualSubTabDescriptions: {
+    aiTraining: 'Apprenez au copieur comment ce canal écrit et met à jour ses signaux.',
+    symbols: 'Limitez les symboles copiés depuis ce canal, ou en excluez certains.',
+    channelInstructions: 'Autorisez ou ignorez les messages qui modifient, ferment ou gèrent les trades.',
+    risk: 'Taille de lot, style single/multi et dimensionnement de chaque position.',
+    stops: 'Stop loss, take-profits et objectifs prédéfinis.',
+    management: 'Breakeven, trailing stop, expiration des pending et commentaires.',
+    filters: 'Restreignez la copie par heure, jours de la semaine et news à fort impact.',
   },
   aiTraining: {
     title: 'Entraînement IA des signaux',
@@ -203,24 +213,29 @@ export const configureModalFr: ConfigureModalTranslations = {
     dynamicBalanceLotSizeFallback: '{lot} lots (repli sur lot fixe — solde du compte non chargé)',
     tradeStyle: 'Style de trading',
     tradeStyleHint:
-      'Entrée unique : un ordre à la taille de lot configurée. Range Trading : répartit ce lot en plusieurs ordres plus petits sur les take-profit du signal.',
-    singleTrade: 'Entrée unique',
+      'Entrées uniques : ouvre un trade broker distinct pour chaque Take-Profit % activé (même lot total). Range Trading : répartit ce lot en plusieurs ordres plus petits sur les take-profit du signal.',
+    singleTrade: 'Entrées uniques',
     multiTrades: 'Range Trading',
     singleTpTarget: 'Objectif TP en mode unique',
     singleTpTargetHint:
-      'Choisissez quel TP la position broker doit viser en Position unique. Les TP précédents peuvent toujours déclencher des fermetures partielles selon votre répartition %.',
+      'Obsolète pour Entrées uniques — chaque Take-Profit activé ouvre son propre trade broker avec ce TP visible.',
     singleTpTargetFarthest: 'TP le plus éloigné (auto)',
     singleTpTargetTp1: 'TP1',
     singleTpTargetTp2: 'TP2',
     singleTpTargetTp3: 'TP3',
     singleTpLotBreakdownTitle: 'Lot breakdown',
-    singleTpLotBreakdownSlice: '{lot} lots closes @ {tp}',
-    partialTpMinLotWarning: 'Avec un volume de {lot}, ce trade ne peut pas être réparti : {levels} ne seront pas clôturés partiellement et seul le dernier take profit est placé chez le courtier. Chaque niveau nécessite au moins 0.01 de volume — augmentez le volume pour clôturer à chaque niveau.',
+    singleTpLotBreakdownSlice: '{lot} lots opens @ {tp}',
+    partialTpMinLotWarning: 'Avec un volume de {lot}, ces niveaux ne peuvent pas s’ouvrir en trades séparés : {levels}. Leur part est ajoutée au TP le plus éloigné. Chaque niveau nécessite au moins 0.01 de volume — augmentez le volume pour ouvrir chaque niveau.',
     singleTpLotBreakdownJoin: ', ',
     signalEntryTitle: 'Exécution de l’entrée du signal',
     signalEntryBody:
-      'Utiliser le prix d’entrée du signal s’applique uniquement en mode Position unique. Si activé, le signal doit inclure une entrée explicite analysée (prix, zone, @ prix ou libellés comme « Prix d’entrée : »). Après tout délai du canal, le worker compare la cotation en direct à cette entrée : en achat, exécution au marché seulement si l’ask est au ou en dessous de l’entrée ; sinon, placement d’un buy limit à l’entrée. En vente, l’inverse. Le take profit du courtier vise le dernier TP analysé lorsque plusieurs objectifs existent, avec fermetures partielles optionnelles selon votre échelle de TP. Le copieur suit chaque ordre en attente à entrée stricte pour synchroniser les exécutions avec votre liste ; les ordres en attente sont annulés lorsque le panier est à plat. Les messages « acheter maintenant » sans entrée sont ignorés.',
+      'Utiliser le prix d’entrée du signal s’applique uniquement en mode Position unique. Si activé, le signal doit inclure une entrée explicite analysée (prix, zone, @ prix ou libellés comme « Prix d’entrée : »). Après tout délai du canal, le worker compare la cotation en direct à cette entrée : en achat, exécution au marché seulement si l’ask est au ou en dessous de l’entrée ; sinon, placement d’un buy limit à l’entrée. En vente, l’inverse. Lorsque plusieurs Take-Profit sont activés, Entrées uniques ouvre un trade broker par TP selon vos %. Le copieur suit chaque ordre en attente à entrée stricte pour synchroniser les exécutions avec votre liste ; les ordres en attente sont annulés lorsque le panier est à plat. Les messages « acheter maintenant » sans entrée sont ignorés.',
     useSignalEntryPrice: 'Utiliser le prix d’entrée du signal',
+    signalEntryPrefer: 'Prix d’entrée',
+    signalEntryPreferHint:
+      'Lorsque le signal indique deux prix d’entrée, Premier prix prend le pire niveau du côté (achat : plus haut, vente : plus bas) et Dernier prix le meilleur. La tolérance en pips s’applique à ce prix unique.',
+    signalEntryPreferFirst: 'Premier prix (pire)',
+    signalEntryPreferLast: 'Dernier prix (meilleur)',
     pipToleranceLegacy: 'Tolérance en pips (héritée)',
     pipToleranceHint:
       'Non utilisée pour le routage d’entrée stricte ; conservée pour compatibilité avec les réglages enregistrés.',
@@ -308,7 +323,7 @@ export const configureModalFr: ConfigureModalTranslations = {
       usePredefinedTp: 'Utiliser comme TP prédéfini',
       tpLevelsTitle: 'Niveaux de take-profit',
       tpLevelsHint:
-        'Pips = distance depuis l’entrée pour chaque TP. % cible = part du volume (single) ou des jambes (multi) fermée à ce TP.',
+        'Pips = distance depuis l’entrée pour chaque TP. % cible = part du volume ouverte à ce TP (Entrées uniques = un trade par niveau ; Range Trading = répartition des jambes).',
       tpPipsCol: 'Pips',
       tpPercentCol: '% cible',
       tpLabel: 'TP{index}',
@@ -318,7 +333,7 @@ export const configureModalFr: ConfigureModalTranslations = {
       addTp: 'Ajouter un TP',
       remove: 'Supprimer',
       tradeStyle: 'Style de trade',
-      singleTrade: 'Entrée unique',
+      singleTrade: 'Entrées uniques',
       multiTrades: 'Range trading (multi)',
       perLegSize: 'Taille par jambe (% du lot fixe)',
       rangeLayering: 'Échelonnage de range',
@@ -384,7 +399,7 @@ export const configureModalFr: ConfigureModalTranslations = {
     multiTradeNote:
       'Range Trading : répartit les jambes planifiées sur les TP selon ces pourcentages (ex. 50/30/20 sur 20 jambes → 10/6/4 sur TP1/TP2/TP3).',
     singleTradeNote:
-      'Position unique : l’ordre vise le dernier TP activé chez le courtier ; le worker ferme partiellement le pourcentage configuré à chaque TP antérieur (ex. 50/30/20 sur 1,0 lot → ferme 0,50 à TP1, 0,30 à TP2, le 0,20 restant à TP3 via le courtier).',
+      'Entrées uniques : ouvre un trade broker distinct pour chaque TP activé selon ces pourcentages (ex. 50/30/20 sur 3,0 lots → 1,5 @ TP1, 0,9 @ TP2, 0,6 @ TP3). Chaque trade a son propre take-profit broker — pas de fermetures partielles par le worker.',
     enabledTotal: 'Total activé :',
     unallocated: '{pct}% non alloué',
     overCap: 'Dépasse 100 % (plafonné à la prochaine modification)',
@@ -531,10 +546,13 @@ export const configureModalFr: ConfigureModalTranslations = {
     reverseSignal: 'Inverser le signal',
     addToExisting: 'Ajouter une position à l’existant',
     closeOpposite: 'Fermer sur signal opposé',
+    closeOnSignalDeleted: 'Fermer le trade / Supprimer le pending si le signal est effacé',
     reverseHint:
       'Inverser : un achat du canal est copié en vente, et une vente en achat. Les SL/TP prédéfinis (pips depuis l’entrée) s’appliquent au sens inversé. Sinon, les SL/TP du signal sont miroir autour de l’entrée.',
     closeOppositeHint:
       'Fermer sur opposé : en mode manuel, un nouvel achat/vente du canal ferme les positions ouvertes sur le même symbole en sens inverse (direction du canal, avant inversion), annule leurs ordres en attente virtuels de range, puis exécute le nouveau plan.',
+    closeOnSignalDeletedHint:
+      'Si activé, supprimer le message signal d’origine sur Telegram, Discord ou WhatsApp ferme les positions ouvertes de ce signal et annule ses ordres en attente (y compris les jambes virtuelles de range). Désactivé par défaut.',
     addExistingHint:
       'Ajouter à l’existant : un suivi du même côté actualise chaque jambe ouverte de la même signal d’origine (même panier), par ordre d’exécution (la plus ancienne d’abord), via la répartition multi-positions des TP du planificateur (chaque jambe reçoit le SL/TP de l’ordre immédiat correspondant selon vos lignes de % de TP). Les ordres en attente virtuels de range de ce panier sont annulés et réinsérés sous le signal parent. Le fil de réponse ou la fenêtre de 4 h s’appliquent toujours. Les lignes de TP partiel en position unique ne sont recréées que lorsque le panier n’a qu’une jambe.',
     rrFallbacksTitle: 'Repli R:R',
@@ -630,5 +648,68 @@ export const configureModalFr: ConfigureModalTranslations = {
   riskDisclaimer: {
     warning: 'Attention ! Votre capital est exposé au risque. Ne copiez que des fournisseurs de signaux en qui vous avez confiance.',
     fullLink: 'Voir l’avertissement complet sur les risques',
+  },
+  configureWithAi: {
+    button: 'Configurer avec l’IA',
+    title: 'Configurer avec l’IA',
+    subtitle:
+      'Décrivez comment vous voulez trader — ou chargez le format de signaux de ce canal pour des réglages adaptés.',
+    close: 'Fermer',
+    placeholder: 'ex. Mettre le break even sur TP2, ou utiliser 1 % de risque…',
+    send: 'Envoyer',
+    thinking: 'Réflexion…',
+    welcome:
+      'Demandez n’importe quel réglage (ex. break even sur TP2), ou chargez le format de signaux de ce canal pour une configuration complète.',
+    needChannel: 'Sélectionnez d’abord un canal pour configurer avec l’IA.',
+    loadFromChannel: 'Charger depuis le canal',
+    loadJsonFormat: 'Charger le format JSON',
+    loadingExamples: 'Chargement des signaux de ce canal…',
+    loadingJsonFormat: 'Chargement du format JSON TradingView…',
+    examplesLoaded: '{count} exemple(s) de signal chargé(s).',
+    examplesEmpty:
+      'Aucun signal récent sur ce canal — collez quelques exemples ci-dessous, ou attendez de nouveaux messages.',
+    examplesEmptyTradingView:
+      'Aucun JSON d’alerte TradingView trouvé — collez un exemple ci-dessous, ou configurez le modèle d’alerte sur le canal.',
+    pasteLabel: 'Coller le format de signal',
+    pastePlaceholder: 'Collez un ou plusieurs signaux d’exemple…',
+    pastePlaceholderTradingView: 'Collez une ou plusieurs charges JSON d’alerte TradingView…',
+    usePaste: 'Utiliser les signaux collés',
+    clearPaste: 'Effacer',
+    examplesCount: '{count} exemple(s) dans le contexte',
+    examplesHeading: 'Exemples de signaux',
+    examplesHeadingTradingView: 'Format JSON TradingView',
+    exampleLabelEntry: 'Entrée',
+    exampleLabelUpdate: 'Mise à jour',
+    exampleLabelIgnore: 'Ignorer',
+    analyzingExamples: 'Analyse du format de signaux…',
+    analyzingJsonFormat: 'Analyse de votre format JSON TradingView…',
+    analyzeRequest:
+      'Voici mes exemples de signaux (entrée et mise à jour/modify/close s’il y en a). Analyse le style d’entrée (prix unique vs range/zone), la gestion modify/close du canal, tiens compte de la taille de mon compte, et résume clairement lot, style, cibles et gestion. Pose les questions manquantes, puis propose des réglages.',
+    analyzeRequestTradingView:
+      'Voici mon format JSON d’alerte TradingView. Analyse la forme du payload (entrée, SL, TP), tiens compte de la taille de mon compte, et propose lot, style, cibles et gestion. Pose les questions manquantes, puis propose des réglages.',
+    applyToForm: 'Appliquer les paramètres',
+    applySettings: 'Appliquer les paramètres',
+    applySettingsHint: 'Cela appliquera les paramètres à la configuration.',
+    somethingElsePill: 'Autre chose',
+    dismissProposal: 'Ignorer',
+    proposalTitle: 'Paramètres proposés',
+    proposalApplied:
+      'Appliqué au formulaire — cliquez sur Enregistrer dans Configurer le trading quand vous êtes prêt.',
+    proposalRationale: 'Pourquoi',
+    proposalWarnings: 'Notes',
+    errorFallback: 'Une erreur s’est produite. Réessayez.',
+    trainHint: 'Vous pouvez aussi entraîner les Exemples de signaux dans l’accordéon Configurer pour rafraîchir les échantillons.',
+  },
+  advancedOnlyNotice: {
+    title: 'These settings need the Advanced plan',
+    body: 'Your current plan runs entries with simple settings only. Because this configuration uses the items below, signals from this channel are skipped instead of copied. Switch them off, or upgrade the plan.',
+    items: {
+      multiTrade: 'Several positions per signal (trade style: multiple)',
+      rangeTrading: 'Range trading',
+      moveSlToEntry: 'Moving the stop loss to entry after a trigger',
+      reverseSignal: 'Reversed direction',
+      closeWorseEntries: 'Closing instant entries when price runs past the signal',
+      riskReward: 'Stop loss or targets calculated from risk-reward',
+    },
   },
 }

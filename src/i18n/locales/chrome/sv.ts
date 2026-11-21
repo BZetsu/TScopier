@@ -4,6 +4,7 @@ export const chromeSv: AppChromeTranslations = {
   nav: {
     sections: {
       general: 'ALLMÄNT',
+      copy: 'KOPIERING',
       signals: 'SIGNALER',
       discover: 'UPPTÄCK',
       tradingTools: 'HANDELSVERKTYG',
@@ -132,10 +133,10 @@ export const chromeSv: AppChromeTranslations = {
       cancel: 'Cancel',
       welcomeTitle: 'I can help you set up and run UniCopier.',
       suggestions: [
-        'Is my Telegram linked?',
+        'Are my Signals connected?',
+        'Add an account in Account Configuration',
+        'Show my Account Trades',
         'Pause the copier',
-        'Connect an MT5 account',
-        'What are trading presets?',
       ],
       emptyReply: 'How else can I help?',
       actionDone: 'Done.',
@@ -204,6 +205,14 @@ export const chromeSv: AppChromeTranslations = {
         positionClosed: 'Closed',
         reportStatusOpen: 'Öppen',
         reportStatusResolved: 'Löst',
+      },
+      csvCard: {
+        title: 'CSV-export',
+        ready: 'Din CSV med kontots affärer är klar.',
+        empty: 'Inga kontoaffärer hittades för den dagen.',
+        download: 'Ladda ner CSV',
+        countLabel: '{count} affärer',
+        exportFailed: 'Kunde inte exportera kontoaffärer. Prova Kontoaffärer i appen.',
       },
 
     },

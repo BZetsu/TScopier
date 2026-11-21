@@ -1,6 +1,11 @@
 export interface ContactSupportPageTranslations {
   channelsTitle: string
   channelsSubtitle: string
+  systemStatus: {
+    title: string
+    description: string
+    cta: string
+  }
   email: {
     title: string
     description: string

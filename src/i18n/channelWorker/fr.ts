@@ -189,6 +189,8 @@ export const channelWorkerFr: ChannelWorkerTranslations = {
       'ce canal est en mode position unique (Ajouter aux trades existants désactivé), les nouvelles entrées doivent inclure TP/SL',
     entry_requires_imperative_or_labeled_stops:
       'le message n\'incluait pas d\'ordre d\'entrée (ex. buy now, gold sell now) ni de SL/TP étiquetés',
+    tradingview_missing_sl_tp:
+      'l\'alerte TradingView n\'avait pas de prix SL et TP — ajoutez-les au message, ou activez Override SL et Override TP dans la configuration',
     entry_tp_without_sl: 'SL non fourni — définissez des pips SL prédéfinis dans la configuration du courtier',
     signal_missing_required_sl: 'SL non fourni — définissez des pips SL prédéfinis dans la configuration du courtier',
     delete_pendings_no_parent:
@@ -196,6 +198,8 @@ export const channelWorkerFr: ChannelWorkerTranslations = {
     delete_pendings_requires_reply:
       'les instructions d\'annulation doivent être envoyées en réponse au message du signal original',
     delete_pendings_none: 'aucun ordre en attente à annuler pour ce trade',
+    delete_pendings_cancel_failed: 'des ordres en attente ont été trouvés, mais aucun n’a pu être annulé (le courtier a refusé ou était indisponible) — réessayez, ou fermez-les depuis la page Trades',
+    partial_close_unavailable_for_position_size: 'clôture partielle impossible — cette position est trop petite pour être fractionnée (la partie demandée passerait sous le lot minimum du broker) ; rien n’a été fermé et le trade est resté ouvert à sa taille complète',
   },
   dispatchSkipped: 'Signal non copié ({reason}).',
   rangeRebalanceSkippedNamed: 'Rééquilibrage du take profit {symbol} ignoré ({reason})',
@@ -211,6 +215,10 @@ export const channelWorkerFr: ChannelWorkerTranslations = {
     'L’EA de trading n’est pas prêt sur votre terminal MT5 — activez Algo Trading, gardez le terminal ouvert, puis actualisez la santé du courtier',
   errorBrokerNotConnected:
     'Courtier non connecté — dans Configuration du compte, utilisez Reconnect et entrez votre mot de passe MT',
+  errorBrokerBusy:
+    'Courtier occupé — trop d’ordres en cours ; les signaux suivants s’exécuteront quand la charge baissera',
+  errorOrderSendTimedOut:
+    'OrderSend timed out — vérifiez les positions ouvertes ; l’ordre a peut‑être tout de même été exécuté',
   errorInvalidStops:
     'Le courtier a rejeté ces niveaux de stop — vérifiez que SL/TP sont du bon côté du marché et respectent la distance minimale.',
   errorBridgeGlitch:

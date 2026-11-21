@@ -1,0 +1,12 @@
+{
+  "name": "gen-wealth-btc-buy-zones",
+  "raw_message": "BTC BUY ZONES\n\n63979\n62758",
+  "expected": {
+    "action": "buy",
+    "symbol": "BTCUSD",
+    "entry_zone_low": 62758,
+    "entry_zone_high": 63979,
+    "sl": null,
+    "tp": []
+  }
+}

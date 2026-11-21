@@ -48,6 +48,9 @@ verify_jwt = true
 [functions.assistant-chat]
 verify_jwt = true
 
+[functions.configure-with-ai]
+verify_jwt = true
+
 [functions.customer-portal]
 verify_jwt = true
 
@@ -96,6 +99,9 @@ verify_jwt = false
 [functions.email-unsubscribe]
 verify_jwt = false
 
+[functions.public-status]
+verify_jwt = false
+
 [functions.send-subscription-email]
 verify_jwt = false
 
@@ -130,4 +136,19 @@ verify_jwt = false
 verify_jwt = true
 
 [functions.billing-backfill]
+verify_jwt = false
+
+[functions.support-chat]
+verify_jwt = false
+
+[functions.support-tickets]
+verify_jwt = false
+
+[functions.support-ticket-inbound]
+verify_jwt = false
+
+[functions.support-translate]
+verify_jwt = false
+
+[functions.support-push]
 verify_jwt = false

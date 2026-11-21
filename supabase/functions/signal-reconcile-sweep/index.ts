@@ -3,10 +3,15 @@
  *
  * Worker UserListener runs reconcile every 60s (primary). This edge function runs
  * every 2 minutes and POSTs to the listener worker for users with open trades.
+ * With LISTENER_SHARD_URLS set, each user is routed to their owning shard.
  */
 
 // @ts-ignore Deno runtime
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4"
+import {
+  hasListenerWorkerUrl,
+  pickListenerWorkerUrl,
+} from "../_shared/workerShard.ts"
 
 // @ts-ignore Deno globals
 declare const Deno: {
@@ -14,19 +19,8 @@ declare const Deno: {
   serve: (handler: (req: Request) => Response | Promise<Response>) => void
 }
 
-/** Accept host-only Railway URLs — fetch requires a scheme (same as telegram-auth). */
-function normalizeWorkerBaseUrl(raw: string): string {
-  const trimmed = raw.trim().replace(/\/+$/, "")
-  if (!trimmed) return ""
-  if (/^https?:\/\//i.test(trimmed)) return trimmed
-  return `https://${trimmed}`
-}
-
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? ""
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-const WORKER_URL = normalizeWorkerBaseUrl(
-  Deno.env.get("TELEGRAM_LISTENER_URL") ?? Deno.env.get("WORKER_URL") ?? "",
-)
 const WORKER_INTERNAL_TOKEN = Deno.env.get("WORKER_INTERNAL_TOKEN") ?? ""
 const LOOKBACK_HOURS = 24
 const MAX_USERS = 40
@@ -35,10 +29,14 @@ const PER_USER_TIMEOUT_MS = 8_000
 const CONCURRENCY = 5
 
 async function reconcileUser(userId: string): Promise<Record<string, unknown>> {
+  const workerUrl = pickListenerWorkerUrl(userId)
+  if (!workerUrl) {
+    return { user_id: userId, ok: false, reason: "no_listener_url" }
+  }
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), PER_USER_TIMEOUT_MS)
   try {
-    const res = await fetch(`${WORKER_URL}/internal/reconcile-signals`, {
+    const res = await fetch(`${workerUrl}/internal/reconcile-signals`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -49,15 +47,21 @@ async function reconcileUser(userId: string): Promise<Record<string, unknown>> {
     })
     const data = await res.json().catch(() => ({}))
     if (res.ok && data?.ok !== false) {
-      return { user_id: userId, ok: true, stats: data?.stats ?? null }
+      return { user_id: userId, ok: true, stats: data?.stats ?? null, worker_url: workerUrl }
     }
-    return { user_id: userId, ok: false, reason: data?.reason ?? data?.error ?? res.status }
+    return {
+      user_id: userId,
+      ok: false,
+      reason: data?.reason ?? data?.error ?? res.status,
+      worker_url: workerUrl,
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return {
       user_id: userId,
       ok: false,
       error: msg.includes("abort") ? `timeout_after_${PER_USER_TIMEOUT_MS}ms` : msg,
+      worker_url: workerUrl,
     }
   } finally {
     clearTimeout(timer)
@@ -86,10 +90,11 @@ Deno.serve(async () => {
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
     return new Response(JSON.stringify({ error: "missing supabase env" }), { status: 500 })
   }
-  if (!WORKER_URL || !WORKER_INTERNAL_TOKEN) {
-    return new Response(JSON.stringify({ error: "WORKER_URL or WORKER_INTERNAL_TOKEN not configured" }), {
-      status: 503,
-    })
+  if (!hasListenerWorkerUrl() || !WORKER_INTERNAL_TOKEN) {
+    return new Response(
+      JSON.stringify({ error: "LISTENER_SHARD_URLS/TELEGRAM_LISTENER_URL or WORKER_INTERNAL_TOKEN not configured" }),
+      { status: 503 },
+    )
   }
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
@@ -124,7 +129,6 @@ Deno.serve(async () => {
       users_considered: userIds.length,
       triggered,
       skipped,
-      worker_url: WORKER_URL,
       results,
     }),
     { headers: { "Content-Type": "application/json" } },

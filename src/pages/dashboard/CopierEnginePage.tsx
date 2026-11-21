@@ -24,6 +24,7 @@ import { upsertTelegramChannel, planLimitErrorMessage } from '../../lib/telegram
 import {
   hasValidTelegramChannelIdentity,
   isNumericTelegramChatId,
+  isTelegramSourceChannel,
 } from '../../lib/telegramChannelIdentity'
 import {
   reconcileChannelIdentitiesFromTelegram,
@@ -57,10 +58,9 @@ import {
   invalidateTgSessionCache,
   setCachedTgSession,
 } from '../../lib/telegramSessionCache'
-import {
-  fetchListenerLeaseStatus,
-  type ListenerLeaseSnapshot,
-} from '../../lib/listenerLeaseStatus'
+import { CopierHealthBanner } from '../../components/dashboard/CopierHealthBanner'
+import { useCopierHealth } from '../../hooks/useCopierHealth'
+import { deriveCopierHealthUi } from '../../lib/copierHealthUi'
 import { subscribeDiscordSourcesChanged } from '../../lib/discordSource'
 import { SIGNAL_SOURCE_MARKS, type SignalSourceKind } from '../../lib/signalSourceMark'
 import {
@@ -166,9 +166,16 @@ export function CopierEnginePage() {
   const [searchParams] = useSearchParams()
   // Production builds ignore Discord invite links until the Discord worker ships.
   const guildFromInvite = buildFlags.extraSourcesLocked ? null : searchParams.get('guild_id')
-  const [source, setSource] = useState<AddedSignalSource | null>(guildFromInvite ? 'discord' : null)
+  const sourceFromQueryRaw = searchParams.get('source')
+  const sourceFromQuery = isAddedSignalSource(sourceFromQueryRaw) && !isSignalSourceLocked(sourceFromQueryRaw)
+    ? sourceFromQueryRaw
+    : null
+  const appliedQuerySourceRef = useRef<AddedSignalSource | null>(null)
+  const [source, setSource] = useState<AddedSignalSource | null>(
+    guildFromInvite ? 'discord' : sourceFromQuery,
+  )
   const [settingUpSource, setSettingUpSource] = useState<AddedSignalSource | null>(
-    guildFromInvite ? 'discord' : null,
+    guildFromInvite ? 'discord' : sourceFromQuery,
   )
   const [pickedSources, setPickedSources] = useState<AddedSignalSource[]>(() => (
     user?.id ? readAddedSignalSources(user.id) : []
@@ -202,18 +209,11 @@ export function CopierEnginePage() {
   const [tgPassword, setTgPassword] = useState('')
   const [tgLoading, setTgLoading] = useState(false)
   const [tgError, setTgError] = useState('')
-  const [listenerLease, setListenerLease] = useState<ListenerLeaseSnapshot>({
-    status: 'unknown',
-    expiresAt: null,
-  })
+  const { health: copierHealth, refresh: refreshCopierHealth } = useCopierHealth(
+    hasTgSession ? user?.id : null,
+  )
 
   const EDGE_FN = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-auth`
-
-  const refreshListenerLease = useCallback(async () => {
-    if (!user?.id) return
-    const snap = await fetchListenerLeaseStatus(supabase, user.id)
-    setListenerLease(snap)
-  }, [user?.id])
 
   useEffect(() => {
     if (!user) return
@@ -242,7 +242,7 @@ export function CopierEnginePage() {
           },
           payload => {
             const row = payload.new as TelegramChannel
-            if (!row?.id) return
+            if (!row?.id || !isTelegramSourceChannel(row)) return
             setChannels(prev => prev.map(c => (c.id === row.id ? { ...c, ...row } : c)))
           },
         )
@@ -255,45 +255,6 @@ export function CopierEnginePage() {
     }
   }, [user?.id])
 
-  useEffect(() => {
-    if (!user?.id || !hasTgSession) {
-      setListenerLease({ status: 'unknown', expiresAt: null })
-      return
-    }
-    void refreshListenerLease()
-    const interval = setInterval(() => void refreshListenerLease(), 30_000)
-    return () => clearInterval(interval)
-  }, [user?.id, hasTgSession, refreshListenerLease])
-
-  useEffect(() => {
-    if (!user?.id || !hasTgSession) return
-
-    let cancelled = false
-    let rt: ReturnType<typeof supabase.channel> | null = null
-
-    void whenRealtimeReady(user.id).then(() => {
-      if (cancelled) return
-      rt = supabase
-        .channel(`worker_session_leases_ui:${user.id}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'worker_session_leases',
-            filter: `user_id=eq.${user.id}`,
-          },
-          () => void refreshListenerLease(),
-        )
-        .subscribe()
-    })
-
-    return () => {
-      cancelled = true
-      if (rt) void supabase.removeChannel(rt)
-    }
-  }, [user?.id, hasTgSession, refreshListenerLease])
-
   const loadData = async (opts?: { skipTgFetch?: boolean; backgroundTgFetch?: boolean; forceTgFetch?: boolean }) => {
     const [channelsRes, sessionRes, discordInstalls, whatsappSession, tradingViewHooks] = await Promise.all([
       supabase.from('telegram_channels').select('*').eq('user_id', user!.id).order('created_at', { ascending: false }),
@@ -303,12 +264,12 @@ export function CopierEnginePage() {
       supabase.from('tradingview_webhooks').select('id', { count: 'exact', head: true }).eq('user_id', user!.id),
     ])
     const allChannelRows = (channelsRes.data ?? []) as TelegramChannel[]
-    const channelRows = allChannelRows.filter(row => !row.source_kind || row.source_kind === 'telegram')
+    const channelRows = allChannelRows.filter(isTelegramSourceChannel)
     const tgList = user?.id ? getCachedTgChannels(user.id) : null
     const reconciledChannels = tgList?.length
       ? await reconcileChannelIdentitiesFromTelegram(supabase, user!.id, channelRows, tgList)
       : channelRows
-    setChannels(reconciledChannels)
+    setChannels(reconciledChannels.filter(isTelegramSourceChannel))
     const brokerRows = await refreshBrokers({ silent: true })
     const reconciled = await pruneStaleBrokerChannelIds(supabase, user!.id, allChannelRows, brokerRows)
     setBrokers(reconciled)
@@ -331,7 +292,7 @@ export function CopierEnginePage() {
           : 'idle',
     )
     setLoading(false)
-    if (hasSession) void refreshListenerLease()
+    if (hasSession) void refreshCopierHealth()
     if (hasSession && !opts?.skipTgFetch) {
       const cached = user?.id ? getCachedTgChannels(user.id) : null
       if (cached && !opts?.forceTgFetch) {
@@ -386,8 +347,8 @@ export function CopierEnginePage() {
     setTgCanResendCode(false)
     setTgPassword('')
     setTgStage(nextStage)
-    void refreshListenerLease()
-  }, [user, session?.access_token, EDGE_FN, refreshListenerLease])
+    void refreshCopierHealth()
+  }, [user, session?.access_token, EDGE_FN, refreshCopierHealth])
 
   /** Session revoked server-side — show reconnect UI; never wipe configured channels. */
   const handleTelegramSessionInvalid = useCallback(async () => {
@@ -405,7 +366,7 @@ export function CopierEnginePage() {
       .select('*')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
-    setChannels((channelRows ?? []) as TelegramChannel[])
+    setChannels(((channelRows ?? []) as TelegramChannel[]).filter(isTelegramSourceChannel))
     setTgStage('method')
   }, [user, ce.telegramSessionExpired])
 
@@ -439,7 +400,7 @@ export function CopierEnginePage() {
       setTgChannels(list)
       if (user?.id) setCachedTgChannels(user.id, list)
       setError('')
-      void refreshListenerLease()
+      void refreshCopierHealth()
     } catch {
       setError(ce.networkError)
     } finally {
@@ -454,7 +415,7 @@ export function CopierEnginePage() {
     ce.failedLoadTgChannels,
     ce.networkError,
     user?.id,
-    refreshListenerLease,
+    refreshCopierHealth,
   ])
 
   const isTgReconnectFlow =
@@ -516,13 +477,14 @@ export function CopierEnginePage() {
               .select('*')
               .eq('user_id', user.id)
               .order('created_at', { ascending: false })
+            const telegramOnly = ((channelRows ?? []) as TelegramChannel[]).filter(isTelegramSourceChannel)
             const reconciled = await reconcileChannelIdentitiesFromTelegram(
               supabase,
               user.id,
-              (channelRows ?? []) as TelegramChannel[],
+              telegramOnly,
               list,
             )
-            setChannels(reconciled)
+            setChannels(reconciled.filter(isTelegramSourceChannel))
           }
           if (!opts?.background) setError('')
           return
@@ -981,13 +943,13 @@ export function CopierEnginePage() {
         readAddedSignalSources(user.id),
         prev,
         connectedSources,
-        guildFromInvite ? 'discord' : null,
+        guildFromInvite ? 'discord' : sourceFromQuery,
       )
       const unchanged = next.length === prev.length && next.every((kind, index) => kind === prev[index])
       if (!unchanged) writeAddedSignalSources(user.id, next)
       return unchanged ? prev : next
     })
-  }, [connectedSources, guildFromInvite, sourcesReady, user?.id])
+  }, [connectedSources, guildFromInvite, sourceFromQuery, sourcesReady, user?.id])
 
   useEffect(() => {
     if (!sourcesReady) return
@@ -1016,6 +978,13 @@ export function CopierEnginePage() {
     setSourcePickerOpen(false)
   }
 
+  useEffect(() => {
+    if (!sourcesReady || !sourceFromQuery) return
+    if (appliedQuerySourceRef.current === sourceFromQuery) return
+    appliedQuerySourceRef.current = sourceFromQuery
+    addSignalSource(sourceFromQuery)
+  }, [connectedSources, sourceFromQuery, sourcesReady])
+
   const sourceTabLabel = (kind: AddedSignalSource) => {
     if (kind === 'telegram') return t.channelsPage.tabTelegram
     if (kind === 'whatsapp') return t.channelsPage.tabWhatsApp
@@ -1023,11 +992,13 @@ export function CopierEnginePage() {
     return t.channelsPage.tabTradingView
   }
 
-  const showListenerLeaseWarning =
-    hasTgSession
-    && hasActiveSubscription
-    && !isTgReconnectFlow
-    && (listenerLease.status === 'expired' || listenerLease.status === 'missing')
+  const healthUi = deriveCopierHealthUi(copierHealth, { hasTelegramSession: hasTgSession })
+  const {
+    telegramLive,
+    telegramReconnectRequired,
+    telegramReconnecting,
+    telegramOffline,
+  } = healthUi
 
   return (
     <PageShell maxWidth="lg" spacing="none" className="space-y-6">
@@ -1111,25 +1082,15 @@ export function CopierEnginePage() {
       ) : source === 'telegram' ? (
       <>
 
-      {showListenerLeaseWarning && (
-        <div className="mb-3 px-4 py-3 bg-warning-50 dark:bg-amber-950/40 border border-warning-200 dark:border-amber-800 rounded-xl text-sm text-warning-800 dark:text-amber-100 flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between">
-          <div className="flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <div>
-              <p className="font-medium">{ce.listenerLeaseExpired}</p>
-              <p className="text-xs mt-0.5 opacity-90">{ce.listenerLeaseExpiredHint}</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2 sm:shrink-0">
-            <Button size="sm" variant="secondary" onClick={() => void fetchTgChannels({ force: true })} loading={loadingTg}>
-              <RefreshCw className="w-3.5 h-3.5" />
-              {t.common.refresh}
-            </Button>
-            <Button size="sm" onClick={() => void reconnectTelegram()}>
-              {ce.reconnectTelegram}
-            </Button>
-          </div>
-        </div>
+      {hasTgSession && !isTgReconnectFlow && (
+        <CopierHealthBanner
+          className="mb-3"
+          onReconnect={() => void reconnectTelegram()}
+          onRefresh={async () => {
+            await refreshCopierHealth()
+            await fetchTgChannels({ force: true })
+          }}
+        />
       )}
 
       {/* Status row */}
@@ -1190,17 +1151,21 @@ export function CopierEnginePage() {
                 <p className="text-xs text-neutral-900 dark:text-neutral-50">{ce.telegramConnectedHint}</p>
               </div>
               <span className="shrink-0 hidden sm:inline-flex gap-1.5">
-                <Badge variant="primary" size="sm">{ce.connected}</Badge>
-                {hasActiveSubscription && listenerLease.status === 'live' && (
+                {telegramLive ? (
+                  <Badge variant="primary" size="sm">{ce.connected}</Badge>
+                ) : telegramReconnectRequired ? (
+                  <Badge variant="error" size="sm">{t.dashboard.copierStatus.reconnectRequired}</Badge>
+                ) : telegramReconnecting ? (
+                  <Badge variant="warning" size="sm">{t.dashboard.copierStatus.reconnecting}</Badge>
+                ) : telegramOffline ? (
+                  <Badge variant="warning" size="sm">{t.dashboard.copierStatus.offline}</Badge>
+                ) : (
+                  <Badge variant="warning" size="sm">{ce.linkedNotReceiving}</Badge>
+                )}
+                {hasActiveSubscription && telegramLive && (
                   <Badge variant="primary" size="sm">{ce.listenerLeaseLive}</Badge>
                 )}
-                {!hasActiveSubscription && listenerLease.status === 'live' && (
-                  <Badge variant="warning" size="sm">{ce.listenerLeaseExpired}</Badge>
-                )}
-                {listenerLease.status === 'unknown' && (
-                  <Badge variant="neutral" size="sm">{ce.listenerLeaseUnknown}</Badge>
-                )}
-                {(listenerLease.status === 'expired' || listenerLease.status === 'missing') && (
+                {!hasActiveSubscription && telegramLive && (
                   <Badge variant="warning" size="sm">{ce.listenerLeaseExpired}</Badge>
                 )}
               </span>
@@ -1547,7 +1512,8 @@ function ChannelRow({
     [brokers, channel.id],
   )
   const hasAnyBrokers = brokers.some(b => isBrokerCopyEnabledForUi(b))
-  const identityValid = hasValidTelegramChannelIdentity(channel)
+  const identityValid =
+    !isTelegramSourceChannel(channel) || hasValidTelegramChannelIdentity(channel)
 
   useEffect(() => {
     if (!connectMenuOpen) return

@@ -271,7 +271,8 @@
 }
 
 @utility marketing-hero-bg {
-  @apply min-h-screen overflow-hidden;
+  /* No overflow clipping here — it breaks position:sticky scroll stages. */
+  @apply min-h-screen;
 }
 
 @utility marketing-page-bg {
@@ -288,11 +289,11 @@
 }
 
 @utility marketing-footer-cta {
-  @apply relative overflow-hidden border-b border-neutral-200/70 bg-linear-to-b from-teal-50/50 via-white/95 to-white/95 dark:border-neutral-800/45 dark:from-teal-950/25 dark:via-neutral-900/95 dark:to-neutral-900/95;
+  @apply relative overflow-hidden border-b border-neutral-200/70 bg-[#ECEEF2] dark:border-neutral-800/45 dark:bg-neutral-900;
 }
 
 @utility marketing-footer-cta-grid {
-  @apply marketing-grid-pattern pointer-events-none absolute inset-0 opacity-60;
+  @apply pointer-events-none absolute inset-0;
 }
 
 @utility marketing-footer-main {
@@ -1000,5 +1001,42 @@ html[dir="rtl"] .marketing-feature-log-row {
 @media (prefers-reduced-motion: reduce) {
   .logo-marquee-track {
     animation: none;
+  }
+}
+
+/*
+ * Support widget reply-ETA under the title: slide right→left to reveal clipped text,
+ * hold on the end, jump back to the start (no reverse slide), repeat.
+ * --support-reply-slide = overflow px (scrollWidth - clientWidth).
+ */
+@keyframes support-reply-slide {
+  0%,
+  12% {
+    transform: translateX(0);
+  }
+  50%,
+  72% {
+    transform: translateX(calc(-1 * var(--support-reply-slide, 0px)));
+  }
+  72.01%,
+  100% {
+    transform: translateX(0);
+  }
+}
+.support-reply-slide-track {
+  display: inline-block;
+  width: max-content;
+  max-width: none;
+  will-change: transform;
+  animation: support-reply-slide 10s linear infinite;
+}
+.support-reply-slide-track[data-needs-slide='false'] {
+  animation: none;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .support-reply-slide-track {
+    animation: none;
+    transform: none;
   }
 }

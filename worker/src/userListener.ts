@@ -7,6 +7,7 @@ import { NewMessage } from 'telegram/events'
 import type { NewMessageEvent } from 'telegram/events/NewMessage'
 import { EditedMessage } from 'telegram/events/EditedMessage'
 import type { EditedMessageEvent } from 'telegram/events/EditedMessage'
+import { Raw } from 'telegram/events'
 import { Api } from 'telegram/tl'
 import {
   buildClient,
@@ -33,10 +34,10 @@ import type { SignalRow } from './tradeExecutor'
 import { enqueueParsedSignal } from './queue/signalQueuePublisher'
 import { signalQueueConfig } from './queue/signalQueueConfig'
 import {
-  pushParsedSignalToTradeWorker,
   pushParsedSignalToTradeWorkerAccept,
 } from './tradeSignalPush'
 import { persistListenerEvent } from './listenerEvents'
+import { PollEventThrottle, POLL_EVENT_WINDOW_MS } from './pollEventThrottle'
 import { getChannelParseContext, invalidateChannelParseCache } from './channelKeywordsCache'
 import { parseChannelMessageSync, parseModificationDeterministic, parseRawChannelMessage } from './parseSignal'
 import { looksLikeTradingSignal, looksLikeTrainingCandidate } from './signalTradingHeuristic'
@@ -80,6 +81,7 @@ import {
   RECONCILE_POLL_HOOK_WINDOW_MS,
   RECONCILE_SWEEP_INTERVAL_MS,
   chunkTelegramMessageIds,
+  deletedTelegramMessageIds,
   findSignalsNeedingReconcile,
   groupSignalsByChannel,
   loadSignalsForReconcile,
@@ -89,7 +91,9 @@ import {
   snapshotsFromTelegramMessages,
   telegramEditDateSec,
   telegramMessageText,
+  revisionBlockedForManagement,
 } from './signalTelegramReconcile'
+import { handleSignalMessageDeleted } from './signalDeletedClose'
 import { evaluateParsedSignalExecutionEligibility, deterministicEntryNeedsAiRepair } from './signalExecutionEligibility'
 import { getUniversalParseMode } from './signalIntent/parseConfig'
 import { routeSignalParse } from './signalIntent/parseRouting'
@@ -401,14 +405,24 @@ interface ChannelRow {
   id: string
   channel_id: string
   channel_username: string
+  display_name?: string | null
   signal_channel_id?: string | null
   last_seen_message_id: number | string | null
   last_seen_at?: string | null
   last_live_at?: string | null
 }
 
+function channelSourceDisplayName(row: ChannelRow): string {
+  const name = row.display_name?.trim()
+  if (name) return name
+  const username = row.channel_username?.trim().replace(/^@/, '')
+  if (username) return `@${username}`
+  return 'Telegram'
+}
+
 type Handler = (event: NewMessageEvent) => void
 type EditHandler = (event: EditedMessageEvent) => void
+type RawHandler = (update: Api.TypeUpdate) => void
 
 export type SignalReconcileStats = {
   checked: number
@@ -542,6 +556,8 @@ export class UserListener {
   private currentEventBuilder: NewMessage | null = null
   private currentEditHandler: EditHandler | null = null
   private currentEditEventBuilder: EditedMessage | null = null
+  private currentRawHandler: RawHandler | null = null
+  private currentRawEventBuilder: Raw | null = null
   private startedAt = 0
   /** Set when start() reuses the auth-time client (no second connect). */
   private startedWithLiveClient = false
@@ -577,6 +593,12 @@ export class UserListener {
   private sessionRevoked = false
   private lastEventAt = 0
   private lastSuccessfulPollAt = 0
+  /**
+   * Last time a poll cycle ran to completion, including cycles that found no
+   * new messages. The watchdog probe never touches it, so it is the only
+   * honest signal that the listener is still reading channels.
+   */
+  private lastPollCycleCompletedAt = 0
   private lastReconnectAt = 0
   private lastReconnectEndedAt = 0
   private deferredRetryTimer: NodeJS.Timeout | null = null
@@ -585,6 +607,21 @@ export class UserListener {
   private reconnectInFlight: Promise<void> | null = null
   /** Rate-limit AUTH_KEY_DUPLICATED poll_error rows (safety+fast poll can fire every few seconds). */
   private lastAuthKeyDupPollErrorAt = 0
+  /**
+   * Collapses repeated per-channel poll failures into one row per minute.
+   * A dead socket makes every channel on every 3-second tick report the same
+   * error; without this a short outage writes dozens of identical rows.
+   */
+  private pollEventThrottle = new PollEventThrottle(
+    envNumber(process.env.POLL_EVENT_THROTTLE_WINDOW_MS, POLL_EVENT_WINDOW_MS, 5_000, 3_600_000),
+  )
+  /**
+   * Clean reconcile passes ("checked N signals, no mismatch") used to write one row
+   * per channel per sweep — roughly 3,500 rows a day for a twelve-channel account,
+   * with no diagnostic value. One row per channel per hour still proves the sweep
+   * is running.
+   */
+  private reconcileCheckedThrottle = new PollEventThrottle(60 * 60 * 1000)
   private lastAuthKeyDupLogAt = 0
   private lastSavedSession: string
   private readonly canRecreateClient: boolean
@@ -669,8 +706,9 @@ export class UserListener {
   private currentListenerStatus(): SignalListenerState {
     if (this.isConnected) return 'connected'
     if (this.reconnectInFlight || this.deferredRetryTimer) return 'reconnecting'
-    if (this.stopping) return 'disconnected'
-    return 'unknown'
+    // Idle-disconnected must not report `unknown` — that kept UI/trade gates
+    // treating lease-only renew as live while MTProto was down.
+    return 'disconnected'
   }
 
   private updateHealth(
@@ -1118,9 +1156,13 @@ export class UserListener {
       }
     }
     this.isConnected = true
+    // Errors from before the reconnect belong to a different episode; do not let
+    // them silence the first error of the next one.
+    this.pollEventThrottle.clear()
     this.startedAt = Date.now()
     this.lastEventAt = Date.now()
     this.lastSuccessfulPollAt = Date.now()
+    this.lastPollCycleCompletedAt = Date.now()
     this.updateHealth('listener_started', { force: true })
 
     // Do not await getDialogs warmup here — flood-wait / hung dialogs blocked
@@ -1266,6 +1308,15 @@ export class UserListener {
     void this.requestReconnect(reason)
   }
 
+  /**
+   * Lease renew may keep ownership while MTProto is down — force a health write so
+   * UI / trade live gates never treat lease freshness as Connected.
+   */
+  reportLeaseRenewWhileDisconnected(): void {
+    if (this.stopping) return
+    this.updateHealth('lease_renew_while_disconnected', { force: true })
+  }
+
   /** Await recovery until MTProto is up, or throw a client-safe busy error. */
   async ensureTelegramConnected(reason = 'ensure'): Promise<void> {
     // Check revocation first: if the two flags ever disagree (revoked while a
@@ -1305,11 +1356,45 @@ export class UserListener {
     return this.resolveChannelPeer(row)
   }
 
-  /** Used by session manager to skip lease renew when listener is stale. */
+  /**
+   * Probe-level health: "the socket answered recently".
+   *
+   * Kept for the health ladder (`resolveCopierEngineState`) and the parked-renew
+   * check. Do NOT use it to decide whether the listener is working: the watchdog
+   * refreshes the same timestamp on every successful `updates.GetState`, so a
+   * listener whose poll loops are wedged still reads as healthy here. Poll
+   * progress is `isPollLoopStalled()`.
+   */
   isListenerHealthy(staleMs: number): boolean {
     const now = Date.now()
     const lastActivity = Math.max(this.lastEventAt, this.lastSuccessfulPollAt)
     return this.isConnected && (lastActivity === 0 || now - lastActivity < staleMs)
+  }
+
+  /**
+   * True when the poll loops have stopped completing cycles.
+   *
+   * Deliberately separate from `isListenerHealthy`: that value is refreshed by
+   * the watchdog probe every 30 s, so a listener whose socket still answers
+   * probes while its polling is wedged looks perfectly healthy there. During
+   * the 2026-11-18 outage the poll loops stopped at 08:27 and nothing noticed
+   * for 82 minutes; this timestamp only advances when a real poll cycle runs.
+   */
+  isPollLoopStalled(staleMs: number): boolean {
+    if (!this.isConnected) return false
+    if (this.lastPollCycleCompletedAt === 0) return false
+    return Date.now() - this.lastPollCycleCompletedAt >= staleMs
+  }
+
+  /**
+   * True while the session is deliberately paused after a Telegram flood wait.
+   *
+   * Used by the session manager's stall heal: a paused listener is silent
+   * because Telegram told it to be, not because it is wedged, so it must never
+   * be hard-reset (that would swap one throttled session for another).
+   */
+  isPollBackoffActive(): boolean {
+    return Date.now() < this.pollBackoffUntil
   }
 
   private async refreshChannelListenerState(): Promise<void> {
@@ -1340,7 +1425,7 @@ export class UserListener {
     }
     const { data: rows } = await this.supabase
       .from('telegram_channels')
-      .select('id, channel_id, channel_username, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
+      .select('id, channel_id, channel_username, display_name, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
       .eq('user_id', this.userId)
       .eq('is_active', true)
       .eq('source_kind', 'telegram')
@@ -1452,14 +1537,25 @@ export class UserListener {
         console.error(`[userListener] handleEditedMessage error for ${this.userId}:`, err)
       })
     }
+    const rawHandler: RawHandler = (update: Api.TypeUpdate) => {
+      this.handleDeletedMessagesUpdate(update).catch(err => {
+        console.error(`[userListener] handleDeletedMessagesUpdate error for ${this.userId}:`, err)
+      })
+    }
     const builder = new NewMessage({})
     const editBuilder = new EditedMessage({})
+    const rawBuilder = new Raw({
+      types: [Api.UpdateDeleteChannelMessages, Api.UpdateDeleteMessages],
+    })
     this.client.addEventHandler(handler, builder)
     this.client.addEventHandler(editHandler, editBuilder)
+    this.client.addEventHandler(rawHandler, rawBuilder)
     this.currentHandler = handler
     this.currentEventBuilder = builder
     this.currentEditHandler = editHandler
     this.currentEditEventBuilder = editBuilder
+    this.currentRawHandler = rawHandler
+    this.currentRawEventBuilder = rawBuilder
   }
 
   private removeCurrentHandler(client: TelegramClient = this.client) {
@@ -1477,10 +1573,19 @@ export class UserListener {
         // ignore
       }
     }
+    if (this.currentRawHandler && this.currentRawEventBuilder) {
+      try {
+        client.removeEventHandler(this.currentRawHandler, this.currentRawEventBuilder)
+      } catch {
+        // ignore
+      }
+    }
     this.currentHandler = null
     this.currentEventBuilder = null
     this.currentEditHandler = null
     this.currentEditEventBuilder = null
+    this.currentRawHandler = null
+    this.currentRawEventBuilder = null
   }
 
   private setsEqual(a: Set<string>, b: Set<string>) {
@@ -1492,7 +1597,7 @@ export class UserListener {
   private async loadChannels(): Promise<Set<string>> {
     const { data } = await this.supabase
       .from('telegram_channels')
-      .select('id, channel_id, channel_username')
+      .select('id, channel_id, channel_username, display_name')
       .eq('user_id', this.userId)
       .eq('is_active', true)
       .eq('source_kind', 'telegram')
@@ -1517,7 +1622,7 @@ export class UserListener {
   ): Promise<ChannelRow | null> {
     const { data: rows, error } = await this.supabase
       .from('telegram_channels')
-      .select('id, channel_id, channel_username, last_seen_message_id')
+      .select('id, channel_id, channel_username, display_name, last_seen_message_id')
       .eq('user_id', this.userId)
       .eq('is_active', true)
       .eq('source_kind', 'telegram')
@@ -1641,6 +1746,7 @@ export class UserListener {
           break
         }
         this.isConnected = true
+        this.pollEventThrottle.clear()
         const dialogs = await this.fetchAllDialogs()
         this.connectionTrace('recovery_complete', { source: 'getDialogs', cycleId, attempt: attempt + 1 })
         return dialogs
@@ -1684,7 +1790,7 @@ export class UserListener {
     const lookbackDays = Math.max(1, Math.min(90, Number(days || 30)))
     const { data: row, error } = await this.supabase
       .from('telegram_channels')
-      .select('id, channel_id, channel_username, last_seen_message_id')
+      .select('id, channel_id, channel_username, display_name, last_seen_message_id')
       .eq('user_id', this.userId)
       .eq('id', channelRowId)
       .eq('is_active', true)
@@ -1714,7 +1820,7 @@ export class UserListener {
 
     const { data: row, error } = await this.supabase
       .from('telegram_channels')
-      .select('id, channel_id, channel_username, last_seen_message_id')
+      .select('id, channel_id, channel_username, display_name, last_seen_message_id')
       .eq('user_id', this.userId)
       .eq('id', channelRowId)
       .eq('is_active', true)
@@ -1769,7 +1875,7 @@ export class UserListener {
 
     const { data: row, error } = await this.supabase
       .from('telegram_channels')
-      .select('id, channel_id, channel_username, last_seen_message_id')
+      .select('id, channel_id, channel_username, display_name, last_seen_message_id')
       .eq('user_id', this.userId)
       .eq('id', channelRowId)
       .eq('is_active', true)
@@ -1891,7 +1997,14 @@ export class UserListener {
     })
 
     if (collected.length === 0) {
-      errors.push('0 messages from Telegram — check session and channel access')
+      const label = (row as { display_name?: string | null }).display_name
+        || (row as { channel_username?: string | null }).channel_username
+        || channelRowId
+      errors.push(
+        `0 messages from Telegram for “${label}” in this date range. `
+        + 'Confirm you still have access to that exact channel (not a backup/mirror), '
+        + 'widen the dates, or pick the channel that is receiving live signals.',
+      )
     } else if (candidates.length === 0) {
       errors.push('No messages looked like trade signals in this range')
     } else if (imported === 0 && errors.length === 0) {
@@ -1961,8 +2074,10 @@ export class UserListener {
   // ── live message handling ─────────────────────────────────────────────
 
   private async handleMessage(event: NewMessageEvent) {
-    this.lastEventAt = Date.now()
-    this.lastLiveMessageAt = Date.now()
+    // Stamp before any awaited chat/channel lookup — otherwise telegram_receipt
+    // includes DB RTT and understates Telegram delivery / overstates listener work.
+    const messageReceivedAt = Date.now()
+    this.lastEventAt = messageReceivedAt
     incMetric('telegram_live_events')
 
     const message = event.message
@@ -1976,6 +2091,9 @@ export class UserListener {
       chatIdVariants.some(v => this.monitoredChannels.has(v)) ||
       (!!chatUsername && this.monitoredChannels.has(chatUsername))
     if (!isMonitored) return
+
+    // Only monitored chats pause catch-up — unrelated chats must not extend the deaf window.
+    this.lastLiveMessageAt = messageReceivedAt
 
     console.log(
       `[userListener] message candidate user=${this.userId} chatId=${chatId} variants=${chatIdVariants.join(',')} username=${chatUsername || '-'} msgId=${String(message.id)}`,
@@ -2021,9 +2139,40 @@ export class UserListener {
         replyTo: message.replyTo,
         date: (message as MessageLike & { date?: number | Date | string }).date,
       },
-      { source: 'live' },
+      { source: 'live', receivedAt: messageReceivedAt },
     )
     void this.bumpLastLive(channelRow.id)
+  }
+
+  private async handleDeletedMessagesUpdate(update: Api.TypeUpdate): Promise<void> {
+    if (update instanceof Api.UpdateDeleteChannelMessages) {
+      const channelId = String(update.channelId)
+      const messageIds = (update.messages ?? []).map(id => String(id)).filter(Boolean)
+      if (!messageIds.length) return
+      const channelRow = await this.resolveChannelRowForChat(toChannelIdVariants(channelId), '')
+      if (!channelRow) return
+      for (const messageId of messageIds) {
+        await handleSignalMessageDeleted(this.supabase, {
+          userId: this.userId,
+          telegramMessageId: messageId,
+          channelRowId: channelRow.id,
+          source: 'telegram_live',
+        })
+      }
+      return
+    }
+
+    if (update instanceof Api.UpdateDeleteMessages) {
+      // Non-channel deletes omit peer; look up by message id for this user only.
+      const messageIds = (update.messages ?? []).map(id => String(id)).filter(Boolean)
+      for (const messageId of messageIds) {
+        await handleSignalMessageDeleted(this.supabase, {
+          userId: this.userId,
+          telegramMessageId: messageId,
+          source: 'telegram_live',
+        })
+      }
+    }
   }
 
   private async handleEditedMessage(event: EditedMessageEvent) {
@@ -2103,6 +2252,25 @@ export class UserListener {
       telegramMessageId: messageId,
     })
     if (!existing) return false
+    // Management commands are point-in-time: a reconcile revision re-parses the
+    // text and can only lose specificity (a re-parsed "CLOSE TP2" becomes a
+    // full "close" and wipes the basket). Never revise them — and never run a
+    // revision from an empty fetched text.
+    if (revisionBlockedForManagement(existing.parsed_data)) {
+      void persistListenerEvent(this.supabase, {
+        userId: this.userId,
+        eventType: 'message_revision_management_skipped',
+        channelRowId: channelRow.id,
+        telegramMessageId: messageId,
+        detail: {
+          signal_id: existing.id,
+          source,
+          action: String((existing.parsed_data as { action?: unknown } | null)?.action ?? ''),
+        },
+      })
+      return false
+    }
+    if (!rawMessage.trim()) return false
     if (isIncomingRevisionStale(existing.telegram_edit_date_seen, args.telegramEditDateSeen)) {
       void persistListenerEvent(this.supabase, {
         userId: this.userId,
@@ -2758,7 +2926,7 @@ export class UserListener {
   private async logSignal(
     channelRow: ChannelRow,
     message: MessageLike & { date?: number | Date | string },
-    opts?: { source?: 'live' | 'catchup' },
+    opts?: { source?: 'live' | 'catchup'; receivedAt?: number },
   ): Promise<boolean> {
     const isCatchUp = opts?.source === 'catchup'
     if (isCatchUp) {
@@ -2778,31 +2946,16 @@ export class UserListener {
   private async logSignalInner(
     channelRow: ChannelRow,
     message: MessageLike & { date?: number | Date | string },
-    opts?: { source?: 'live' | 'catchup' },
+    opts?: { source?: 'live' | 'catchup'; receivedAt?: number },
   ): Promise<boolean> {
     if (await this.skipMessageWhileCopierPaused(channelRow, String(message.id))) return false
-
-    const signalChannelId = await resolveSignalChannelIdForRow(this.supabase, channelRow)
-    if (signalChannelId) {
-      channelRow.signal_channel_id = signalChannelId
-      if (await shouldSkipPassiveChannelIngest(
-        this.supabase,
-        this.userId,
-        signalChannelId,
-        this.passiveSignalChannelIds,
-      )) {
-        incMetric('channel_passive_ingest_skipped')
-        return false
-      }
-    }
 
     const messageId = String(message.id)
     const rawMessage = telegramMessageText(message)
     const isReply = !!message.replyTo
     const messageEpochSec = this.messageEpochSec(message)
-    // Stamp listener arrival as early as possible so telegram_to_listener_ms
-    // reflects only Telegram delivery time (not our dedup/parent lookup DB calls).
-    const tListenerReceived = Date.now()
+    // Prefer the handleMessage stamp (before chat/channel awaits); fall back for catch-up.
+    const tListenerReceived = opts?.receivedAt ?? Date.now()
 
     if (opts?.source === 'catchup' && messageEpochSec > 0) {
       const ageMs = Date.now() - messageEpochSec * 1000
@@ -2816,12 +2969,38 @@ export class UserListener {
       }
     }
     const replyToMessageId = extractReplyToMsgId(message.replyTo)
-    let parentSignalId: string | null = null
-    if (replyToMessageId) {
-      parentSignalId = await this.resolveParentSignalIdForReply(channelRow.id, replyToMessageId)
+
+    // Parallelize the independent DB lookups that previously stacked ~0.6–0.9s
+    // between t_listener_received and message_normalized_at on live Adjust/Close.
+    // `parentSignalId` is `let` — provider-number linking may fill it after parse.
+    const [signalChannelId, resolvedParentSignalId, heuristicCtx, dupHead] = await Promise.all([
+      resolveSignalChannelIdForRow(this.supabase, channelRow),
+      replyToMessageId
+        ? this.resolveParentSignalIdForReply(channelRow.id, replyToMessageId)
+        : Promise.resolve(null as string | null),
+      getChannelParseContext(this.supabase, channelRow.id),
+      this.supabase
+        .from('signals')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', this.userId)
+        .eq('channel_id', channelRow.id)
+        .eq('telegram_message_id', messageId),
+    ])
+    let parentSignalId: string | null = resolvedParentSignalId
+
+    if (signalChannelId) {
+      channelRow.signal_channel_id = signalChannelId
+      if (await shouldSkipPassiveChannelIngest(
+        this.supabase,
+        this.userId,
+        signalChannelId,
+        this.passiveSignalChannelIds,
+      )) {
+        incMetric('channel_passive_ingest_skipped')
+        return false
+      }
     }
 
-    const heuristicCtx = await getChannelParseContext(this.supabase, channelRow.id)
     if (!looksLikeTradingSignal(rawMessage, isReply, heuristicCtx)) {
       console.log(
         `[userListener] skipped non-signal user=${this.userId} channelRow=${channelRow.id} messageId=${messageId}`,
@@ -2838,13 +3017,7 @@ export class UserListener {
     }
 
     const dedupKey = `${channelRow.id}:${messageId}`
-
-    const { count: dupCount } = await this.supabase
-      .from('signals')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', this.userId)
-      .eq('channel_id', channelRow.id)
-      .eq('telegram_message_id', messageId)
+    const dupCount = dupHead.count
     if ((dupCount ?? 0) > 0) {
       const revised = await this.tryApplyMessageRevision({
         channelRow,
@@ -2873,6 +3046,8 @@ export class UserListener {
 
     const signalId = randomUUID()
     const pipelineTs: PipelineTimestamps = {}
+    const ingestPath = opts?.source === 'catchup' ? 'catchup' : 'live'
+    pipelineTs.ingest_path = ingestPath
     if (messageEpochSec > 0) {
       setPipelineTimestamp(pipelineTs, 'telegram_source_message_at', messageEpochSec * 1000)
     }
@@ -2883,13 +3058,13 @@ export class UserListener {
       signalId,
       telegramMessageId: messageId,
       channelId: channelRow.id,
-      dispatchSource: opts?.source ?? 'live',
+      dispatchSource: ingestPath,
     })
     emitPipelineEvent({
       event: 'signal_received',
       correlation,
       timestamps: pipelineTs,
-      path: opts?.source ?? 'live',
+      path: ingestPath,
     })
 
     let parseResult: Awaited<ReturnType<typeof parseChannelMessageSync>>
@@ -3207,6 +3382,8 @@ export class UserListener {
       id: signalId,
       user_id: this.userId,
       channel_id: channelRow.id,
+      source_kind: 'telegram',
+      source_display_name: channelSourceDisplayName(channelRow),
       raw_message: rawMessage,
       status: effectiveParseResult.status,
       parsed_data: effectiveParseResult.parsed as unknown as Record<string, unknown>,
@@ -3276,13 +3453,9 @@ export class UserListener {
         && (queueCfg.pushFallbackOnQueueFail || !queueResult || queueResult.skipped)
       let httpPushOk: boolean | null = null
       if (shouldHttpPush) {
-        const action = parsedAction(dispatchRow.parsed_data)
-        if (isManagementAction(action)) {
-          httpPushOk = await pushParsedSignalToTradeWorkerAccept(dispatchRow)
-        } else {
-          pushParsedSignalToTradeWorker(dispatchRow)
-          httpPushOk = true
-        }
+        // Await accept for entry AND management — fire-and-forget lied about success
+        // and left silent 401/wrong-shard failures to the multi-second DB sweep.
+        httpPushOk = await pushParsedSignalToTradeWorkerAccept(dispatchRow)
       }
       void writeExecutionLog(this.supabase, {
         user_id: this.userId,
@@ -3298,7 +3471,8 @@ export class UserListener {
           queue_error: queueResult?.error ?? null,
           http_push_fallback: shouldHttpPush,
           http_push_ok: httpPushOk,
-          mgmt_push_accept_only: isManagementAction(parsedAction(dispatchRow.parsed_data)),
+          mgmt_push_accept_only: false,
+          entry_push_await_accept: true,
           runs_trade: workerConfig.runsTrade,
           runs_listener: workerConfig.runsListener,
           persist_before_dispatch: opts?.persistBeforeDispatch === true,
@@ -3334,6 +3508,8 @@ export class UserListener {
         id: signalId,
         user_id: this.userId,
         channel_id: channelRow.id,
+        source_kind: 'telegram',
+        source_display_name: channelSourceDisplayName(channelRow),
         raw_message: rawMessage,
         raw_image_url: null,
         status: parseResult.status,
@@ -3385,6 +3561,8 @@ export class UserListener {
         id: signalId,
         user_id: this.userId,
         channel_id: channelRowId,
+        source_kind: 'telegram',
+        source_display_name: 'Telegram',
         raw_message: rawMessage,
         raw_image_url: null,
         status: 'pending',
@@ -3471,6 +3649,8 @@ export class UserListener {
           id: signalId,
           user_id: this.userId,
           channel_id: channelRow.id,
+          source_kind: 'telegram',
+          source_display_name: channelSourceDisplayName(channelRow),
           raw_message: rawMessage,
           status: parseResult.status,
           parsed_data: parseResult.parsed as unknown as Record<string, unknown>,
@@ -3599,7 +3779,7 @@ export class UserListener {
           : this.fastPollRows.find(r => r.id === channelRowId)
             ?? (await this.supabase
               .from('telegram_channels')
-              .select('id, channel_id, channel_username, last_seen_message_id, last_seen_at, last_live_at')
+              .select('id, channel_id, channel_username, display_name, last_seen_message_id, last_seen_at, last_live_at')
               .eq('id', channelRowId)
               .maybeSingle()).data as ChannelRow | null
         if (!row) continue
@@ -3645,6 +3825,7 @@ export class UserListener {
     }
 
     const snapshots = new Map<string, { text: string; editDateSec: number | null }>()
+    const deletedMessageIds = new Set<string>()
     const ids = signals.map(s => s.telegram_message_id)
     for (const chunk of chunkTelegramMessageIds(ids)) {
       const numericIds = chunk
@@ -3657,6 +3838,12 @@ export class UserListener {
         })) as unknown[]
         for (const [id, snap] of snapshotsFromTelegramMessages(batch ?? [])) {
           snapshots.set(id, snap)
+        }
+        for (const deletedId of deletedTelegramMessageIds(
+          chunk.map(id => String(id)),
+          batch ?? [],
+        )) {
+          deletedMessageIds.add(deletedId)
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -3674,6 +3861,20 @@ export class UserListener {
           },
         })
       }
+    }
+
+    for (const deletedId of deletedMessageIds) {
+      void handleSignalMessageDeleted(this.supabase, {
+        userId: this.userId,
+        telegramMessageId: deletedId,
+        channelRowId: channelRow.id,
+        source: 'telegram_reconcile',
+      }).catch(err => {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `[userListener] signal-deleted reconcile close failed message=${deletedId}: ${msg.slice(0, 200)}`,
+        )
+      })
     }
 
     const checkedIds: string[] = []
@@ -3730,19 +3931,38 @@ export class UserListener {
       })
     }
     if (!mismatches.length) {
-      if (stats.checked > 0) {
-        void persistListenerEvent(this.supabase, {
-          userId: this.userId,
-          eventType: 'signal_reconcile_checked',
-          channelRowId: channelRow.id,
-          detail: { source, checked: stats.checked, mismatches: 0 },
-        })
-      }
+      this.persistReconcileChecked(channelRow, source, stats.checked, 0)
       return stats
     }
 
-    stats.mismatches = mismatches.length
+    // Blocked revisions (management actions, empty fetched text) are not real
+    // mismatches: settle them silently so the sweep neither re-flags them every
+    // cycle nor re-parses them. Management commands are point-in-time.
+    const actionableMismatches: typeof mismatches = []
+    const blockedRevisionIds: string[] = []
     for (const candidate of mismatches) {
+      if (
+        revisionBlockedForManagement(candidate.signal.parsed_data)
+        || !candidate.rawMessage.trim()
+      ) {
+        blockedRevisionIds.push(candidate.signal.id)
+      } else {
+        actionableMismatches.push(candidate)
+      }
+    }
+    if (blockedRevisionIds.length) {
+      await markSignalsReconciled(this.supabase, {
+        signalIds: blockedRevisionIds,
+        editDateBySignalId,
+      })
+    }
+    stats.mismatches = actionableMismatches.length
+    if (!actionableMismatches.length) {
+      this.persistReconcileChecked(channelRow, source, stats.checked, blockedRevisionIds.length)
+      return stats
+    }
+
+    for (const candidate of actionableMismatches) {
       void persistListenerEvent(this.supabase, {
         userId: this.userId,
         eventType: 'signal_reconcile_mismatch',
@@ -3854,7 +4074,7 @@ export class UserListener {
   private async advanceAllChannelsLastSeenToLatest(): Promise<void> {
     const { data: rows } = await this.supabase
       .from('telegram_channels')
-      .select('id, channel_id, channel_username, last_seen_message_id')
+      .select('id, channel_id, channel_username, display_name, last_seen_message_id')
       .eq('user_id', this.userId)
       .eq('is_active', true)
       .eq('source_kind', 'telegram')
@@ -3893,7 +4113,7 @@ export class UserListener {
     if (Date.now() < this.pollBackoffUntil) return
     const { data: rows } = await this.supabase
       .from('telegram_channels')
-      .select('id, channel_id, channel_username')
+      .select('id, channel_id, channel_username, display_name')
       .eq('user_id', this.userId)
       .eq('is_active', true)
       .eq('source_kind', 'telegram')
@@ -3967,7 +4187,7 @@ export class UserListener {
     try {
       const { data: rows } = await this.supabase
         .from('telegram_channels')
-        .select('id, channel_id, channel_username, last_seen_message_id')
+        .select('id, channel_id, channel_username, display_name, last_seen_message_id')
         .eq('user_id', this.userId)
         .eq('is_active', true)
         .eq('source_kind', 'telegram')
@@ -3989,7 +4209,7 @@ export class UserListener {
     try {
       const { data: rows } = await this.supabase
         .from('telegram_channels')
-        .select('id, channel_id, channel_username, last_seen_message_id')
+        .select('id, channel_id, channel_username, display_name, last_seen_message_id')
         .eq('user_id', this.userId)
         .eq('is_active', true)
         .eq('source_kind', 'telegram')
@@ -4008,20 +4228,30 @@ export class UserListener {
     if (!this.isConnected) return
     if (Date.now() < this.pollBackoffUntil) return
     const floodAtCycleStart = this.floodErrorsThisCycle
-    const { data: rows } = await this.supabase
-      .from('telegram_channels')
-      .select('id, channel_id, channel_username, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
-      .eq('user_id', this.userId)
-      .eq('is_active', true)
-      .eq('source_kind', 'telegram')
+    let rows: ChannelRow[]
+    try {
+      const res = await this.supabase
+        .from('telegram_channels')
+        .select('id, channel_id, channel_username, display_name, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
+        .eq('user_id', this.userId)
+        .eq('is_active', true)
+        .eq('source_kind', 'telegram')
+      rows = (res.data ?? []) as ChannelRow[]
+    } catch (err) {
+      // Database trouble must never look like a Telegram stall: the cycle is
+      // still alive, so it is stamped below and the listener is not reset.
+      console.warn(`[userListener] channel list read failed user=${this.userId}:`, err)
+      rows = []
+    }
 
-    const activeRows = ((rows ?? []) as ChannelRow[]).filter(row => !this.isChannelLocallyDisabled(row))
+    const activeRows = rows.filter(row => !this.isChannelLocallyDisabled(row))
     await this.mapWithConcurrency(activeRows, CHANNEL_POLL_CONCURRENCY, async row => {
       await this.pollChannelNewMessages(row).catch(err =>
         console.warn(`[userListener] poll failed channel=${row.id}:`, err),
       )
     })
     this.endPollCycle(floodAtCycleStart)
+    this.lastPollCycleCompletedAt = Date.now()
   }
 
   /**
@@ -4061,12 +4291,7 @@ export class UserListener {
         msg,
       )
       incMetric('poll_peer_resolve_failed')
-      void persistListenerEvent(this.supabase, {
-        userId: this.userId,
-        eventType: 'poll_peer_resolve_failed',
-        channelRowId: row.id,
-        detail: { error: msg.slice(0, 300) },
-      })
+      this.persistPollFailure('poll_peer_resolve_failed', row.id, msg)
       return 'failed'
     }
     let minId = Number(row.last_seen_message_id ?? 0)
@@ -4100,12 +4325,7 @@ export class UserListener {
         msg,
       )
       incMetric('poll_get_messages_failed')
-      void persistListenerEvent(this.supabase, {
-        userId: this.userId,
-        eventType: 'poll_error',
-        channelRowId: row.id,
-        detail: { error: msg.slice(0, 300), min_id: minId },
-      })
+      this.persistPollFailure('poll_error', row.id, msg, { min_id: minId })
       return 'failed'
     }
 
@@ -4224,12 +4444,7 @@ export class UserListener {
       }
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[userListener] warmChannelEntity failed channel=${row.id}:`, msg)
-      void persistListenerEvent(this.supabase, {
-        userId: this.userId,
-        eventType: 'peer_resolve_failed',
-        channelRowId: row.id,
-        detail: { error: msg.slice(0, 300) },
-      })
+      this.persistPollFailure('peer_resolve_failed', row.id, msg)
     }
   }
 
@@ -4402,18 +4617,27 @@ export class UserListener {
   ): Promise<MessageLike[]> {
     const fromSec = Math.floor(fromMs / 1000)
     const toSec = Math.floor(toMs / 1000)
+    const forBacktest = opts?.forBacktest === true
 
     let peer: unknown
     try {
       peer = await this.resolveChannelPeer(row)
-    } catch {
-      throw new Error('Failed to resolve Telegram channel entity')
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      throw new Error(
+        `Failed to resolve Telegram channel entity`
+        + (detail ? ` (${detail.slice(0, 160)})` : ''),
+      )
     }
 
     const collected: MessageLike[] = []
     let offsetId = 0
     const batchSize = 100
-    const heuristicCtx = await getChannelParseContext(this.supabase, row.id)
+    // Backtest candidate filtering happens in syncBacktestSignals — fetch must
+    // keep every non-empty text message or empty history looks like "no access".
+    const heuristicCtx = forBacktest ? null : await getChannelParseContext(this.supabase, row.id)
+    let batchesFetched = 0
+    let telegramMessagesSeen = 0
 
     while (collected.length < BACKFILL_PER_CHANNEL_CAP) {
       let batch: Array<MessageLike & { id: number | bigint; date?: number | Date | string }>
@@ -4422,10 +4646,21 @@ export class UserListener {
           limit: batchSize,
           offsetId,
         })) as unknown as Array<MessageLike & { id: number | bigint; date?: number | Date | string }>
-      } catch {
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err)
+        if (forBacktest) {
+          throw new Error(
+            `Telegram getMessages failed for channel ${row.display_name || row.id}: ${detail.slice(0, 200)}`,
+          )
+        }
+        console.warn(
+          `[userListener] getMessages failed user=${this.userId} channel=${row.id}: ${detail.slice(0, 200)}`,
+        )
         break
       }
       if (!batch.length) break
+      batchesFetched++
+      telegramMessagesSeen += batch.length
 
       let reachedOlderThanRange = false
       for (const m of batch) {
@@ -4439,11 +4674,8 @@ export class UserListener {
         }
         const raw = telegramMessageText(m)
         if (!raw) continue
-        const isReply = !!m.replyTo
-        const fetchAllForBacktest = process.env.BACKTEST_FETCH_ALL_MESSAGES === 'true'
-        if (!opts?.forBacktest) {
-          if (!looksLikeTradingSignal(raw, isReply, heuristicCtx)) continue
-        } else if (!fetchAllForBacktest) {
+        if (!forBacktest) {
+          const isReply = !!m.replyTo
           if (!looksLikeTradingSignal(raw, isReply, heuristicCtx)) continue
         }
         collected.push(m)
@@ -4452,6 +4684,14 @@ export class UserListener {
       offsetId = Number(batch[batch.length - 1].id)
       if (batch.length < batchSize || reachedOlderThanRange) break
       await new Promise(r => setTimeout(r, CATCHUP_BACKPRESSURE_MS))
+    }
+
+    if (forBacktest) {
+      console.log(
+        `[userListener] backtest fetch user=${this.userId} channel=${row.id}`
+        + ` batches=${batchesFetched} telegram_seen=${telegramMessagesSeen}`
+        + ` in_range_text=${collected.length} from=${fromSec} to=${toSec}`,
+      )
     }
 
     collected.sort((a, b) => Number(a.id) - Number(b.id))
@@ -4588,6 +4828,72 @@ export class UserListener {
         await this.requestReconnect('watchdog')
       }
     }
+  }
+
+  /**
+   * Record a clean reconcile pass at most once an hour per channel.
+   *
+   * These rows exist only to prove the sweep is running, so writing one per channel
+   * per minute made the audit trail unusable: ~3,500 rows a day for one account.
+   * `repeats` carries how many passes were folded in since the previous row.
+   */
+  private persistReconcileChecked(
+    channelRow: ChannelRow,
+    source: string,
+    checked: number,
+    blocked: number,
+  ): void {
+    if (checked <= 0) return
+    const decision = this.reconcileCheckedThrottle.shouldEmit(
+      `signal_reconcile_checked|${channelRow.id}`,
+      Date.now(),
+      channelRow.id,
+    )
+    if (!decision.emit) return
+    void persistListenerEvent(this.supabase, {
+      userId: this.userId,
+      eventType: 'signal_reconcile_checked',
+      channelRowId: channelRow.id,
+      detail: {
+        source,
+        checked,
+        mismatches: 0,
+        ...(blocked > 0 ? { blocked } : {}),
+        ...(decision.repeats > 0 ? { repeats: decision.repeats } : {}),
+      },
+    })
+  }
+
+  /**
+   * Write a polling-failure event unless the same error was already written in
+   * the last minute; when repeats were hidden, the row says how many.
+   *
+   * Keys exclude the channel on purpose: one outage covers every channel, so
+   * the operator wants one row, not one per channel.
+   */
+  private persistPollFailure(
+    eventType: 'poll_error' | 'poll_peer_resolve_failed' | 'peer_resolve_failed',
+    channelRowId: string | undefined,
+    message: string,
+    extra: Record<string, unknown> = {},
+  ): void {
+    const key = `${this.clientGeneration}|${eventType}|${message}`
+    const decision = this.pollEventThrottle.shouldEmit(key, Date.now(), channelRowId)
+    if (!decision.emit) return
+    void persistListenerEvent(this.supabase, {
+      userId: this.userId,
+      eventType,
+      // One affected channel. When `repeat_channels` is present the failure hit
+      // that many distinct channels, not this one alone.
+      channelRowId,
+      detail: {
+        error: message.slice(0, 300),
+        ...extra,
+        ...(decision.repeats > 0
+          ? { repeats: decision.repeats, repeat_channels: decision.repeatSources }
+          : {}),
+      },
+    })
   }
 
   private noteAuthKeyDuplicated(
@@ -4885,8 +5191,13 @@ export class UserListener {
           return
         }
         this.isConnected = true
+        // New connection, new episode: the first failure after it must be written.
+        this.pollEventThrottle.clear()
         this.resetTelegramBackoffState()
         this.lastSuccessfulPollAt = Date.now()
+        // Deliberately NOT seeding lastPollCycleCompletedAt here: a reconnect
+        // must not buy a blind window. If the poll loops fail to resume after
+        // this point (the 2026-11-18 shape), the stall heal has to see it.
         if (reason === 'malformed_rpc_result') {
           this.malformedRpcRecoveryCount = 0
           this.lastMalformedRpcRecoveryAt = 0
@@ -5072,14 +5383,20 @@ export class UserListener {
     try {
       const now = Date.now()
       if (now - this.fastPollRowsAt > SAFETY_POLL_INTERVAL_MS) {
-        const { data } = await this.supabase
-          .from('telegram_channels')
-          .select('id, channel_id, channel_username, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
-          .eq('user_id', this.userId)
-          .eq('is_active', true)
-          .eq('source_kind', 'telegram')
-        this.fastPollRows = ((data ?? []) as ChannelRow[]).filter(row => !this.isChannelLocallyDisabled(row))
-        this.fastPollRowsAt = now
+        try {
+          const { data } = await this.supabase
+            .from('telegram_channels')
+            .select('id, channel_id, channel_username, display_name, signal_channel_id, last_seen_message_id, last_seen_at, last_live_at')
+            .eq('user_id', this.userId)
+            .eq('is_active', true)
+            .eq('source_kind', 'telegram')
+          this.fastPollRows = ((data ?? []) as ChannelRow[]).filter(row => !this.isChannelLocallyDisabled(row))
+          this.fastPollRowsAt = now
+        } catch (err) {
+          // Keep the cached rows and let the cycle complete: a failed channel
+          // list read is not a Telegram stall and must not trigger a reset.
+          console.warn(`[userListener] fast poll channel list read failed user=${this.userId}:`, err)
+        }
       }
 
       const floodAtCycleStart = this.floodErrorsThisCycle
@@ -5112,6 +5429,7 @@ export class UserListener {
         )
       })
       this.endPollCycle(floodAtCycleStart)
+      this.lastPollCycleCompletedAt = Date.now()
     } finally {
       this.fastPollInFlight = false
     }

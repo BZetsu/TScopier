@@ -5,6 +5,8 @@ export interface ChannelFilterCategoryTranslation {
 
 export interface ConfigureModalTranslations {
   title: string
+  /** Body heading above settings: Configure {channel} on {broker} (placeholders become logo+name). */
+  configureChannelOnBroker: string
   close: string
   saved: string
   cancel: string
@@ -70,6 +72,16 @@ export interface ConfigureModalTranslations {
     channels: string
   }
   manualSubTabs: {
+    symbols: string
+    channelInstructions: string
+    risk: string
+    stops: string
+    management: string
+    filters: string
+    aiTraining: string
+  }
+  /** One-line blurb under each Configure Trading accordion header. */
+  manualSubTabDescriptions: {
     symbols: string
     channelInstructions: string
     risk: string
@@ -212,6 +224,10 @@ export interface ConfigureModalTranslations {
     signalEntryTitle: string
     signalEntryBody: string
     useSignalEntryPrice: string
+    signalEntryPrefer: string
+    signalEntryPreferHint: string
+    signalEntryPreferFirst: string
+    signalEntryPreferLast: string
     pipToleranceLegacy: string
     pipToleranceHint: string
     multiIntro: string
@@ -473,8 +489,10 @@ export interface ConfigureModalTranslations {
     reverseSignal: string
     addToExisting: string
     closeOpposite: string
+    closeOnSignalDeleted: string
     reverseHint: string
     closeOppositeHint: string
+    closeOnSignalDeletedHint: string
     addExistingHint: string
     rrFallbacksTitle: string
     rrFallbacksIntro: string
@@ -534,5 +552,65 @@ export interface ConfigureModalTranslations {
   riskDisclaimer: {
     warning: string
     fullLink: string
+  }
+  configureWithAi: {
+    button: string
+    title: string
+    subtitle: string
+    close: string
+    placeholder: string
+    send: string
+    thinking: string
+    welcome: string
+    needChannel: string
+    loadFromChannel: string
+    /** TradingView-only primary load CTA. */
+    loadJsonFormat: string
+    loadingExamples: string
+    loadingJsonFormat: string
+    examplesLoaded: string
+    examplesEmpty: string
+    examplesEmptyTradingView: string
+    pasteLabel: string
+    pastePlaceholder: string
+    pastePlaceholderTradingView: string
+    usePaste: string
+    clearPaste: string
+    examplesCount: string
+    examplesHeading: string
+    examplesHeadingTradingView: string
+    exampleLabelEntry: string
+    exampleLabelUpdate: string
+    exampleLabelIgnore: string
+    analyzingExamples: string
+    analyzingJsonFormat: string
+    analyzeRequest: string
+    analyzeRequestTradingView: string
+    applyToForm: string
+    /** Primary follow-up CTA label (e.g. Apply Settings). */
+    applySettings: string
+    /** Helper under the Apply settings pill. */
+    applySettingsHint: string
+    /** Secondary pill when user wants a different proposal. */
+    somethingElsePill: string
+    dismissProposal: string
+    proposalTitle: string
+    proposalApplied: string
+    proposalRationale: string
+    proposalWarnings: string
+    errorFallback: string
+    trainHint: string
+  }
+  advancedOnlyNotice: {
+    title: string
+    body: string
+    items: {
+      multiTrade: string
+      rangeTrading: string
+      moveSlToEntry: string
+      reverseSignal: string
+      closeWorseEntries: string
+      riskReward: string
+    }
   }
 }

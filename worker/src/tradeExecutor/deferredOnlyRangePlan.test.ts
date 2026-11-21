@@ -281,6 +281,9 @@ function makeRangeCtx(options: { materialized?: boolean } = {}) {
     logs,
     skips,
     supabase,
+    // entryPrepare reads warm-quote cache via ctx.entryBrokerReadCache.get(...)
+    // (added in the 2026-11-15 pull); the test ctx needs the Map.
+    entryBrokerReadCache: new Map(),
     apiFor: () => ({
       quote: async () => ({ bid: 2399.9, ask: 2400.1 }),
       orderSend: async () => {

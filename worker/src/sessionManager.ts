@@ -1,7 +1,7 @@
 import { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
 import { TelegramClient } from 'telegram'
 import { runEphemeralBacktestSync, runWithEphemeralListener } from './backtestSync'
-import { TelegramSessionInvalidError } from './telegramClient'
+import { TelegramSessionInvalidError, telegramApiCredentialsConfigured } from './telegramClient'
 import { envNumber } from './envNumber'
 import {
   openTelegramSession,
@@ -120,6 +120,35 @@ function disconnectedRenewHealTicks(): number {
   return envNumber(process.env.LISTENER_DISCONNECT_HEAL_TICKS, 3, 2, 20)
 }
 
+/** Consecutive renew ticks a connected-but-idle listener may stay silent before a hard reset. */
+function stalledRenewHealTicks(): number {
+  return envNumber(process.env.LISTENER_STALL_HEAL_TICKS, 2, 1, 20)
+}
+
+/**
+ * Hard resets allowed per listener per hour.
+ *
+ * The stall heal cannot tell "wedged after a reconnect" apart from "cannot
+ * poll for a structural reason" (for example every channel disabled, or a
+ * channel that only ever fails). Without a ceiling, such a listener would be
+ * torn down and restarted every few minutes forever. Two resets per hour
+ * repairs the real outage within minutes while keeping the worst case to two
+ * reconnects an hour.
+ */
+const STALLED_HEAL_BUDGET_PER_HOUR = 2
+
+/**
+ * Hard resets one renew cycle may perform.
+ *
+ * A process-wide stall (event-loop block, shared dependency outage) makes every
+ * listener look stalled at the same moment. Resetting them all in one cycle
+ * would fire a herd of `connect()` calls; healing at most this many per cycle
+ * spreads the same repairs over consecutive cycles instead.
+ */
+function maxStalledHealsPerCycle(): number {
+  return envNumber(process.env.LISTENER_STALL_HEALS_PER_CYCLE, 2, 1, 50)
+}
+
 export class UserSessionManager {
   private listeners = new Map<string, UserListener>()
   private supabase: SupabaseClient
@@ -144,11 +173,24 @@ export class UserSessionManager {
   private renewLeasesInFlightSinceMs = 0
   /** Renew ticks spent disconnected; cleared when connected again. */
   private disconnectedRenewTicks = new Map<string, number>()
+  /** Renew ticks spent connected but unable to poll; drives the stall heal. */
+  private stalledRenewTicks = new Map<string, number>()
+  /** Rolling-hour hard-reset budget per listener (see STALLED_HEAL_BUDGET_PER_HOUR). */
+  private stalledHealBudget = new Map<string, { count: number; windowStartMs: number }>()
+  /** Last per-tick stall warning, so a listener that cannot be healed does not spam the log. */
+  private stalledWarnAt = new Map<string, number>()
+  /** Hard resets performed in the current renew cycle (see maxStalledHealsPerCycle). */
+  private stalledHealsThisCycle = 0
+  /** Listeners currently being stopped by the stall heal (keeps their budget entry). */
+  private stalledHealUsers = new Set<string>()
   private channelListenerManager: ChannelListenerManager | null = null
   private channelReconcileMonitor: ChannelReconcileMonitor | null = null
   private shuttingDown = false
   /** Tracks start failures with timestamps so syncSessions doesn't retry in a tight loop. */
   private recentlyFailed = new Map<string, number>()
+  /** Fast re-acquire when startListener loses to a draining predecessor (not 30s syncSessions). */
+  private leaseRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private leaseRetrySession = new Map<string, string>()
 
   constructor(supabase: SupabaseClient) {
     this.supabase = supabase
@@ -268,6 +310,10 @@ export class UserSessionManager {
     }
   }
 
+  getTradeExecutor(): TradeExecutor | null {
+    return this.tradeExecutor
+  }
+
   async loadAll() {
     if (this.shuttingDown) return
     if (!workerConfig.runsListener) return
@@ -350,6 +396,7 @@ export class UserSessionManager {
     }
     this.renewLeasesInFlight = true
     this.renewLeasesInFlightSinceMs = Date.now()
+    this.stalledHealsThisCycle = 0
     try {
       const staleMs = Math.max(
         60_000,
@@ -450,6 +497,7 @@ export class UserSessionManager {
           `[sessionManager] listener disconnected but renewing lease anyway`
           + ` user=${userId} — kicking reconnect in background`,
         )
+        listener.reportLeaseRenewWhileDisconnected()
         listener.requestReconnectIfDisconnected('lease_renew_disconnected')
       }
     } else {
@@ -485,12 +533,118 @@ export class UserSessionManager {
 
     // A parked revoked listener is quiet by design, not by low traffic — do not
     // emit this warning every renew tick (20 s) for a user who must re-link.
-    if (!listener.isSessionRevoked() && !listener.isListenerHealthy(opts.staleMs)) {
-      console.warn(
-        `[sessionManager] listener quiet but lease renewed user=${userId}`
-        + ' (no Telegram events recently — normal for low-traffic channels)',
-      )
+    if (listener.isSessionRevoked() || !listener.isPollLoopStalled(opts.staleMs)) {
+      this.stalledRenewTicks.delete(userId)
+      return
     }
+
+    // A flood-wait pause is deliberate: the listener is silent because Telegram
+    // asked it to be. Resetting it would only swap one throttled session for
+    // another, so this path is never allowed to touch it.
+    if (listener.isPollBackoffActive()) {
+      this.stalledRenewTicks.delete(userId)
+      return
+    }
+
+    // Connected, holding the lease, and no poll cycle has completed for
+    // staleMs. This is the shape of the 2026-11-18 outage (user d5027e0c): the
+    // socket answered probes while the listener read nothing, and nothing ever
+    // repaired it because only the *disconnected* path heals itself.
+    const healAfter = stalledRenewHealTicks()
+    const stalledTicks = Math.min((this.stalledRenewTicks.get(userId) ?? 0) + 1, healAfter)
+    this.stalledRenewTicks.set(userId, stalledTicks)
+    if (stalledTicks < healAfter) return
+
+    if (this.stalledHealsThisCycle >= maxStalledHealsPerCycle()) return
+    if (!this.hasStalledHealBudget(userId)) {
+      if (this.warnStalledThrottled(
+        userId,
+        `[sessionManager] listener stalled but hourly heal budget is spent user=${userId}`
+        + ' — leaving it untouched until the window resets',
+      )) {
+        // Ops visibility for the worst state: deaf listener, heal given up,
+        // health row still "connected". Alertable on healed=false.
+        void persistListenerEvent(this.supabase, {
+          userId,
+          eventType: 'listener_stall_heal',
+          detail: {
+            stale_ms: opts.staleMs,
+            ticks: stalledTicks,
+            budget_per_hour: STALLED_HEAL_BUDGET_PER_HOUR,
+            healed: false,
+          },
+        })
+      }
+      return
+    }
+
+    const wasTracked = this.listeners.has(userId)
+    this.stalledHealsThisCycle += 1
+    this.stalledRenewTicks.delete(userId)
+    this.stalledHealUsers.add(userId)
+    try {
+      await this.stopListener(userId)
+    } catch (err) {
+      // Do not charge the budget or the cycle for a reset that did not happen,
+      // and let the next tick retry: an unhealable listener is the state this
+      // exists to end.
+      this.stalledHealsThisCycle -= 1
+      console.warn(
+        `[sessionManager] stalled listener reset failed user=${userId}:`,
+        err instanceof Error ? err.message : err,
+      )
+      return
+    } finally {
+      this.stalledHealUsers.delete(userId)
+    }
+    // Another path may have removed the listener between the map snapshot and
+    // this call; `disconnectListener` then returns without stopping anything,
+    // so nothing was healed and nothing should be charged.
+    if (!wasTracked) return
+    this.consumeStalledHealBudget(userId)
+    console.warn(
+      `[sessionManager] hard-reset stalled listener user=${userId}`
+      + ' — connected but no poll cycle completed; syncSessions will restart it',
+    )
+    void persistListenerEvent(this.supabase, {
+      userId,
+      eventType: 'listener_stall_heal',
+      detail: {
+        stale_ms: opts.staleMs,
+        ticks: stalledTicks,
+        budget_per_hour: STALLED_HEAL_BUDGET_PER_HOUR,
+        healed: true,
+      },
+    })
+  }
+
+  /** True when this listener may still be hard-reset inside the current hour. */
+  private hasStalledHealBudget(userId: string): boolean {
+    const entry = this.stalledHealBudget.get(userId)
+    if (!entry) return true
+    if (Date.now() - entry.windowStartMs > 60 * 60_000) return true
+    return entry.count < STALLED_HEAL_BUDGET_PER_HOUR
+  }
+
+  /** Records one hard reset. The window starts at the first reset and lasts one hour. */
+  private consumeStalledHealBudget(userId: string): void {
+    const now = Date.now()
+    const entry = this.stalledHealBudget.get(userId)
+    if (!entry || now - entry.windowStartMs > 60 * 60_000) {
+      this.stalledHealBudget.set(userId, { count: 1, windowStartMs: now })
+      return
+    }
+    entry.count += 1
+  }
+
+  /** Logs a stall warning at most once every five minutes per listener. Returns whether it logged. */
+  private warnStalledThrottled(userId: string, message: string): boolean {
+    const now = Date.now()
+    const last = this.stalledWarnAt.get(userId) ?? 0
+    if (now - last < 5 * 60_000) return false
+    this.stalledWarnAt.set(userId, now)
+    console.warn(message)
+    return true
   }
 
   private realtimeRetryBaseMs(): number {
@@ -905,6 +1059,8 @@ export class UserSessionManager {
     lease_gap: number
     lease_mismatch_user_ids?: string[]
     session_encryption: { primary: string | null; previous: string[] }
+    /** True when TELEGRAM_API_ID + TELEGRAM_API_HASH are present (no secret values). */
+    telegram_api_configured: boolean
     metrics: Record<string, number>
     checked_at: string
   }> {
@@ -963,6 +1119,7 @@ export class UserSessionManager {
         ? { lease_mismatch_user_ids: leaseMismatchUserIds }
         : {}),
       session_encryption: telegramSessionKeyFingerprints(),
+      telegram_api_configured: telegramApiCredentialsConfigured(),
       metrics: getMetricsSnapshot(),
       checked_at: new Date(now).toISOString(),
     }
@@ -1172,7 +1329,10 @@ export class UserSessionManager {
    * authorization until the user revokes it in Telegram or a future hard-logout
    * flow is designed.
    */
-  async disconnectTelegramSession(userId: string): Promise<{ ok: true }> {
+  async disconnectTelegramSession(
+    userId: string,
+    origin?: { client?: string; ip?: string; ua?: string },
+  ): Promise<{ ok: true }> {
     await this.supabase.from('telegram_auth_pending').delete().eq('user_id', userId)
     if (this.listeners.has(userId)) {
       await this.stopListener(userId)
@@ -1194,6 +1354,14 @@ export class UserSessionManager {
     void persistListenerEvent(this.supabase, {
       userId,
       eventType: 'telegram_link_disconnect',
+      // Record who pressed it. An empty detail was unreadable in the admin:
+      // a burst of disconnects could not be told apart from a connection drop.
+      detail: {
+        source: 'app',
+        ...(origin?.client ? { client: origin.client } : {}),
+        ...(origin?.ip ? { ip: origin.ip } : {}),
+        ...(origin?.ua ? { ua: origin.ua } : {}),
+      },
     })
     return { ok: true }
   }
@@ -1408,8 +1576,13 @@ export class UserSessionManager {
       const lease = await acquireSessionLease(this.supabase, userId)
       if (!lease.ok) {
         console.warn(`[sessionManager] skip listener for ${userId}: ${lease.reason}`)
+        // Predecessor still draining after deploy — retry in 1–2s, not next 30s sync.
+        if (/lease held/i.test(lease.reason ?? '')) {
+          this.scheduleLeaseRetry(userId, sessionString)
+        }
         return
       }
+      this.clearLeaseRetry(userId)
 
       const listener = new UserListener(
         userId,
@@ -1470,6 +1643,7 @@ export class UserSessionManager {
       this.listeners.set(userId, listener)
       this.recentlyFailed.delete(userId)
       this.disconnectedRenewTicks.delete(userId)
+      this.stalledRenewTicks.delete(userId)
       console.log(`[sessionManager] Started listener for user ${userId}`)
     })
   }
@@ -1506,6 +1680,13 @@ export class UserSessionManager {
     await listener.stop()
     this.listeners.delete(userId)
     this.disconnectedRenewTicks.delete(userId)
+    this.stalledRenewTicks.delete(userId)
+    this.stalledWarnAt.delete(userId)
+    // Any stop that is not the stall heal itself clears the heal budget, so a
+    // listener restarted for a legitimate reason is not locked out of healing
+    // for the rest of the hour. The heal marks its own stop so the budget it
+    // just recorded survives (see stalledHealUsers).
+    if (!this.stalledHealUsers.has(userId)) this.stalledHealBudget.delete(userId)
     await releaseSessionLease(this.supabase, userId)
     await persistCopierHealth(this.supabase, userId, {
       telegramAccountStatus,
@@ -1525,7 +1706,45 @@ export class UserSessionManager {
     console.log(`[sessionManager] Stopped listener for user ${userId}`)
   }
 
+  private clearLeaseRetry(userId: string): void {
+    const timer = this.leaseRetryTimers.get(userId)
+    if (timer) clearTimeout(timer)
+    this.leaseRetryTimers.delete(userId)
+    this.leaseRetrySession.delete(userId)
+  }
+
+  /**
+   * After "lease held" during deploy drain, retry acquire every 1–2s instead of
+   * waiting for the 30s syncSessions tick (closes the Telegram deaf window).
+   */
+  private scheduleLeaseRetry(userId: string, sessionString: string): void {
+    if (this.shuttingDown) return
+    if (this.leaseRetryTimers.has(userId)) {
+      this.leaseRetrySession.set(userId, sessionString)
+      return
+    }
+    this.leaseRetrySession.set(userId, sessionString)
+    const delayMs = Math.max(
+      1_000,
+      Math.min(2_000, Number(process.env.TELEGRAM_LEASE_RETRY_MS ?? 1_500) || 1_500),
+    )
+    const timer = setTimeout(() => {
+      this.leaseRetryTimers.delete(userId)
+      const session = this.leaseRetrySession.get(userId)
+      this.leaseRetrySession.delete(userId)
+      if (!session || this.shuttingDown || this.listeners.has(userId)) return
+      void this.startListener(userId, session).catch(err => {
+        console.warn(
+          `[sessionManager] lease retry start failed ${userId}:`,
+          err instanceof Error ? err.message : err,
+        )
+      })
+    }, delayMs)
+    this.leaseRetryTimers.set(userId, timer)
+  }
+
   private async stopListener(userId: string) {
+    this.clearLeaseRetry(userId)
     await this.withConnectionLock(userId, async () => {
       await this.disconnectListener(userId)
     })
@@ -1575,6 +1794,9 @@ export class UserSessionManager {
 
   async disconnectAll() {
     this.shuttingDown = true
+    for (const timer of this.leaseRetryTimers.values()) clearTimeout(timer)
+    this.leaseRetryTimers.clear()
+    this.leaseRetrySession.clear()
     for (const timer of this.realtimeRetryTimers.values()) clearTimeout(timer)
     this.realtimeRetryTimers.clear()
     if (this.channelChannel) {

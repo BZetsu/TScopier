@@ -4,6 +4,7 @@ export const chromeAr: AppChromeTranslations = {
   nav: {
     sections: {
       general: 'عام',
+      copy: 'نسخ',
       signals: 'الإشارات',
       discover: 'اكتشف',
       tradingTools: 'أدوات التداول',
@@ -131,10 +132,10 @@ export const chromeAr: AppChromeTranslations = {
       cancel: 'Cancel',
       welcomeTitle: 'I can help you set up and run UniCopier.',
       suggestions: [
-        'Is my Telegram linked?',
+        'Are my Signals connected?',
+        'Add an account in Account Configuration',
+        'Show my Account Trades',
         'Pause the copier',
-        'Connect an MT5 account',
-        'What are trading presets?',
       ],
       emptyReply: 'How else can I help?',
       actionDone: 'Done.',
@@ -203,6 +204,14 @@ export const chromeAr: AppChromeTranslations = {
         positionClosed: 'Closed',
         reportStatusOpen: 'مفتوح',
         reportStatusResolved: 'تم الحل',
+      },
+      csvCard: {
+        title: 'تصدير CSV',
+        ready: 'ملف CSV لصفقات الحساب جاهز.',
+        empty: 'لا توجد صفقات حساب لهذا اليوم.',
+        download: 'تنزيل CSV',
+        countLabel: '{count} صفقات',
+        exportFailed: 'تعذّر تصدير صفقات الحساب. جرّب صفحة صفقات الحساب في التطبيق.',
       },
 
     },

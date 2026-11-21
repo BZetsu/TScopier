@@ -189,6 +189,8 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
       'broker bridge unavailable — enable Algo Trading on MT5 and confirm Trade EA ready in Account Configuration',
     entry_requires_imperative_or_labeled_stops:
       'message did not include an entry order phrase (e.g. buy now, gold sell now) or labeled SL/TP',
+    tradingview_missing_sl_tp:
+      'TradingView alert had no SL and TP prices — add them to the alert message, or enable Override SL and Override TP in configuration',
     entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
     signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
     delete_pendings_no_parent:
@@ -196,6 +198,9 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
     delete_pendings_requires_reply:
       'cancel-pending instructions must be sent as a reply to the original signal message',
     delete_pendings_none: 'no pending orders found to cancel for this trade',
+    delete_pendings_cancel_failed:
+      'pending orders were found but none could be cancelled (the broker refused or was unavailable) — try again, or close them from the Trades page',
+    partial_close_unavailable_for_position_size: 'partial close not possible — this position is too small to split: the requested part would fall below the broker minimum lot, so nothing was closed and the trade stayed open at its full size',
   },
   dispatchSkipped: 'Did not copy this signal ({reason}).',
   rangeRebalanceSkippedNamed: 'Skipped {symbol} take-profit rebalance ({reason})',
@@ -212,6 +217,10 @@ export const channelWorkerEn: ChannelWorkerTranslations = {
     'Trade EA is not ready on your MT5 terminal — enable Algo Trading, keep the terminal running, then refresh broker health',
   errorBrokerNotConnected:
     'Broker not connected — in Account Configuration, use Reconnect and enter your MT password for this account',
+  errorBrokerBusy:
+    'Broker busy — too many orders in flight; later signals will run when load drops',
+  errorOrderSendTimedOut:
+    'OrderSend timed out — check open positions; the order may still have filled',
   errorInvalidStops:
     'The broker rejected these stop levels — check SL/TP are on the correct side of market and meet minimum distance.',
   errorBridgeGlitch:

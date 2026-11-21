@@ -150,6 +150,19 @@ function displayFromCode(reasonCode: string, context: Record<string, unknown>): 
       safeContext: context,
     }
   }
+  if (code === 'MTAPI_OLD_VERSION') {
+    return {
+      reasonCode: code,
+      title: 'Trade not copied — trading bridge needs an update',
+      explanation:
+        'The MetaTrader connection bridge is running a build older than your broker accepts (OLD_VERSION). The signal was parsed correctly; the order was refused before it reached the broker. This is a platform issue, not your account settings.',
+      recommendedAction:
+        'No action needed on your account. Support must update the MTAPI bridge. Do not retry old signals — their prices are stale.',
+      retryable: false,
+      userActionRequired: false,
+      safeContext: context,
+    }
+  }
   return null
 }
 
@@ -198,6 +211,9 @@ export function resolveTradeFailureDisplay(args: {
   }
 
   const legacy = String(args.legacyMessage ?? '').trim()
+  if (/\bold_version\b/i.test(legacy)) {
+    return displayFromCode('MTAPI_OLD_VERSION', sanitizeContext(suppliedContext))
+  }
   const sym = legacy.match(/symbol not found:\s*([A-Z0-9._#+]+)/i)
   if (sym) {
     return displayFromCode('BROKER_SYMBOL_NOT_FOUND', sanitizeContext({ requestedSymbol: sym[1] }))
@@ -211,10 +227,14 @@ export function resolveTradeFailureDisplay(args: {
   return null
 }
 
-export function buildTradeFailureAssistantPrompt(failure: TradeFailureDisplay): string {
+export function buildTradeFailureAssistantPrompt(
+  failure: TradeFailureDisplay,
+  opts?: { instruction?: string },
+): string {
   const context = sanitizeContext(failure.safeContext)
   return [
-    'Please explain this trade copy issue using the structured reason below.',
+    opts?.instruction?.trim() ||
+      'Please explain this trade copy issue using the structured reason below. Reply in English.',
     `Reason code: ${failure.reasonCode}`,
     `Title: ${failure.title}`,
     `Explanation: ${failure.explanation}`,

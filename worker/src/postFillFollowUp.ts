@@ -21,6 +21,7 @@ import { lastPositiveParsedTpPrice } from './manualPlanning/parsedEntry'
 import type { ChannelKeywords, ManualSettings, ParsedSignal } from './manualPlanning/types'
 import type { SignalRow } from './tradeExecutor'
 import { isBenignOrderModifyError } from './orderModifyBenign'
+import { modifyLegSlTpWithFallback } from './orderModifySafe'
 import { captureDeferredBusinessFailure } from './observability/deferredBusinessEvents'
 import { resolvePostFillIsBuy } from './postFillSide'
 import { writeExecutionLog } from './observability/executionLog'
@@ -124,11 +125,10 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
   } = args
   const manual = (broker.manual_settings ?? {}) as ManualSettings
   const isMulti = (manual.trade_style ?? 'single') === 'multi'
-  // Multi legs already carry per-bucket TPs; flattening to tp[0] here was wrong.
-  // Still stamp Override signal SL/TP from *this* fill when those settings are on.
-  const multiPredefinedSl = isMulti && resolvePredefinedSlPips(manual) != null
-  const multiPredefinedTp = isMulti && resolvePredefinedTpPips(manual) != null
-  if (isMulti && !multiPredefinedSl && !multiPredefinedTp) {
+  // Multi/range baskets freeze absolute Override SL/TP from the first entry at
+  // plan time. Never restamp from later fills — that moved stops and collapsed
+  // the Targets % ladder.
+  if (isMulti) {
     return
   }
   const reverse = manual.reverse_signal === true
@@ -145,8 +145,7 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
 
     let plannerParsed: ParsedSignal = { ...parsed }
     if (
-      !isMulti
-      && signal.channel_id
+      signal.channel_id
       && shouldMergeChannelParamsForEntry(plannerParsed)
       && !shouldPreferParsedStopsOnEntry(plannerParsed)
     ) {
@@ -183,28 +182,7 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
     const openTp = Number(leg.openTp)
     const allowTpReplace = resolvePredefinedTpPips(manual) != null || !(openTp > 0)
     let stopSource = 'unchanged'
-    if (isMulti) {
-      stopSource = multiPredefinedSl || multiPredefinedTp ? 'multi_predefined_from_fill' : 'multi_unchanged'
-      const derived = deriveManualStopsWithClamp({
-        parsed: plannerParsed,
-        manual,
-        channelKeywords,
-        resolvedSymbol: symbol,
-        ctx,
-        entryAnchor: entry,
-        isBuy,
-      })
-      if (multiPredefinedSl && derived.finalSl != null) targetSl = derived.roundPrice(derived.finalSl)
-      if (multiPredefinedTp && derived.finalTps.length) {
-        const existing = Number(leg.openTp)
-        const picked = Number.isFinite(existing) && existing > 0
-          ? derived.finalTps.reduce((best, tp) => (
-            Math.abs(tp - existing) < Math.abs(best - existing) ? tp : best
-          ), derived.finalTps[0]!)
-          : derived.finalTps[0]!
-        targetTp = derived.roundPrice(picked)
-      }
-    } else if (hasPartialTpSchedule && plannedBrokerTp != null && plannedBrokerTp > 0) {
+    if (hasPartialTpSchedule && plannedBrokerTp != null && plannedBrokerTp > 0) {
       stopSource = 'planned_partial_tp'
       targetTp = plannedBrokerTp
     } else if (usesPredefinedStops(manual)) {
@@ -234,16 +212,14 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
 
     const stripped = stripInvalidStopsForSide({
       stoploss: Number(targetSl) || 0,
-      takeprofit: (isMulti && !multiPredefinedTp) ? 0 : (Number(targetTp) || 0),
+      takeprofit: Number(targetTp) || 0,
       referencePrice: entry,
       isBuy,
     })
     const newSl = stripped.stoploss > 0 ? stripped.stoploss : null
-    const newTp = (isMulti && !multiPredefinedTp)
-      ? leg.openTp
-      : (stripped.takeprofit > 0 ? stripped.takeprofit : null)
+    const newTp = stripped.takeprofit > 0 ? stripped.takeprofit : null
     const slChanged = newSl != null && newSl !== leg.openSl
-    const tpChanged = newTp != null && newTp !== leg.openTp && (!isMulti || multiPredefinedTp)
+    const tpChanged = newTp != null && newTp !== leg.openTp
     if (!slChanged && !tpChanged) continue
     const changePayload = {
       symbol,
@@ -263,19 +239,46 @@ async function applyPipAndChannelStops(args: ApplyPostFillFollowUpArgs): Promise
       const modifyArgs: { ticket: number; stoploss?: number | null; takeprofit?: number | null } = {
         ticket: leg.ticket,
       }
-      if (slChanged) modifyArgs.stoploss = newSl
-      if (tpChanged) modifyArgs.takeprofit = newTp
-      await api.orderModify(uuid, modifyArgs)
+      // MTAPI clears an omitted side to 0 — carry the side this update is not
+      // changing so an SL-only refresh cannot wipe the TP (and vice versa).
+      const slToSend = slChanged ? newSl : leg.openSl
+      const tpToSend = tpChanged ? newTp : leg.openTp
+      if (slToSend != null && slToSend > 0) modifyArgs.stoploss = slToSend
+      if (tpToSend != null && tpToSend > 0) modifyArgs.takeprofit = tpToSend
+      // SL-first with split fallback: a stale carried counterpart must not
+      // block the side we actually want to change (combined invalid-stops →
+      // SL-only retry), while a successful combined modify keeps both sides.
+      const safe = await modifyLegSlTpWithFallback(
+        api,
+        uuid,
+        leg.ticket,
+        modifyArgs.stoploss ?? 0,
+        modifyArgs.takeprofit ?? 0,
+      )
+      if (safe.benign) {
+        await recordPostFillStopsChange(args, { ...changePayload, error: safe.error ?? 'No changes' }, 'skipped')
+        continue
+      }
+      if (!safe.ok) {
+        throw new Error(safe.error ?? 'OrderModify failed')
+      }
       if (leg.tradeRowId) {
         const patch: { sl?: number | null; tp?: number | null } = {}
-        if (slChanged) patch.sl = newSl
-        if (tpChanged) patch.tp = newTp
+        if (slChanged && safe.slApplied) patch.sl = newSl
+        if (tpChanged && safe.tpApplied) patch.tp = newTp
         if (Object.keys(patch).length > 0) {
           await args.supabase
             .from('trades')
             .update(patch)
             .eq('id', leg.tradeRowId)
         }
+      }
+      // A requested TP the split could not land must not be recorded as full
+      // success: the SL-only step cleared the broker TP to 0, and postFill has
+      // no reconcile pass to heal it. Record the failure (catch block) so the
+      // telemetry fires — the applied SL is already patched above.
+      if ((modifyArgs.takeprofit ?? 0) > 0 && !safe.tpApplied) {
+        throw new Error(safe.error ?? 'take profit not applied')
       }
       await recordPostFillStopsChange(args, changePayload, 'success')
     } catch (err) {

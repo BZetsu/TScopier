@@ -40,11 +40,18 @@
  *   dead_letters_high      { max_open: number }
  *   telegram_gap           { max_not_listening: number }     // paying subscribers only (active/trialing)
  *   openai_credits_exhausted { grace_seconds: number }
+ *   openai_key_invalid      { grace_seconds: number }
+ *   support_notify_backlog  { max_wait_minutes: number }    // unsent support notifications
+ *   listener_stall_heal     { refused_min: number, heals_min: number }  // windowed; refused = hourly heal budget spent
+ *   mtapi_old_version      { max_accounts: number, max_rows: number, persistence_minutes: number }  // windowed; any account refused with OLD_VERSION = bridge Manager API build below the broker minimum
  *
- * OpenAI credits are the one external dependency this evaluator probes
+ * OpenAI health is the one external dependency this evaluator probes
  * itself: every run makes a one-token request and writes the outcome to
- * system_probe_state target 'openai_api'. That row also powers the admin
- * Systems Health page, so the screen and the email always agree.
+ * system_probe_state target 'openai_api'. Two rules read that row —
+ * credits (billing codes) and key invalid (auth codes / missing key) —
+ * because a revoked key must page without claiming credits ran out. That
+ * row also powers the admin Systems Health page, so the screen and the
+ * email always agree.
  *
  * Principles: never treat unknown as healthy (a stale probe row fires), never
  * invent an outage from an unreadable table (skip and log instead), and keep
@@ -53,7 +60,12 @@
  */
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "jsr:@supabase/supabase-js@2";
+// Pinned to 2.119.1, not `@2`: on 2026-11-19 npm's `latest` moved to 2.119.2,
+// whose dependency `@supabase/auth-js@2.119.2` has a missing tarball (404), so
+// the edge bundler fails with "Failed caching npm package". Bump deliberately
+// once 2.119.3+ is fully published.
+import { createClient } from "npm:@supabase/supabase-js@2.119.1";
+import { isReconcileDriftRow, reconnectRequiredUserIds, persistenceStep, nextEscalation, shouldSuppressRecovery, SEVERITY_RANK } from "../_shared/alertEvalRules.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -80,6 +92,8 @@ const ALERT_ENV =
 // First human action per rule — the description says what the alert means;
 // this says what to do about it at 3am.
 const NEXT_ACTION: Record<string, string> = {
+  listener_stall_heal:
+    "A customer's Telegram listener is connected but not reading channels. If the heal was refused, the per-listener hourly reset limit is spent: check the Railway listener logs for 'hard-reset stalled listener' and 'hourly heal budget is spent', confirm the user's channels are still linked in the admin, then restart the Listener service (or wait for the window to reset). Until it recovers the copier records nothing, so the customer will report missing trades rather than an error.",
   bridge_down: "Check the MTAPI bridge service and the Systems Health page — MT5/MT4 copies are blocked until it recovers.",
   probe_stale: "Open the Systems Health page — the named target stopped reporting. If it is the alert evaluator itself, other alerts may be delayed.",
   mtapi_accounts_error: "Check the Bridges / Reconnects pages — this usually means a bridge-side problem, not isolated user issues.",
@@ -92,6 +106,11 @@ const NEXT_ACTION: Record<string, string> = {
   dead_letters_high: "Open the dead-letter view and replay or discard the parked messages.",
   telegram_gap: "Linked accounts without a listener are not being copied — check worker leases on the Systems Health page.",
   openai_credits_exhausted: "Add OpenAI credits now (Billing → Add credits). Until then AI parsing is refused and only the regex parser runs, so complex signals may be missed.",
+  openai_key_invalid: "The OpenAI API key is invalid or was revoked — create a new key in the OpenAI dashboard and update OPENAI_API_KEY in Supabase edge secrets (and Railway for the worker). Until then AI parsing falls back to the regex parser and complex signals are skipped.",
+  cerebras_key_invalid: "Cerebras is unusable — the API key was rejected or the account is out of quota/credit (HTTP 402). Check the Cerebras billing tab and the CEREBRAS_API_KEY secrets (Supabase edge + Railway listener). Cerebras parses most signals, so until this is fixed parsing falls back to OpenAI on every affected request, and complex signals may be skipped.",
+  support_notify_backlog: "Support notifications are stuck: new tickets and human requests are not reaching the team by email. The tickets are still in the desk; check the support-notify function (its key and logs) and the Resend sending domain. Nothing is lost — the waiting rows send once the cause is fixed.",
+  mtapi_old_version:
+    "The MTAPI bridge's MT5 Manager API build is older than what the brokers now accept, so every order on the affected accounts is refused at connect time with OLD_VERSION (nothing is sent to the broker). On the Contabo VPS: docker pull timurila/mt5rest, then recreate the container through the redactor installer — cd /root/mtapi-log-redactor && CONTAINER=mtapi IMAGE=timurila/mt5rest HOST_IP=127.0.0.1 HOST_PORT=8080 CONTAINER_PORT=80 bash ./install.sh. Verify: curl -s \"http://127.0.0.1:8080/CheckConnect?id=<current session>\" prints OK. Brokers roll the minimum out over hours, so expect accounts to fail in waves. Do NOT replay the failed signals — their prices are hours old.",
 };
 
 const EMAIL_BATCH_LIMIT = 25;
@@ -103,8 +122,6 @@ const EMAIL_CLAIM_LEASE_MS = 180_000;
 const EMAIL_MISSING_KEY_RETRY_MS = 30 * 60_000;
 const MESSAGE_MAX = 500;
 
-const SEVERITY_RANK: Record<string, number> = { info: 0, warning: 1, critical: 2 };
-
 interface RuleRow {
   code: string;
   name: string;
@@ -114,6 +131,10 @@ interface RuleRow {
   threshold: Record<string, unknown>;
   window_minutes: number;
   cooldown_seconds: number;
+  /** Persistence state: when the condition first held continuously (ISO), null = not armed. */
+  cond_true_since?: string | null;
+  /** Persistence state: when the condition first cleared while an event was open (ISO). */
+  cond_false_since?: string | null;
 }
 
 interface EventRow {
@@ -125,6 +146,8 @@ interface EventRow {
   email_attempts: number;
   email_next_attempt_at: string | null;
   created_at: string;
+  message?: string | null;
+  value?: number | null;
 }
 
 type EvalOutcome =
@@ -161,18 +184,31 @@ function minutesSince(iso: string | null | undefined, nowMs: number): number | n
   return Math.max(0, (nowMs - t) / 60_000);
 }
 
+/**
+ * Count-only query that keeps the PostgREST error text.
+ *
+ * select("*") — not "id": worker_session_leases has no id column, and a bad
+ * column would make PostgREST error the whole count (silent skip).
+ */
+async function headCountDetailed(
+  sb: ReturnType<typeof createClient>,
+  table: string,
+  apply: (q: any) => any,
+): Promise<{ count: number | null; error: string | null }> {
+  let q = sb.from(table).select("*", { count: "exact", head: true });
+  q = apply(q);
+  const { count, error } = await q;
+  if (error) return { count: null, error: error.message };
+  return { count: count ?? 0, error: null };
+}
+
+/** Count-only query; null when the table cannot be read (caller decides to skip). */
 async function headCount(
   sb: ReturnType<typeof createClient>,
   table: string,
   apply: (q: any) => any,
 ): Promise<number | null> {
-  // select("*") — not "id": worker_session_leases has no id column, and a
-  // bad column would make PostgREST error the whole count (silent skip).
-  let q = sb.from(table).select("*", { count: "exact", head: true });
-  q = apply(q);
-  const { count, error } = await q;
-  if (error) return null;
-  return count ?? 0;
+  return (await headCountDetailed(sb, table, apply)).count;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,11 +250,15 @@ async function recordOpenAiProbe(
   latencyMs: number | null,
   detail: string,
 ): Promise<void> {
+  // OpenAI 401 messages echo the presented key ("Incorrect API key
+  // provided: sk-…"). Redact at this single choke point so the key never
+  // reaches the probe row, probe events, the health page or the alert email.
+  const redacted = detail.replace(/sk-[A-Za-z0-9_-]{8,}/g, (m) => m.slice(0, 7) + "…");
   const { error } = await sb.rpc("record_probe_result", {
     p_target: "openai_api",
     p_state: state,
     p_latency_ms: latencyMs,
-    p_detail: detail.slice(0, 300),
+    p_detail: redacted.slice(0, 300),
   });
   if (error) console.warn(`[alert-evaluator] openai probe write failed err=${error.message}`);
 }
@@ -284,6 +324,135 @@ async function probeOpenAiCredits(sb: any): Promise<OpenAiProbeResult> {
   } catch (err) {
     const detail = `probe_error:${err instanceof Error ? err.message : String(err)}`;
     await recordOpenAiProbe(sb, "unknown", null, detail);
+    return { ran: true, state: "unknown", detail };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cerebras — same shape as the OpenAI probe. Cerebras handles the MAJORITY of
+// signal parsing, so a rejected key or an exhausted account silently degrades
+// parsing to the slower fallback without any other outward sign. The outcome is
+// written to system_probe_state target 'cerebras_api' so the alert rule and the
+// admin Systems Health page read the exact same fact.
+//
+// Classification mirrors OpenAI on purpose:
+//   - 401/403 (bad key)             -> down, detail "auth:…"
+//   - 429 (rate limited)            -> up,   detail "rate_limited:…" (key is valid)
+//   - 5xx / timeout / network       -> unknown (never a false all-clear)
+// ---------------------------------------------------------------------------
+
+const CEREBRAS_PROBE_MODEL =
+  Deno.env.get("CEREBRAS_PROBE_MODEL") || Deno.env.get("CEREBRAS_PARSE_MODEL") || "gpt-oss-120b";
+const CEREBRAS_PROBE_TIMEOUT_MS = 8_000;
+
+/**
+ * Same resolution order as the listener (worker/src/signalIntent/parseConfig.ts
+ * cerebrasParseApiKeys): numbered keys CEREBRAS_API_KEY_1..20 enumerated until
+ * the first gap, and only then the legacy CEREBRAS_API_KEY. The listener may be
+ * running entirely on numbered keys, so reading only the legacy name would
+ * report "not configured" while parsing is perfectly healthy.
+ */
+function cerebrasProbeApiKey(): string {
+  for (let i = 1; i <= 20; i += 1) {
+    const key = String(Deno.env.get(`CEREBRAS_API_KEY_${i}`) ?? "").trim();
+    if (!key) break;
+    return key;
+  }
+  return String(Deno.env.get("CEREBRAS_API_KEY") ?? "").trim();
+}
+
+async function recordCerebrasProbe(
+  sb: any,
+  state: "up" | "down" | "unknown",
+  latencyMs: number | null,
+  detail: string,
+): Promise<void> {
+  // Cerebras keys are prefixed csk-; redact at this single choke point so the
+  // key never reaches the probe row, the health page or an alert email.
+  const redacted = detail.replace(/csk-[A-Za-z0-9_-]{8,}/g, (m) => m.slice(0, 7) + "\u2026");
+  const { error } = await sb.rpc("record_probe_result", {
+    p_target: "cerebras_api",
+    p_state: state,
+    p_latency_ms: latencyMs,
+    p_detail: redacted.slice(0, 300),
+  });
+  if (error) console.warn(`[alert-evaluator] cerebras probe write failed err=${error.message}`);
+}
+
+async function probeCerebras(sb: any): Promise<OpenAiProbeResult> {
+  const apiKey = cerebrasProbeApiKey();
+  if (!apiKey) {
+    // Record the gap so the page cannot show an old green row forever.
+    const detail = "probe_error:CEREBRAS_API_KEY not configured";
+    await recordCerebrasProbe(sb, "unknown", null, detail);
+    return { ran: true, state: "unknown", detail };
+  }
+
+  const startedAt = Date.now();
+  try {
+    // A real (tiny) chat request, not GET /v1/models: an account that is out of
+    // credit still lists models happily, so a model list would report "up" while
+    // every parse returns HTTP 402 payment_required. max_tokens is deliberately
+    // generous because gpt-oss-120b is a reasoning model and spends budget on
+    // reasoning tokens before emitting anything.
+    const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: CEREBRAS_PROBE_MODEL,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 64,
+        temperature: 0,
+      }),
+      signal: AbortSignal.timeout(CEREBRAS_PROBE_TIMEOUT_MS),
+    });
+    const latencyMs = Date.now() - startedAt;
+    const rawText = await res.text().catch(() => "");
+    let body: Record<string, unknown> = {};
+    try { body = JSON.parse(rawText) as Record<string, unknown>; } catch { /* non-JSON error page */ }
+    const err = (body as { error?: { code?: string; type?: string; message?: string } }).error;
+
+    if (res.ok) {
+      const detail = `ok (${CEREBRAS_PROBE_MODEL})`;
+      await recordCerebrasProbe(sb, "up", latencyMs, detail);
+      return { ran: true, state: "up", detail };
+    }
+
+    const code = String(err?.code ?? err?.type ?? "");
+    const message = String(err?.message ?? rawText ?? `HTTP ${res.status}`).slice(0, 160);
+
+    // 402 payment_required is what an out-of-credit / over-quota account returns
+    // on chat requests. It is not a transient blip: until billing is fixed every
+    // call fails, so it belongs in the same bucket as a daily limit.
+    if (res.status === 402) {
+      const detail = `quota:payment_required${code ? `:${code}` : ""} \u2014 ${message}`;
+      await recordCerebrasProbe(sb, "down", latencyMs, detail);
+      return { ran: true, state: "down", detail };
+    }
+    if (res.status === 401 || res.status === 403) {
+      const detail = `auth:${code || `HTTP_${res.status}`} \u2014 ${message}`;
+      await recordCerebrasProbe(sb, "down", latencyMs, detail);
+      return { ran: true, state: "down", detail };
+    }
+    if (res.status === 429) {
+      // Daily token limit is a real outage for the day; a plain rate limit is not.
+      const daily = /per day limit/i.test(message);
+      const detail = daily
+        ? `quota:daily_limit \u2014 ${message}`
+        : `rate_limited:${code || "HTTP_429"}`;
+      await recordCerebrasProbe(sb, daily ? "down" : "up", latencyMs, detail);
+      return { ran: true, state: daily ? "down" : "up", detail };
+    }
+
+    const detail = `probe_error:HTTP_${res.status}${code ? `:${code}` : ""} \u2014 ${message}`;
+    await recordCerebrasProbe(sb, "unknown", latencyMs, detail);
+    return { ran: true, state: "unknown", detail };
+  } catch (err) {
+    const detail = `probe_error:${err instanceof Error ? err.message : String(err)}`;
+    await recordCerebrasProbe(sb, "unknown", null, detail);
     return { ran: true, state: "unknown", detail };
   }
 }
@@ -490,14 +659,20 @@ async function evalQueueStuck(sb: any, rule: RuleRow, nowMs: number): Promise<Ev
 /**
  * Failed executions.
  *
- * Three noise corrections, all learned from the 2026-10-23 incident review:
+ * Four noise corrections, all learned from the 2026-10-23 incident review and
+ * the 2026-11-02 alert audit:
  *
  *  1. `order_close_audit` rows are the audit trail of broker close *attempts*
  *     (the stuck-pending retry loop wrote one every few minutes — 215 in 24h).
  *     They describe an attempt, not an execution outcome, so they never count.
- *  2. Distinct failing signals, not raw rows: one chronic failure retried every
+ *  2. Reconciliation/drift rows (`isReconcileDriftRow`) are the management
+ *     layer reporting broker-vs-desired state, retried every cycle by design.
+ *     2026-10-27: 194 of 278 failed rows were this class and one signal wrote
+ *     86 rows in 3h — they tripped the storm cap while distinct signals stayed
+ *     under the limit. Real entry failures (rejected orders) still count.
+ *  3. Distinct failing signals, not raw rows: one chronic failure retried every
  *     cycle must not look like twenty different failing executions.
- *  3. A raw-row storm still fires on its own at 3x `max_failed`, so a
+ *  4. A raw-row storm still fires on its own at 3x `max_failed`, so a
  *     systematic single-account failure (one broker down, every execution for
  *     it retrying) cannot hide under the distinct count.
  */
@@ -519,22 +694,82 @@ async function evalExecutionsFailing(sb: any, rule: RuleRow, nowMs: number): Pro
   const since = new Date(nowMs - rule.window_minutes * 60_000).toISOString();
   const { data, error } = await sb
     .from("trade_execution_logs")
-    .select("signal_id")
+    .select("signal_id, error_message")
     .eq("status", "failed")
     .neq("action", "order_close_audit")
     .gte("created_at", since)
     .limit(EXECUTIONS_FAILING_MAX_ROWS);
   if (error) return { kind: "skip", reason: "trade_execution_logs unreadable" };
-  const rows = (data ?? []) as Array<{ signal_id?: string | null }>;
+  const allRows = (data ?? []) as Array<{ signal_id?: string | null; error_message?: string | null }>;
+  const rows = allRows.filter(r => !isReconcileDriftRow(r.error_message));
+  const reconcileExcluded = allRows.length - rows.length;
   const distinct = countDistinctFailingSignals(rows);
   const rowsFailed = rows.length;
   const fired = distinct > maxFailed || rowsFailed > stormCap;
+  const excludedNote = reconcileExcluded > 0 ? `; ${reconcileExcluded} reconcile rows excluded` : "";
   return {
     kind: "ok",
     fired,
     value: fired ? Math.max(distinct, rowsFailed) : distinct,
     message: `${distinct} distinct signal(s) with failed executions in ${rule.window_minutes}m`
-      + ` (${rowsFailed} failure rows; limits ${maxFailed} signals / ${stormCap} rows)`,
+      + ` (${rowsFailed} failure rows; limits ${maxFailed} signals / ${stormCap} rows${excludedNote})`,
+  };
+}
+
+/**
+ * MT5 Manager API build below the broker's minimum (2026-11-19 incident).
+ *
+ * `mt5rest` runs no MetaTrader terminal: it logs in to each broker's trade
+ * server with the MT5 Manager API client bundled in the image. When a broker
+ * raises its minimum accepted build, `MT5API.Connect()` throws
+ * `ServerException: OLD_VERSION` — the bridge cannot open the manager session,
+ * so EVERY order on that account is refused before it is sent. Customers see
+ * "No position opened" / `entry_not_opened`, which reads like a parser or a
+ * broker-rejection problem and hides the real cause.
+ *
+ * OLD_VERSION has no benign cause and nothing self-heals, so the FIRST affected
+ * account pages (`max_accounts: 0`, i.e. `accounts.size > 0`). The incident this
+ * was written for refused one account at 02:16 and the rest in waves after it;
+ * waiting for a second account would have re-created the original blind spot for
+ * however long that first broker stayed alone. `max_rows` still covers rows that
+ * arrive without a `broker_account_id`.
+ *
+ * `persistence_minutes` matters here: the condition is bursty (it is true only
+ * while refusals sit inside the trailing window), so without a hold a quiet
+ * ten-minute gap would resolve the event, email "recovered", and then the
+ * cooldown would mute the re-fire while orders were still being refused.
+ */
+async function evalMtapiOldVersion(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutcome> {
+  const maxAccounts = num(rule.threshold.max_accounts, 0);
+  const maxRows = num(rule.threshold.max_rows, 6);
+  const since = new Date(nowMs - rule.window_minutes * 60_000).toISOString();
+  // No `order_close_audit` / reconcile-drift exclusion on purpose: unlike the
+  // generic executions_failing rule, OLD_VERSION is a manager-login refusal, so
+  // close attempts and drift retries are the same failure and all count.
+  const { data, error } = await sb
+    .from("trade_execution_logs")
+    .select("broker_account_id")
+    .eq("status", "failed")
+    .ilike("error_message", "%OLD_VERSION%")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(500);
+  if (error) return { kind: "skip", reason: "trade_execution_logs unreadable" };
+
+  const rows = (data ?? []) as Array<{ broker_account_id?: string | null }>;
+  const accounts = new Set<string>();
+  for (const row of rows) {
+    const id = String(row.broker_account_id ?? "").trim();
+    if (id) accounts.add(id);
+  }
+  const fired = accounts.size > maxAccounts || rows.length > maxRows;
+  return {
+    kind: "ok",
+    fired,
+    value: fired ? Math.max(accounts.size, rows.length) : accounts.size,
+    message: `${accounts.size} MT5 account(s) refused with OLD_VERSION in ${rule.window_minutes}m`
+      + ` (${rows.length} failure rows; limits ${maxAccounts} accounts / ${maxRows} rows).`
+      + " The bridge's Manager API build is below the broker minimum — update the mt5rest image.",
   };
 }
 
@@ -622,9 +857,10 @@ async function evalTelegramGap(sb: any, rule: RuleRow, nowMs: number): Promise<E
 
   const healthRes = await sb
     .from("copier_listener_health")
-    .select("user_id, listener_status, mtproto_connected, updated_at, last_successful_probe_at, freshness_threshold_ms");
+    .select("user_id, listener_status, mtproto_connected, telegram_account_status, updated_at, last_successful_probe_at, freshness_threshold_ms");
   const healthLive = new Set<string>();
   let healthReporting = 0;
+  let excludedReconnect = 0;
   if (!healthRes.error) {
     for (const h of healthRes.data ?? []) {
       const thresholdMs = Math.max(1_000, Math.min(10 * 60_000, num(h.freshness_threshold_ms, 90_000)));
@@ -635,6 +871,27 @@ async function evalTelegramGap(sb: any, rule: RuleRow, nowMs: number): Promise<E
         healthLive.add(h.user_id);
       }
     }
+    // Revoked/invalidated sessions are user-action problems (the owner must
+    // re-link; the product UI shows "Reconnect required"). Excluded from the
+    // gap so a permanent pair cannot sit exactly at the threshold and turn
+    // every one-minute blip elsewhere into a page (2026-11-02 audit). When the
+    // health table is unreadable nothing is excluded — over-counting is the
+    // safe direction.
+    const revoked = reconnectRequiredUserIds((healthRes.data ?? []) as Array<{ user_id: string; telegram_account_status?: string | null }>);
+    for (const userId of [...linked]) {
+      if (revoked.has(userId)) {
+        linked.delete(userId);
+        excludedReconnect += 1;
+      }
+    }
+    if (linked.size === 0 && excludedReconnect > 0) {
+      return {
+        kind: "ok",
+        fired: false,
+        value: 0,
+        message: `all ${excludedReconnect} in-scope session(s) are reconnect-required`,
+      };
+    }
   }
   const useHealth = !healthRes.error && healthReporting > 0;
   // Both listening signals unreadable: unknown, never a page.
@@ -644,10 +901,11 @@ async function evalTelegramGap(sb: any, rule: RuleRow, nowMs: number): Promise<E
     if (useHealth ? healthLive.has(userId) : leaseListening.has(userId)) listening.add(userId);
   }
   const gap = linked.size - listening.size;
-  const message = payingTotal != null
+  const excludedNote = excludedReconnect > 0 ? `; ${excludedReconnect} reconnect-required excluded` : "";
+  const message = (payingTotal != null
     ? `${gap} of ${linked.size} paying-subscriber session(s) not listening`
       + ` (${payingTotal} paying subscribers total; max ${maxGap})`
-    : `${gap} of ${linked.size} linked session(s) not listening (max ${maxGap})`;
+    : `${gap} of ${linked.size} linked session(s) not listening (max ${maxGap})`) + excludedNote;
   return {
     kind: "ok",
     fired: gap > maxGap,
@@ -689,6 +947,188 @@ async function evalOpenAiCredits(sb: any, rule: RuleRow, nowMs: number): Promise
   return { kind: "ok", fired: false, value: 0, message: "" };
 }
 
+/**
+ * OpenAI key health — auth failures (401/403 invalid_api_key) and a missing
+ * OPENAI_API_KEY, read from the same probe row as evalOpenAiCredits. Kept
+ * separate so a revoked key pages as "key rejected" instead of staying silent
+ * behind the billing-only rule (2026-10-24: the key was revoked and no email
+ * went out for three days). Billing codes belong to openai_credits_exhausted;
+ * rate limits and probe errors stay unalerted here on purpose.
+ */
+async function evalOpenAiKeyInvalid(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutcome> {
+  const graceMs = num(rule.threshold.grace_seconds, 60) * 1000;
+  const { data, error } = await sb
+    .from("system_probe_state")
+    .select("state, down_since, detail, updated_at")
+    .eq("target", "openai_api")
+    .maybeSingle();
+  if (error) return { kind: "skip", reason: error.message };
+  if (!data) return { kind: "skip", reason: "openai_api probe has not reported yet" };
+
+  const detail = String(data.detail ?? "");
+  const keyRejected = data.state === "down" && detail.startsWith("auth:");
+  const keyMissing = detail.startsWith("probe_error:OPENAI_API_KEY");
+  if (!keyRejected && !keyMissing) {
+    return { kind: "ok", fired: false, value: null, message: "" };
+  }
+
+  // auth: rows carry down_since (grace absorbs a one-off blip). A missing key
+  // is a configuration fact, not an outage that started — page immediately.
+  const since = data.down_since ? Date.parse(data.down_since) : NaN;
+  const ageMs = Number.isFinite(since) ? nowMs - since : graceMs;
+  if (ageMs >= graceMs) {
+    return keyMissing
+      ? { kind: "ok", fired: true, value: 0, message: `OPENAI_API_KEY is not configured (${detail})` }
+      : {
+          kind: "ok",
+          fired: true,
+          value: Math.round(ageMs / 1000),
+          message: `OpenAI is refusing the API key: ${detail}`,
+        };
+  }
+  return { kind: "ok", fired: false, value: 0, message: "" };
+}
+
+/**
+ * Cerebras availability — a rejected key (401/403), a missing CEREBRAS_API_KEY,
+ * or an account refusing chat requests for quota/payment (HTTP 402, or a 429
+ * daily-token limit). This one rule covers both because, unlike OpenAI, Cerebras
+ * is the primary parser: either condition means parsing drops to the fallback.
+ * Plain per-minute rate limits and probe errors stay unalerted.
+ */
+async function evalCerebrasKeyInvalid(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutcome> {
+  const graceMs = num(rule.threshold.grace_seconds, 60) * 1000;
+  const { data, error } = await sb
+    .from("system_probe_state")
+    .select("state, down_since, detail, updated_at")
+    .eq("target", "cerebras_api")
+    .maybeSingle();
+  if (error) return { kind: "skip", reason: error.message };
+  if (!data) return { kind: "skip", reason: "cerebras_api probe has not reported yet" };
+
+  const detail = String(data.detail ?? "");
+  const keyRejected = data.state === "down" && detail.startsWith("auth:");
+  const budgetExhausted = data.state === "down" && detail.startsWith("quota:");
+  const keyMissing = detail.startsWith("probe_error:CEREBRAS_API_KEY");
+  if (!keyRejected && !budgetExhausted && !keyMissing) {
+    return { kind: "ok", fired: false, value: null, message: "" };
+  }
+
+  // auth: rows carry down_since (grace absorbs a one-off blip). A missing key
+  // is a configuration fact, not an outage that started — page immediately.
+  const since = data.down_since ? Date.parse(data.down_since) : NaN;
+  const ageMs = Number.isFinite(since) ? nowMs - since : graceMs;
+  if (ageMs >= graceMs) {
+    if (keyMissing) {
+      return { kind: "ok", fired: true, value: 0, message: `CEREBRAS_API_KEY is not configured (${detail})` };
+    }
+    return {
+      kind: "ok",
+      fired: true,
+      value: Math.round(ageMs / 1000),
+      message: budgetExhausted
+        ? `Cerebras is refusing requests for quota/payment reasons: ${detail}`
+        : `Cerebras is refusing the API key: ${detail}`,
+    };
+  }
+  return { kind: "ok", fired: false, value: 0, message: "" };
+}
+
+/**
+ * Support notifications that have stopped going out.
+ *
+ * support-notify queues every new ticket, reopened ticket and human request in
+ * support_notification_outbox and empties it on a one-minute schedule. If its
+ * key is wrong, the sender is rejected or the job stops, rows simply accumulate:
+ * no other signal exists, and the team believes nobody is writing. This rule is
+ * that signal. It only looks at unsent rows, so a healthy queue — including a
+ * deliberately deferred one — never fires, and it resolves by itself once the
+ * queue drains (the recovery email doubles as "notifications are working again").
+ */
+async function evalSupportNotifyBacklog(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutcome> {
+  const maxWaitMinutes = num(rule.threshold.max_wait_minutes, 30);
+  const { data, error } = await sb
+    .from("support_notification_outbox")
+    .select("created_at, last_error")
+    .is("sent_at", null)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  // A missing table (migration not applied) is a skip, never a page.
+  if (error) return { kind: "skip", reason: `support_notification_outbox unreadable: ${error.message}` };
+  if (!data) return { kind: "ok", fired: false, value: 0, message: "" };
+
+  const oldestMs = Date.parse(String(data.created_at));
+  if (!Number.isFinite(oldestMs)) return { kind: "skip", reason: "unreadable outbox timestamp" };
+  const ageMinutes = Math.floor((nowMs - oldestMs) / 60_000);
+  if (ageMinutes < maxWaitMinutes) {
+    return { kind: "ok", fired: false, value: ageMinutes, message: "" };
+  }
+
+  const waiting = await headCount(sb, "support_notification_outbox", q => q.is("sent_at", null));
+  const lastError = String(data.last_error ?? "").trim().slice(0, 120);
+  return {
+    kind: "ok",
+    fired: true,
+    value: waiting ?? 1,
+    message: `${waiting ?? "at least one"} support notification(s) not sent, oldest waiting ${ageMinutes} minutes${lastError ? `; last error: ${lastError}` : ""}`,
+  };
+}
+
+/**
+ * Listener stall heal (incident 2026-11-18).
+ *
+ * The worker now restarts a listener that is connected but no longer reading
+ * channels, and records `listener_stall_heal` in listener_events. Two states
+ * deserve a page:
+ *   - `healed: false` — the heal was REFUSED because the hourly budget was
+ *     spent. That listener is deaf and we deliberately left it alone; nobody
+ *     else will notice.
+ *   - several heals in the window — a platform-wide stall is being repaired
+ *     one listener at a time, which is worth knowing about before customers do.
+ *
+ * Count-only queries (never row reads) and the (event_type, created_at) index
+ * keep this cheap on a table that carries thousands of rows an hour.
+ */
+async function evalListenerStallHeal(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutcome> {
+  const windowMinutes = num(rule.window_minutes, 15);
+  const sinceIso = new Date(nowMs - windowMinutes * 60_000).toISOString();
+  const refusedMin = Math.max(1, num(rule.threshold.refused_min, 1));
+  const healsMin = Math.max(1, num(rule.threshold.heals_min, 3));
+
+  const refusedRes = await headCountDetailed(sb, "listener_events", q =>
+    q.eq("event_type", "listener_stall_heal").eq("detail->>healed", "false").gte("created_at", sinceIso));
+  if (refusedRes.error) {
+    return { kind: "skip", reason: `listener_events unreadable: ${refusedRes.error}` };
+  }
+  const refused = refusedRes.count ?? 0;
+  if (refused >= refusedMin) {
+    return {
+      kind: "ok",
+      fired: true,
+      value: refused,
+      message: `${refused} stalled Telegram listener(s) could not be restarted in the last ${windowMinutes} minutes (hourly heal limit reached) — those copiers are connected but not receiving signals`,
+    };
+  }
+
+  const healsRes = await headCountDetailed(sb, "listener_events", q =>
+    q.eq("event_type", "listener_stall_heal").gte("created_at", sinceIso));
+  if (healsRes.error) {
+    return { kind: "skip", reason: `listener_events unreadable: ${healsRes.error}` };
+  }
+  const heals = healsRes.count ?? 0;
+  if (heals >= healsMin) {
+    return {
+      kind: "ok",
+      fired: true,
+      value: heals,
+      message: `${heals} Telegram listeners were restarted automatically in the last ${windowMinutes} minutes — several copiers stopped reading channels at once, which suggests a platform-wide stall rather than one account`,
+    };
+  }
+
+  return { kind: "ok", fired: false, value: heals, message: "" };
+}
+
 async function evaluate(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutcome> {
   switch (rule.code) {
     case "bridge_down": return evalBridgeDown(sb, rule, nowMs);
@@ -703,6 +1143,11 @@ async function evaluate(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutc
     case "dead_letters_high": return evalDeadLettersHigh(sb, rule);
     case "telegram_gap": return evalTelegramGap(sb, rule, nowMs);
     case "openai_credits_exhausted": return evalOpenAiCredits(sb, rule, nowMs);
+    case "openai_key_invalid": return evalOpenAiKeyInvalid(sb, rule, nowMs);
+    case "cerebras_key_invalid": return evalCerebrasKeyInvalid(sb, rule, nowMs);
+    case "support_notify_backlog": return evalSupportNotifyBacklog(sb, rule, nowMs);
+    case "listener_stall_heal": return evalListenerStallHeal(sb, rule, nowMs);
+    case "mtapi_old_version": return evalMtapiOldVersion(sb, rule, nowMs);
     default:
       return { kind: "skip", reason: `no evaluator for rule ${rule.code}` };
   }
@@ -715,19 +1160,29 @@ async function evaluate(sb: any, rule: RuleRow, nowMs: number): Promise<EvalOutc
 interface RecipientRow {
   email: string;
   min_severity: string;
+  /** When set and non-empty, this address only receives the listed rules. */
+  rule_codes?: string[] | null;
 }
 
 function alertEmailHtml(opts: {
   rule: RuleRow;
-  event: EventRow & { message?: string; value?: number | null; resolved_at?: string | null };
-  kind: "firing" | "resolved";
+  event: EventRow & { message?: string | null; value?: number | null; resolved_at?: string | null };
+  kind: "firing" | "resolved" | "escalated";
 }): string {
   const { rule, event, kind } = opts;
-  const isFiring = kind === "firing";
-  const accent = isFiring ? (rule.severity === "critical" ? "#dc2626" : "#d97706") : "#059669";
-  const label = isFiring ? (rule.severity === "critical" ? "CRITICAL ALERT" : "ALERT") : "RESOLVED";
+  const severity = event.severity || rule.severity;
+  const isResolved = kind === "resolved";
+  const accent = isResolved ? "#059669" : (SEVERITY_RANK[severity] >= SEVERITY_RANK.critical ? "#dc2626" : "#d97706");
+  const label = isResolved
+    ? "RESOLVED"
+    : kind === "escalated"
+      ? `ESCALATED TO ${severity.toUpperCase()}`
+      : (severity === "critical" ? "CRITICAL ALERT" : "ALERT");
   const valueLine = event.value != null ? `<p style="margin:0 0 8px 0;font-size:14px;color:#404040;">Measured value: <strong>${esc(event.value)}</strong></p>` : "";
-  const resolvedNote = !isFiring
+  const escalationNote = kind === "escalated"
+    ? `<p style="margin:0 0 8px 0;font-size:14px;color:#404040;">This alert stayed open and was raised to <strong>${esc(severity)}</strong> (open since ${esc(event.created_at)}).</p>`
+    : "";
+  const resolvedNote = isResolved
     ? `<p style="margin:0 0 12px 0;font-size:14px;color:#404040;">The condition cleared at ${esc(event.resolved_at ?? "")}.</p>`
     : "";
   const actionText = NEXT_ACTION[rule.code];
@@ -745,11 +1200,12 @@ function alertEmailHtml(opts: {
       <h1 style="margin:12px 0 4px 0;font-size:20px;color:#18181b;">${esc(rule.name)}</h1>
       <p style="margin:0 0 16px 0;font-size:14px;line-height:1.5;color:#404040;">${esc(event.message ?? "")}</p>
       ${valueLine}
+      ${escalationNote}
       ${actionLine}
       <p style="margin:0 0 16px 0;font-size:13px;line-height:1.5;color:#71717a;">${esc(rule.description)}</p>
       ${resolvedNote}
       <p style="margin:0 0 20px 0;"><a href="${esc(ADMIN_ALERTS_URL)}" style="font-size:14px;font-weight:600;color:${accent};text-decoration:none;">Open the Alerts console &rarr;</a></p>
-      <p style="margin:0;font-size:12px;line-height:1.5;color:#a3a3a3;">Rule <code style="background:#f4f4f5;padding:1px 5px;border-radius:4px;">${esc(rule.code)}</code> · severity ${esc(rule.severity)} · raised ${esc(event.created_at)}</p>
+      <p style="margin:0;font-size:12px;line-height:1.5;color:#a3a3a3;">Rule <code style="background:#f4f4f5;padding:1px 5px;border-radius:4px;">${esc(rule.code)}</code> · severity ${esc(event.severity || rule.severity)} · raised ${esc(event.created_at)}</p>
     </div>
   </div>
 </body>
@@ -758,12 +1214,14 @@ function alertEmailHtml(opts: {
 
 async function sendAlertEmail(
   rule: RuleRow,
-  event: EventRow & { message?: string; value?: number | null; resolved_at?: string | null },
+  event: EventRow & { message?: string | null; value?: number | null; resolved_at?: string | null },
   recipients: RecipientRow[],
-  kind: "firing" | "resolved",
+  kind: "firing" | "resolved" | "escalated",
 ): Promise<{ ok: boolean; error?: string; sent: number }> {
   const eligible = recipients.filter(
-    r => (SEVERITY_RANK[r.min_severity] ?? 1) <= (SEVERITY_RANK[event.severity] ?? 1),
+    r => (SEVERITY_RANK[r.min_severity] ?? 1) <= (SEVERITY_RANK[event.severity] ?? 1)
+      // null / empty means "every rule"; a list narrows it to those rules only.
+      && (!r.rule_codes || r.rule_codes.length === 0 || r.rule_codes.includes(rule.code)),
   );
   // Nothing configured to notify: treat as delivered so the retry loop stops.
   if (eligible.length === 0) return { ok: true, sent: 0 };
@@ -771,7 +1229,9 @@ async function sendAlertEmail(
   const html = alertEmailHtml({ rule, event, kind });
   const subject = kind === "firing"
     ? `TScopier [${ALERT_ENV}] alert: ${rule.name}`
-    : `TScopier [${ALERT_ENV}] recovered: ${rule.name}`;
+    : kind === "escalated"
+      ? `TScopier [${ALERT_ENV}] ESCALATED to ${event.severity}: ${rule.name}`
+      : `TScopier [${ALERT_ENV}] recovered: ${rule.name}`;
 
   let sent = 0;
   let lastError = "";
@@ -857,6 +1317,12 @@ Deno.serve(async (req) => {
     fired: [] as string[],
     resolved: [] as string[],
     cooldown_suppressed: [] as string[],
+    /** Alerts whose severity was raised by a threshold.escalations tier (rule→severity). */
+    escalated: [] as string[],
+    /** Resolved rows whose recovery email was suppressed because no page ever went out. */
+    recovery_suppressed: 0,
+    /** Rules waiting out their threshold.persistence_minutes hold (fire/resolve). */
+    persistence_pending: [] as string[],
     emails_attempted: 0,
     emails_sent: 0,
     email_errors: [] as string[],
@@ -865,24 +1331,45 @@ Deno.serve(async (req) => {
   };
 
   try {
-    const rulesRes = await sb
+    // Deploy-order safety: if migration 20261102160000 has not been applied
+    // yet, the select below fails and — without this fallback — every cron
+    // tick would 500, i.e. total alert blackout (the evaluator is the only
+    // thing that can turn a broken system into an email). Run the legacy
+    // column set instead and say so in the run summary.
+    let rulesRes = await sb
       .from("alert_rules")
-      .select("code, name, description, severity, enabled, threshold, window_minutes, cooldown_seconds");
+      .select("code, name, description, severity, enabled, threshold, window_minutes, cooldown_seconds, cond_true_since, cond_false_since");
+    let persistenceColumnsAvailable = true;
+    if (rulesRes.error && /cond_true_since|cond_false_since/.test(rulesRes.error.message)) {
+      persistenceColumnsAvailable = false;
+      rulesRes = await sb
+        .from("alert_rules")
+        .select("code, name, description, severity, enabled, threshold, window_minutes, cooldown_seconds");
+      summary.warnings.push("alert_rules persistence columns missing — apply migration 20261102160000 (persistence + firing_email_sent_at inactive this run)");
+    }
     if (rulesRes.error) throw new Error(`alert_rules: ${rulesRes.error.message}`);
     const rules = (rulesRes.data ?? []) as RuleRow[];
     summary.rules = rules.length;
     const codes = rules.map(r => r.code);
 
-    // Probe before evaluating so the openai_credits_exhausted rule always sees
-    // this run's fresh result. Failures are recorded as unknown, never thrown.
+    // Probe before evaluating so the openai_credits_exhausted and
+    // openai_key_invalid rules always see this run's fresh result. Failures
+    // are recorded as unknown, never thrown.
     const openaiProbe = await probeOpenAiCredits(sb);
     if (openaiProbe.ran && openaiProbe.state !== "up") {
       summary.warnings.push(`openai probe: ${openaiProbe.state} — ${openaiProbe.detail ?? ""}`);
     }
 
+    // Same treatment for Cerebras: probe first so cerebras_key_invalid always
+    // sees this run's fresh result.
+    const cerebrasProbe = await probeCerebras(sb);
+    if (cerebrasProbe.ran && cerebrasProbe.state !== "up") {
+      summary.warnings.push(`cerebras probe: ${cerebrasProbe.state} — ${cerebrasProbe.detail ?? ""}`);
+    }
+
     const openRes = await sb
       .from("alert_events")
-      .select("id, rule_code, state, severity, email_sent_at, email_attempts, created_at")
+      .select("id, rule_code, state, severity, email_sent_at, email_attempts, created_at, message, value")
       .in("rule_code", codes)
       .in("state", ["firing", "acknowledged"]);
     if (openRes.error) throw new Error(`alert_events open: ${openRes.error.message}`);
@@ -906,6 +1393,28 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Recipients are needed by two passes: severity escalation (while an event
+    // is open) and the email delivery pass below. Fetched once, up front.
+    // rule_codes is optional: fall back to the old shape so a database that has
+    // not received the migration still delivers mail instead of going silent.
+    let recipientsRes = await sb
+      .from("alert_recipients")
+      .select("email, min_severity, rule_codes")
+      .eq("enabled", true);
+    if (recipientsRes.error) {
+      recipientsRes = await sb
+        .from("alert_recipients")
+        .select("email, min_severity")
+        .eq("enabled", true);
+    }
+    const recipients: RecipientRow[] = recipientsRes.error
+      ? []
+      : ((recipientsRes.data ?? []) as RecipientRow[]);
+    if (recipientsRes.error) {
+      console.warn(`[alert-evaluator] alert_recipients unreadable err=${recipientsRes.error.message}`);
+      summary.warnings.push(`alert_recipients unreadable: ${recipientsRes.error.message}`);
+    }
+
     for (const rule of rules) {
       const open = openByRule.get(rule.code);
 
@@ -921,7 +1430,57 @@ Deno.serve(async (req) => {
           if (error) console.warn(`[alert-evaluator] disable-resolve failed rule=${rule.code} err=${error.message}`);
           else summary.resolved.push(rule.code);
         }
+        // Drop any persistence timers so a re-enabled rule starts fresh.
+        if (rule.cond_true_since != null || rule.cond_false_since != null) {
+          const { error } = await sb.from("alert_rules")
+            .update({ cond_true_since: null, cond_false_since: null })
+            .eq("code", rule.code);
+          if (error) console.warn(`[alert-evaluator] disable persistence-clear failed rule=${rule.code} err=${error.message}`);
+        }
         continue;
+      }
+
+      // Severity escalation (2026-11-13 audit): time-based tiers configured in
+      // threshold.escalations. Driven purely by how long the event has been
+      // open, so it still applies when the underlying condition cannot be
+      // re-checked this tick. CAS on severity prevents a concurrent tick from
+      // double-sending the escalation email.
+      if (open) {
+        const tier = nextEscalation(rule.threshold.escalations, open.severity, open.created_at, startedAt);
+        if (tier) {
+          const updRes = await sb
+            .from("alert_events")
+            .update({ severity: tier.severity })
+            .eq("id", open.id)
+            .eq("severity", open.severity)
+            .is("resolved_at", null)
+            .select("id");
+          if (updRes.error) {
+            console.warn(`[alert-evaluator] escalation update failed rule=${rule.code} err=${updRes.error.message}`);
+          } else if ((updRes.data ?? []).length > 0) {
+            open.severity = tier.severity;
+            summary.escalated.push(`${rule.code} → ${tier.severity}`);
+            if (RESEND_API_KEY === "") {
+              summary.email_errors.push(`${rule.code}: escalation email skipped — RESEND_API_KEY not configured`);
+            } else {
+              const escResult = await sendAlertEmail(rule, open, recipients, "escalated");
+              if (escResult.ok) {
+                // Stamp the page marker so Option B still lets the later
+                // recovery email through for a successfully paged escalation.
+                if (escResult.sent > 0 && persistenceColumnsAvailable) {
+                  const stampRes = await sb
+                    .from("alert_events")
+                    .update({ firing_email_sent_at: new Date().toISOString() })
+                    .eq("id", open.id)
+                    .is("firing_email_sent_at", null);
+                  if (stampRes.error) console.warn(`[alert-evaluator] escalation stamp failed rule=${rule.code} err=${stampRes.error.message}`);
+                }
+              } else {
+                summary.email_errors.push(`${rule.code}: escalation email ${escResult.error ?? "failed"}`);
+              }
+            }
+          }
+        }
       }
 
       summary.evaluated += 1;
@@ -932,12 +1491,46 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      if (outcome.fired) {
-        if (open) continue; // already firing/acknowledged — dedupe by open row
+      // Persistence (threshold.persistence_minutes > 0): hold the condition
+      // for N minutes before opening an event, and N minutes before closing
+      // one — one-tick blips never reach the inbox (2026-11-02 audit). When
+      // the persistence columns are unavailable (migration not applied), run
+      // fully legacy-immediate instead of arming writes that would fail.
+      const persistMs = persistenceColumnsAvailable
+        ? Math.max(0, num(rule.threshold.persistence_minutes, 0)) * 60_000
+        : 0;
+      const step = persistenceStep({
+        persistMs,
+        fired: outcome.fired,
+        hasOpen: open != null,
+        trueSince: rule.cond_true_since ? Date.parse(rule.cond_true_since) : null,
+        falseSince: rule.cond_false_since ? Date.parse(rule.cond_false_since) : null,
+        nowMs: startedAt,
+      });
+
+      // Writes persistence state back to alert_rules. Only ever receives a
+      // non-empty patch: rules without timers produce `patch: {}`, while a
+      // rule whose persistence was just switched off may send a clear-only
+      // patch (stale-timer cleanup) — that write must go through even though
+      // persistMs is now 0.
+      const writePersistenceState = async (patch: { cond_true_since?: number | null; cond_false_since?: number | null }) => {
+        const body: Record<string, unknown> = {};
+        if ("cond_true_since" in patch) {
+          body.cond_true_since = patch.cond_true_since == null ? null : new Date(patch.cond_true_since).toISOString();
+        }
+        if ("cond_false_since" in patch) {
+          body.cond_false_since = patch.cond_false_since == null ? null : new Date(patch.cond_false_since).toISOString();
+        }
+        if (Object.keys(body).length === 0) return;
+        const { error } = await sb.from("alert_rules").update(body).eq("code", rule.code);
+        if (error) console.warn(`[alert-evaluator] persistence state write failed rule=${rule.code} err=${error.message}`);
+      };
+
+      if (step.action === "insert") {
         const resolvedAt = lastResolvedAt.get(rule.code);
         if (resolvedAt != null && startedAt - resolvedAt < rule.cooldown_seconds * 1000) {
           summary.cooldown_suppressed.push(rule.code);
-          continue;
+          continue; // keep the armed timestamp: re-check next tick, insert after cooldown
         }
         const { data, error } = await sb
           .from("alert_events")
@@ -957,12 +1550,13 @@ Deno.serve(async (req) => {
           continue;
         }
         if (data) summary.fired.push(rule.code);
+        await writePersistenceState(step.patch);
         continue;
       }
 
-      // Condition cleared: transition the open row to resolved and reset
-      // delivery so the recovery email goes through the normal retry pass.
-      if (open) {
+      if (step.action === "resolve" && open) {
+        // Transition the open row to resolved and reset delivery so the
+        // recovery email goes through the normal retry pass.
         const { data, error } = await sb
           .from("alert_events")
           .update({
@@ -977,8 +1571,26 @@ Deno.serve(async (req) => {
           .eq("state", open.state)
           .select("id")
           .maybeSingle();
-        if (!error && data) summary.resolved.push(rule.code);
+        if (!error && data) {
+          summary.resolved.push(rule.code);
+          await writePersistenceState(step.patch);
+        }
         if (error) console.warn(`[alert-evaluator] resolve failed rule=${rule.code} err=${error.message}`);
+        continue;
+      }
+
+      // Holding: arming the fire timer, holding the resolve timer, or clearing
+      // stale timers. Record the wait every tick (not only the arming tick) so
+      // the run summary explains why nothing fired/resolved this tick.
+      if (Object.keys(step.patch).length > 0) {
+        await writePersistenceState(step.patch);
+      }
+      if (persistMs > 0) {
+        if (outcome.fired && !open && (step.patch.cond_true_since != null || rule.cond_true_since != null)) {
+          summary.persistence_pending.push(`${rule.code}:fire`);
+        } else if (!outcome.fired && open && (step.patch.cond_false_since != null || rule.cond_false_since != null)) {
+          summary.persistence_pending.push(`${rule.code}:resolve`);
+        }
       }
     }
 
@@ -988,19 +1600,15 @@ Deno.serve(async (req) => {
     // field (1m, 2m, 4m ... capped at 30m). Eligibility is filtered in SQL so
     // permanently dead rows (resolved events past their cap or lookback)
     // cannot fill the batch window and starve newer firing emails.
-    const recipientsRes = await sb
-      .from("alert_recipients")
-      .select("email, min_severity")
-      .eq("enabled", true);
-    const recipients: RecipientRow[] = recipientsRes.error ? [] : ((recipientsRes.data ?? []) as RecipientRow[]);
-    if (recipientsRes.error) {
-      console.warn(`[alert-evaluator] alert_recipients unreadable err=${recipientsRes.error.message}`);
-    }
-
     const lookbackIso = new Date(startedAt - EMAIL_RETRY_LOOKBACK_MS).toISOString();
+    // firing_email_sent_at ships with migration 20261102160000 (same guard as
+    // the rules select above): only select it when the column exists.
+    const unsentFields = persistenceColumnsAvailable
+      ? "id, rule_code, state, severity, email_attempts, email_next_attempt_at, created_at, resolved_at, message, value, firing_email_sent_at"
+      : "id, rule_code, state, severity, email_attempts, email_next_attempt_at, created_at, resolved_at, message, value";
     const unsentRes = await sb
       .from("alert_events")
-      .select("id, rule_code, state, severity, email_attempts, email_next_attempt_at, created_at, resolved_at, message, value")
+      .select(unsentFields)
       .is("email_sent_at", null)
       .or(
         `state.neq.resolved,and(state.eq.resolved,email_attempts.lt.${EMAIL_MAX_ATTEMPTS},resolved_at.gte.${lookbackIso})`,
@@ -1037,6 +1645,22 @@ Deno.serve(async (req) => {
       emailAttemptsThisRun += 1;
       summary.emails_attempted += 1;
 
+      const kind: "firing" | "resolved" = ev.state === "resolved" ? "resolved" : "firing";
+
+      // Option B (2026-11-13 audit): never announce a recovery for a page that
+      // never went out — mark the row handled instead. This run already owns
+      // the claim, so a concurrent tick cannot race the mark.
+      if (shouldSuppressRecovery(kind, ev.firing_email_sent_at, persistenceColumnsAvailable)) {
+        const { error } = await sb.from("alert_events").update({
+          email_sent_at: nowIso,
+          email_last_error: null,
+          email_next_attempt_at: nowIso,
+        }).eq("id", ev.id).is("email_sent_at", null);
+        if (error) summary.email_errors.push(`${ev.rule_code}: recovery-suppress mark failed ${error.message}`);
+        else summary.recovery_suppressed += 1;
+        continue;
+      }
+
       if (RESEND_API_KEY === "") {
         summary.email_errors.push(`${ev.rule_code}: RESEND_API_KEY not configured`);
         await sb.from("alert_events").update({
@@ -1046,16 +1670,21 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const result = await sendAlertEmail(
-        rule,
-        ev,
-        recipients,
-        ev.state === "resolved" ? "resolved" : "firing",
-      );
+      const result = await sendAlertEmail(rule, ev, recipients, kind);
       if (result.ok) {
+        const sentAt = new Date(Date.now()).toISOString();
         const { error } = await sb.from("alert_events")
           .update({
-            email_sent_at: new Date(Date.now()).toISOString(),
+            email_sent_at: sentAt,
+            // Firing pages keep their own timestamp forever: resolve resets
+            // email_sent_at (so the recovery email can reuse the retry pass),
+            // which previously destroyed all evidence a page was sent
+            // (2026-11-02 audit). Only stamped when a recipient actually got
+            // the mail (sent > 0) and the column exists (same migration as
+            // the persistence columns — see the rules-select fallback).
+            ...(kind === "firing" && result.sent > 0 && persistenceColumnsAvailable
+              ? { firing_email_sent_at: sentAt }
+              : {}),
             email_last_error: null,
             email_next_attempt_at: nowIso,
           })

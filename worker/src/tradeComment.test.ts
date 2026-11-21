@@ -8,6 +8,7 @@ import {
   resolveTscopierCommentPrefix,
   appendOrderCommentSuffix,
   buildBasketRefreshComment,
+  parseOrderCommentTpIndex,
 } from './tradeComment'
 
 test('resolveChannelLabelForComment prefers display_name', () => {
@@ -22,8 +23,8 @@ test('sanitizeChannelCommentSlug strips non-alphanumeric', () => {
 
 test('buildTscopierCommentPrefix embeds channel slug', () => {
   const id = '28785f02-000b-4860-a3dd-58d74f890a5d'
-  assert.equal(buildTscopierCommentPrefix(id, 'GoldSignals'), 'TScopier:GoldSignals:28785f02')
-  assert.equal(buildTscopierCommentPrefix(id, null), 'TScopier:28785f02')
+  assert.equal(buildTscopierCommentPrefix(id, 'GoldSignals'), 'UniCopier:GoldSignals:28785f02')
+  assert.equal(buildTscopierCommentPrefix(id, null), 'UniCopier:28785f02')
 })
 
 test('areOrderCommentsEnabled defaults on unless explicitly false', () => {
@@ -36,16 +37,24 @@ test('areOrderCommentsEnabled defaults on unless explicitly false', () => {
 test('resolveTscopierCommentPrefix respects order_comments_enabled', () => {
   const id = '28785f02-000b-4860-a3dd-58d74f890a5d'
   assert.equal(resolveTscopierCommentPrefix(id, 'Gold', { order_comments_enabled: false }), '')
-  assert.equal(resolveTscopierCommentPrefix(id, 'Gold', {}), 'TScopier:Gold:28785f02')
+  assert.equal(resolveTscopierCommentPrefix(id, 'Gold', {}), 'UniCopier:Gold:28785f02')
 })
 
 test('appendOrderCommentSuffix returns empty when prefix is empty', () => {
   assert.equal(appendOrderCommentSuffix('', ':tp1'), '')
-  assert.equal(appendOrderCommentSuffix('TScopier:abc', ':tp1'), 'TScopier:abc:tp1')
+  assert.equal(appendOrderCommentSuffix('UniCopier:abc', ':tp1'), 'UniCopier:abc:tp1')
+})
+
+test('parseOrderCommentTpIndex reads :tpN and :rgN.tpM', () => {
+  assert.equal(parseOrderCommentTpIndex('UniCopier:FOREXKINGBAC:1df27fc2:tp1'), 0)
+  assert.equal(parseOrderCommentTpIndex('UniCopier:x:abc:tp3'), 2)
+  assert.equal(parseOrderCommentTpIndex('TSc:4d999b3e:rg2.tp3'), 2)
+  assert.equal(parseOrderCommentTpIndex('no-suffix'), null)
+  assert.equal(parseOrderCommentTpIndex(''), null)
 })
 
 test('buildBasketRefreshComment empty when comments disabled', () => {
   const id = '28785f02-000b-4860-a3dd-58d74f890a5d'
   assert.equal(buildBasketRefreshComment(id, { order_comments_enabled: false }), '')
-  assert.equal(buildBasketRefreshComment(id, {}), 'TScopier:28785f02:refresh')
+  assert.equal(buildBasketRefreshComment(id, {}), 'UniCopier:28785f02:refresh')
 })

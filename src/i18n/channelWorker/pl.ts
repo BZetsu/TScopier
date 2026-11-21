@@ -190,6 +190,8 @@ export const channelWorkerPl: ChannelWorkerTranslations = {
       'ten kanał działa w trybie pojedynczego slotu (Add to Existing Trades jest wyłączone), więc nowe wejścia muszą zawierać parametry TP/SL',
     entry_requires_imperative_or_labeled_stops:
       'wiadomość nie zawierała frazy wejścia (np. buy now, gold sell now) ani oznaczonych SL/TP',
+    tradingview_missing_sl_tp:
+      'Alert TradingView nie zawierał cen SL i TP — dodaj je do wiadomości alertu albo włącz Override SL i Override TP w konfiguracji',
     entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
     signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
     delete_pendings_no_parent:
@@ -197,6 +199,8 @@ export const channelWorkerPl: ChannelWorkerTranslations = {
     delete_pendings_requires_reply:
       'instrukcje anulowania muszą być wysyłane jako odpowiedź na oryginalną wiadomość sygnału',
     delete_pendings_none: 'nie znaleziono oczekujących zleceń do anulowania dla tej transakcji',
+    delete_pendings_cancel_failed: 'znaleziono oczekujące zlecenia, ale nie udało się anulować żadnego (broker odmówił lub był niedostępny) — spróbuj ponownie albo zamknij je na stronie Trades',
+    partial_close_unavailable_for_position_size: 'zamknięcie częściowe niemożliwe — ta pozycja jest zbyt mała do podziału (żądana część byłaby poniżej minimalnego lotu brokera); nie zamknięto niczego i transakcja pozostała otwarta w pełnym rozmiarze',
   },
   dispatchSkipped: 'Nie skopiowano tego sygnału ({reason}).',
   rangeRebalanceSkippedNamed: 'Pominięto zmianę take profit {symbol} ({reason})',
@@ -212,6 +216,10 @@ export const channelWorkerPl: ChannelWorkerTranslations = {
     'Trade EA is not ready on your MT5 terminal — enable Algo Trading and refresh broker health',
   errorBrokerNotConnected:
     'Broker nie jest połączony — w Konfiguracji konta użyj Reconnect i wpisz hasło MT dla tego konta',
+  errorBrokerBusy:
+    'Broker zajęty — zbyt wiele zleceń w toku; kolejne sygnały uruchomią się, gdy obciążenie spadnie',
+  errorOrderSendTimedOut:
+    'OrderSend timed out — sprawdź otwarte pozycje; zlecenie mogło zostać zrealizowane',
   errorInvalidStops:
     'Broker odrzucił te poziomy stop — sprawdź, czy SL/TP są po właściwej stronie rynku i spełniają minimalną odległość.',
   errorBridgeGlitch:

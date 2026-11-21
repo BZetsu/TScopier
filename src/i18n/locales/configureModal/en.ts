@@ -1,7 +1,8 @@
 import type { ConfigureModalTranslations } from './types'
 
 export const configureModalEn: ConfigureModalTranslations = {
-  title: 'Configure Trading',
+  title: 'Trading',
+  configureChannelOnBroker: 'Configure {channel} on {broker}',
   close: 'Close',
   saved: 'Saved',
   cancel: 'Cancel',
@@ -77,6 +78,15 @@ export const configureModalEn: ConfigureModalTranslations = {
     management: 'Management',
     filters: 'Filters',
     aiTraining: 'Signal Examples',
+  },
+  manualSubTabDescriptions: {
+    aiTraining: 'Teach the copier how this channel writes and updates signals.',
+    symbols: 'Limit which symbols are copied from this channel, or exclude some.',
+    channelInstructions: 'Allow or ignore channel messages that modify, close, or manage trades.',
+    risk: 'Lot size, single vs multi trade style, and how each position is sized.',
+    stops: 'Stop loss, take-profit levels, and predefined target overrides.',
+    management: 'Breakeven, trailing stop, pending expiry, and order comments.',
+    filters: 'Restrict copying by time of day, weekdays, and high-impact news.',
   },
   aiTraining: {
     title: 'AI Signal Training',
@@ -206,24 +216,29 @@ export const configureModalEn: ConfigureModalTranslations = {
     dynamicBalanceLotSizeFallback: '{lot} lots (using fixed-lot fallback — account balance not loaded)',
     tradeStyle: 'Trade Style',
     tradeStyleHint:
-      'Single Entry: one order at your full configured lot. Range Trading: splits that lot into many smaller orders across the signal\'s take-profit levels.',
-    singleTrade: 'Single Entry',
+      'Single Entries: opens a separate broker trade for each enabled Take-Profit % (same total lot). Range Trading: splits that lot into many smaller orders across the signal\'s take-profit levels.',
+    singleTrade: 'Single Entries',
     multiTrades: 'Range Trading',
     singleTpTarget: 'Single TP target',
     singleTpTargetHint:
-      'Choose which TP the broker order should target in Single Trade mode. Earlier TP levels can still trigger partial closes based on your TP distribution.',
+      'Deprecated for Single Entries — each enabled Take-Profit level opens its own broker trade with that TP visible.',
     singleTpTargetFarthest: 'Farthest TP (auto)',
     singleTpTargetTp1: 'TP1',
     singleTpTargetTp2: 'TP2',
     singleTpTargetTp3: 'TP3',
     singleTpLotBreakdownTitle: 'Lot breakdown',
-    singleTpLotBreakdownSlice: '{lot} lots closes @ {tp}',
-    partialTpMinLotWarning: 'With a lot of {lot} this trade cannot be split: {levels} will not close as partial take-profits, and only the final take-profit is placed on the broker. Each level needs at least 0.01 lot — increase the lot to close at every level.',
+    singleTpLotBreakdownSlice: '{lot} lots opens @ {tp}',
+    partialTpMinLotWarning: 'With a lot of {lot} these levels cannot open as separate trades: {levels}. Their share is added to the farthest TP. Each level needs at least 0.01 lot — increase the lot to open every level.',
     singleTpLotBreakdownJoin: ', ',
     signalEntryTitle: 'Signal entry execution',
     signalEntryBody:
-      'Use Signal Entry Price applies only in Single Trade mode. When enabled, the signal must include an explicit parsed entry (price, zone, @ price, or labels like "Entry Price:"). After any channel delay, the worker compares the live quote to that entry: Buy fills at market only when ask is at or below the entry; otherwise it places a buy limit at the entry. Sell is the inverse. The broker take-profit targets the last parsed TP when you have several targets, with optional partial closes from your TP ladder. Copier tracks each strict-entry pending so fills sync to your trade list; pendings are cancelled when the basket is flat. Bare "buy now" messages with no entry are skipped.',
+      'Use Signal Entry Price applies only in Single Trade mode. When enabled, the signal must include an explicit parsed entry (price, zone, @ price, or labels like "Entry Price:"). After any channel delay, the worker compares the live quote to that entry: Buy fills at market only when ask is at or below the entry; otherwise it places a buy limit at the entry. Sell is the inverse. When several Take-Profit levels are enabled, Single Entries open a separate broker trade per TP using your Targets %. Copier tracks each strict-entry pending so fills sync to your trade list; pendings are cancelled when the basket is flat. Bare "buy now" messages with no entry are skipped.',
     useSignalEntryPrice: 'Use Signal Entry Price',
+    signalEntryPrefer: 'Entry price',
+    signalEntryPreferHint:
+      'When the signal lists two entry prices, First Price uses the worse level for that side (buy: higher, sell: lower) and Last Price uses the best. Pip tolerance then applies to that single price.',
+    signalEntryPreferFirst: 'First Price (Worse)',
+    signalEntryPreferLast: 'Last Price (Best)',
     pipToleranceLegacy: 'Pip tolerance',
     pipToleranceHint:
       'Allowed distance from the signal entry level before entry is deferred (single trade strict entry and range signal range).',
@@ -311,7 +326,7 @@ export const configureModalEn: ConfigureModalTranslations = {
       usePredefinedTp: 'Use as Predefined TP',
       tpLevelsTitle: 'Take-profit levels',
       tpLevelsHint:
-        'Pips = distance from entry for each TP. % target = share of volume (single) or legs (multi) closed at that TP.',
+        'Pips = distance from entry for each TP. % target = share of volume opened at that TP (Single Entries open one trade per level; Range Trading distributes legs).',
       tpPipsCol: 'Pips',
       tpPercentCol: '% target',
       tpLabel: 'TP{index}',
@@ -321,7 +336,7 @@ export const configureModalEn: ConfigureModalTranslations = {
       addTp: 'Add TP',
       remove: 'Remove',
       tradeStyle: 'Trade style',
-      singleTrade: 'Single entry',
+      singleTrade: 'Single Entries',
       multiTrades: 'Range trading (multi)',
       perLegSize: 'Per-leg size (% of fixed lot)',
       rangeLayering: 'Range layering',
@@ -387,7 +402,7 @@ export const configureModalEn: ConfigureModalTranslations = {
     multiTradeNote:
       'Range Trading: distributes the planned legs across TPs by these percentages (e.g. 50/30/20 of 20 legs → 10/6/4 at TP1/TP2/TP3).',
     singleTradeNote:
-      'Single-trade: the order rides to the last enabled TP at the broker; the worker auto-partial-closes the configured percentage at every earlier TP (e.g. 50/30/20 on a 1.0 lot → close 0.50 at TP1, 0.30 at TP2, remaining 0.20 closes at TP3 via the broker).',
+      'Single Entries: opens a separate broker trade for each enabled TP using these percentages (e.g. 50/30/20 on a 3.0 lot → 1.5 @ TP1, 0.9 @ TP2, 0.6 @ TP3). Each trade has its own broker take-profit — no worker partial closes.',
     enabledTotal: 'Enabled total:',
     unallocated: '{pct}% unallocated',
     overCap: 'Over 100% (capped on next edit)',
@@ -532,10 +547,13 @@ export const configureModalEn: ConfigureModalTranslations = {
     reverseSignal: 'Reverse Signal',
     addToExisting: 'Add New Trade to Existing',
     closeOpposite: 'Close on Opposite Signal',
+    closeOnSignalDeleted: 'Close trade / Delete pending when signal deleted',
     reverseHint:
       'Reverse: a channel buy is copied as a sell, and a sell as a buy. Override signal SL/TP (pips from entry) are applied on the reversed side. If those are off, signal SL/TP prices are mirrored around entry.',
     closeOppositeHint:
       'Close on opposite: in manual mode, a new channel buy/sell closes any open trades on the same symbol facing the opposite way (channel direction, before reverse), cancels their virtual range pendings, then the new plan runs.',
+    closeOnSignalDeletedHint:
+      'When ON, deleting the original signal message on Telegram, Discord, or WhatsApp closes open trades from that signal and cancels its pending orders (including virtual range legs). Off by default.',
     addExistingHint:
       'Add to existing: follow-up on the same side refreshes every open leg that belongs to the same original signal (same basket), in fill order (oldest leg first), using the planner\'s multi-trade TP distribution (each leg gets the SL/TP of the matching immediate order from your TP lot percentage rows). Range virtual pendings for that basket are cancelled and re-inserted under the parent signal. Reply-thread or 4h time window still applies. Single-trade partial-TP rows are only re-created when the basket is a single leg.',
     rrFallbacksTitle: 'R:R fallbacks',
@@ -632,5 +650,66 @@ export const configureModalEn: ConfigureModalTranslations = {
   riskDisclaimer: {
     warning: 'Warning! Your capital is at risk. Only copy signal providers you trust.',
     fullLink: 'See full risk disclaimer',
+  },
+  configureWithAi: {
+    button: 'Configure with AI',
+    title: 'Configure with AI',
+    subtitle: 'Describe how you want to trade — or load this channel’s signal format for tailored settings.',
+    close: 'Close',
+    placeholder: 'e.g. Set break even to TP2, or use 1% risk…',
+    send: 'Send',
+    thinking: 'Thinking…',
+    welcome:
+      'Ask for any setting (e.g. break even at TP2), or load this channel’s signal format for a full setup.',
+    needChannel: 'Select a channel first to configure with AI.',
+    loadFromChannel: 'Load from channel',
+    loadJsonFormat: 'Load JSON format',
+    loadingExamples: 'Loading signals from this channel…',
+    loadingJsonFormat: 'Loading TradingView JSON format…',
+    examplesLoaded: 'Loaded {count} signal example(s).',
+    examplesEmpty:
+      'No recent signals found on this channel yet — paste a few sample signals below, or wait for new messages.',
+    examplesEmptyTradingView:
+      'No TradingView alert JSON found yet — paste a sample alert JSON below, or configure the alert template on the channel.',
+    pasteLabel: 'Paste signal format',
+    pastePlaceholder: 'Paste one or more sample channel signals…',
+    pastePlaceholderTradingView: 'Paste one or more TradingView alert JSON payloads…',
+    usePaste: 'Use pasted signals',
+    clearPaste: 'Clear paste',
+    examplesCount: '{count} example(s) in context',
+    examplesHeading: 'Signal examples',
+    examplesHeadingTradingView: 'TradingView JSON format',
+    exampleLabelEntry: 'Entry',
+    exampleLabelUpdate: 'Update',
+    exampleLabelIgnore: 'Ignore',
+    analyzingExamples: 'Analyzing your signal format…',
+    analyzingJsonFormat: 'Analyzing your TradingView JSON format…',
+    analyzeRequest:
+      'Analyze the signal examples I just loaded (also listed below and in context). Classify entry style (single price vs range/zone / teaser→params), how the channel sends modify/close, consider my account size, summarize lot size, trade style, targets, and management, then call propose_settings now with a full draft. Ask only if something critical is missing.',
+    analyzeRequestTradingView:
+      'Analyze the TradingView alert JSON format I just loaded (also listed below and in context). Classify the payload shape (entry, SL, TPs), consider my account size, propose lot size, trade style, targets, and management, then call propose_settings now. Ask only if something critical is missing.',
+    applyToForm: 'Apply Settings',
+    applySettings: 'Apply settings',
+    applySettingsHint: 'This will apply the settings to the configuration.',
+    somethingElsePill: 'Something else',
+    dismissProposal: 'Dismiss',
+    proposalTitle: 'Proposed settings',
+    proposalApplied: 'Applied to the form — click Save in Configure Trading when you’re ready.',
+    proposalRationale: 'Why',
+    proposalWarnings: 'Notes',
+    errorFallback: 'Something went wrong. Please try again.',
+    trainHint: 'You can also train Signal Examples in the Configure accordion to refresh channel samples.',
+  },
+  advancedOnlyNotice: {
+    title: 'These settings need the Advanced plan',
+    body: 'Your current plan runs entries with simple settings only. Because this configuration uses the items below, signals from this channel are skipped instead of copied. Switch them off, or upgrade the plan.',
+    items: {
+      multiTrade: 'Several positions per signal (trade style: multiple)',
+      rangeTrading: 'Range trading',
+      moveSlToEntry: 'Moving the stop loss to entry after a trigger',
+      reverseSignal: 'Reversed direction',
+      closeWorseEntries: 'Closing instant entries when price runs past the signal',
+      riskReward: 'Stop loss or targets calculated from risk-reward',
+    },
   },
 }

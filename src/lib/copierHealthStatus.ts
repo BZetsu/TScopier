@@ -10,6 +10,10 @@ export type CopierHealthSnapshot = {
   signalListenerStatus: SignalListenerStatus
   copierEngineStatus: CopierEngineStatus
   workerOwnershipStatus: WorkerOwnershipStatus
+  /** Raw MTProto flag from the worker health row (false when lease-only). */
+  mtprotoConnected: boolean
+  /** True when last_successful_probe_at is within freshness_threshold_ms. */
+  probeFresh: boolean
   lastSuccessfulHealthAt: string | null
   updatedAt: string | null
   reason: string | null
@@ -49,6 +53,8 @@ export function copierHealthFromRow(
       signalListenerStatus: 'unknown',
       copierEngineStatus: 'unknown',
       workerOwnershipStatus: 'unknown',
+      mtprotoConnected: false,
+      probeFresh: false,
       lastSuccessfulHealthAt: null,
       updatedAt: null,
       reason: null,
@@ -64,9 +70,10 @@ export function copierHealthFromRow(
   const threshold = freshnessThresholdMs(row)
   const rowFresh = updatedMs != null && nowMs - updatedMs <= threshold
   const probeFresh = probeMs != null && nowMs - probeMs <= threshold
+  const mtprotoConnected = row.mtproto_connected === true
   const canBeOperational =
     signalListenerStatus === 'connected'
-    && row.mtproto_connected === true
+    && mtprotoConnected
     && workerOwnershipStatus === 'owned'
     && rowFresh
     && probeFresh
@@ -88,6 +95,8 @@ export function copierHealthFromRow(
     signalListenerStatus,
     copierEngineStatus,
     workerOwnershipStatus,
+    mtprotoConnected,
+    probeFresh,
     lastSuccessfulHealthAt: typeof row.last_successful_probe_at === 'string' && probeMs != null ? row.last_successful_probe_at : null,
     updatedAt: typeof row.updated_at === 'string' && updatedMs != null ? row.updated_at : null,
     reason: typeof row.health_reason === 'string' ? row.health_reason : null,

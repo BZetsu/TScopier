@@ -4,6 +4,7 @@ export const chromeNl: AppChromeTranslations = {
   nav: {
     sections: {
       general: 'ALGEMEEN',
+      copy: 'KOPIËREN',
       signals: 'SIGNALEN',
       discover: 'ONTDEK',
       tradingTools: 'HANDELSTOOLS',
@@ -132,10 +133,10 @@ export const chromeNl: AppChromeTranslations = {
       cancel: 'Cancel',
       welcomeTitle: 'I can help you set up and run UniCopier.',
       suggestions: [
-        'Is my Telegram linked?',
+        'Are my Signals connected?',
+        'Add an account in Account Configuration',
+        'Show my Account Trades',
         'Pause the copier',
-        'Connect an MT5 account',
-        'What are trading presets?',
       ],
       emptyReply: 'How else can I help?',
       actionDone: 'Done.',
@@ -204,6 +205,14 @@ export const chromeNl: AppChromeTranslations = {
         positionClosed: 'Closed',
         reportStatusOpen: 'Open',
         reportStatusResolved: 'Opgelost',
+      },
+      csvCard: {
+        title: 'CSV-export',
+        ready: 'Je CSV met accounttrades is klaar.',
+        empty: 'Geen accounttrades gevonden voor die dag.',
+        download: 'CSV downloaden',
+        countLabel: '{count} trades',
+        exportFailed: 'Accounttrades exporteren mislukt. Probeer Accounttrades in de app.',
       },
 
     },

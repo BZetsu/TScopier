@@ -45,6 +45,10 @@ function normalizeSkipReasonKey(value: unknown): string {
 /** Expected setup gaps — hidden from the Channel Worker feed to reduce noise. */
 const SILENCED_CHANNEL_WORKER_SKIP_REASONS = new Set([
   'no_broker_channel_match',
+  // Post-fill basket stop apply found nothing to change (SL/TP already on the
+  // broker or cleared). Not a skipped order — hide so Copier Process does not
+  // show "Order placement / Skipped" for a live fill.
+  'no_stops_to_apply',
 ])
 
 export function isSilencedChannelWorkerSkipReason(value: unknown): boolean {
@@ -236,6 +240,12 @@ function translateBrokerError(message: string, cw: ChannelWorkerTranslations, sy
   }
   if (/not connected/i.test(message) || /broker session is not connected/i.test(message)) {
     return cw.errorBrokerNotConnected
+  }
+  if (/broker busy|OrderSendSafe broker busy|CONCURRENCY_BUSY/i.test(message)) {
+    return cw.errorBrokerBusy
+  }
+  if (/OrderSendSafe timed out|OrderSend timed out|OrderSendSafe.*timed out/i.test(message)) {
+    return cw.errorOrderSendTimedOut
   }
   if (/order rejected|invalid stops?|invalid stop/i.test(message)) {
     return cw.errorInvalidStops
@@ -528,6 +538,7 @@ const CHANNEL_WORKER_HIDDEN_LOG_ACTIONS = new Set([
   'queue_consume_retry',
   'queue_dead_letter',
   'basket_reconcile_tick',
+  'basket_leg_modify',
   'virtual_pending_tp_lock',
   'signal_entry_pending_sync',
   'news_pre_close',
@@ -613,6 +624,7 @@ export function channelWorkerLogMessage(
   const skipReason = resolveLogSkipReason(row)
   if (isNonTradeSkipReason(skipReason)) return null
   if (isSilencedChannelWorkerSkipReason(skipReason)) return null
+  if (isInternalRebalancePayload(row.request_payload ?? {})) return null
   const logAction = row.action.toLowerCase()
   const signalAction = signalActionFromLog(row)
   if (CHANNEL_WORKER_HIDDEN_LOG_ACTIONS.has(logAction)) return null
@@ -661,15 +673,8 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
   const err = errSuffix(row, cw)
 
   if (logAction === 'mgmt_skip') {
-    const reason = translateSkipReason(
-      String(payload.skip_reason ?? row.error_message ?? cw.noMatchingOpenTrade),
-      cw,
-    )
     const mgmt = signalAction === 'close' ? 'close' : signalAction || 'modify'
-    return interpolate(cw.mgmtSkippedReason, {
-      phrase: mgmtSkippedPhrase(mgmt, instr, cw),
-      reason,
-    })
+    return mgmtSkippedMessage(payload.skip_reason ?? row.error_message, mgmt, instr, cw)
   }
 
   if (logAction === 'dispatch_skipped') {
@@ -770,7 +775,9 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
     return interpolate(cw.orderSent, { on })
   }
 
-  if (logAction === 'basket_leg_modify' && isInternalRebalancePayload(payload)) {
+  // Per-leg basket stop applies are internal (merge_modify_summary / order_send
+  // are the user-facing rows). Never surface them as "Completed: sell …".
+  if (logAction === 'basket_leg_modify') {
     return ''
   }
   if (logAction === 'range_basket_tp_rebalance') {
@@ -810,12 +817,7 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
       return `${mgmtFailurePhrase(mgmt, instr, cw)}${err}`
     }
     if (status === 'skipped') {
-      const phrase = mgmtSkippedPhrase(mgmt, instr, cw)
-      const reason = translateSkipReason(
-        String(payload.skip_reason ?? row.error_message ?? cw.noMatchingOpenTrade),
-        cw,
-      )
-      return interpolate(cw.mgmtSkippedReason, { phrase, reason })
+      return mgmtSkippedMessage(payload.skip_reason ?? row.error_message, mgmt, instr, cw)
     }
     return mgmtSuccessPhrase(mgmt, instr, parsed, cw)
   }
@@ -1069,6 +1071,12 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
       const sl = slPart(payload.new_sl, cw, half ? 'paren' : 'at')
       return half ? interpolate(cw.autoBeHalf, { on, sl }) : interpolate(cw.autoBe, { on, sl })
     }
+    if (status === 'skipped') {
+      // Deferred, not failed: the row's position was absent from the live
+      // snapshot (2026-11-03 Luis incident) — show the neutral skipped
+      // phrasing, not "could not move stop loss".
+      return mgmtSkippedMessage(payload.skip_reason ?? row.error_message, 'breakeven', instr, cw)
+    }
     return interpolate(cw.autoBeFailed, { on: onInstrument(instr, cw), err })
   }
   if (logAction === 'cwe_close') {
@@ -1097,6 +1105,23 @@ function buildChannelWorkerLogMessage(row: ChannelWorkerLogRow, cw: ChannelWorke
     || CHANNEL_WORKER_HIDDEN_LOG_ACTIONS.has(logAction)
   ) {
     return ''
+  }
+
+  // Skipped logs must never use the "Completed: buy/sell" fallback — that
+  // contradicted the Skipped badge when post-fill housekeeping rows leaked through.
+  if (status === 'skipped') {
+    const reason = translateSkipReason(
+      String(payload.skip_reason ?? row.error_message ?? cw.notPlaced),
+      cw,
+      String(payload.symbol ?? payload.trade_symbol ?? instr ?? '').trim() || null,
+    )
+    if (signalAction === 'buy' || signalAction === 'sell') {
+      return interpolate(cw.orderDidNotPlaceSkipped, {
+        on: onInstrument(instr, cw),
+        reason,
+      })
+    }
+    return interpolate(cw.dispatchSkipped, { reason })
   }
 
   // Unknown success rows must not read as a filled entry — real opens use order_send / pending paths.
@@ -1237,6 +1262,26 @@ function mgmtFailurePhrase(action: string, instr: string | null, cw: ChannelWork
         () => cw.mgmtApplyFailGeneric,
       )
   }
+}
+
+/**
+ * Shared sentence for a skipped management action: neutral phrase + translated
+ * reason. One copy of the idiom for `mgmt_skip`, `mgmt_*` skipped rows, and
+ * `auto_be` skipped rows, so the reason-priority chain
+ * (`skip_reason` → `error_message` → "no matching open trade") and wording
+ * change in exactly one place.
+ */
+function mgmtSkippedMessage(
+  reasonRaw: unknown,
+  phraseAction: string,
+  instr: string | null,
+  cw: ChannelWorkerTranslations,
+): string {
+  const reason = translateSkipReason(String(reasonRaw ?? cw.noMatchingOpenTrade), cw)
+  return interpolate(cw.mgmtSkippedReason, {
+    phrase: mgmtSkippedPhrase(phraseAction, instr, cw),
+    reason,
+  })
 }
 
 function mgmtSkippedPhrase(action: string, instr: string | null, cw: ChannelWorkerTranslations): string {

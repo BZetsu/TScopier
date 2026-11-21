@@ -11,11 +11,21 @@ import {
   copierLogDestinationLabel,
   copierLogSourceIcon,
   copierLogSourceLabel,
-  copierLogToastFingerprint,
   copierLogToastFromSignal,
+  mergeCopierLogToastSeen,
+  readCopierLogToastSeen,
+  shouldAnnounceCopierLogToast,
   signalHistoryToastLabels,
+  writeCopierLogToastSeen,
   type CopierLogToast,
 } from '../../lib/copierLogToast'
+import { CopierDestinationLogos } from './CopierDestinationLogos'
+import {
+  buildChannelSourceKinds,
+  resolveSignalSourceKind,
+  resolveSignalSourceName,
+  SIGNAL_SOURCE_MARKS,
+} from '../../lib/signalSourceMark'
 import { whenRealtimeReady } from '../../lib/whenRealtimeReady'
 
 type ChannelRow = {
@@ -27,6 +37,7 @@ type ChannelRow = {
 
 const TOAST_MS = 6_000
 const MAX_TOASTS = 4
+const SEEN_HYDRATE_LIMIT = 100
 
 const STATUS_ACCENT: Record<string, string> = {
   executed: 'bg-green-400',
@@ -36,7 +47,14 @@ const STATUS_ACCENT: Record<string, string> = {
   parsed: 'bg-teal-400',
 }
 
-export function CopierLogToasts({ userId }: { userId: string | undefined }) {
+export function CopierLogToasts({
+  userId,
+  embedded = false,
+}: {
+  userId: string | undefined
+  /** When true, omit the fixed stack wrapper (parent provides it). */
+  embedded?: boolean
+}) {
   const t = useT()
   const navigate = useNavigate()
   const { brokers } = useBrokerAccounts()
@@ -78,7 +96,7 @@ export function CopierLogToasts({ userId }: { userId: string | undefined }) {
 
   useEffect(() => {
     if (!userId) return
-    seen.current.clear()
+    seen.current = readCopierLogToastSeen(userId)
     channelsRef.current = new Map()
     setToasts([])
     let cancelled = false
@@ -97,10 +115,11 @@ export function CopierLogToasts({ userId }: { userId: string | undefined }) {
       return next
     }
 
-    const show = async (signal: Signal) => {
-      const fingerprint = copierLogToastFingerprint(signal)
-      if (seen.current.get(signal.id) === fingerprint) return
-      seen.current.set(signal.id, fingerprint)
+    const show = async (signal: Signal, event: 'INSERT' | 'UPDATE') => {
+      if (cancelled) return
+      const decision = shouldAnnounceCopierLogToast(seen.current, signal, event)
+      writeCopierLogToastSeen(userId, seen.current)
+      if (decision !== 'show') return
       const channels = await ensureChannels()
       if (cancelled) return
       if (signal.channel_id && !channels.has(signal.channel_id)) {
@@ -109,13 +128,18 @@ export function CopierLogToasts({ userId }: { userId: string | undefined }) {
       }
       if (cancelled) return
       const channel = signal.channel_id ? channelsRef.current.get(signal.channel_id) : null
+      const channelSourceKinds = buildChannelSourceKinds([...channelsRef.current.values()])
+      const sourceKind = resolveSignalSourceKind(signal, channelSourceKinds)
+      const sourceName = resolveSignalSourceName(signal, undefined, channelSourceKinds)
       const toast = copierLogToastFromSignal(
         signal,
         labelsRef.current.copierLogs,
         signalHistoryToastLabels(labelsRef.current.history),
         {
-          source: copierLogSourceLabel(channel, labelsRef.current.unknownChannel),
-          sourceIcon: copierLogSourceIcon(channel),
+          source: channel
+            ? copierLogSourceLabel(channel, labelsRef.current.unknownChannel)
+            : `${SIGNAL_SOURCE_MARKS[sourceKind].label} · ${sourceName}`,
+          sourceIcon: copierLogSourceIcon(channel, sourceKind),
           destination: copierLogDestinationLabel(brokersRef.current, signal.channel_id),
           destinationIcons: copierLogDestinationIcons(brokersRef.current, signal.channel_id),
         },
@@ -130,22 +154,40 @@ export function CopierLogToasts({ userId }: { userId: string | undefined }) {
       }, TOAST_MS))
     }
 
-    void whenRealtimeReady(userId).then(() => {
+    const start = async () => {
+      // Mark existing signal statuses as already shown before listening, so
+      // refresh + reconcile UPDATEs (same status) do not resurrect old toasts.
+      const { data } = await supabase
+        .from('signals')
+        .select('id,status,skip_reason')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(SEEN_HYDRATE_LIMIT)
+      if (cancelled) return
+      mergeCopierLogToastSeen(
+        seen.current,
+        (data ?? []) as Array<Pick<Signal, 'id' | 'status' | 'skip_reason'>>,
+      )
+      writeCopierLogToastSeen(userId, seen.current)
+
+      await whenRealtimeReady(userId)
       if (cancelled) return
       channel = supabase
         .channel(`copier_log_toasts:${userId}`)
         .on(
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'signals', filter: `user_id=eq.${userId}` },
-          payload => show(payload.new as Signal),
+          payload => void show(payload.new as Signal, 'INSERT'),
         )
         .on(
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'signals', filter: `user_id=eq.${userId}` },
-          payload => show(payload.new as Signal),
+          payload => void show(payload.new as Signal, 'UPDATE'),
         )
         .subscribe()
-    })
+    }
+
+    void start()
 
     return () => {
       cancelled = true
@@ -156,48 +198,49 @@ export function CopierLogToasts({ userId }: { userId: string | undefined }) {
   if (toasts.length === 0) return null
 
   const closeLabel = t.copierLogs.detailModal?.close ?? 'Close'
+  const cards = toasts.map(toast => (
+    <div
+      key={toast.signalId}
+      className="pointer-events-auto flex items-stretch overflow-hidden rounded-lg border border-neutral-200 bg-white text-sm shadow-lg dark:border-neutral-700 dark:bg-neutral-900"
+    >
+      <span className={clsx('w-1 shrink-0', STATUS_ACCENT[toast.status] ?? 'bg-neutral-300')} aria-hidden />
+      <button
+        type="button"
+        onClick={() => navigate('/copier-logs')}
+        className="min-w-0 flex-1 py-2.5 ps-3 text-start"
+      >
+        <p className="font-semibold text-neutral-900 dark:text-neutral-50">{toast.title}</p>
+        <p className="mt-0.5 line-clamp-2 text-neutral-900 dark:text-neutral-50">{toast.detail}</p>
+        <p className="mt-1 flex items-center gap-1.5 text-xs text-neutral-900 dark:text-neutral-50">
+          {toast.sourceIcon ? (
+            <img src={toast.sourceIcon} alt="" aria-hidden className="h-4 w-4 shrink-0 object-contain" />
+          ) : null}
+          <span className="truncate">{t.configurationsPage.copyFrom} {toast.source}</span>
+        </p>
+        <p className="flex items-center gap-1.5 text-xs text-neutral-900 dark:text-neutral-50">
+          <CopierDestinationLogos icons={toast.destinationIcons} />
+          <span className="truncate">{t.configurationsPage.copyTo} {toast.destination}</span>
+        </p>
+      </button>
+      <button
+        type="button"
+        onClick={() => dismiss(toast.signalId)}
+        className="my-2 me-2 rounded-md p-1 text-neutral-900 hover:bg-neutral-100 dark:text-neutral-50 dark:hover:bg-neutral-800"
+        aria-label={closeLabel}
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  ))
+
+  if (embedded) return <>{cards}</>
 
   return (
     <div
       className="pointer-events-none fixed bottom-4 inset-e-4 z-70 flex w-[min(100vw-2rem,22rem)] flex-col gap-2"
       aria-live="polite"
     >
-      {toasts.map(toast => (
-        <div
-          key={toast.signalId}
-          className="pointer-events-auto flex items-stretch overflow-hidden rounded-lg border border-neutral-200 bg-white text-sm shadow-lg dark:border-neutral-700 dark:bg-neutral-900"
-        >
-          <span className={clsx('w-1 shrink-0', STATUS_ACCENT[toast.status] ?? 'bg-neutral-300')} aria-hidden />
-          <button
-            type="button"
-            onClick={() => navigate('/copier-logs')}
-            className="min-w-0 flex-1 py-2.5 ps-3 text-start"
-          >
-            <p className="font-semibold text-neutral-900 dark:text-neutral-50">{toast.title}</p>
-            <p className="mt-0.5 line-clamp-2 text-neutral-900 dark:text-neutral-50">{toast.detail}</p>
-            <p className="mt-1 flex items-center gap-1.5 text-xs text-neutral-900 dark:text-neutral-50">
-              {toast.sourceIcon ? (
-                <img src={toast.sourceIcon} alt="" aria-hidden className="h-4 w-4 shrink-0 object-contain" />
-              ) : null}
-              <span className="truncate">{t.configurationsPage.copyFrom} {toast.source}</span>
-            </p>
-            <p className="flex items-center gap-1.5 text-xs text-neutral-900 dark:text-neutral-50">
-              {toast.destinationIcons.map(icon => (
-                <img key={icon} src={icon} alt="" aria-hidden className="h-4 w-4 shrink-0 object-contain" />
-              ))}
-              <span className="truncate">{t.configurationsPage.copyTo} {toast.destination}</span>
-            </p>
-          </button>
-          <button
-            type="button"
-            onClick={() => dismiss(toast.signalId)}
-            className="my-2 me-2 rounded-md p-1 text-neutral-900 hover:bg-neutral-100 dark:text-neutral-50 dark:hover:bg-neutral-800"
-            aria-label={closeLabel}
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      ))}
+      {cards}
     </div>
   )
 }

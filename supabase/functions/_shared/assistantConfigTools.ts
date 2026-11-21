@@ -24,8 +24,10 @@ export const DEFAULT_MANUAL_SETTINGS: Record<string, unknown> = {
   range_layering_type: "auto",
   reverse_signal: false,
   use_signal_entry_price: false,
+  signal_entry_prefer: "first_price",
   signal_entry_pip_tolerance: 10,
   close_on_opposite_signal: false,
+  close_on_signal_deleted: false,
   order_comments_enabled: true,
 };
 
@@ -51,6 +53,7 @@ export const PATCHABLE_MANUAL_KEYS = new Set([
   "close_worse_entries_pips",
   "reverse_signal",
   "use_signal_entry_price",
+  "signal_entry_prefer",
   "signal_entry_pip_tolerance",
   "use_predefined_sl_pips",
   "predefined_sl_pips",
@@ -61,6 +64,7 @@ export const PATCHABLE_MANUAL_KEYS = new Set([
   "symbol_to_trade",
   "symbols_exclude",
   "close_on_opposite_signal",
+  "close_on_signal_deleted",
   "order_comments_enabled",
   "pending_expiry_hours",
   "add_new_trades_to_existing",
@@ -70,11 +74,49 @@ export const PATCHABLE_MANUAL_KEYS = new Set([
   "trailing_distance_pips",
 ]);
 
+/**
+ * Broader allowlist for the Configure with AI expert (draft-only patches).
+ * Includes management / TP lot / breakeven keys the global assistant does not write.
+ */
+export const CONFIGURE_AI_PATCHABLE_KEYS = new Set([
+  ...PATCHABLE_MANUAL_KEYS,
+  "tp_lots",
+  "single_tp_target",
+  "move_sl_to_entry_after_mode",
+  "move_sl_to_entry_after_value",
+  "move_sl_to_entry_tp_index",
+  "move_sl_to_entry_type",
+  "breakeven_offset_pips",
+  // Legacy aliases (ignored by product UI if present; prefer the keys above)
+  "move_sl_to_entry_after_tp_index",
+  "move_sl_to_entry_after_pips",
+  "news_trading_enabled",
+  "news_avoid_impacts",
+  "close_before_news_minutes",
+  "resume_after_news_minutes",
+  "time_filter_enabled",
+  "trade_start_hour",
+  "trade_end_hour",
+  "days_filter_enabled",
+  "trade_days",
+]);
+
 export function sanitizeManualPatch(raw: unknown): Record<string, unknown> {
+  return sanitizePatchAgainstAllowlist(raw, PATCHABLE_MANUAL_KEYS);
+}
+
+export function sanitizeConfigureAiPatch(raw: unknown): Record<string, unknown> {
+  return sanitizePatchAgainstAllowlist(raw, CONFIGURE_AI_PATCHABLE_KEYS);
+}
+
+function sanitizePatchAgainstAllowlist(
+  raw: unknown,
+  allowlist: Set<string>,
+): Record<string, unknown> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (!PATCHABLE_MANUAL_KEYS.has(key)) continue;
+    if (!allowlist.has(key)) continue;
     if (value === undefined) continue;
     out[key] = value;
   }
@@ -85,7 +127,10 @@ export function mergeManualSettings(
   current: Record<string, unknown>,
   patch: Record<string, unknown>,
 ): Record<string, unknown> {
-  const merged = {
+  // Annotated explicitly: spreading Record<string, unknown> into a literal with a
+  // later fixed property made TypeScript drop the index signature, so the two
+  // assignments below failed to type-check.
+  const merged: Record<string, unknown> = {
     ...DEFAULT_MANUAL_SETTINGS,
     ...current,
     ...patch,
@@ -114,6 +159,9 @@ export function summarizeManualPatch(patch: Record<string, unknown>): string {
   if (patch.range_step_pips != null) parts.push(`step ${patch.range_step_pips}p`);
   if (patch.range_distance_pips != null) parts.push(`distance ${patch.range_distance_pips}p`);
   if (patch.reverse_signal === true) parts.push("reverse on");
+  if (patch.use_signal_entry_price === true) parts.push("signal entry price on");
+  if (patch.signal_entry_prefer === "last_price") parts.push("entry Last Price");
+  else if (patch.signal_entry_prefer === "first_price") parts.push("entry First Price");
   if (parts.length === 0) {
     const keys = Object.keys(patch);
     return keys.length ? keys.slice(0, 6).join(", ") : "settings";

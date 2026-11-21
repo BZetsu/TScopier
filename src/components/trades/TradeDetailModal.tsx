@@ -31,10 +31,13 @@ import {
   type SocialCopyAttribution,
 } from '../../lib/socialCopyAttribution'
 import {
+  fetchPartialCloseTooSmall,
   fetchPlanFallbackReason,
   isTpSplitSkippedReason,
   staleEntryNotice,
+  strippedTpNotice,
 } from '../../lib/tradeExecutionNotes'
+import { resolveTradeDisplayDirection } from '../../lib/tradeDirection'
 import type { MtTrade } from '../../lib/fxsocketBroker'
 import {
   formatSignalInstructions,
@@ -94,6 +97,7 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
   const [mirrorCloseStatus, setMirrorCloseStatus] = useState<'idle' | 'working' | 'done' | 'timeout' | 'error'>('idle')
   const [mirrorCloseError, setMirrorCloseError] = useState<string | null>(null)
   const [planFallbackReason, setPlanFallbackReason] = useState<string | null>(null)
+  const [partialCloseTooSmall, setPartialCloseTooSmall] = useState(false)
   const [showReport, setShowReport] = useState(false)
 
   useEffect(() => {
@@ -108,6 +112,7 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
       setMirrorCloseStatus('idle')
       setMirrorCloseError(null)
       setPlanFallbackReason(null)
+      setPartialCloseTooSmall(false)
       return
     }
     if (!userId) {
@@ -119,6 +124,7 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
       setMirrorCloseStatus('idle')
       setMirrorCloseError(null)
       setPlanFallbackReason(null)
+      setPartialCloseTooSmall(false)
       return
     }
 
@@ -133,6 +139,7 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
     setMirrorCloseStatus('idle')
     setMirrorCloseError(null)
     setPlanFallbackReason(null)
+    setPartialCloseTooSmall(false)
 
     void (async () => {
       try {
@@ -157,7 +164,7 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
         setMirrorAttribution(mirror)
         setSocialAttribution(social)
         if (result?.signal) {
-          const [failures, fallbackReason] = await Promise.all([
+          const [failures, fallbackReason, partialCloseRefused] = await Promise.all([
             fetchBrokerFailuresForTrade(supabase, {
               userId,
               signalId: result.signal.id,
@@ -168,10 +175,17 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
               signalId: result.signal.id,
               brokerAccountId: trade.broker_id,
             }),
+            fetchPartialCloseTooSmall(supabase, {
+              userId,
+              signalId: result.signal.id,
+              brokerAccountId: trade.broker_id,
+              ticket: trade.ticket,
+            }),
           ])
           if (cancelled) return
           setBrokerFailures(failures)
           setPlanFallbackReason(fallbackReason)
+          setPartialCloseTooSmall(partialCloseRefused)
         }
       } catch (e) {
         if (!cancelled) {
@@ -303,9 +317,15 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
 
   const askAssistantAboutFailure = () => {
     if (!structuredBrokerFailure) return
+    const dm = t.copierLogs.detailModal
     assistant.persistMessages(prev => [
       ...prev,
-      { role: 'user', content: buildTradeFailureAssistantPrompt(structuredBrokerFailure) },
+      {
+        role: 'user',
+        content: buildTradeFailureAssistantPrompt(structuredBrokerFailure, {
+          instruction: dm?.explainFailurePrompt,
+        }),
+      },
     ])
     assistant.openAssistant()
   }
@@ -313,6 +333,7 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
   const askAssistantExplainSignal = () => {
     if (!trade) return
     const parsed = context?.signal?.parsed_data as Record<string, unknown> | null
+    const dm = t.copierLogs.detailModal
     const ctx = [
       `Signal ID: ${context?.signal?.id}`,
       `Status: ${context?.signal?.status}`,
@@ -324,7 +345,9 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
       context?.signal?.skip_reason ? `Skip reason: ${context.signal.skip_reason}` : '',
       rawMessage ? `\nOriginal Telegram message:\n${rawMessage}` : '',
     ].filter(Boolean).join('\n')
-    assistant.setPendingAutoSend(`Please explain what happened with this trade signal in plain English.\n\n${ctx}`)
+    assistant.setPendingAutoSend(
+      `${dm?.explainSignalPrompt ?? 'Please explain what happened with this trade signal in clear, everyday language.'}\n\n${ctx}`,
+    )
     assistant.openAssistant()
   }
 
@@ -344,11 +367,24 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
 
   if (!trade || !display) return null
 
-  const staleEntry = staleEntryNotice(
-    (context?.signal?.parsed_data as Record<string, unknown> | null)?.entry_price,
-    trade.entry_price,
-  )
+  const signalParsed = (context?.signal?.parsed_data as Record<string, unknown> | null) ?? null
+  const staleEntry = staleEntryNotice(signalParsed?.entry_price, trade.entry_price)
+  // Only while the trade is open: the note claims it "stayed open at its full
+  // size", which stops being true once the trade closes.
+  const partialCloseNote = partialCloseTooSmall && trade.status === 'open'
   const showTpSplitNote = isTpSplitSkippedReason(planFallbackReason)
+  const strippedTp = strippedTpNotice({
+    tpLevels: signalParsed?.tp,
+    fillPrice: trade.entry_price,
+    brokerTp: trade.tp,
+    direction: resolveTradeDisplayDirection({
+      direction: trade.direction,
+      entry_price: trade.entry_price,
+      sl: trade.sl,
+      tp: trade.tp,
+    }) || String(signalParsed?.action ?? ''),
+    tpUnit: signalParsed?.tp_unit,
+  })
 
   const channelLabel = (() => {
     const ch = context?.channel
@@ -622,7 +658,7 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
             </section>
           ) : null}
 
-          {staleEntry != null || showTpSplitNote ? (
+          {staleEntry != null || showTpSplitNote || strippedTp != null || partialCloseNote ? (
             <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 space-y-2 dark:border-amber-900/60 dark:bg-amber-950/25">
               <div className="flex items-center gap-2">
                 <TriangleAlert className="h-4 w-4 shrink-0 text-amber-700 dark:text-amber-300" aria-hidden />
@@ -637,6 +673,12 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
                       ?? 'Some partial take-profits were skipped — this lot is too small to split (those slices would be below the broker minimum). The remaining take-profits still apply.'}
                   </li>
                 ) : null}
+                {partialCloseNote ? (
+                  <li className="text-sm text-neutral-900 dark:text-neutral-50">
+                    {tr.execNotePartialCloseTooSmall
+                      ?? 'A requested partial close could not be executed — this position was too small to split (the requested part would fall below the broker minimum lot), so that instruction closed nothing and the trade was left at its full size.'}
+                  </li>
+                ) : null}
                 {staleEntry != null ? (
                   <li className="text-sm text-neutral-900 dark:text-neutral-50">
                     {interpolate(
@@ -645,6 +687,18 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
                       {
                         entry: formatTradePrice(staleEntry.signalEntry),
                         fill: formatTradePrice(staleEntry.fillPrice),
+                      },
+                    )}
+                  </li>
+                ) : null}
+                {strippedTp != null ? (
+                  <li className="text-sm text-neutral-900 dark:text-neutral-50">
+                    {interpolate(
+                      tr.execNoteTpStripped
+                        ?? 'Take-profits {levels} were stripped — the trade opened at {fill}, past the take-profit price, so applying them would have closed the trade immediately.',
+                      {
+                        levels: strippedTp.levels.map(formatTradePrice).join(', '),
+                        fill: formatTradePrice(strippedTp.fillPrice),
                       },
                     )}
                   </li>
@@ -687,7 +741,7 @@ export function TradeDetailModal({ trade, userId, manualOverrideWarningMaps, onC
                     onClick={askAssistantAboutFailure}
                     className="text-xs font-semibold text-green-500 dark:text-teal-300 hover:underline underline-offset-2"
                   >
-                    Ask AI about this issue
+                    {t.copierLogs.detailModal?.askAiAboutIssue ?? 'Ask AI about this issue'}
                   </button>
                 </div>
               ) : null}

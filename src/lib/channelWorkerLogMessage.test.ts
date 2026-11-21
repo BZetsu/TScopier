@@ -380,6 +380,29 @@ test('channelWorkerLogMessage: close worse entries success', () => {
   assert.match(message ?? '', /instant.*XAUUSD/i)
 })
 
+test('channelWorkerLogMessage: hides basket_leg_modify no_stops_to_apply (live fill noise)', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'basket_leg_modify',
+      status: 'skipped',
+      request_payload: {
+        skip_reason: 'no_stops_to_apply',
+        broker_symbol: 'BTCUSD',
+      },
+      response_payload: null,
+      error_message: 'no_stops_to_apply',
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'sell', symbol: 'BTCUSD' },
+        status: 'executed',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'general' },
+  )
+  assert.equal(message, null)
+})
+
 test('channelWorkerLogMessage: hides internal range rebalance leg modify failures', () => {
   const message = channelWorkerLogMessage(
     {
@@ -502,6 +525,50 @@ test('channelWorkerLogMessage: HTTP 503 shows bridge unavailable guidance', () =
     { 'ch-1': 'Gold Trader Mo' },
   )
   assert.ok(message?.includes('Broker bridge temporarily unavailable'))
+})
+
+test('channelWorkerLogMessage: broker busy shows deferred copy', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'order_send',
+      status: 'failed',
+      request_payload: { symbol: 'XAUUSD', operation: 'Buy' },
+      response_payload: null,
+      error_message: 'MTAPI OrderSendSafe broker busy',
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+        status: 'failed',
+        skip_reason: 'MTAPI OrderSendSafe broker busy',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Gold Trader Mo' },
+  )
+  assert.ok(message?.toLowerCase().includes('broker busy'))
+  assert.ok(!message?.toLowerCase().includes('timed out'))
+})
+
+test('channelWorkerLogMessage: OrderSend timed out shows ambiguous-fill guidance', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'order_send',
+      status: 'failed',
+      request_payload: { symbol: 'XAUUSD', operation: 'Buy' },
+      response_payload: null,
+      error_message: 'OrderSend timed out — check open positions; the order may still have filled',
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+        status: 'failed',
+        skip_reason: 'OrderSend timed out',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'Gold Trader Mo' },
+  )
+  assert.ok(message?.includes('OrderSend timed out'))
+  assert.ok(message?.toLowerCase().includes('open positions'))
 })
 
 test('channelWorkerLogMessage: HTTP 500 with symbol shows mapping guidance', () => {
@@ -863,4 +930,62 @@ test('channelWorkerLogMessage: keeps the generic plan-fallback wording for other
   )
   assert.ok(message)
   assert.match(message!, /Adjusted the order plan for XAUUSD/)
+})
+
+test('channelWorkerLogMessage: auto_be skipped shows neutral skipped phrasing, not the failure sentence', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'auto_be',
+      status: 'skipped',
+      request_payload: { ticket: 2056709464, symbol: 'XAUUSD' },
+      response_payload: null,
+      error_message:
+        'position not in live snapshot (attributes match multiple live positions)'
+        + ' — nothing to modify; awaiting reconciliation closure',
+      signals: {
+        channel_id: 'ch-1',
+        // Production shape: auto_be rows carry the ENTRY signal (buy/sell),
+        // which routes past the generic mgmt_* branch into the auto_be one.
+        parsed_data: { action: 'buy', symbol: 'XAUUSD' },
+        status: 'executed',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'star fx trade' },
+  )
+  assert.ok(message)
+  // The customer-facing sentence from the 2026-11-03 incident must not appear.
+  assert.doesNotMatch(message!, /could not move stop loss/i)
+  // The neutral skipped sentence for the specific instrument.
+  assert.match(message!, /Skipped the XAUUSD update/i)
+})
+
+test('channelWorkerLogMessage: explains a partial close refused because the position is too small', () => {
+  const message = channelWorkerLogMessage(
+    {
+      action: 'mgmt_partial_profit',
+      status: 'skipped',
+      request_payload: {
+        skip_reason: 'partial_close_unavailable_for_position_size',
+        current_volume: 0.01,
+        requested_fraction: 0.2,
+        min_volume: 0.01,
+      },
+      response_payload: null,
+      error_message: null,
+      signals: {
+        channel_id: 'ch-1',
+        parsed_data: { action: 'partial_profit', symbol: 'BTCUSD' },
+        status: 'skipped',
+        skip_reason: 'partial_close_unavailable_for_position_size',
+      },
+    },
+    channelWorkerEn,
+    { 'ch-1': 'GoldPro' },
+  )
+  assert.ok(message)
+  // The refusal must be explained, not rendered as a raw key.
+  assert.match(message!, /too small to split/i)
+  assert.match(message!, /nothing was closed/i)
+  assert.ok(!message!.includes('partial_close_unavailable'), message!)
 })

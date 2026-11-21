@@ -189,6 +189,8 @@ export const channelWorkerNl: ChannelWorkerTranslations = {
       'dit kanaal staat in single-slot-modus (Add to Existing Trades staat uit), dus nieuwe entries moeten TP/SL-parameters bevatten',
     entry_requires_imperative_or_labeled_stops:
       'bericht bevatte geen entry-opdracht (bijv. buy now, gold sell now) of gelabelde SL/TP',
+    tradingview_missing_sl_tp:
+      'TradingView-alert had geen SL- en TP-prijs — voeg ze toe aan het alertbericht, of schakel Override SL en Override TP in bij de configuratie',
     entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
     signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
     delete_pendings_no_parent:
@@ -196,6 +198,8 @@ export const channelWorkerNl: ChannelWorkerTranslations = {
     delete_pendings_requires_reply:
       'annuleringsinstructies moeten worden verzonden als een reactie op het originele signaalbericht',
     delete_pendings_none: 'geen openstaande orders gevonden om te annuleren voor deze transactie',
+    delete_pendings_cancel_failed: 'er zijn openstaande orders gevonden, maar geen kon worden geannuleerd (de broker weigerde of was niet beschikbaar) — probeer het opnieuw, of annuleer ze vanaf de Trades-pagina',
+    partial_close_unavailable_for_position_size: 'partiële afsluiting niet mogelijk — deze positie is te klein om te splitsen (het gevraagde deel zou onder de minimumlot van de broker vallen); er is niets gesloten en de trade bleef open op volledige grootte',
   },
   dispatchSkipped: 'Dit signaal is niet gekopieerd ({reason}).',
   rangeRebalanceSkippedNamed: 'Take-profit-herverdeling voor {symbol} overgeslagen ({reason})',
@@ -211,6 +215,10 @@ export const channelWorkerNl: ChannelWorkerTranslations = {
     'Trade EA is not ready on your MT5 terminal — enable Algo Trading and refresh broker health',
   errorBrokerNotConnected:
     'Broker niet verbonden — gebruik in Account Configuration Reconnect en voer je MT-wachtwoord voor dit account in',
+  errorBrokerBusy:
+    'Broker bezig — te veel orders onderweg; latere signalen draaien wanneer de belasting daalt',
+  errorOrderSendTimedOut:
+    'OrderSend timed out — controleer open posities; de order kan alsnog gevuld zijn',
   errorInvalidStops:
     'De broker weigerde deze stopniveaus — controleer of SL/TP aan de juiste kant van de markt staan en voldoen aan de minimale afstand.',
   errorBridgeGlitch:

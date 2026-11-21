@@ -13,20 +13,53 @@ export interface UserSubscriptionRow {
   status: SubscriptionStatus
   extra_accounts: number
   trial_ends_at: string | null
+  /** End of the paid period; a grant given while paying starts after this. */
+  current_period_end?: string | null
 }
 
 const CACHE_TTL_MS = 60_000
 const cache = new Map<string, { expiresAt: number; row: UserSubscriptionRow | null }>()
 const adminCache = new Map<string, { expiresAt: number; isAdmin: boolean }>()
-const extensionCache = new Map<string, { expiresAt: number; endMs: number | null }>()
+const extensionCache = new Map<string, { expiresAt: number; endMs: number | null; subEndMs: number | null; queued: boolean }>()
 
-/** Latest admin-granted extension end in epoch milliseconds, cached for a minute. */
+/**
+ * End of the paid period, else the trial — read regardless of the current status.
+ * The Stripe webhook flips the status to `canceled` and keeps `current_period_end`,
+ * so discarding it there is what made a grant expire unused on cancellation.
+ */
+export function subscriptionEndMs(sub: UserSubscriptionRow | null | undefined): number | null {
+  if (!sub) return null
+  const raw = sub.current_period_end ?? sub.trial_ends_at ?? null
+  if (!raw) return null
+  const ms = Date.parse(raw)
+  return Number.isFinite(ms) ? ms : null
+}
+
+/** True when the subscription is still running, so a grant must wait for its end. */
+export function queuesUntilSubscriptionEnd(
+  sub: UserSubscriptionRow | null | undefined,
+  endMs: number | null,
+  now = Date.now(),
+): boolean {
+  if (endMs == null || endMs <= now) return false
+  return sub?.status === 'active' || sub?.status === 'trialing'
+}
+
+/**
+ * Latest admin-granted extension end in epoch milliseconds, cached for a minute.
+ *
+ * The window starts at the later of the grant date and the end of the paid period:
+ * a grant given to a paying customer must not run while they are still paying.
+ */
 export async function loadCachedSubscriptionExtensionEnd(
   supabase: SupabaseClient,
   userId: string,
+  sub: UserSubscriptionRow | null = null,
 ): Promise<number | null> {
+  const subEndMs = subscriptionEndMs(sub)
+  const queued = queuesUntilSubscriptionEnd(sub, subEndMs)
   const hit = extensionCache.get(userId)
-  if (hit && hit.expiresAt > Date.now()) return hit.endMs
+  if (hit && hit.expiresAt > Date.now() && hit.subEndMs === subEndMs && hit.queued === queued) return hit.endMs
 
   const { data, error } = await supabase
     .from('subscription_extensions')
@@ -41,12 +74,20 @@ export async function loadCachedSubscriptionExtensionEnd(
       const days = Number((row as { days: unknown }).days)
       const start = Date.parse(String((row as { granted_at: unknown }).granted_at ?? ''))
       if (Number.isFinite(days) && days > 0 && !Number.isNaN(start)) {
-        const end = start + days * 86_400_000
+        const now = Date.now()
+        const windowStart = subEndMs == null
+          ? start
+          : queued
+            ? Math.max(start, subEndMs)
+            : Math.max(start, Math.min(subEndMs, now))
+        // A window queued behind a paid period has not started: it grants nothing yet.
+        if (windowStart > now) continue
+        const end = windowStart + days * 86_400_000
         if (endMs == null || end > endMs) endMs = end
       }
     }
   }
-  extensionCache.set(userId, { endMs, expiresAt: Date.now() + CACHE_TTL_MS })
+  extensionCache.set(userId, { endMs, expiresAt: Date.now() + CACHE_TTL_MS, subEndMs, queued })
   return endMs
 }
 
@@ -64,7 +105,7 @@ export async function loadCachedUserSubscription(
 
   const { data } = await supabase
     .from('subscriptions')
-    .select('plan,status,extra_accounts,trial_ends_at')
+    .select('plan,status,extra_accounts,trial_ends_at,current_period_end')
     .eq('user_id', userId)
     .maybeSingle()
 
@@ -128,10 +169,10 @@ export function subscriptionBlocksSignalExecution(
   if (isAdmin) return null
   const active = isSubscriptionActive(sub?.status, sub?.trial_ends_at)
   if (!active && !extensionAccessActive(extensionEndMs)) return 'subscription_inactive'
-  // While a trial or an extension keeps access alive, plan limits follow the stored plan.
+  // A live admin extension is granted as Advanced while it is the reason access is alive.
   const plan = active
     ? effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at)
-    : (sub?.plan ?? 'basic')
+    : 'advanced'
   if (plan === 'basic' && brokerManualSettingsUseAdvancedFeatures(manualSettings)) {
     return 'plan_advanced_feature_required'
   }
@@ -146,7 +187,7 @@ export async function userMayRunCopierListener(
   if (await loadCachedUserIsAdmin(supabase, userId)) return true
   const sub = await loadCachedUserSubscription(supabase, userId)
   if (isSubscriptionActive(sub?.status, sub?.trial_ends_at)) return true
-  return extensionAccessActive(await loadCachedSubscriptionExtensionEnd(supabase, userId))
+  return extensionAccessActive(await loadCachedSubscriptionExtensionEnd(supabase, userId, sub))
 }
 
 export { isSubscriptionActive, effectivePlan, manualSettingsUseAdvancedFeatures }

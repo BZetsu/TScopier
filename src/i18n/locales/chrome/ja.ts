@@ -4,6 +4,7 @@ export const chromeJa: AppChromeTranslations = {
   nav: {
     sections: {
       general: '全般',
+      copy: 'コピー',
       signals: 'シグナル',
       discover: '発見',
       tradingTools: '取引ツール',
@@ -131,10 +132,10 @@ export const chromeJa: AppChromeTranslations = {
       cancel: 'Cancel',
       welcomeTitle: 'I can help you set up and run UniCopier.',
       suggestions: [
-        'Is my Telegram linked?',
+        'Are my Signals connected?',
+        'Add an account in Account Configuration',
+        'Show my Account Trades',
         'Pause the copier',
-        'Connect an MT5 account',
-        'What are trading presets?',
       ],
       emptyReply: 'How else can I help?',
       actionDone: 'Done.',
@@ -203,6 +204,14 @@ export const chromeJa: AppChromeTranslations = {
         positionClosed: 'Closed',
         reportStatusOpen: 'オープン',
         reportStatusResolved: '解決済み',
+      },
+      csvCard: {
+        title: 'CSV エクスポート',
+        ready: '口座トレードの CSV の準備ができました。',
+        empty: 'その日の口座トレードは見つかりませんでした。',
+        download: 'CSV をダウンロード',
+        countLabel: '{count} 件',
+        exportFailed: '口座トレードをエクスポートできませんでした。アプリの口座トレードを試してください。',
       },
 
     },

@@ -129,6 +129,10 @@ export function normalizeManualSettingsForExecution(
     single_tp_target: singleTpTarget,
     predefined_tp_pips: predefinedTpPips,
     use_signal_entry_price: j.use_signal_entry_price === true,
+    signal_entry_prefer:
+      String(j.signal_entry_prefer ?? 'first_price').toLowerCase() === 'last_price'
+        ? 'last_price'
+        : 'first_price',
     trade_style: j.trade_style === 'multi' ? 'multi' : 'single',
     range_trading: j.range_trading === true,
     range_layer_till_close: j.range_layer_till_close === true,

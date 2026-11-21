@@ -10,6 +10,12 @@ export interface ParsedSignal {
   entry_price: number | null
   entry_zone_low: number | null
   entry_zone_high: number | null
+  /** First entry price as written in the signal (before min/max sort). */
+  entry_zone_first?: number | null
+  /** Last entry price as written in the signal (before min/max sort). */
+  entry_zone_last?: number | null
+  /** Discrete BUY/SELL ZONES bulletin levels (ordered as written). */
+  entry_zone_levels?: number[] | null
   /** Explicit provider instruction; absent/null retains legacy inferred routing. */
   entry_order_type?: EntryOrderType | null
   sl: number | null
@@ -90,6 +96,8 @@ export interface ManualSettings {
   range_total_lot?: number
   reverse_signal?: boolean
   use_signal_entry_price?: boolean | string | number
+  /** Which of two written entry prices to use for Use Signal Entry Price (text order). */
+  signal_entry_prefer?: 'first_price' | 'last_price'
   signal_entry_pip_tolerance?: number
   use_predefined_sl_pips?: boolean
   predefined_sl_pips?: number
@@ -102,6 +110,8 @@ export interface ManualSettings {
   pending_expiry_hours?: number
   add_new_trades_to_existing?: boolean
   close_on_opposite_signal?: boolean
+  /** When true, deleting the source channel message closes trades / cancels pendings. */
+  close_on_signal_deleted?: boolean
   /** When false, OrderSend comments are left empty. Default on. */
   order_comments_enabled?: boolean
   time_filter_enabled?: boolean

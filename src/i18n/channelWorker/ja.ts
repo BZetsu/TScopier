@@ -189,6 +189,8 @@ export const channelWorkerJa: ChannelWorkerTranslations = {
       'このチャネルは single-slot モードです（Add to Existing Trades がオフ）。新規エントリーには TP/SL パラメータが必要です',
     entry_requires_imperative_or_labeled_stops:
       'メッセージにエントリー命令（buy now、gold sell now など）またはラベル付き SL/TP がありませんでした',
+    tradingview_missing_sl_tp:
+      'TradingViewアラートにSL/TPの価格がありません — アラートメッセージに追加するか、設定でOverride SLとOverride TPを有効にしてください',
     entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
     signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
     delete_pendings_no_parent:
@@ -196,6 +198,8 @@ export const channelWorkerJa: ChannelWorkerTranslations = {
     delete_pendings_requires_reply:
       'キャンセル指示は元のシグナルメッセージへの返信として送信する必要があります',
     delete_pendings_none: 'この取引でキャンセルする保留中の注文が見つかりませんでした',
+    delete_pendings_cancel_failed: '保留中の注文は見つかりましたが、キャンセルできませんでした（ブローカーが拒否したか利用できませんでした）。再試行するか、Tradesページからキャンセルしてください',
+    partial_close_unavailable_for_position_size: '部分決済は実行できません — このポジションは小さすぎて分割できません（希望した数量がブローカーの最小ロットを下回ります）。何も閉じられず、取引は全量のまま残りました',
   },
   dispatchSkipped: 'このシグナルはコピーされませんでした（{reason}）。',
   rangeRebalanceSkippedNamed: '{symbol}の利益確定リバランスをスキップしました（{reason}）',
@@ -211,6 +215,10 @@ export const channelWorkerJa: ChannelWorkerTranslations = {
     'Trade EA is not ready on your MT5 terminal — enable Algo Trading and refresh broker health',
   errorBrokerNotConnected:
     'ブローカーが未接続です — Account Configuration で Reconnect を実行し、この口座の MT パスワードを入力してください',
+  errorBrokerBusy:
+    'ブローカーが混雑しています — 進行中の注文が多すぎます。負荷が下がると後続シグナルが実行されます',
+  errorOrderSendTimedOut:
+    'OrderSend timed out — 建玉を確認してください。約定している可能性があります',
   errorInvalidStops:
     'ブローカーがこれらのストップ水準を拒否しました — SL/TP が相場の正しい側にあり、最小距離を満たしているか確認してください。',
   errorBridgeGlitch:

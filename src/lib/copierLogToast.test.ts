@@ -4,9 +4,14 @@ import { en } from '../i18n/locales/en'
 import {
   copierLogDestinationIcons,
   copierLogDestinationLabel,
+  copierLogDestinationSummary,
+  copierLogDestinationsFromAccountLabel,
   copierLogSourceIcon,
   copierLogSourceLabel,
+  copierLogToastFingerprint,
   copierLogToastFromSignal,
+  mergeCopierLogToastSeen,
+  shouldAnnounceCopierLogToast,
   signalHistoryToastLabels,
 } from './copierLogToast'
 import type { BrokerAccount } from '../types/database'
@@ -67,6 +72,60 @@ test('copier log toast ignores commentary that never appears in the log', () => 
   assert.equal(toast, null)
 })
 
+test('mergeCopierLogToastSeen seeds fingerprints so identical status updates are ignored', () => {
+  const seen = new Map<string, string>()
+  mergeCopierLogToastSeen(seen, [{
+    id: 'sig-1',
+    status: 'executed',
+    skip_reason: null,
+  }])
+  assert.equal(seen.get('sig-1'), copierLogToastFingerprint({
+    id: 'sig-1',
+    status: 'executed',
+    skip_reason: null,
+  }))
+  assert.equal(
+    seen.get('sig-1') === copierLogToastFingerprint({
+      id: 'sig-1',
+      status: 'executed',
+      skip_reason: null,
+    }),
+    true,
+  )
+  assert.equal(
+    seen.get('sig-1') === copierLogToastFingerprint({
+      id: 'sig-1',
+      status: 'failed',
+      skip_reason: null,
+    }),
+    false,
+  )
+})
+
+test('shouldAnnounceCopierLogToast: UPDATE of unknown id seeds without announcing', () => {
+  const seen = new Map<string, string>()
+  const signal = { id: 'old-1', status: 'executed', skip_reason: null }
+  assert.equal(shouldAnnounceCopierLogToast(seen, signal, 'UPDATE'), 'seed')
+  assert.equal(seen.get('old-1'), copierLogToastFingerprint(signal))
+  assert.equal(shouldAnnounceCopierLogToast(seen, signal, 'UPDATE'), 'skip')
+})
+
+test('shouldAnnounceCopierLogToast: INSERT announces; status change UPDATE announces', () => {
+  const seen = new Map<string, string>()
+  assert.equal(
+    shouldAnnounceCopierLogToast(seen, { id: 'sig-2', status: 'pending', skip_reason: null }, 'INSERT'),
+    'show',
+  )
+  assert.equal(
+    shouldAnnounceCopierLogToast(seen, { id: 'sig-2', status: 'executed', skip_reason: null }, 'UPDATE'),
+    'show',
+  )
+  assert.equal(
+    shouldAnnounceCopierLogToast(seen, { id: 'sig-2', status: 'executed', skip_reason: null }, 'UPDATE'),
+    'skip',
+  )
+})
+
 test('copier log route names the channel and the linked broker', () => {
   assert.equal(copierLogSourceLabel({
     display_name: 'Gold VIP',
@@ -93,4 +152,37 @@ test('copier log route names the channel and the linked broker', () => {
   assert.equal(copierLogDestinationLabel(brokers, 'ch-1'), 'cTrader Demo')
   assert.deepEqual(copierLogDestinationIcons(brokers, 'ch-1'), ['/cTrader.png'])
   assert.equal(copierLogDestinationLabel(brokers, null), '')
+})
+
+test('copierLogDestinationsFromAccountLabel matches linked broker or guesses platform logo', () => {
+  const brokers = [{
+    id: 'b1',
+    label: 'MT5 • 477608729',
+    platform: 'MT5',
+    provider: 'fxsocket',
+    is_active: true,
+    signal_channel_ids: [],
+  }] as BrokerAccount[]
+  assert.deepEqual(
+    copierLogDestinationsFromAccountLabel('MT5 • 477608729', brokers),
+    [{ label: 'MT5 • 477608729', iconSrc: '/MT5.png' }],
+  )
+  assert.deepEqual(
+    copierLogDestinationsFromAccountLabel('cTrader • 99', []),
+    [{ label: 'cTrader • 99', iconSrc: '/cTrader.png' }],
+  )
+  assert.deepEqual(copierLogDestinationsFromAccountLabel(null), [])
+  assert.deepEqual(
+    copierLogDestinationSummary([{ label: 'A', iconSrc: '/a.png' }, { label: 'B', iconSrc: '/a.png' }]),
+    { label: 'A, B', icons: ['/a.png'] },
+  )
+  assert.deepEqual(
+    copierLogDestinationSummary([
+      { label: 'A', iconSrc: '/a.png' },
+      { label: 'B', iconSrc: '/b.png' },
+      { label: 'C', iconSrc: '/c.png' },
+      { label: 'D', iconSrc: '/d.png' },
+    ]),
+    { label: 'A, B, C, D', icons: ['/a.png', '/b.png', '/c.png'] },
+  )
 })

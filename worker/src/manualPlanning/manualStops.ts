@@ -131,8 +131,8 @@ function pipSizeForPredefinedStops(args: {
 }
 
 /**
- * Override signal SL from this fill/trigger. Used by the multi planner, post-fill,
- * and range-fire so each leg is  N pips from *that* entry, not the first basket anchor.
+ * Override signal SL from an entry/trigger price. Layered multi/range baskets
+ * freeze absolute SL from the first entry; later fills must not recompute this.
  */
 export function resolvePredefinedSlForEntry(args: {
   manual: Pick<ManualSettings, 'use_predefined_sl_pips' | 'predefined_sl_pips'>
@@ -157,8 +157,9 @@ export function resolvePredefinedSlForEntry(args: {
 
 /**
  * Override signal TP from this fill/trigger. `matchEntry` + `existingTp` pick the
- * Targets % bucket (TP1/TP2/…) from the planned ladder, then restamp that same
- * pip distance onto `entry` so range/multi legs are N pips from *that* fill.
+ * Targets % bucket (TP1/TP2/…) from the planned ladder, then apply that same
+ * pip distance onto `entry`. Layered multi/range baskets freeze absolute stops
+ * from the first entry instead — callers must not restamp later fills.
  */
 export function resolvePredefinedTpForEntry(args: {
   manual: Pick<ManualSettings, 'use_predefined_tp_pips' | 'predefined_tp_pips'>

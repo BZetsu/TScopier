@@ -206,7 +206,9 @@ export function extractUnlabeledPrices(message: string): number[] {
 /**
  * FX Culture / ICT style bare range on its own line: "4282.0-4287.0", "4282 / 4287".
  */
-export function extractBarePriceRangeZone(message: string): { low: number; high: number } | null {
+export function extractBarePriceRangeZone(
+  message: string,
+): { low: number; high: number; first: number; last: number } | null {
   const collapsed = String(message ?? '').replace(/\s+/g, ' ').trim()
   const zoneRx = new RegExp(
     `(?:^|\\s)(${SIGNAL_PRICE_NUM})\\s*(?:-|–)\\s*(${SIGNAL_PRICE_NUM})(?:\\.|\\s|$)`,
@@ -217,7 +219,7 @@ export function extractBarePriceRangeZone(message: string): { low: number; high:
   const a = parseSignalPriceToken(m[1])
   const b = parseSignalPriceToken(m[2])
   if (a == null || b == null) return null
-  return { low: Math.min(a, b), high: Math.max(a, b) }
+  return { low: Math.min(a, b), high: Math.max(a, b), first: a, last: b }
 }
 
 export function entryReferenceFromParsed(parsed: {

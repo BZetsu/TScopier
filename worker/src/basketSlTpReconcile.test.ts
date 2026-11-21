@@ -149,6 +149,59 @@ describe('basketLegModifyMergeFailed', () => {
   })
 })
 
+describe('runBasketLegModifies shared quote', () => {
+  it('fetches GetQuote once for a parallel multi-leg basket', async () => {
+    let quoteCalls = 0
+    const family: BasketOpenLeg[] = [1, 2, 3].map(i => ({
+      id: `trade-${i}`,
+      signal_id: 'sig-mod',
+      metaapi_order_id: String(9000 + i),
+      opened_at: new Date().toISOString(),
+      lot_size: 0.05,
+      sl: null,
+      tp: null,
+      entry_price: 4000,
+      direction: 'buy' as const,
+      symbol: 'XAUUSD',
+    }))
+    const api = {
+      quote: async () => {
+        quoteCalls += 1
+        return { bid: 4010, ask: 4010.2, symbol: 'XAUUSD' }
+      },
+      orderModify: async () => ({ stopLoss: 3990, takeProfit: 4020 }),
+    }
+    const supabase = {
+      from: () => ({
+        insert: async () => ({ error: null }),
+        update: () => ({ eq: async () => ({ error: null }) }),
+      }),
+    }
+    const { summary } = await runBasketLegModifies({
+      supabase: supabase as never,
+      api: api as never,
+      uuid: 'broker-uuid',
+      symbol: 'XAUUSD',
+      direction: 'buy',
+      baseLot: 0.05,
+      params: { point: 0.01, stopsLevel: 0, freezeLevel: 0, minLot: 0.01, lotStep: 0.01, contractSize: null, digits: 2 },
+      signalId: 'sig-mod',
+      userId: 'user-1',
+      brokerAccountId: 'broker-1',
+      familyTrades: family,
+      perLegTargets: family.map(() => ({ stoploss: 3990, takeprofit: 4020 })),
+      nImmCwe: 0,
+      overrideTp: null,
+      strictEntryPrefetch: null,
+      openedTickets: new Set([9001, 9002, 9003]),
+      parallelLegs: true,
+      explicitChannelTargets: true,
+    })
+    assert.equal(summary.modified, 3)
+    assert.equal(quoteCalls, 1, 'shared quote prefetch must not N× GetQuote')
+  })
+})
+
 describe('runBasketLegModifies explicit loosening', () => {
   it('applies a looser explicit SL when explicitChannelTargets is true', async () => {
     const familyLeg: BasketOpenLeg = {
@@ -511,10 +564,17 @@ describe('runBasketLegModifies modify outcome observability counters', () => {
 
   it('keeps invalid-stops split fallback as success when SL/TP fallback lands', async () => {
     const calls: Array<{ stoploss?: number; takeprofit?: number }> = []
+    // Realistic split: only the FIRST combined attempt is rejected; the retries
+    // now arrive as SL+TP pairs (the TP retry carries the applied SL so MTAPI
+    // cannot clear it), so a "both fields present" rule would reject them too.
+    let combinedTried = false
     const { summary, legErrors } = await runOne({
       orderModify: async (_uuid, args) => {
         calls.push(args)
-        if (args.stoploss != null && args.takeprofit != null) throw new Error('Invalid stops')
+        if (args.stoploss != null && args.takeprofit != null && !combinedTried) {
+          combinedTried = true
+          throw new Error('Invalid stops')
+        }
         return { stopLoss: args.stoploss ?? null, takeProfit: args.takeprofit ?? null }
       },
     })
@@ -522,7 +582,8 @@ describe('runBasketLegModifies modify outcome observability counters', () => {
     assert.equal(summary.modified, 1)
     assert.equal(summary.failed, 0)
     assert.equal(legErrors.length, 0)
-    assert.equal(calls.length, 3, 'combined + SL-only + TP-only')
+    assert.equal(calls.length, 3, 'combined + SL-only + SL+TP retry')
+    assert.equal(calls[2]!.stoploss, 4376, 'TP retry carries the applied SL')
   })
 
   it('does not treat MT4 4108 invalid request as benign for modify semantics', async () => {

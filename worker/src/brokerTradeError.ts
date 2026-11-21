@@ -189,6 +189,26 @@ function tradeFailureCopy(
         retryable: true,
         userActionRequired: false,
       }
+    case 'BROKER_BUSY':
+      return {
+        category: 'broker',
+        title: 'Trade deferred - Broker busy',
+        explanation: 'Too many orders were already in flight on the shared trading bridge. The copier skipped this send instead of waiting until the request timed out.',
+        recommendedAction: 'Later signals will run when load drops; no manual reconnect is required.',
+        retryable: true,
+        userActionRequired: false,
+      }
+    case 'MTAPI_OLD_VERSION':
+      return {
+        category: 'system',
+        title: 'Trade not copied — trading bridge needs an update',
+        explanation:
+          'The MetaTrader connection bridge is running a build older than your broker accepts (OLD_VERSION). The signal was parsed correctly; the order was refused before it reached the broker. This is a platform issue, not your account settings.',
+        recommendedAction:
+          'No action needed on your account. Support must update the MTAPI bridge image (timurila/mt5rest) on the Contabo VPS. Do not retry old signals — their prices are stale.',
+        retryable: false,
+        userActionRequired: false,
+      }
     case 'BROKER_ORDER_REJECTED':
       return {
         category: 'broker',
@@ -232,6 +252,9 @@ export function tradeFailureReasonFromBrokerMessage(
   safeContext?: Record<string, unknown>,
 ): TradeFailureReason | null {
   const lower = String(message ?? '').toLowerCase()
+  if (/\bold_version\b/.test(lower)) {
+    return tradeFailureReasonFromCode('MTAPI_OLD_VERSION', safeContext)
+  }
   // "Trading is disabled for symbol X" and "Symbol disabled" are not a missing
   // symbol: the instrument exists but the broker is not accepting new orders.
   if (isTradingDisabledMessage(lower)) {
@@ -254,6 +277,9 @@ export function tradeFailureReasonFromBrokerMessage(
   }
   if (/invalid volume|lot|minimum volume|min lot/.test(lower)) {
     return tradeFailureReasonFromCode('INVALID_LOT', safeContext)
+  }
+  if (/broker busy|concurrency_busy|ordersendsafe broker busy/.test(lower)) {
+    return tradeFailureReasonFromCode('BROKER_BUSY', safeContext)
   }
   if (/timeout|timed out|operation timeout/.test(lower)) {
     return tradeFailureReasonFromCode('BROKER_TIMEOUT', safeContext)
@@ -402,6 +428,13 @@ export function humanizeOrderSendError(message: string, symbol?: string | null):
   }
   if (/^invalid\s+request$/i.test(m)) {
     return 'Broker rejected order: invalid request. Check symbol availability and order parameters.'
+  }
+  if (/broker busy|CONCURRENCY_BUSY|code=BROKER_BUSY/i.test(m) || /OrderSendSafe broker busy/i.test(m)) {
+    return 'Broker busy — too many orders in flight; will retry on the next signal or when load drops'
+  }
+  // Keep "timed out" in the string so isOrderOpTimedOutMessage / reconcile still match.
+  if (/OrderSendSafe timed out|OrderSend timed out/i.test(m)) {
+    return 'OrderSend timed out — check open positions; the order may still have filled'
   }
   return m
 }

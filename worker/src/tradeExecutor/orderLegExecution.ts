@@ -22,7 +22,7 @@ import {
   renewSignalBrokerDispatchClaim,
   SIGNAL_DISPATCH_CLAIM_LEASE_MS,
 } from './signalBrokerDispatchClaim'
-import { reconcileUnknownSend } from './reconcileUnknownSend'
+import { reconcileUnknownSend, resolveUnknownSendFromOrders } from './reconcileUnknownSend'
 import { trailingTradeRowSnapshot } from '../trailingStop'
 import { applyPostFillFollowUp, type PostFillTradeLeg } from '../postFillFollowUp'
 import { captureBrokerPositionIdentity } from '../captureBrokerPositionIdentity'
@@ -52,6 +52,7 @@ import { collapseIdenticalImmediateLegs } from './collapseIdenticalImmediateLegs
 import { authorityFromBrokerRow, withBrokerWriteAuthority } from '../brokerWriteAuthority'
 import { writeExecutionLog } from '../observability/executionLog'
 import { normalizeBrokerTradeTicket } from '../brokerTradeTicket'
+import { isMtapiGlobalOrderSaturated } from '../mtapiProvider'
 export { collapseIdenticalImmediateLegs }
 
 /** Normalized broker fill shape shared by the v1 client and the v2 fxClient. */
@@ -139,26 +140,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
     })
   }
 
-  if (manual.trade_style !== 'multi' && workingLegs.length > 1) {
-    console.error(
-      `[tradeExecutor] single_style_multi_leg_blocked ${workingLegs.length} legs`
-      + ` signal=${signal.id} broker=${broker.id}`,
-    )
-    await writeExecutionLog(ctx.supabase, {
-      user_id: signal.user_id,
-      signal_id: signal.id,
-      broker_account_id: broker.id,
-      action: 'single_style_multi_leg_blocked',
-      status: 'failed',
-      request_payload: { leg_count: workingLegs.length } as unknown as Record<string, unknown>,
-      error_message: `single trade_style refused ${workingLegs.length} immediate legs`,
-    })
-    return {
-      channelDelayMs,
-      channelDelaySkipped,
-      failureReason: 'single_style_multi_leg_blocked',
-    }
-  }
+  // Single trade style may send multiple immediates (one per Targets % TP).
 
   const sendLegs = workingLegs
 
@@ -193,6 +175,8 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
   const positionSnapshot = (): Promise<unknown[] | null> => {
     positionSnapshotPromise ??= (async () => {
       try {
+        const warm = ctx.entryBrokerReadCache.get(uuid)?.openedOrders
+        if (warm && Date.now() - warm.at < 2_500) return warm.rows
         return (await api.openedOrders(uuid)) ?? null
       } catch {
         return null
@@ -247,12 +231,6 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
     let sendArgs = args
     const plannedSl = Number(args.stoploss) || 0
     const plannedTp = Number(args.takeprofit) || 0
-    const t0 = Date.now()
-    if (liveEntryFast && signal.pipeline_ts && signal.pipeline_ts.t_first_broker_send == null) {
-      setPipelineTimestamp(signal.pipeline_ts, 'broker_request_started_at', t0)
-    } else if (signal.pipeline_ts && signal.pipeline_ts.broker_request_started_at == null) {
-      setPipelineTimestamp(signal.pipeline_ts, 'broker_request_started_at', t0)
-    }
 
     let result: NormalizedFill | null = null
     let lastAttemptError: string
@@ -267,6 +245,15 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       dispatchSource: signal.dispatch_source,
     })
 
+    /** Stamp only when the real OrderSend is about to fire (not during prep / gate wait). */
+    const stampFirstBrokerSend = (): void => {
+      if (!signal.pipeline_ts) signal.pipeline_ts = {}
+      if (signal.pipeline_ts.t_first_broker_send != null && signal.pipeline_ts.broker_request_started_at != null) {
+        return
+      }
+      setPipelineTimestamp(signal.pipeline_ts, 'broker_request_started_at', Date.now())
+    }
+
     // Refresh the lease while the broker call is pending, including the wait
     // for the per-account send gate. A slow but healthy send must not be
     // mistaken for a crashed worker and duplicated.
@@ -277,7 +264,45 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       return work.finally(() => clearInterval(timer))
     }
 
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // If a prior attempt (or twin worker) already filled this comment, adopt it
+    // instead of opening a second market position.
+    const isMarketSend = sendArgs.operation === 'Buy' || sendArgs.operation === 'Sell'
+    if (isMarketSend && sendArgs.comment && api) {
+      try {
+        const opened = (await positionSnapshot()) ?? []
+        const pre = resolveUnknownSendFromOrders(opened, {
+          symbol: sendArgs.symbol,
+          operation: sendArgs.operation,
+          volume: sendArgs.volume,
+          comment: sendArgs.comment,
+        })
+        if (pre.status === 'adopted') {
+          result = {
+            ticket: pre.ticket,
+            openPrice: pre.openPrice,
+            stopLoss: pre.stopLoss,
+            takeProfit: pre.takeProfit,
+            lots: pre.lots ?? sendArgs.volume,
+          }
+          console.warn(
+            `[tradeExecutor] adopted pre-existing fill before OrderSend signal=${signal.id}`
+            + ` broker=${broker.id} ticket=${pre.ticket} symbol=${sendArgs.symbol}`,
+          )
+          void writeExecutionLog(ctx.supabase, {
+            user_id: signal.user_id,
+            signal_id: signal.id,
+            broker_account_id: broker.id,
+            action: 'order_send_adopted',
+            status: 'success',
+            request_payload: { ...sendArgs, adopted_ticket: pre.ticket, phase: 'pre_send' } as never,
+          })
+        }
+      } catch {
+        /* fall through to OrderSend */
+      }
+    }
+
+    for (let attempt = 0; attempt < 2 && result == null; attempt++) {
       // Each attempt decides for itself; a stale value from an earlier attempt
       // must not be attributed to this failure's payload.
       timeoutReconcile = null
@@ -301,6 +326,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
           dispatchSource: signal.dispatch_source,
         })
         if (useV2) {
+          stampFirstBrokerSend()
           const sendPromise = withBrokerWriteAuthority(
             authorityFromBrokerRow(broker),
             'v2_orderSend',
@@ -363,6 +389,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
             lots: r.volume ?? sendArgs.volume,
           }
         } else {
+          stampFirstBrokerSend()
           const sendPromise = api.orderSend(uuid, sendArgs)
           emitPipelineEvent({
             event: 'broker_request_started',
@@ -409,6 +436,17 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       } catch (err) {
         setPipelineTimestamp(signal.pipeline_ts ?? (signal.pipeline_ts = {}), 'broker_response_received_at', Date.now())
         const rawAttemptError = err instanceof Error ? err.message : String(err)
+        // Capacity gate can expire before the bridge is truly down — retry once
+        // in-basket instead of failing the leg as "Broker busy".
+        const brokerBusy = /broker busy|BROKER_BUSY|CONCURRENCY_BUSY|OrderSendSafe broker busy/i.test(rawAttemptError)
+        if (brokerBusy && attempt === 0) {
+          console.warn(
+            `[tradeExecutor] OrderSend broker busy; retrying once signal=${signal.id}`
+            + ` broker=${broker.id} leg=${leg.idx + 1}/${totalCount}`,
+          )
+          await new Promise<void>(r => setTimeout(r, 400))
+          continue
+        }
         lastAttemptError = humanizeOrderSendError(rawAttemptError, sendArgs.symbol)
         const hasStops = (Number(sendArgs.stoploss) || 0) > 0 || (Number(sendArgs.takeprofit) || 0) > 0
         if (isInvalidStopsMessage(rawAttemptError) && hasStops && !wrongSideSl) {
@@ -533,12 +571,16 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
               : reasonCode === 'BROKER_SYMBOL_NOT_FOUND'
                 ? 'trade_copy_blocked'
                 : 'broker_order_rejected',
-            severity: reasonCode === 'BROKER_RATE_LIMITED' ? 'warning' : 'error',
+            severity: reasonCode === 'BROKER_RATE_LIMITED' || reasonCode === 'BROKER_BUSY'
+              ? 'warning'
+              : 'error',
             reasonCode,
             message: reasonCode === 'BROKER_SYMBOL_NOT_FOUND'
               ? `Broker does not offer ${sendArgs.symbol} — symbol not in broker inventory`
-              : 'Broker rejected trade copy order',
-            userImpact: 'failed',
+              : reasonCode === 'BROKER_BUSY'
+                ? 'Broker busy — order deferred to avoid timeout'
+                : 'Broker rejected trade copy order',
+            userImpact: reasonCode === 'BROKER_BUSY' ? 'delayed' : 'failed',
             context: {
               user_id: signal.user_id,
               signal_id: signal.id,
@@ -605,7 +647,10 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
 
     if (!result) return false
 
-    const latencyMs = Date.now() - t0
+    const sendStartedAt = signal.pipeline_ts?.broker_request_started_at
+      ?? signal.pipeline_ts?.t_first_broker_send
+      ?? Date.now()
+    const latencyMs = Date.now() - sendStartedAt
     if (liveEntryFast && signal.pipeline_ts) {
       setPipelineTimestamp(signal.pipeline_ts, 'broker_response_received_at', Date.now())
       setPipelineTimestamp(signal.pipeline_ts, 'broker_execution_confirmed_at', Date.now())
@@ -654,6 +699,12 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
         }),
     })
     const tradeTicket = normalizeBrokerTradeTicket(broker.provider, result.ticket)
+    // Broker echoes sometimes return lots=0 on LIMIT/STOP accept; keep the
+    // requested volume so the row is not stored as a zero-lot phantom.
+    const filledLots = Number(result.lots) > 0 ? Number(result.lots) : sendArgs.volume
+    const plannedTpIndex = typeof leg.plannedTpIndex === 'number' && leg.plannedTpIndex >= 0
+      ? Math.floor(leg.plannedTpIndex)
+      : null
     const tradeRowPayload = {
       user_id: signal.user_id,
       signal_id: signal.id,
@@ -665,10 +716,12 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
       entry_price: entryPx,
       sl: openSl,
       tp: openTp,
-      lot_size: result.lots ?? sendArgs.volume,
+      lot_size: filledLots,
       status: sendArgs.operation.includes('Limit') || sendArgs.operation.includes('Stop') ? 'pending' : 'open',
       opened_at: new Date().toISOString(),
       cwe_close_price: leg.cweClosePrice ?? null,
+      // Persist planned TP level so teaser follow-ups don't rely on opened_at order.
+      next_tp_index: plannedTpIndex != null ? plannedTpIndex + 1 : 1,
       ...trailCols,
       ...autoBeCols,
     }
@@ -695,7 +748,7 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
             metaapi_order_id: tradeTicket,
             symbol: sendArgs.symbol,
             direction: isBuy ? 'buy' : 'sell',
-            lot_size: result.lots ?? sendArgs.volume,
+            lot_size: filledLots,
             entry_price: entryPx,
           },
           openedOrders: await positionSnapshot(),
@@ -990,9 +1043,28 @@ export async function sendImmediateLegs(input: SendImmediateLegsInput): Promise<
     return true
   }
 
-  // All immediates fan out in parallel. Virtual pendings are already
-  // persisted; the worker monitor + edge sweep will fire them on trigger.
-  const sendResults = await Promise.allSettled(sendLegs.map(sendLeg))
+  // Default: fan out in parallel (per-account + global gates still apply).
+  // Opt-in serialize under saturation — off by default after Gold-lab busy storms.
+  const serializeWhenSaturated = String(process.env.MT_SEND_SERIALIZE_WHEN_SATURATED ?? '')
+    .toLowerCase() === 'true'
+  const saturated = serializeWhenSaturated && isMtapiGlobalOrderSaturated()
+  const legGapMs = saturated
+    ? Math.max(0, Math.min(500, Number(process.env.MT_SEND_LEG_GAP_MS ?? 50) || 0))
+    : 0
+  let sendResults: PromiseSettledResult<boolean>[]
+  if (saturated && sendLegs.length > 1) {
+    sendResults = []
+    for (const leg of sendLegs) {
+      try {
+        sendResults.push({ status: 'fulfilled', value: await sendLeg(leg) })
+      } catch (reason) {
+        sendResults.push({ status: 'rejected', reason })
+      }
+      if (legGapMs > 0) await new Promise<void>(r => setTimeout(r, legGapMs))
+    }
+  } else {
+    sendResults = await Promise.allSettled(sendLegs.map(sendLeg))
+  }
 
   let materializedBrokerPendings = materializedVirtuals
   if (deferBrokerRangePendingMaterialize && brokerPendingMode && virtualPendings.length > 0 && api) {

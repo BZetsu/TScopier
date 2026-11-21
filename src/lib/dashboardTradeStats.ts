@@ -16,7 +16,7 @@ export type TradeStatsRow = {
   commission?: number | null
 }
 
-function isTradeableMtRow(row: {
+export function isTradeableMtRow(row: {
   symbol: string
   lot_size: number
   direction?: string

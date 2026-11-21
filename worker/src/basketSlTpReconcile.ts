@@ -7,8 +7,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FxsocketBrokerClient, OrderSendArgs } from './fxsocketClient'
 import type { MergeModifySummary, PerLegStopTarget } from './multiTradeMerge'
 import { expandPerLegTargetsToCount } from './manualPlanning/tpBucketDistribution'
-import { bundleSteadyLegTps } from './manualPlanning/tpBundleIdentity'
-import { isTpBundleEnabled } from './manualPlanning/tpBundleRollout'
+import {
+  bundleSteadyLegTps,
+  resolveBundleLegTpIndexes,
+} from './manualPlanning/tpBundleIdentity'
 import type { ManualTpLot } from './manualPlanning/types'
 import { resolveChosenTakeProfit } from './manualPlanning/partialTpSchedule'
 import { filterPlausibleInstrumentPrices } from './tradableSymbol'
@@ -43,12 +45,18 @@ export type BasketOpenLeg = {
   entry_price: number | null
   direction: string
   symbol: string
+  /** DB status — pending = resting BuyLimit/SellLimit (strict entry). */
+  status?: string | null
   /** Set by autoManagementMonitor when the leg was moved to breakeven. */
   auto_be_applied_at?: string | null
   /** Offset used when this leg was moved to breakeven (pips beyond entry). */
   auto_be_offset_pips?: number | null
   /** Close-worse-entries threshold — broker TP must stay 0 (CWE monitor closes). */
   cwe_close_price?: number | null
+  /** 1-based planned TP level (from `:tpN` at open). */
+  next_tp_index?: number | null
+  /** Broker order comment when enriched from OpenedOrders. */
+  comment?: string | null
 }
 
 export type LegModifyError = {
@@ -141,7 +149,7 @@ export function roundBasketLot(volume: number, params: BasketSymbolParams | null
   return Math.max(min, +rounded.toFixed(2))
 }
 
-function ingestBrokerTickets(orders: unknown[]): Set<number> {
+export function ingestBrokerTickets(orders: unknown[]): Set<number> {
   const tickets = new Set<number>()
   for (const raw of orders ?? []) {
     if (!raw || typeof raw !== 'object') continue
@@ -366,26 +374,42 @@ export async function runBasketLegModifies(args: {
     })
     : 0
   let perLegTargets: PerLegStopTarget[]
-  if (
-    args.bundleIdentity === true
-    && isTpBundleEnabled()
-    && rawTargets.length < familyTrades.length
-  ) {
-    // Bundled basket with short/lost targets: steady state — legs keep their
-    // own TP, naked legs backfill positionally from the ladder (never
-    // count-weighted, which would collapse the ladder onto TP1/TP2) (D3).
+  if (args.bundleIdentity === true) {
+    // Percent-split Single + bundled multi: keep each leg's own TP; naked legs
+    // backfill from planned `:tpN` / next_tp_index (not opened_at position).
     const sl = rawTargets[0]?.stoploss ?? 0
     const ladder = parsedTps.length
       ? parsedTps
       : rawTargets.map(t => t.takeprofit).filter(tp => typeof tp === 'number' && tp > 0)
+    const legTpIndexes = resolveBundleLegTpIndexes({
+      legs: familyTrades,
+      ladderLength: ladder.length,
+      tpLots,
+    })
     const tps = bundleSteadyLegTps({
       currentTps: familyTrades.map(tr => tr.tp),
       ladder,
+      legTpIndexes,
     })
-    perLegTargets = familyTrades.map((_, i) => ({
-      stoploss: sl,
-      takeprofit: tps[i] ?? 0,
-    }))
+    // Prefer caller-provided per-leg targets when they already cover every open
+    // leg (fresh reconcile); otherwise rebuild from current TPs + ladder.
+    if (rawTargets.length >= familyTrades.length) {
+      perLegTargets = familyTrades.map((_, i) => {
+        const fromRaw = rawTargets[i]
+        const steady = tps[i] ?? 0
+        const rawTp = Number(fromRaw?.takeprofit) || 0
+        return {
+          stoploss: Number(fromRaw?.stoploss) || sl,
+          // Prefer a positive raw target; fall back to steady identity.
+          takeprofit: rawTp > 0 ? rawTp : steady,
+        }
+      })
+    } else {
+      perLegTargets = familyTrades.map((_, i) => ({
+        stoploss: sl,
+        takeprofit: tps[i] ?? 0,
+      }))
+    }
   } else {
     perLegTargets = expandPerLegTargetsToCount({
       targets: rawTargets,
@@ -424,6 +448,16 @@ export async function runBasketLegModifies(args: {
     ...legArgs,
     internalRebalance: internalRebalance === true,
   })
+
+  // One shared quote for the whole basket — never N× GetQuote when legs run in parallel.
+  let sharedQuotePrefetch = strictEntryPrefetch
+  if (!sharedQuotePrefetch) {
+    try {
+      sharedQuotePrefetch = await api.quote(uuid, symbol)
+    } catch {
+      /* legs fall back to entry price */
+    }
+  }
 
   type LegOutcome = {
     modifiedId?: string
@@ -499,7 +533,7 @@ export async function runBasketLegModifies(args: {
     let ref = Number(tr.entry_price) || 0
     let marketRef = 0
     try {
-      const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
+      const q = sharedQuotePrefetch ?? await api.quote(uuid, symbol)
       const quote = direction === 'buy' ? q.bid : q.ask
       if (Number.isFinite(quote) && quote > 0) {
         marketRef = quote
@@ -510,7 +544,7 @@ export async function runBasketLegModifies(args: {
     }
     if (ref <= 0) {
       try {
-        const q = strictEntryPrefetch ?? await api.quote(uuid, symbol)
+        const q = sharedQuotePrefetch ?? await api.quote(uuid, symbol)
         const quote = direction === 'buy' ? q.bid : q.ask
         if (Number.isFinite(quote) && quote > 0) marketRef = quote
         ref = direction === 'buy' ? q.ask : q.bid
@@ -542,13 +576,16 @@ export async function runBasketLegModifies(args: {
       }
     }
 
-    // The wrong-side / min-distance guard must judge the stop against the live
-    // market, never the entry price: entry is stale the moment price moves, and
-    // comparing a profitable trail to the entry rejected every break-even move
-    // for buys as `wrong_side_sl` (incident 2026-10-28). The entry ref stays
-    // for the modify price and for the "never loosen" rule further down; when
-    // no live quote is available we keep the old entry-based behaviour.
-    const guardRef = marketRef > 0 ? marketRef : ref
+    // Open positions: judge stops against the live market (entry is stale once
+    // price moves — incident 2026-10-28). Resting pending BuyLimit/SellLimit:
+    // the broker validates against the pending entry price, so a live-market
+    // guard would wrongly reject a valid SL between entry and market (same
+    // rule as channelStopApply).
+    const isPendingLeg = String(tr.status ?? '').toLowerCase() === 'pending'
+    const entryRef = Number(tr.entry_price) || 0
+    const guardRef = isPendingLeg && entryRef > 0
+      ? entryRef
+      : (marketRef > 0 ? marketRef : ref)
 
     let stoploss = target.stoploss
     let takeprofit = cweIdx < nImmCwe ? 0 : target.takeprofit
@@ -803,6 +840,18 @@ export async function runBasketLegModifies(args: {
           : (typeof newTp === 'number' && newTp > 0 ? newTp : null)
       }
       await supabase.from('trades').update(tradePatch).eq('id', tr.id)
+      if (isPendingLeg) {
+        const sepPatch: { stoploss?: number | null; takeprofit?: number | null } = {}
+        if (safe.slApplied) sepPatch.stoploss = tradePatch.sl ?? null
+        if (safe.tpApplied) sepPatch.takeprofit = tradePatch.tp ?? null
+        if (Object.keys(sepPatch).length > 0) {
+          await supabase
+            .from('signal_entry_pending_orders')
+            .update(sepPatch)
+            .eq('trade_id', tr.id)
+            .eq('status', 'broker_pending')
+        }
+      }
       await logLegModify({
         userId,
         signalId,
@@ -1136,18 +1185,20 @@ export async function upsertBasketReconcileJob(
   )
   const parsedTps = (args.signalTps ?? []).filter(t => typeof t === 'number' && Number.isFinite(t) && t > 0)
   let baseTargets = args.perLegTargets
-  if (
-    args.bundleIdentity === true
-    && isTpBundleEnabled()
-    && baseTargets.length < args.familyTrades.length
-  ) {
+  if (args.bundleIdentity === true && baseTargets.length < args.familyTrades.length) {
     const ladder = parsedTps.length
       ? parsedTps
       : baseTargets.map(t => t.takeprofit).filter(tp => typeof tp === 'number' && tp > 0)
     const sl = baseTargets[0]?.stoploss ?? 0
+    const legTpIndexes = resolveBundleLegTpIndexes({
+      legs: args.familyTrades,
+      ladderLength: ladder.length,
+      tpLots: args.tpLots,
+    })
     const tps = bundleSteadyLegTps({
       currentTps: args.familyTrades.map(tr => tr.tp),
       ladder,
+      legTpIndexes,
     })
     baseTargets = args.familyTrades.map((_, i) => ({
       stoploss: sl,
@@ -1253,10 +1304,10 @@ export async function loadOpenBasketLegs(
 ): Promise<BasketOpenLeg[]> {
   const { data, error } = await supabase
     .from('trades')
-    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at,auto_be_offset_pips')
+    .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,auto_be_applied_at,auto_be_offset_pips,next_tp_index,status')
     .eq('broker_account_id', brokerAccountId)
     .eq('signal_id', anchorSignalId)
-    .eq('status', 'open')
+    .in('status', ['open', 'pending'])
     .order('opened_at', { ascending: true })
     .limit(500)
   if (error) return []

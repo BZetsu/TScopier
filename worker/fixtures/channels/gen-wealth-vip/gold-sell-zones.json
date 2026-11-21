@@ -1,0 +1,12 @@
+{
+  "name": "gen-wealth-gold-sell-zones",
+  "raw_message": "GOLD SELL ZONES \n\n3866\n3874",
+  "expected": {
+    "action": "sell",
+    "symbol": "XAUUSD",
+    "entry_zone_low": 3866,
+    "entry_zone_high": 3874,
+    "sl": null,
+    "tp": []
+  }
+}

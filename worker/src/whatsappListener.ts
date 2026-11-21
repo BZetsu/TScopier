@@ -9,8 +9,15 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { isWhatsAppGroupJid, whatsappMessageText, type WhatsAppMessageContent } from './whatsappMessage'
 import { parseRawChannelMessage } from './parseSignal'
 import { pushParsedSignalToTradeWorker } from './tradeSignalPush'
+import { handleSignalMessageDeleted } from './signalDeletedClose'
 import { userBelongsToShard } from './workerConfig'
 import { installRelayFetch } from './relayFetch'
+import {
+  isWhatsAppAuthCryptoConfigured,
+  openWhatsAppAuthColumn,
+  sealWhatsAppAuthColumn,
+  whatsappAuthKeyFingerprints,
+} from './whatsappAuthCrypto'
 import WebSocket from 'ws'
 
 installRelayFetch()
@@ -48,7 +55,12 @@ type BaileysSocket = {
 
 type AuthBucket = Record<string, Record<string, unknown>>
 
-const PORT = Math.max(1, Number(process.env.WHATSAPP_LISTENER_PORT ?? 8091))
+// Railway injects PORT and proxies public HTTPS → that port. Prefer it over the
+ // local default 8091, otherwise the dashboard fetch hits a closed public port.
+const PORT = Math.max(
+  1,
+  Number(process.env.PORT ?? process.env.WHATSAPP_LISTENER_PORT ?? 8091),
+)
 const sessions = new Map<string, LiveSession>()
 
 // Baileys rejects socket queries from its own timers. Those must not exit this process,
@@ -95,11 +107,14 @@ async function useSupabaseAuthState(supabase: SupabaseClient, userId: string) {
     .eq('user_id', userId)
     .maybeSingle()
   const stored = data as { creds?: unknown; keys?: unknown } | null
+  // Dual-format read: plaintext rows (legacy/rollout) and sealed `v1:` envelopes
+  // both resolve to JSON text; an unopenable envelope throws here so a session
+  // never starts from ciphertext and the row is never overwritten.
   const creds = stored?.creds
-    ? JSON.parse(JSON.stringify(stored.creds), baileys.BufferJSON.reviver)
+    ? JSON.parse(openWhatsAppAuthColumn(stored.creds), baileys.BufferJSON.reviver)
     : baileys.initAuthCreds()
   const keys: AuthBucket = stored?.keys
-    ? JSON.parse(JSON.stringify(stored.keys), baileys.BufferJSON.reviver)
+    ? JSON.parse(openWhatsAppAuthColumn(stored.keys), baileys.BufferJSON.reviver)
     : {}
 
   let retired = false
@@ -111,8 +126,10 @@ async function useSupabaseAuthState(supabase: SupabaseClient, userId: string) {
     }
     await supabase.from('whatsapp_auth').upsert({
       user_id: userId,
-      creds: payload.creds,
-      keys: payload.keys,
+      // Unconfigured: the legacy object (stored type unchanged). Configured:
+      // sealed envelope; sealing failures throw instead of writing plaintext.
+      creds: sealWhatsAppAuthColumn(JSON.stringify(payload.creds), payload.creds),
+      keys: sealWhatsAppAuthColumn(JSON.stringify(payload.keys), payload.keys),
       updated_at: new Date().toISOString(),
     })
   }
@@ -188,35 +205,78 @@ async function copyGroupMessage(
 ): Promise<void> {
   const { data, error } = await supabase
     .from('whatsapp_groups')
-    .select('channel_id, is_active, telegram_channels!inner(is_active, source_kind)')
+    .select('channel_id, is_active, telegram_channels!inner(is_active, source_kind, display_name, channel_username)')
     .eq('user_id', userId)
     .eq('group_jid', groupJid)
     .maybeSingle()
-  if (error || !data) return
+  if (error) {
+    console.warn(`[whatsapp] group lookup failed user=${userId} jid=${groupJid}: ${error.message}`)
+    return
+  }
+  if (!data) {
+    console.warn(`[whatsapp] ignore unlinked group user=${userId} jid=${groupJid}`)
+    return
+  }
   const row = data as {
     channel_id: string
     is_active: boolean
-    telegram_channels: { is_active?: boolean; source_kind?: string } | { is_active?: boolean; source_kind?: string }[]
+    telegram_channels: {
+      is_active?: boolean
+      source_kind?: string
+      display_name?: string | null
+      channel_username?: string | null
+    } | Array<{
+      is_active?: boolean
+      source_kind?: string
+      display_name?: string | null
+      channel_username?: string | null
+    }>
   }
   const shadow = Array.isArray(row.telegram_channels) ? row.telegram_channels[0] : row.telegram_channels
-  if (!row.is_active || !shadow?.is_active || shadow.source_kind !== 'whatsapp') return
+  if (!row.is_active || !shadow?.is_active || shadow.source_kind !== 'whatsapp') {
+    console.warn(
+      `[whatsapp] ignore inactive/non-whatsapp group user=${userId} jid=${groupJid} `
+      + `group_active=${row.is_active} channel_active=${Boolean(shadow?.is_active)} `
+      + `source_kind=${shadow?.source_kind ?? 'missing'}`,
+    )
+    return
+  }
+  const sourceDisplayName = shadow.display_name?.trim()
+    || (shadow.channel_username?.trim() ? `@${shadow.channel_username.trim().replace(/^@/, '')}` : '')
+    || 'WhatsApp'
 
   const parsed = await parseRawChannelMessage(supabase, row.channel_id, text)
-  if (parsed.status !== 'parsed' || parsed.parsed.action === 'ignore') return
+  if (parsed.status !== 'parsed' || parsed.parsed.action === 'ignore') {
+    console.warn(
+      `[whatsapp] parse dropped user=${userId} jid=${groupJid} `
+      + `status=${parsed.status} action=${parsed.status === 'parsed' ? parsed.parsed.action : 'n/a'}`,
+    )
+    return
+  }
   const signalId = crypto.randomUUID()
   const createdAt = new Date().toISOString()
-  const { error: insertError } = await supabase.from('signals').insert({
+  const baseRow = {
     id: signalId,
     user_id: userId,
     channel_id: row.channel_id,
     raw_message: text,
     parsed_data: parsed.parsed,
-    status: 'parsed',
+    status: 'parsed' as const,
     skip_reason: null,
     telegram_message_id: messageId,
     is_modification: false,
     created_at: createdAt,
-  })
+  }
+  let insertError = (await supabase.from('signals').insert({
+    ...baseRow,
+    source_kind: 'whatsapp',
+    source_display_name: sourceDisplayName,
+  })).error
+  // Older DBs (pre source_kind migration) reject the denormalized columns — retry core row.
+  if (insertError && /source_kind|source_display_name/i.test(insertError.message)) {
+    console.warn(`[whatsapp] retrying signal insert without source columns user=${userId}: ${insertError.message}`)
+    insertError = (await supabase.from('signals').insert(baseRow)).error
+  }
   if (insertError) {
     if (insertError.code !== '23505') {
       console.warn(`[whatsapp] signal insert failed user=${userId}: ${insertError.message}`)
@@ -337,7 +397,48 @@ async function openSocket(supabase: SupabaseClient, userId: string): Promise<Liv
       })
     }
   })
+  sock.ev.on('messages.update', (updates: Array<{
+    key?: { remoteJid?: string | null; id?: string | null }
+    update?: { messageStubType?: number | null; message?: unknown }
+  }>) => {
+    for (const entry of updates ?? []) {
+      const jid = entry.key?.remoteJid
+      const messageId = entry.key?.id
+      if (!isWhatsAppGroupJid(jid) || !messageId) continue
+      // Baileys: revoke / delete-for-everyone typically clears message or stubs REVOKE (2).
+      const stub = Number(entry.update?.messageStubType ?? NaN)
+      const revoked = entry.update?.message === null || stub === 2
+      if (!revoked) continue
+      void handleWhatsAppMessageDeleted(supabase, userId, jid, messageId).catch(err => {
+        const detail = err instanceof Error ? err.message : String(err)
+        console.warn(`[whatsapp] delete-close failed message=${messageId}: ${detail}`)
+      })
+    }
+  })
   return live
+}
+
+async function handleWhatsAppMessageDeleted(
+  supabase: SupabaseClient,
+  userId: string,
+  groupJid: string,
+  messageId: string,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('whatsapp_groups')
+    .select('channel_id, is_active')
+    .eq('user_id', userId)
+    .eq('group_jid', groupJid)
+    .maybeSingle()
+  if (error || !data || !(data as { is_active?: boolean }).is_active) return
+  const channelId = String((data as { channel_id?: string }).channel_id ?? '').trim()
+  if (!channelId) return
+  await handleSignalMessageDeleted(supabase, {
+    userId,
+    telegramMessageId: messageId,
+    channelRowId: channelId,
+    source: 'whatsapp',
+  })
 }
 
 async function waitForPair(live: LiveSession): Promise<void> {
@@ -477,7 +578,13 @@ async function main(): Promise<void> {
     server.on('error', reject)
   })
   const host = new URL(String(process.env.WHATSAPP_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '')).host
+  const fingerprints = whatsappAuthKeyFingerprints()
   console.log(`[whatsapp] listener listening on ${PORT} (${host})`)
+  console.log(
+    `[whatsapp] auth-encryption configured=${isWhatsAppAuthCryptoConfigured()} `
+    + `primary-fingerprint=${fingerprints.primary ?? 'missing'} `
+    + `previous-fingerprints=${fingerprints.previous.join(',') || 'none'}`,
+  )
   await resumeConnected(supabase)
 }
 

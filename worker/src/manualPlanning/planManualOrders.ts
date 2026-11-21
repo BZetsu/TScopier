@@ -4,9 +4,9 @@ import { deriveManualStopsWithClamp, mirrorParsedAbsoluteStopsForReverse, resolv
 import { flipOperation, resolveOpExecAndStrict } from './executionShape'
 import { signalEntryPriceStrictEnabled, signalEntryRangeStrictEnabled } from './manualSettings'
 import {
+  normalizeSignalEntryPrefer,
   parsedHasExplicitEntryAnchor,
-  resolvedParsedEntryPrice,
-  resolvedParsedEntryZone,
+  resolvePreferredSignalEntryPrice,
   SKIP_REASON_SIGNAL_ENTRY_REQUIRED,
   SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED,
 } from './parsedEntry'
@@ -80,14 +80,16 @@ export function planManualOrders(args: {
     return { orders: [], skip_reason: SKIP_REASON_SIGNAL_ENTRY_RANGE_REQUIRED, delay_ms }
   }
 
-  let entry: number | null = resolvedParsedEntryPrice(parsed)
-  if (entry == null) {
-    const z = resolvedParsedEntryZone(parsed)
-    if (z) {
-      const prefer = channelKeywords?.additional?.prefer_entry ?? 'first_price'
-      entry = prefer === 'last_price' ? z.hi : z.lo
-    }
-  }
+  const preferEntry =
+    normalizeSignalEntryPrefer(
+      (manual as { signal_entry_prefer?: unknown }).signal_entry_prefer
+        ?? channelKeywords?.additional?.prefer_entry
+        ?? 'first_price',
+    )
+  // Dual entry quotes: First Price = worse for the signal side, Last = best
+  // (not raw text order / not min-as-first).
+  const signalSide = String(parsed.action ?? '').toLowerCase() === 'sell' ? 'sell' : 'buy'
+  let entry: number | null = resolvePreferredSignalEntryPrice(parsed, preferEntry, signalSide)
   const entryOk = entry != null && Number.isFinite(entry) && entry > 0
   const entryAnchorFromSignal = entryOk ? entry : null
 
@@ -163,6 +165,7 @@ export function planManualOrders(args: {
     pip,
     pipQuote,
     roundPrice,
+    commentPrefix,
   }
 
   const rangeEntryWait = buildRangeEntryWait({ manual, parsed, isBuy })

@@ -254,6 +254,55 @@ describe('channelStopApply', () => {
     assert.equal(result.brokers[0]?.errors[0]?.skipReason, 'sl_quote_unavailable')
   })
 
+  it('liveFast SL-only skips OpenedOrders preflight and uses parsed SL + prewarmed quote', async () => {
+    const legs: ChannelStopLeg[] = [
+      testLeg({ id: 'buy-1', direction: 'buy', entry_price: 4119, sl: 4097, tp: 4132 }),
+    ]
+    const broker = testBroker()
+    let openedOrdersCalls = 0
+    let modifyCalls = 0
+    let firstSend = 0
+    const api = {
+      seedPlatformCache: () => {},
+      quote: async () => {
+        throw new Error('should use prewarmed quote')
+      },
+      openedOrders: async () => {
+        openedOrdersCalls += 1
+        return [{ ticket: 1001, stopLoss: 4097 }]
+      },
+      orderModify: async () => {
+        modifyCalls += 1
+        return {}
+      },
+    }
+
+    const { supabase } = recordingSupabase()
+    const result = await applyChannelStopsToBaskets({
+      supabase: supabase as never,
+      apiFor: () => api as never,
+      userId: 'user-1',
+      channelId: 'ch-1',
+      signalId: 'sig-mod',
+      brokersById: new Map([['b1', broker]]),
+      rowsByBrokerSignal: new Map([['b1|anchor', legs]]),
+      hasNewSl: true,
+      hasNewTp: false,
+      parsedSl: 4023,
+      parsedTpLevels: [],
+      slFrom: 'parsed',
+      liveFast: true,
+      verifyOnBroker: false,
+      prewarmedByUuid: new Map([[FX_UUID, { quote: { bid: 4105, ask: 4105.2 } }]]),
+      onFirstBrokerSend: () => { firstSend += 1 },
+    })
+
+    assert.equal(openedOrdersCalls, 0, 'liveFast Adjust must not block on OpenedOrders')
+    assert.equal(modifyCalls, 1)
+    assert.equal(firstSend, 1)
+    assert.equal(result.totalModified, 1)
+  })
+
   it('does not apply the live-market guard to a pending stop order', async () => {
     // Pending Buy Stop: entry 4100, live bid 4070, SL 4085 sits above the
     // current market but below entry — a valid pending-stop SL. Judging it
@@ -400,6 +449,62 @@ describe('channelStopApply', () => {
     assert.equal(result.totalModified, 16)
     assert.ok(maxConcurrent > 1, `expected parallel modifies, got max concurrency ${maxConcurrent}`)
     assert.equal(openedOrdersCalls, 1, 'single OpenedOrders snapshot (no duplicate fetch)')
+  })
+
+  it('SL-only instruction keeps the existing TP on the modify (MTAPI clears an omitted side)', async () => {
+    const prevKey = process.env.FXSOCKET_API_KEY
+    process.env.FXSOCKET_API_KEY = 'test-key'
+    const legs: ChannelStopLeg[] = [{
+      id: 't0',
+      signal_id: 'sig-a',
+      broker_account_id: 'b1',
+      metaapi_order_id: '1000',
+      symbol: 'XAUUSD',
+      direction: 'sell',
+      sl: 4200,
+      tp: 4100,
+      opened_at: '2026-11-09T10:00:00Z',
+      entry_price: 4150,
+      telegram_channel_id: 'ch-1',
+    }]
+    const broker: ChannelStopBroker = { id: 'b1', platform: 'mt5', fxsocket_account_id: FX_UUID, manual_settings: { tp_lots: null } }
+    const modifyCalls: Array<{ ticket: number; stoploss?: number; takeprofit?: number }> = []
+    const api = {
+      seedPlatformCache: () => {},
+      quote: async () => ({ bid: 4150, ask: 4150.2 }),
+      openedOrders: async () => legs.map(l => ({ ticket: Number(l.metaapi_order_id) })),
+      orderModify: async (_uuid: string, a: { ticket: number; stoploss?: number; takeprofit?: number }) => {
+        modifyCalls.push(a)
+        return { stopLoss: a.stoploss, takeProfit: a.takeprofit }
+      },
+    }
+
+    const result = await applyChannelStopsToBaskets({
+      supabase: chainableSupabase() as never,
+      apiFor: () => api as never,
+      userId: 'user-1',
+      channelId: 'ch-1',
+      signalId: 'sig-mod',
+      brokersById: new Map([['b1', broker]]),
+      rowsByBrokerSignal: new Map([['b1|sig-a', legs]]),
+      hasNewSl: true,
+      hasNewTp: false,
+      parsedSl: 4180,
+      parsedTpLevels: [],
+      verifyOnBroker: false,
+    })
+
+    if (prevKey == null) delete process.env.FXSOCKET_API_KEY
+    else process.env.FXSOCKET_API_KEY = prevKey
+
+    assert.equal(result.totalModified, 1, 'SL-only instruction modifies the leg')
+    assert.equal(modifyCalls.length, 1)
+    assert.equal(modifyCalls[0]!.stoploss, 4180, 'new SL applied')
+    assert.equal(
+      modifyCalls[0]!.takeprofit,
+      4100,
+      'existing TP rides along — MTAPI clears an omitted takeProfit',
+    )
   })
 
   it('does NOT repaint TP after a TP hit (freeze keeps existing leg TP)', async () => {

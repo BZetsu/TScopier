@@ -174,19 +174,23 @@ export function describeChannelConfiguration(
       )
     }
   } else {
-    const target = row.single_tp_target ?? 'farthest'
     riskRows.push(
-      {
-        label: cm.risk.singleTpTarget,
-        value: target === 'farthest' ? cm.risk.singleTpTargetFarthest : target.toUpperCase(),
-      },
       { label: cm.risk.useSignalEntryPrice, value: onOff(row.use_signal_entry_price === true, copy) },
     )
     if (row.use_signal_entry_price === true) {
-      riskRows.push({
-        label: cm.risk.pipToleranceLegacy,
-        value: formatSettingNumber(finiteNumber(row.signal_entry_pip_tolerance, 10)),
-      })
+      riskRows.push(
+        {
+          label: cm.risk.signalEntryPrefer,
+          value:
+            row.signal_entry_prefer === 'last_price'
+              ? cm.risk.signalEntryPreferLast
+              : cm.risk.signalEntryPreferFirst,
+        },
+        {
+          label: cm.risk.pipToleranceLegacy,
+          value: formatSettingNumber(finiteNumber(row.signal_entry_pip_tolerance, 10)),
+        },
+      )
     }
   }
 
@@ -230,6 +234,7 @@ export function describeChannelConfiguration(
     { label: cm.strategy.reverseSignal, value: onOff(row.reverse_signal === true, copy) },
     { label: cm.strategy.addToExisting, value: onOff(row.add_new_trades_to_existing !== false, copy) },
     { label: cm.strategy.closeOpposite, value: onOff(row.close_on_opposite_signal === true, copy) },
+    { label: cm.strategy.closeOnSignalDeleted, value: onOff(row.close_on_signal_deleted === true, copy) },
     { label: cm.management.moveSlTitle, value: moveSlValue(row, cm, copy) },
     { label: cm.management.trailingTitle, value: onOff(row.trailing_enabled === true, copy) },
     { label: cm.management.orderCommentsTitle, value: onOff(row.order_comments_enabled !== false, copy) },

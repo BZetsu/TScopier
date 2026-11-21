@@ -111,6 +111,30 @@ TP 2660`
     )
   })
 
+  it('fast-lanes management actions below entry FASTPATH_CONFIDENCE (0.92)', () => {
+    const msg = 'Close all trades now'
+    const det = {
+      status: 'parsed' as const,
+      skip_reason: null,
+      parsed: {
+        action: 'close',
+        symbol: null,
+        entry_price: null,
+        entry_zone_low: null,
+        entry_zone_high: null,
+        sl: null,
+        tp: [],
+        lot_size: null,
+        confidence: 0.92,
+        raw_instruction: msg,
+      },
+    }
+    assert.equal(
+      deterministicQualifiesForFastPath(det, msg, DEFAULT_CHANNEL_KEYWORDS),
+      true,
+    )
+  })
+
   it('rejects a high-confidence parse that missed a labeled entry (Fix C)', () => {
     const msg = `BUY XAUUSD
 AREA: 4358
@@ -238,8 +262,45 @@ describe('shouldReconcileSignal', () => {
     assert.equal(shouldReconcileSignal(detResult(), uni), false)
   })
 
-  it('trusts stage 2 when it turns a deterministic modification into an entry', () => {
-    assert.equal(shouldReconcileSignal(detResult({ action: 'modify' }), stageTwo('entry')), false)
+  it('reconciles when stage 2 turns a deterministic modification into an entry', () => {
+    assert.equal(shouldReconcileSignal(detResult({ action: 'modify' }), stageTwo('entry')), true)
+  })
+
+  it('reconciles when rules read close but stage 2 says cancel_pending (2026-11-11 incident shape)', () => {
+    const uni = stageTwo('cancel_pending', { confidence: 0.5 }, { rawMessage: 'Close all trades now' })
+    assert.equal(shouldReconcileSignal(detResult({ action: 'close' }), uni), true)
+  })
+
+  it('reconciles when rules skipped but stage 2 says cancel_pending (BUY LIMITS shape)', () => {
+    const uni = stageTwo('cancel_pending', { confidence: 0.9 }, {
+      rawMessage: 'BUY LIMITS GOLD @ 4050/4045 AREA\nTP 4053\nSL 4040',
+    })
+    assert.equal(shouldReconcileSignal(skippedDet, uni), true)
+  })
+
+  it('does not reconcile a confident cancel both sides agree on', () => {
+    const uni = stageTwo('cancel_pending', { confidence: 0.9 })
+    assert.equal(shouldReconcileSignal(detResult({ action: 'delete_pendings' }), uni), false)
+  })
+
+  it('reconciles when both sides read cancel but stage 2 is unsure', () => {
+    const uni = stageTwo('cancel_pending', { confidence: 0.5 })
+    assert.equal(shouldReconcileSignal(detResult({ action: 'delete_pendings' }), uni), true)
+  })
+
+  it('reconciles when stage 2 flips the entry side', () => {
+    const uni = stageTwo('entry', { side: 'BUY' })
+    assert.equal(shouldReconcileSignal(detResult(), uni), true)
+  })
+
+  it('reconciles a low-confidence executable answer even when the rules agree', () => {
+    const uni = stageTwo('entry', { confidence: 0.5 })
+    assert.equal(shouldReconcileSignal(skippedDet, uni), true)
+  })
+
+  it('does not reconcile confident same-kind management answers', () => {
+    const uni = stageTwo('modify', { confidence: 0.9 })
+    assert.equal(shouldReconcileSignal(detResult({ action: 'modify' }), uni), false)
   })
 
   it('does not reconcile when deterministic and stage 2 agree exactly', () => {

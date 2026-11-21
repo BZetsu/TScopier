@@ -29,8 +29,8 @@ describe('resolveChosenTakeProfit', () => {
   })
 })
 describe('shouldApplySingleTakeProfitTarget', () => {
-  it('is true only for single trade style', () => {
-    assert.equal(shouldApplySingleTakeProfitTarget({ trade_style: 'single' }), true)
+  it('is always false — Single percent-split must not pin legs to farthest TP', () => {
+    assert.equal(shouldApplySingleTakeProfitTarget({ trade_style: 'single' }), false)
     assert.equal(shouldApplySingleTakeProfitTarget({ trade_style: 'multi' }), false)
     assert.equal(shouldApplySingleTakeProfitTarget({ trade_style: null }), false)
     assert.equal(shouldApplySingleTakeProfitTarget(null), false)

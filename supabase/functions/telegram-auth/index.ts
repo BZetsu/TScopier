@@ -1,6 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
 import { logAssistantEvent } from "../_shared/listenerEvents.ts"
+import {
+  hasListenerWorkerUrl,
+  isWrongShardPayload,
+  listenerWorkerUrlCandidates,
+} from "../_shared/workerShard.ts"
 
 /**
  * Thin proxy in front of the worker's MTProto auth API.
@@ -15,25 +20,18 @@ import { logAssistantEvent } from "../_shared/listenerEvents.ts"
  *
  *   The worker is now the single owner of every MTProto socket. This edge
  *   function only authenticates the Supabase user and forwards the request.
+ *   With LISTENER_SHARD_URLS set, each user is routed to their owning shard.
  */
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  // `x-client-id` is sent by the app (one id per browser tab) so events written by
+  // the worker can name the caller. A custom header forces a preflight, so it must
+  // be listed here or the browser blocks every Telegram auth call.
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-Client-Id",
 }
 
-/** Base URL of the Railway worker (public). Accepts with or without https:// — fetch requires a scheme. */
-function normalizeWorkerBaseUrl(raw: string): string {
-  const trimmed = raw.trim().replace(/\/+$/, "")
-  if (!trimmed) return ""
-  if (/^https?:\/\//i.test(trimmed)) return trimmed
-  return `https://${trimmed}`
-}
-
-const WORKER_URL = normalizeWorkerBaseUrl(
-  Deno.env.get("TELEGRAM_LISTENER_URL") ?? Deno.env.get("WORKER_URL") ?? "",
-)
 const WORKER_INTERNAL_TOKEN = Deno.env.get("WORKER_INTERNAL_TOKEN") ?? ""
 
 const ROUTES: Record<string, string> = {
@@ -71,8 +69,8 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders })
     }
 
-    if (!WORKER_URL || !WORKER_INTERNAL_TOKEN) {
-      console.error("telegram-auth: WORKER_URL or WORKER_INTERNAL_TOKEN not configured")
+    if (!hasListenerWorkerUrl() || !WORKER_INTERNAL_TOKEN) {
+      console.error("telegram-auth: LISTENER_SHARD_URLS/TELEGRAM_LISTENER_URL or WORKER_INTERNAL_TOKEN not configured")
       return Response.json(
         { error: "Telegram service is not configured. Contact support." },
         { status: 503, headers: corsHeaders },
@@ -86,6 +84,41 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: "Unknown action" }, { status: 400, headers: corsHeaders })
     }
 
+    // Who is calling: a per-tab client id (when the app is built with it), the
+    // edge-visible client IP and the browser. Forwarded to the worker so events it
+    // writes (for example a disconnect) name the caller, and logged here because
+    // request bodies and actions were previously invisible in the gateway log.
+    const forwardedFor = req.headers.get("x-forwarded-for") ?? ""
+    const clientIp = (req.headers.get("cf-connecting-ip") ?? forwardedFor.split(",")[0] ?? "").trim()
+    const clientId = (req.headers.get("x-client-id") ?? "").trim() || "-"
+    const ua = (req.headers.get("user-agent") ?? "").trim().slice(0, 120)
+    {
+      console.log(
+        `[telegram-auth] action=${action} user=${user.id} client=${clientId} ip=${clientIp || "-"} ua=${ua || "-"}`,
+      )
+      // Only the actions a support conversation would ask about. Polling actions
+      // (qr_status, list_channels) would bury them.
+      const traced = new Set([
+        "send_code",
+        "verify_code",
+        "start_qr_login",
+        "reconnect_telegram",
+        "disconnect_telegram",
+      ])
+      if (traced.has(action)) {
+        logAssistantEvent({
+          userId: user.id,
+          eventType: "telegram_auth_action",
+          detail: {
+            action,
+            client: clientId,
+            ip: clientIp || null,
+            ua: ua || null,
+          },
+        }).catch(() => {}) // fire-and-forget
+      }
+    }
+
     const rest = { ...body }
     delete rest.action
     delete rest.phone_code_hash
@@ -95,22 +128,72 @@ Deno.serve(async (req: Request) => {
     // and let any signed-in user act as (and link Telegram as) someone else.
     delete rest.user_id
 
-    const workerRes = await fetch(`${WORKER_URL}${path}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-internal-token": WORKER_INTERNAL_TOKEN,
-      },
-      body: JSON.stringify({ user_id: user.id, ...rest }),
-    })
-
-    const text = await workerRes.text()
-    let payload: unknown = text
-    try {
-      payload = text ? JSON.parse(text) : {}
-    } catch {
-      payload = { error: "Invalid response from Telegram service" }
+    const candidates = listenerWorkerUrlCandidates(user.id)
+    if (candidates.length === 0) {
+      console.error("telegram-auth: no listener URL for user shard")
+      return Response.json(
+        { error: "Telegram service is not configured. Contact support." },
+        { status: 503, headers: corsHeaders },
+      )
     }
+
+    const forwardHeaders: Record<string, string> = {
+      "content-type": "application/json",
+      "x-internal-token": WORKER_INTERNAL_TOKEN,
+      // Caller identity for the events the worker writes (e.g. a disconnect).
+      ...(clientId !== "-" ? { "x-client-id": clientId } : {}),
+      ...(clientIp ? { "x-client-ip": clientIp } : {}),
+      ...(ua ? { "x-client-ua": ua } : {}),
+    }
+    const forwardBody = JSON.stringify({ user_id: user.id, ...rest })
+
+    // Primary shard first. If LISTENER_SHARD_URLS.length disagrees with listener
+    // WORKER_SHARD_COUNT, the hash index is wrong and the worker returns
+    // wrong_shard — retry other fleet URLs so auth can still complete.
+    let workerRes: Response | null = null
+    let payload: unknown = null
+    for (let i = 0; i < candidates.length; i++) {
+      const workerUrl = candidates[i]!
+      try {
+        workerRes = await fetch(`${workerUrl}${path}`, {
+          method: "POST",
+          headers: forwardHeaders,
+          body: forwardBody,
+        })
+      } catch (err) {
+        console.error(
+          `telegram-auth: fetch failed url=${workerUrl} action=${action}:`,
+          err instanceof Error ? err.message : err,
+        )
+        if (i === candidates.length - 1) throw err
+        continue
+      }
+      const text = await workerRes.text()
+      try {
+        payload = text ? JSON.parse(text) : {}
+      } catch {
+        payload = { error: "Invalid response from Telegram service" }
+      }
+      if (isWrongShardPayload(payload) && i < candidates.length - 1) {
+        console.warn(
+          `telegram-auth: wrong_shard from ${workerUrl} action=${action} user=${user.id}; trying next listener`,
+        )
+        continue
+      }
+      if (i > 0) {
+        console.warn(
+          `telegram-auth: recovered via fallback listener ${workerUrl} (primary was ${candidates[0]}) action=${action} user=${user.id}`,
+        )
+      }
+      break
+    }
+    if (!workerRes) {
+      return Response.json(
+        { error: "Telegram service is not configured. Contact support." },
+        { status: 503, headers: corsHeaders },
+      )
+    }
+
     if (payload && typeof payload === "object" && !Array.isArray(payload)) {
       const rec = payload as Record<string, unknown>
       if (typeof rec.error === "string") {

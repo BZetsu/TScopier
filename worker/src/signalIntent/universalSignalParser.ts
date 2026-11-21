@@ -153,8 +153,8 @@ Rules:
 - New trade entries: kind entry, side BUY or SELL, entry as [price] or zone [low, high].
 - SL/TP updates on open trades: kind modify (keep side from parent/recent context when omitted).
 - For modification messages (modify/close/breakeven/partial_close), the target symbol MUST match an entry in open_trades when open_trades is present. Never pick a symbol that has no open trade.
-- Full close: kind close. Move SL to entry: kind breakeven. Partial close: kind partial_close.
-- Cancel/delete buy/sell limit or pending, or "trade invalid" / "setup invalid": kind cancel_pending (not a full market close).
+- Full close: kind close. "close all (trades)", "close everything", "close my positions", "flatten" → kind close ALWAYS — never cancel_pending (cancel_pending only cancels orders that have NOT been executed yet; it never closes open trades). Move SL to entry: kind breakeven. Partial close: kind partial_close.
+- Cancel/delete buy/sell limit or pending, or "trade invalid" / "setup invalid": kind cancel_pending (not a full market close) — ONLY when the message explicitly cancels/removes/invalidates. A message that merely LISTS pending entries ("BUY LIMITS GOLD @ 4050/4045 AREA", "SELL LIMIT 4131", "BUY STOP 4082") with no cancel verb is kind entry with those prices, never cancel_pending.
 - TP-hit announcements, status updates, "TP2 reached", ATUALIZAÇÃO without new entry → kind commentary or ignore.
 - Conditional tense, retrospective discussion, macro news → kind commentary.
 - If the message could be an executable trade but the instruction, side, price, or intent is genuinely ambiguous → kind uncertain.
@@ -185,6 +185,7 @@ Return strict JSON only matching this schema:
 }
 Rules:
 - Resolve the disagreement using the RAW message as the only source of truth.
+- "close all (trades)", "close everything", "close my positions", "flatten" → kind close, never cancel_pending. A message that only LISTS pending buy/sell limit/stop entries with no cancel verb → kind entry, never cancel_pending.
 - Never invent prices, sides, or stop-losses that are not present in the message. Invented values from stage 2 must be rejected.
 - Extract TRADING INTENT, never translate the message literally.
 - Map instrument aliases: GOLD, OR, XAU-USD, XAU/USD → XAUUSD; SILVER → XAGUSD.
@@ -252,11 +253,14 @@ async function callChatCompletions(args: {
       // 429 (rate limit) and 5xx are transient — retry with backoff before
       // falling back to the next provider. Previously a single 429 silently
       // degraded the whole stage-2 to the weaker OpenAI fallback model.
-      if (res.status === 429 || res.status >= 500) {
+      if (res.status === 402 || res.status === 429 || res.status >= 500) {
         const body = await res.text().catch(() => '')
         lastError = `${args.label} HTTP ${res.status}: ${body.slice(0, 200)}`
-        // Daily quota is exhausted — retrying the same key cannot succeed, the
-        // caller must rotate to the next key (or fall back to OpenAI).
+        // Only the daily token limit is terminal for this key. A 402
+        // payment_required stays in the retry path on purpose: measured on
+        // 2026-11-16, the same key answered 402 once and then served 44
+        // consecutive requests normally, so quarantining it would have been
+        // wrong. Retry with backoff, then rotate.
         dailyExhausted = isCerebrasDailyLimit(res.status, body)
         if (dailyExhausted) break
         if (attempt < attempts) {
@@ -356,6 +360,8 @@ async function callCerebrasUniversal(context: UniversalParseContext): Promise<{
     }
     lastError = attempt.error
     if (attempt.dailyExhausted) {
+      // Covers both a daily token limit and a 402 payment refusal: either way
+      // this key cannot serve until it is rotated out or billing is fixed.
       cerebrasKeyState.set(key, { exhausted: true })
       console.warn(
         `[universalSignalParser] Cerebras[${idx}] daily limit exhausted (${maskKey(key)}) — rotating to next key`,
@@ -634,11 +640,15 @@ export function deterministicQualifiesForFastPath(
   keywords: ChannelKeywords,
 ): boolean {
   if (det.status !== 'parsed' || det.parsed.action === 'ignore') return false
-  const conf = typeof det.parsed.confidence === 'number' ? det.parsed.confidence : 0
-  if (conf < universalParseFastPathConfidence()) return false
 
   const action = parsedAction(det.parsed)
+  // Close / BE / partial / modify are phrase-driven. Default mgmt confidence is
+  // 0.92 but FASTPATH_CONFIDENCE is 0.99 — that alone was sending "Close all
+  // trades now" through ~2s stage-2 AI. Trust deterministic management always.
   if (isManagementAction(action)) return true
+
+  const conf = typeof det.parsed.confidence === 'number' ? det.parsed.confidence : 0
+  if (conf < universalParseFastPathConfidence()) return false
 
   if (action === 'buy' || action === 'sell') {
     if (!evaluateParsedSignalExecutionEligibility(det.parsed, rawMessage, keywords).eligible) return false

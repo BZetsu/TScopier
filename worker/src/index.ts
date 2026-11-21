@@ -51,7 +51,14 @@ import { getFxsocketStreamManager } from './fxsocketStreamManager'
 import { CopyLimitMonitor } from './copyLimitMonitor'
 import { parseEnvBool, isKnownRole, KNOWN_ROLES, workerConfig, WORKER_BUILD_TAG } from './workerConfig'
 import type { DiscordListenerHandle } from './discordListener'
-import { validateListenerTradeShardConfig, validateListenerMgmtShardConfig, validateListenerQueueConfig } from './tradeSignalPush'
+import {
+  validateListenerTradeShardConfig,
+  validateListenerMgmtShardConfig,
+  validateListenerQueueConfig,
+  validateWorkerShardBounds,
+  startTradePushProbeLoop,
+} from './tradeSignalPush'
+import { internalTokenFingerprint } from './internalToken'
 import { SignalQueueConsumerManager } from './queue/signalQueueConsumer'
 import { deployedTradeShardCount, signalQueueConfig, redisQueueConfigured } from './queue/signalQueueConfig'
 import { setQueueMetricsProvider } from './queue/queueHealth'
@@ -129,6 +136,7 @@ const monitorLoops: MonitorLoopHandle[] = []
 let stopLogRetention: (() => void) | null = null
 let stopWorkWake: (() => void) | null = null
 let stopTradeLivenessTick: (() => void) | null = null
+let stopTradingViewWarmPing: (() => void) | null = null
 
 function trackMonitor(m: { stop: () => void; getLoopHandle?: () => MonitorLoopHandle | null; getLoopHandles?: () => MonitorLoopHandle[] }) {
   monitors.push(m)
@@ -268,6 +276,14 @@ async function main() {
     process.exit(1)
   }
 
+  if (workerConfig.runsListener || workerConfig.runsTrade) {
+    const boundErr = validateWorkerShardBounds(workerConfig.shardId, workerConfig.shardCount)
+    if (boundErr) {
+      console.error(`[worker] FATAL: ${boundErr}`)
+      process.exit(1)
+    }
+  }
+
   if (workerConfig.runsListener) {
     const shardErr = validateListenerTradeShardConfig()
     if (shardErr) {
@@ -288,7 +304,8 @@ async function main() {
 
   console.log(
     `[worker] starting role=${workerConfig.role} shard=${workerConfig.shardId}/${workerConfig.shardCount}`
-    + ` instance=${workerConfig.instanceId} build=${WORKER_BUILD_TAG}`,
+    + ` instance=${workerConfig.instanceId} build=${WORKER_BUILD_TAG}`
+    + ` internal_token=${internalTokenFingerprint() ?? 'missing'}`,
   )
 
   if (!workerConfig.runsDiscordListener) {
@@ -356,6 +373,23 @@ async function main() {
           + ' and point WORKER_PUBLIC_URL / VITE_WORKER_URL here (not the listener service)',
         )
       }
+
+      // Keep TradingView ingest path warm (no TV session — process uptime + local ping).
+      const warmPort = parseInt(process.env.WORKER_PORT ?? '8080', 10)
+      const warmMs = Math.max(
+        15_000,
+        Math.min(120_000, Number(process.env.TRADINGVIEW_WARM_PING_MS ?? 30_000)),
+      )
+      const warmTick = () => {
+        const base = `http://127.0.0.1:${warmPort}`
+        void fetch(`${base}/webhooks/tradingview/_warm`).catch(() => {})
+        void fetch(`${base}/health`).catch(() => {})
+      }
+      warmTick()
+      const warmTimer = setInterval(warmTick, warmMs)
+      warmTimer.unref?.()
+      stopTradingViewWarmPing = () => clearInterval(warmTimer)
+      console.log(`[worker] tradingview warm ping every ${warmMs}ms on :${warmPort}`)
     }
 
     const queueCfg = signalQueueConfig()
@@ -398,7 +432,16 @@ async function main() {
     console.log(`[worker] discord listener started guilds=${discordListener.client.guilds.cache.size}`)
   }
 
+  let stopTradePushProbe: (() => void) | null = null
+  // Discord also pushes via /internal/dispatch-signal; probe so breakers recover
+  // after token/URL mismatches (same path as Telegram listener).
+  if (workerConfig.runsListener || workerConfig.runsDiscordListener) {
+    stopTradePushProbe = startTradePushProbeLoop()
+  }
   if (workerConfig.runsListener) {
+    // Authenticated probe of TRADE_*_WORKER_URL targets — opens a breaker on 401/404
+    // so Close-all does not wait on the idle DB sweep after a token mismatch.
+
     // Register periodic lease renewal + session sync BEFORE (and independent of)
     // loadAll. Previously loadAll was awaited first, so a single hung listener
     // connect during startup (e.g. a wedged Telegram warm-up) blocked loadAll
@@ -457,7 +500,9 @@ async function main() {
     stopWorkerHeartbeatCheckIns()
     await authService?.shutdown()
     stopWorkWake?.()
+    stopTradePushProbe?.()
     stopTradeLivenessTick?.()
+    stopTradingViewWarmPing?.()
     stopLogRetention?.()
     setQueueMetricsProvider(null)
     await signalQueueConsumers?.stop()

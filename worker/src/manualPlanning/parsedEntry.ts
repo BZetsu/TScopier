@@ -29,6 +29,75 @@ export function resolvedParsedEntryZone(parsed: ParsedSignal): { lo: number; hi:
   return { lo: Math.min(lo, hi), hi: Math.max(lo, hi) }
 }
 
+/** Ordered entry pair as written in the signal (first mentioned → last mentioned). */
+export function resolvedParsedEntryZoneOrdered(
+  parsed: ParsedSignal,
+): { first: number; last: number } | null {
+  const ext = parsed as unknown as Record<string, unknown>
+  const first =
+    readPositiveNum(parsed.entry_zone_first)
+    ?? readPositiveNum(ext.entryZoneFirst)
+  const last =
+    readPositiveNum(parsed.entry_zone_last)
+    ?? readPositiveNum(ext.entryZoneLast)
+  if (first != null && last != null) return { first, last }
+  return null
+}
+
+export type SignalEntryPrefer = 'first_price' | 'last_price'
+
+export function normalizeSignalEntryPrefer(raw: unknown): SignalEntryPrefer {
+  return String(raw ?? 'first_price').toLowerCase() === 'last_price'
+    ? 'last_price'
+    : 'first_price'
+}
+
+export type SignalEntrySide = 'buy' | 'sell'
+
+/** Worse fill for the signal side: buy high / sell low. */
+export function worseEntryPrice(side: SignalEntrySide, a: number, b: number): number {
+  return side === 'buy' ? Math.max(a, b) : Math.min(a, b)
+}
+
+/** Best fill for the signal side: buy low / sell high. */
+export function bestEntryPrice(side: SignalEntrySide, a: number, b: number): number {
+  return side === 'buy' ? Math.min(a, b) : Math.max(a, b)
+}
+
+function signalEntrySideFromParsed(parsed: ParsedSignal): SignalEntrySide {
+  return String(parsed.action ?? '').toLowerCase() === 'sell' ? 'sell' : 'buy'
+}
+
+/**
+ * Collapse a dual entry to one price for Use Signal Entry Price.
+ *
+ * Product mapping (side-aware, not raw text order):
+ * - First Price → worse entry (buy: higher, sell: lower)
+ * - Last Price → best entry (buy: lower, sell: higher)
+ *
+ * Using min/max for first/last previously flipped common BUY quotes written
+ * high-then-low (e.g. `(3879) 3878`) whenever `entry_zone_first/last` were absent.
+ */
+export function resolvePreferredSignalEntryPrice(
+  parsed: ParsedSignal,
+  prefer: SignalEntryPrefer,
+  side?: SignalEntrySide | null,
+): number | null {
+  const entrySide = side ?? signalEntrySideFromParsed(parsed)
+  const ordered = resolvedParsedEntryZoneOrdered(parsed)
+  const z = resolvedParsedEntryZone(parsed)
+  const a = ordered?.first ?? z?.lo ?? null
+  const b = ordered?.last ?? z?.hi ?? null
+  if (a != null && b != null) {
+    return prefer === 'last_price'
+      ? bestEntryPrice(entrySide, a, b)
+      : worseEntryPrice(entrySide, a, b)
+  }
+  if (a != null) return a
+  if (b != null) return b
+  return resolvedParsedEntryPrice(parsed)
+}
+
 /**
  * True when the parsed signal includes an explicit entry **price** or **zone**
  * (not a bare market “buy now”). Used with strict signal entry so planning
@@ -36,6 +105,7 @@ export function resolvedParsedEntryZone(parsed: ParsedSignal): { lo: number; hi:
  */
 export function parsedHasExplicitEntryAnchor(parsed: ParsedSignal): boolean {
   if (resolvedParsedEntryPrice(parsed) != null) return true
+  if (resolvedParsedEntryZoneOrdered(parsed) != null) return true
   const z = resolvedParsedEntryZone(parsed)
   return z != null && z.lo > 0 && z.hi > 0
 }

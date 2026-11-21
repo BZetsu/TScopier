@@ -11,6 +11,26 @@ everything else (default), **90 days** for rare incident/ops events.
 Columns: `user_id`, `channel_row_id`, `telegram_message_id`, `event_type`,
 `detail` (jsonb), `created_at`.
 
+### Poll failures are throttled
+
+`poll_error`, `poll_peer_resolve_failed` and `peer_resolve_failed` describe a
+connection or channel problem that repeats on every poll tick while it lasts. One
+row per tick per channel would turn a short outage into hundreds of identical
+rows, so they are throttled per (connection generation, event type, error
+message): the first occurrence writes immediately, repeats inside the window
+(default 60 s, `POLL_EVENT_THROTTLE_WINDOW_MS`) are counted, and the next written
+row carries:
+
+- `detail.repeats` — how many occurrences were folded in.
+- `detail.repeat_channels` — how many distinct channels those repeats came from.
+
+The row's `channel_row_id` is therefore *one affected channel*, not necessarily
+the only one. A burst that ends inside a single window leaves one row that does
+not state how often it repeated; use the worker log (`poll getMessages failed`,
+`poll peer resolve failed`, `warmChannelEntity failed`) for tick-level detail.
+The connection episode itself is also visible as `last_disconnected_at` /
+`last_connected_at` in `copier_listener_health`.
+
 ---
 
 ## 1. Message delivery / Telegram transport
@@ -18,11 +38,12 @@ Columns: `user_id`, `channel_row_id`, `telegram_message_id`, `event_type`,
 | event | meaning | kind | kept |
 |---|---|---|---|
 | `unmapped_channel` | A message arrived from a monitored channel but could not be mapped to a `telegram_channels` row; it was ignored. | info | 30d |
-| `poll_error` | Fetching new messages from Telegram failed (general poll failure, including repeated AUTH_KEY duplication). | error | 7d |
+| `poll_error` | Fetching new messages from Telegram failed (general poll failure, including repeated AUTH_KEY duplication). Throttled: see *Poll failures are throttled* above. | error | 7d |
 | `peer_resolve_failed` | A channel's Telegram entity (peer) could not be resolved, so it cannot be read/sent to. Emitted while warming a channel entity. | error | 7d |
 | `poll_peer_resolve_failed` | Same peer-resolution failure, but during the poll cycle. | error | 7d |
 | `catchup_get_messages_failed` | Defined in the worker's type list; **no code path emits it.** | error | 30d |
 | `poll_flood_backoff` | Telegram rate-limited us (FloodWait / retry burst); polling paused and backed off, escalating on repeats. | throttle | 30d |
+| `listener_stall_heal` | The listener was connected but no poll cycle had completed for a stale window; the session manager hard-reset it so it would reconnect. `detail.healed` = `true` when the reset happened, `false` when the per-listener hourly budget refused it (the listener stays deaf until the window resets). Added after the 2026-11-18 outage, where this state was invisible for 82 minutes. | warning | 30d |
 
 ## 2. AI parsing
 
@@ -131,7 +152,8 @@ current worker. They still get the default 30-day retention if they are ever wri
 - `worker/src/userListener.ts` — most events.
 - `worker/src/authService.ts` — `telegram_link_attempt`, `telegram_link_success`,
   `telegram_link_failed`.
-- `worker/src/sessionManager.ts` — `telegram_link_disconnect`.
+- `worker/src/sessionManager.ts` — `telegram_link_disconnect`, `listener_stall_heal`
+  (the stalled-listener heal; `detail.healed` says whether the reset happened).
 - `worker/src/channelCanonicalIngest.ts`, `worker/src/channelReconcileMonitor.ts`,
   `worker/src/tradeExecutor/basketMerge/mergeRouting.ts` — channel/merge events.
 - `supabase/functions/_shared/listenerEvents.ts` and

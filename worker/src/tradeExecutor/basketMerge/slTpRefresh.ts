@@ -3,6 +3,7 @@ import {
   closeStaleOpenTrades,
   fetchOpenBrokerTickets,
   GHOST_BASKET_CLOSED_USER_MESSAGE,
+  ingestBrokerTickets,
   markBasketReconcileDone,
   markBasketReconcileDoneForAnchor,
   runBasketLegModifies,
@@ -11,6 +12,7 @@ import {
   type BasketOpenLeg,
   type BasketSymbolParams
 } from '../../basketSlTpReconcile'
+import { fetchBrokerOrdersSnapshot } from '../../channelStopApply'
 import {
   applyChannelParamsToVirtualPendingList,
   channelParamsPredateBasket,
@@ -41,12 +43,20 @@ import {
 import { isMtBridgeGlitchMessage } from '../../brokerConnectError'
 import { MtOperation } from '../../fxsocketClient'
 import { buildPerLegStopTargets, mergePlanImmediateOrders, type MergeModifySummary } from '../../multiTradeMerge'
+import { isTpPercentSplitBasket } from '../../manualPlanning/tpBundleIdentity'
 import {
   isExplicitBasketSlSource,
   logEffectiveBasketStops,
   resolveEffectiveBasketStops,
 } from '../../basketEffectiveStops'
-import { buildRangeBasketTpTargets, pickV2MergeDistributeTargets, toRangeBasketParsedSlice } from '../../rangeBasketTpSync'
+import {
+  buildRangeBasketTpTargets,
+  hasClosedBasketLegs,
+  pickV2MergeDistributeTargets,
+  preserveOpenLegTakeProfits,
+  toRangeBasketParsedSlice,
+} from '../../rangeBasketTpSync'
+import { hasTpTouchedLock } from '../../rangePendingFireGuard'
 import { isRangeLayerTillCloseEnabled } from '../../rangeLayerTillClose'
 import {
   patchActiveRangePendingLegStops,
@@ -73,6 +83,26 @@ function v2MergeDistributeTpEnabled(): boolean {
   return String(process.env.V2_MERGE_DISTRIBUTE_TP ?? 'true').toLowerCase().trim() !== 'false'
 }
 
+function commentFromBrokerOrder(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const c = o.comment ?? o.Comment
+  return typeof c === 'string' && c.trim() ? c : null
+}
+
+function enrichFamilyLegsWithBrokerComments(
+  familyTrades: BasketOpenLeg[],
+  ordersByTicket: Map<number, unknown>,
+): BasketOpenLeg[] {
+  if (!ordersByTicket.size) return familyTrades
+  return familyTrades.map(tr => {
+    const ticket = Number(tr.metaapi_order_id)
+    if (!Number.isFinite(ticket) || ticket <= 0) return tr
+    const comment = commentFromBrokerOrder(ordersByTicket.get(ticket))
+    return comment ? { ...tr, comment } : tr
+  })
+}
+
 export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     signal: SignalRow
     parsed: ParsedSignal
@@ -90,7 +120,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     sameSignalRefresh?: boolean
     liveMgmtFast?: boolean
     mergeLinkMeta?: Record<string, unknown>
-  }): Promise<{ success: boolean; summary: MergeModifySummary }> {
+  }): Promise<{ success: boolean; summary: MergeModifySummary; failureReason?: string }> {
     const {
       signal, parsed, broker, channelKeywords, baseLot, params, symbol, uuid,
       strictEntryPrefetch, commentPrefix, anchorSignalId, direction, logAction, mergeLinkMeta,
@@ -107,12 +137,15 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
     const useV2BasketRefresh = isV2({ brokerAccountId: broker.id, userId: signal.user_id, provider: broker.provider })
 
     const loadFamilyTrades = async (): Promise<BasketOpenLeg[]> => {
+      // Include resting strict-entry BuyLimit/SellLimit rows (`pending`). A
+      // Telegram message edit must refresh their SL/TP too — loading only
+      // `open` skipped Demo pending baskets entirely (Migration 0b582d78).
       const { data: familyRows, error: famErr } = await ctx.supabase
         .from('trades')
-        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol')
+        .select('id,signal_id,metaapi_order_id,opened_at,lot_size,sl,tp,entry_price,direction,symbol,next_tp_index,status')
         .eq('broker_account_id', broker.id)
         .eq('signal_id', anchorSignalId)
-        .eq('status', 'open')
+        .in('status', ['open', 'pending'])
         .order('opened_at', { ascending: true })
         .limit(500)
       if (famErr) {
@@ -289,6 +322,9 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         console.warn(`[tradeExecutor] basket refresh skipped: no entry anchor signal=${signal.id}`)
         return {
           success: false,
+          // The quote fetch itself failed (transient broker/quote outage), not
+          // a missing anchor — keep it visible to the pipeline monitor.
+          failureReason: 'basket_refresh_no_anchor',
           summary: {
             openLegs: familyTrades.length,
             attempted: 0,
@@ -413,6 +449,31 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         )
       }
     }
+    // Enrich `:tpN` comments from OpenedOrders before building targets — parallel
+    // teaser fills scramble opened_at, so identity must come from the comment.
+    let openedTickets: Set<number> | null = null
+    let ordersByTicket: Map<number, unknown> = new Map()
+    try {
+      if (liveMgmtFast) {
+        const warm = ctx.entryBrokerReadCache.get(uuid)?.openedOrders
+        if (warm && Date.now() - warm.at < 5_000 && Array.isArray(warm.rows)) {
+          openedTickets = ingestBrokerTickets(warm.rows)
+          for (const raw of warm.rows) {
+            if (!raw || typeof raw !== 'object') continue
+            const o = raw as Record<string, unknown>
+            const ticket = Number(o.ticket ?? o.Ticket ?? o.orderId ?? o.OrderID ?? 0)
+            if (Number.isFinite(ticket) && ticket > 0) ordersByTicket.set(ticket, raw)
+          }
+        }
+      }
+      if (!openedTickets) {
+        const snap = await fetchBrokerOrdersSnapshot(api, uuid)
+        openedTickets = snap.tickets
+        ordersByTicket = snap.ordersByTicket
+      }
+      familyTrades = enrichFamilyLegsWithBrokerComments(familyTrades, ordersByTicket)
+    } catch { /* preflight optional */ }
+
     // Modify-only refreshes (message edits on an existing basket) must spread TPs
     // across every open leg. Using the entry-plan instant/range split after extra
     // range legs have fired leaves trailing legs with takeprofit=0 and can crash
@@ -424,11 +485,14 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
             mergePlanImmediateOrders(plan).length,
             Math.max(0, familyTrades.length - Math.max(0, maxPendingStepIdx - activePendingCount)),
           )
-    // Single-mode partial schedule comes from planManualOrders (uses derived finalTps,
-    // predefined TP pips, Targets %, single_tp_target — not raw parsed.tp alone).
+    // Legacy single-mode one-leg partials (no longer planned for Single percent-split).
+    const percentSplitBasket = isTpPercentSplitBasket(manual)
     const singlePartialPartials: PlannerPartialTp[] =
-      manual.trade_style !== 'multi' ? (plan.partialTps ?? []) : []
-    const singleBrokerTpRaw = manual.trade_style !== 'multi' ? plan.orders[0]?.takeprofit : undefined
+      !percentSplitBasket && manual.trade_style !== 'multi' ? (plan.partialTps ?? []) : []
+    const singleBrokerTpRaw =
+      !percentSplitBasket && manual.trade_style !== 'multi'
+        ? plan.orders[0]?.takeprofit
+        : undefined
     const singleBrokerTp =
       typeof singleBrokerTpRaw === 'number' && Number.isFinite(singleBrokerTpRaw) && singleBrokerTpRaw > 0
         ? singleBrokerTpRaw
@@ -456,11 +520,40 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           immediateLegCount: refreshImmediateLegCount,
           tpLots: manual.tp_lots,
           currentLegTps: familyTrades.map(tr => tr.tp),
-          bundleReladder: sameSignalRefresh === true,
+          legIdentities: familyTrades,
+          // Reladder by `:tpN` when attaching TPs to a teaser (any naked leg) or
+          // on an explicit same-signal revision — never by opened_at order.
+          bundleReladder: percentSplitBasket && (
+            sameSignalRefresh === true
+            || familyTrades.some(tr => !(Number(tr.tp) > 0))
+          ),
+          forceSteadyTps: percentSplitBasket,
           isBuy: direction !== 'sell',
         })
-    if (manual.trade_style !== 'multi' && singleBrokerTp != null) {
+    if (!percentSplitBasket && manual.trade_style !== 'multi' && singleBrokerTp != null) {
       perLegTargets = perLegTargets.map(target => ({ ...target, takeprofit: singleBrokerTp }))
+    }
+    // After a TP hit (closed leg / TP-touch), freeze open-leg take-profits for
+    // Range and classic Multi alike. buildRangeBasketTpTargets / count-weighted
+    // redistrib would otherwise repaint survivors onto nearer levels (often all
+    // onto TP1). Explicit same-signal message revisions still reladder.
+    let multiTpFrozen = false
+    if (sameSignalRefresh !== true && familyTrades.length > 0) {
+      const [hasClosedLegs, tpTouched] = await Promise.all([
+        hasClosedBasketLegs(ctx.supabase, broker.id, anchorSignalId),
+        hasTpTouchedLock(ctx.supabase, {
+          signalId: anchorSignalId,
+          brokerAccountId: broker.id,
+          symbol,
+        }),
+      ])
+      if (hasClosedLegs || tpTouched) {
+        perLegTargets = preserveOpenLegTakeProfits(familyTrades, perLegTargets).map(t => ({
+          stoploss: Number(t.stoploss) || 0,
+          takeprofit: Number(t.takeprofit) || 0,
+        }))
+        multiTpFrozen = true
+      }
     }
 
     let anchor: number | null = plan.anchor?.value ?? null
@@ -497,11 +590,6 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           freezeLevel: params.freezeLevel,
         }
       : null
-
-    let openedTickets: Set<number> | null = null
-    try {
-      openedTickets = await fetchOpenBrokerTickets(api, uuid)
-    } catch { /* preflight optional */ }
 
     const modifiedTradeIds = new Set<string>()
     let legErrors: Array<{ error: string; leg_index: number }> = []
@@ -612,9 +700,10 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         // pass, off the dispatch hot path) so a split signal matches a single
         // complete signal. Existing-TP legs are preserved (no repaint), and the
         // reconciler leaves the distributed TPs alone on subsequent ticks.
+        // Includes Single percent-split (not only classic multi).
         if (
           v2MergeDistributeTpEnabled()
-          && manual.trade_style === 'multi'
+          && (manual.trade_style === 'multi' || percentSplitBasket)
           && refreshTpLevels.length > 0
           && familyTrades.some(tr => !(Number(tr.tp) > 0))
         ) {
@@ -667,7 +756,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         await new Promise(r => setTimeout(r, roundSleepMs))
         familyTrades = await loadFamilyTrades()
         summary.openLegs = familyTrades.length
-        const refreshedTargets = buildPerLegStopTargets({
+        let refreshedTargets = buildPerLegStopTargets({
           plan,
           parsed: effectiveParsed,
           openLegCount: familyTrades.length,
@@ -675,13 +764,21 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
           immediateLegCount: refreshImmediateLegCount,
           tpLots: manual.tp_lots,
           currentLegTps: familyTrades.map(tr => tr.tp),
+          legIdentities: familyTrades,
           bundleReladder: false,
+          forceSteadyTps: percentSplitBasket,
           isBuy: direction !== 'sell',
         })
-        if (manual.trade_style !== 'multi' && singleBrokerTp != null) {
+        if (!percentSplitBasket && manual.trade_style !== 'multi' && singleBrokerTp != null) {
           for (let i = 0; i < refreshedTargets.length; i++) {
             refreshedTargets[i] = { ...refreshedTargets[i]!, takeprofit: singleBrokerTp }
           }
+        }
+        if (multiTpFrozen) {
+          refreshedTargets = preserveOpenLegTakeProfits(familyTrades, refreshedTargets).map(t => ({
+            stoploss: Number(t.stoploss) || 0,
+            takeprofit: Number(t.takeprofit) || 0,
+          }))
         }
         if (refreshedTargets.length) {
           perLegTargets.length = 0
@@ -998,7 +1095,7 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
         nImmCwe,
         overrideTp,
         lastError: partialMsg,
-        bundleIdentity: manual.range_trading !== true && manual.trade_style === 'multi',
+        bundleIdentity: percentSplitBasket,
       })
     } else {
       const { data: existingJob } = await ctx.supabase
@@ -1056,5 +1153,11 @@ export async function applyBasketSlTpRefresh(ctx: TradeExecutorContext, args: {
       } catch { /* best-effort */ }
     }
 
-    return { success: !mergeFailed, summary }
+    return {
+      success: !mergeFailed,
+      summary,
+      // Genuine broker modify failures must stay visible to the trade-pipeline
+      // monitor. The ghost-basket case is an automatic repair, not a failure.
+      ...(mergeFailed && !allLegsGhostOnBroker && partialMsg ? { failureReason: partialMsg } : {}),
+    }
   }

@@ -190,6 +190,8 @@ export const channelWorkerAr: ChannelWorkerTranslations = {
       'هذه القناة في وضع فتحة واحدة (إضافة إلى الصفقات الحالية معطّلة) لذا يجب أن تتضمن الدخولات الجديدة معاملات TP/SL',
     entry_requires_imperative_or_labeled_stops:
       'الرسالة لم تتضمن عبارة دخول (مثل buy now أو gold sell now) أو SL/TP موسومة',
+    tradingview_missing_sl_tp:
+      'لمحتوى تنبيه TradingView لا يحتوي على سعري SL وTP — أضفهما إلى رسالة التنبيه، أو فعّل Override SL وOverride TP في الإعدادات',
     entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
     signal_missing_required_sl: 'SL not given — set predefined SL pips in broker configuration',
     delete_pendings_no_parent:
@@ -197,6 +199,8 @@ export const channelWorkerAr: ChannelWorkerTranslations = {
     delete_pendings_requires_reply:
       'يجب إرسال تعليمات الإلغاء كرد على رسالة الإشارة الأصلية',
     delete_pendings_none: 'لم يتم العثور على أوامر معلقة لإلغائها لهذه الصفقة',
+    delete_pendings_cancel_failed: 'تم العثور على أوامر معلقة ولكن تعذر إلغاء أي منها (رفض الوسيط أو كان غير متاح) — حاول مرة أخرى، أو أغلقها من صفحة الصفقات',
+    partial_close_unavailable_for_position_size: 'إغلاق جزئي غير ممكن — هذه الصفقة صغيرة جدًا للتقسيم (الجزء المطلوب سيكون أقل من الحد الأدنى لللوت لدى الوسيط)؛ لم يُغلق أي جزء وبقيت الصفقة مفتوحة بحجمها الكامل',
   },
   dispatchSkipped: 'لم يُنسخ هذا الإشعار ({reason}).',
   rangeRebalanceSkippedNamed: 'تم تخطي إعادة موازنة جني الأرباح لـ {symbol} ({reason}).',
@@ -212,6 +216,10 @@ export const channelWorkerAr: ChannelWorkerTranslations = {
     'Trade EA غير جاهز على طرفية MT5 — فعّل Algo Trading وحدّث صحة الوسيط',
   errorBrokerNotConnected:
     'الوسيط غير متصل — في إعدادات الحساب استخدم إعادة الاتصال وأدخل كلمة مرور MT لهذا الحساب',
+  errorBrokerBusy:
+    'الوسيط مشغول — طلبات كثيرة قيد التنفيذ؛ ستُنفَّذ الإشارات اللاحقة عند انخفاض الحمل',
+  errorOrderSendTimedOut:
+    'OrderSend timed out — تحقق من الصفقات المفتوحة؛ قد يكون الأمر قد نُفِّذ',
   errorInvalidStops:
     'رفض الوسيط هذه مستويات الوقف — تحقق أن SL/TP على الجانب الصحيح من السوق وتحقق الحد الأدنى للمسافة.',
   errorBridgeGlitch:

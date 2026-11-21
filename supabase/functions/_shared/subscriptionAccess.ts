@@ -16,6 +16,8 @@ export interface UserSubscriptionRow {
   status: SubscriptionStatus;
   extra_accounts: number;
   trial_ends_at: string | null;
+  /** End of the paid period; a grant given while paying starts after this. */
+  current_period_end?: string | null;
 }
 
 export async function loadUserSubscription(
@@ -24,7 +26,7 @@ export async function loadUserSubscription(
 ): Promise<UserSubscriptionRow | null> {
   const { data } = await supabase
     .from("subscriptions")
-    .select("plan,status,extra_accounts,trial_ends_at")
+    .select("plan,status,extra_accounts,trial_ends_at,current_period_end")
     .eq("user_id", userId)
     .maybeSingle();
   if (!data) return null;
@@ -38,23 +40,66 @@ function adminUserIdsFromEnv(): Set<string> {
   );
 }
 
-/** True when a single grant window is still open at `now`. */
+type SubscriptionTiming = {
+  status?: string | null;
+  trial_ends_at?: string | null;
+  current_period_end?: string | null;
+};
+
+/**
+ * End of the paid period, else the trial — read regardless of the current status.
+ * The Stripe webhook flips the status to `canceled` and keeps `current_period_end`,
+ * so discarding it there is what made a grant expire unused on cancellation.
+ */
+export function subscriptionEndMs(
+  sub: SubscriptionTiming | null | undefined,
+): number | null {
+  if (!sub) return null;
+  const raw = sub.current_period_end ?? sub.trial_ends_at ?? null;
+  if (!raw) return null;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** True when the subscription is still running, so a grant must wait for its end. */
+export function queuesUntilSubscriptionEnd(
+  sub: SubscriptionTiming | null | undefined,
+  endMs: number | null,
+  now = Date.now(),
+): boolean {
+  if (endMs == null || endMs <= now) return false;
+  return sub?.status === "active" || sub?.status === "trialing";
+}
+
+/**
+ * True when a single grant window is open at `now`.
+ *
+ * A grant given to a paying customer starts at the period end (queued), not while
+ * they are still paying; one given after that period started at that end.
+ */
 export function extensionWindowActive(
   days: unknown,
   grantedAt: unknown,
   now = Date.now(),
+  sub: SubscriptionTiming | null = null,
 ): boolean {
   const d = Number(days);
-  const start = Date.parse(String(grantedAt ?? ""));
-  return (
-    Number.isFinite(d) && d > 0 && !Number.isNaN(start) && start + d * 86_400_000 > now
-  );
+  const granted = Date.parse(String(grantedAt ?? ""));
+  if (!Number.isFinite(d) || d <= 0 || Number.isNaN(granted)) return false;
+  const end = subscriptionEndMs(sub);
+  const start = end == null
+    ? granted
+    : queuesUntilSubscriptionEnd(sub, end, now)
+      ? Math.max(granted, end)
+      : Math.max(granted, Math.min(end, now));
+  return start <= now && start + d * 86_400_000 > now;
 }
 
 /** True when any admin-granted access extension is still live for this user. */
 export async function hasLiveSubscriptionExtension(
   supabase: SupabaseClient,
   userId: string,
+  sub: SubscriptionTiming | null = null,
 ): Promise<boolean> {
   const { data, error } = await supabase
     .from("subscription_extensions")
@@ -69,7 +114,7 @@ export async function hasLiveSubscriptionExtension(
     return false;
   }
   return (data ?? []).some((row) =>
-    extensionWindowActive(row.days, row.granted_at),
+    extensionWindowActive(row.days, row.granted_at, Date.now(), sub),
   );
 }
 
@@ -137,8 +182,9 @@ export async function assertBrokerAccountLimit(
   if (await loadUserIsAdmin(supabase, userId)) return null;
 
   let plan = effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at);
-  if (!plan && (await hasLiveSubscriptionExtension(supabase, userId))) {
-    plan = sub?.plan ?? "basic";
+  if (!plan && (await hasLiveSubscriptionExtension(supabase, userId, sub))) {
+    // A live admin extension grants Advanced while it is the reason access is alive.
+    plan = "advanced";
   }
   if (!plan) {
     return subscriptionAccessDenied(
@@ -185,8 +231,9 @@ export async function assertBacktestMonthlyLimit(
   if (await loadUserIsAdmin(supabase, userId)) return null;
 
   let plan = effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at);
-  if (!plan && (await hasLiveSubscriptionExtension(supabase, userId))) {
-    plan = sub?.plan ?? "basic";
+  if (!plan && (await hasLiveSubscriptionExtension(supabase, userId, sub))) {
+    // A live admin extension grants Advanced while it is the reason access is alive.
+    plan = "advanced";
   }
   if (!plan) {
     return subscriptionAccessDenied(
@@ -234,8 +281,9 @@ export async function assertTelegramChannelLimit(
   if (await loadUserIsAdmin(supabase, userId)) return null;
 
   let plan = effectivePlan(sub?.plan, sub?.status, sub?.trial_ends_at);
-  if (!plan && (await hasLiveSubscriptionExtension(supabase, userId))) {
-    plan = sub?.plan ?? "basic";
+  if (!plan && (await hasLiveSubscriptionExtension(supabase, userId, sub))) {
+    // A live admin extension grants Advanced while it is the reason access is alive.
+    plan = "advanced";
   }
   if (!plan) {
     return subscriptionAccessDenied(
@@ -324,7 +372,8 @@ export async function revokeCopierAccessOnSubscriptionEnd(
   if (await loadUserIsAdmin(supabase, userId)) return
 
   // A live admin extension outranks billing: keep the copier running until it ends.
-  if (await hasLiveSubscriptionExtension(supabase, userId)) return
+  const sub = await loadUserSubscription(supabase, userId)
+  if (await hasLiveSubscriptionExtension(supabase, userId, sub)) return
 
   // Only on the pause transition: a copier the user already paused keeps its
   // own reason instead of being relabelled by a later billing event.

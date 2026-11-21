@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
+import { pickTradeWorkerUrl } from "../_shared/workerShard.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -48,60 +49,35 @@ async function upsertChannelActiveTradeParams(
   if (error) console.warn(`[signal-override] channel params upsert failed: ${error.message}`)
 }
 
-/** Stable per-user shard hash — must match worker `shardForUserId`. */
-function shardForUserId(userId: string, shardCount: number): number {
-  let h = 0
-  for (let i = 0; i < userId.length; i++) {
-    h = (h * 31 + userId.charCodeAt(i)) | 0
-  }
-  return Math.abs(h) % Math.max(1, shardCount)
-}
-
-function parseShardUrls(raw: string | undefined): string[] {
-  if (!raw?.trim()) return []
-  return raw.split(",").map(s => s.trim().replace(/\/+$/, "")).filter(Boolean)
-}
-
-/**
- * Pick the worker URL for a user, mirroring `pickTradeWorkerUrl` for management
- * actions. Override apply is management-style (modifies open legs), so prefer the
- * mgmt fleet and shard by user so we hit the worker that owns this user's session.
- */
+/** Override apply is management-style — prefer mgmt fleet, else entry shards. */
 function pickWorkerUrl(userId: string): string {
-  const mgmtShardUrls = parseShardUrls(Deno.env.get("TRADE_MGMT_WORKER_SHARD_URLS"))
-  if (mgmtShardUrls.length > 1) {
-    return mgmtShardUrls[shardForUserId(userId, mgmtShardUrls.length)] ?? ""
-  }
-  if (mgmtShardUrls.length === 1) return mgmtShardUrls[0]!
-
-  const mgmtUrl = (Deno.env.get("TRADE_MGMT_WORKER_URL") ?? "").trim().replace(/\/+$/, "")
-  const shardUrls = parseShardUrls(Deno.env.get("TRADE_WORKER_SHARD_URLS"))
-  if (shardUrls.length > 1) {
-    if (mgmtUrl) return mgmtUrl
-    return shardUrls[shardForUserId(userId, shardUrls.length)] ?? ""
-  }
-  if (mgmtUrl) return mgmtUrl
-  if (shardUrls.length === 1) return shardUrls[0]!
-
-  return (
-    Deno.env.get("TRADE_WORKER_URL")
-    ?? Deno.env.get("WORKER_URL")
-    ?? Deno.env.get("WORKER_PUBLIC_URL")
-    ?? ""
-  ).trim().replace(/\/+$/, "")
+  return pickTradeWorkerUrl(userId, { management: true })
 }
 
 type BrokerOutcome = { broker_id: string; applied: number; skipped: number; failed: number }
 
+function scheduleBackgroundTask(promise: Promise<unknown>): void {
+  const runtime = (globalThis as typeof globalThis & {
+    EdgeRuntime?: { waitUntil(task: Promise<unknown>): void }
+  }).EdgeRuntime
+  if (runtime?.waitUntil) {
+    runtime.waitUntil(promise)
+    return
+  }
+  void promise
+}
+
 async function callWorkerApply(args: {
   userId: string
   signalId: string
+  forceApply?: boolean
 }): Promise<{
   applied_legs: number
   failed_legs?: number
   errors?: string[]
   brokers?: BrokerOutcome[]
   brokers_missing?: string[]
+  queued?: boolean
 }> {
   const workerUrl = pickWorkerUrl(args.userId)
   const token = (Deno.env.get("WORKER_INTERNAL_TOKEN") ?? "").trim()
@@ -118,6 +94,7 @@ async function callWorkerApply(args: {
     body: JSON.stringify({
       user_id: args.userId,
       signal_id: args.signalId,
+      ...(args.forceApply ? { force_apply: true } : {}),
     }),
   })
   const data = await res.json().catch(() => ({})) as {
@@ -127,6 +104,8 @@ async function callWorkerApply(args: {
     errors?: string[]
     brokers?: BrokerOutcome[]
     brokers_missing?: string[]
+    queued?: boolean
+    accepted?: boolean
   }
   if (!res.ok) {
     return { applied_legs: 0, failed_legs: 0, errors: [data.error ?? `Worker apply failed (${res.status})`] }
@@ -137,6 +116,7 @@ async function callWorkerApply(args: {
     errors: data.errors,
     brokers: data.brokers,
     brokers_missing: data.brokers_missing,
+    queued: data.queued === true || data.accepted === true,
   }
 }
 
@@ -160,6 +140,7 @@ Deno.serve(async (req: Request) => {
       signal_id?: string
       sl?: number | null
       tp_levels?: number[]
+      force_apply?: boolean
     }
     try {
       body = await req.json() as typeof body
@@ -172,6 +153,7 @@ Deno.serve(async (req: Request) => {
 
     const sl = body.sl === null || body.sl === undefined ? null : positiveLevel(body.sl)
     const tpLevels = normalizeTpLevels(body.tp_levels ?? [])
+    const forceApply = body.force_apply === true
     if (sl !== null && !(sl > 0)) return bad(400, "Invalid SL level")
     if (tpLevels.some(n => !(n > 0))) return bad(400, "Invalid TP levels")
     if (sl === null && tpLevels.length === 0) {
@@ -225,31 +207,32 @@ Deno.serve(async (req: Request) => {
       .eq("signal_id", signalId)
       .eq("status", "open")
 
-    let open = (signalOpenCount ?? 0) > 0
-    const workerResult = await callWorkerApply({ userId, signalId })
-    const appliedLegs = workerResult.applied_legs
-    const failedLegs = workerResult.failed_legs ?? 0
-    const applyErrors = workerResult.errors
-    open = open || appliedLegs > 0
-    if (applyErrors?.length) {
-      console.warn(`[signal-override] worker apply warnings: ${applyErrors.join("; ")}`)
-    }
+    const open = (signalOpenCount ?? 0) > 0
 
-    const brokers = workerResult.brokers ?? []
-    const brokersTotal = brokers.length + (workerResult.brokers_missing?.length ?? 0)
-    const brokersUpdated = brokers.filter(b => b.applied > 0).length
+    // Kick the worker apply without blocking the HTTP response — OrderModify
+    // across many legs can take tens of seconds and was freezing the modal.
+    scheduleBackgroundTask(
+      callWorkerApply({ userId, signalId, forceApply }).then((workerResult) => {
+        if (workerResult.errors?.length) {
+          console.warn(`[signal-override] worker apply warnings: ${workerResult.errors.join("; ")}`)
+        }
+      }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`[signal-override] background worker apply failed: ${msg}`)
+      }),
+    )
 
     return Response.json(
       {
         ok: true,
-        applied_legs: appliedLegs,
-        failed_legs: failedLegs,
+        queued: true,
+        applied_legs: 0,
+        failed_legs: 0,
         open,
-        errors: applyErrors,
-        brokers,
-        brokers_missing: workerResult.brokers_missing ?? [],
-        brokers_total: brokersTotal,
-        brokers_updated: brokersUpdated,
+        brokers: [] as BrokerOutcome[],
+        brokers_missing: [] as string[],
+        brokers_total: 0,
+        brokers_updated: 0,
       },
       { status: 200, headers: corsHeaders },
     )

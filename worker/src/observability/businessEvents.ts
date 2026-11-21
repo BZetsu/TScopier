@@ -211,6 +211,8 @@ export function addBusinessBreadcrumb(args: BusinessBreadcrumbInput): void {
 
 export function classifyBrokerFailureReason(message: string): string {
   const lower = String(message ?? '').toLowerCase()
+  // MT5 Manager API build below broker minimum — Connect() refused; not a signal/account rule.
+  if (/\bold_version\b/.test(lower)) return 'MTAPI_OLD_VERSION'
   if (/margin|not enough money|insufficient funds/.test(lower)) return 'INSUFFICIENT_MARGIN'
   if (isTradingDisabledMessage(lower)) {
     return 'BROKER_SYMBOL_TRADE_DISABLED'
@@ -224,6 +226,7 @@ export function classifyBrokerFailureReason(message: string): string {
   ) {
     return 'BROKER_SYMBOL_NOT_FOUND'
   }
+  if (/broker busy|concurrency_busy|ordersendsafe broker busy/.test(lower)) return 'BROKER_BUSY'
   if (/timeout|timed out|operation timeout/.test(lower)) return 'BROKER_TIMEOUT'
   if (/not connected|disconnected|session|auth|unauthorized|forbidden|invalid api/.test(lower)) return 'BROKER_ACCOUNT_UNAVAILABLE'
   if (/rate limit|too many requests/.test(lower)) return 'BROKER_RATE_LIMITED'

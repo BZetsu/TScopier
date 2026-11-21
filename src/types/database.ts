@@ -442,6 +442,11 @@ export interface ManualSettings {
    * market fill if still acceptable, otherwise limit/stop at signal entry.
    */
   use_signal_entry_price?: boolean
+  /**
+   * When the signal lists two entry prices, which one Use Signal Entry Price uses
+   * (as written: first mentioned vs last). Default `first_price`.
+   */
+  signal_entry_prefer?: 'first_price' | 'last_price'
   /** Pips above (buy) / below (sell) entry within which a market order is allowed. */
   signal_entry_pip_tolerance?: number
   use_predefined_sl_pips?: boolean
@@ -466,6 +471,8 @@ export interface ManualSettings {
   trailing_step_pips?: number
   trailing_distance_pips?: number
   close_on_opposite_signal?: boolean
+  /** When true, deleting the source channel message closes trades / cancels pendings. */
+  close_on_signal_deleted?: boolean
   /** When false, OrderSend comments are left empty (Management tab). Default on. */
   order_comments_enabled?: boolean
   time_filter_enabled?: boolean
@@ -710,6 +717,15 @@ export interface TelegramAuthPending {
   expires_at: string
 }
 
+/** Persisted TradingView alert JSON builder choices (UI only). */
+export type TradingViewWebhookAlertConfig = {
+  kind: 'indicator' | 'strategy'
+  includeSl: boolean
+  includeTp: boolean
+  tpCount: number
+  symbol?: string
+}
+
 export interface TradingViewWebhook {
   id: string
   user_id: string
@@ -718,6 +734,8 @@ export interface TradingViewWebhook {
   token_hash: string
   token: string
   is_active: boolean
+  /** Alert message JSON builder preferences for this webhook. */
+  alert_config?: TradingViewWebhookAlertConfig | null
   created_at: string
   updated_at: string
 }
@@ -763,6 +781,13 @@ export interface Signal {
   channel_id: string | null
   /** Optional link to canonical channel_signals row. */
   channel_signal_id?: string | null
+  /**
+   * Platform that produced the signal. Survives channel delete so Copier Logs
+   * can keep showing the source logo after telegram_channels is removed.
+   */
+  source_kind?: 'telegram' | 'tradingview' | 'discord' | 'whatsapp' | null
+  /** Channel/webhook name at ingest. Survives channel delete for Copier Logs. */
+  source_display_name?: string | null
   raw_message: string
   raw_image_url: string | null
   parsed_data: Json | null
@@ -983,6 +1008,10 @@ export type ParsedSignal = {
   entry_price?: number
   entry_zone_low?: number
   entry_zone_high?: number
+  /** First entry price as written in the signal (before min/max sort). */
+  entry_zone_first?: number
+  /** Last entry price as written in the signal (before min/max sort). */
+  entry_zone_last?: number
   sl?: number
   tp?: number[]
   open_tp?: boolean

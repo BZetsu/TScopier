@@ -7,8 +7,24 @@ export function resolveCopierSkipReasonKey(reason: string | null | undefined): s
   if (!raw) return ''
   if (/invalid\s+stops/i.test(raw)) return 'invalid_stops'
   if (/invalid\s+s\/l/i.test(raw)) return 'invalid_stops'
+
+  const lower = raw.toLowerCase()
+  // Free-text reasons stored by the parser/worker (not stable snake_case codes).
+  if (
+    lower === 'ai classified as uncertain; human review required'
+    || lower.startsWith('ai classified as uncertain')
+  ) {
+    return 'ai_classified_as_uncertain_human_review_required'
+  }
+  if (lower === 'ai classified as non-actionable') return 'ai_classified_as_non_actionable'
+  if (lower === 'ai classified as non-entry') return 'ai_classified_as_non_entry'
+  if (lower === 'non-trade message' || lower === 'non_trade_message') return 'non_trade_message'
+
   const normalized = normalizeCopierSkipReasonKey(raw)
-  return normalized.replace(/[\s-]+/g, '_')
+  return normalized
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
 }
 
 export const COPIER_SKIP_REASON_LABELS: Record<string, string> = {
@@ -17,6 +33,7 @@ export const COPIER_SKIP_REASON_LABELS: Record<string, string> = {
   ai_classified_as_non_entry: 'AI found no entry instruction in this message',
   modification_no_open_trade: 'No open trade to modify',
   entry_price_moved_adverse: 'Price moved past the entry before the order was placed',
+  entry_tps_beyond_market: 'All take-profits were already past the market price — trade skipped',
   ai_classified_as_uncertain_human_review_required: 'AI was uncertain — review before trading',
   ai_review_expired: 'Review window expired',
   ai_review_price_passed: 'Price moved outside the review entry range',
@@ -32,12 +49,14 @@ export const COPIER_SKIP_REASON_LABELS: Record<string, string> = {
   channel_config_missing: 'Channel not configured',
   channel_config_incomplete: 'Channel settings incomplete',
   channel_filter_ignored: 'Ignored by channel filter',
+  basket_modify_skipped_by_channel_filter: 'Stop-loss changes ignored for this channel',
   no_broker_channel_match: 'No broker linked to channel',
   copier_paused: 'Copier is paused',
   telegram_listener_not_live: 'Telegram not connected',
   subscription_inactive: 'Subscription inactive',
   plan_advanced_feature_required: 'Plan upgrade required',
   entry_not_execution_eligible: 'Signal not eligible to trade',
+  entry_missing_predefined_stops: 'Zone signal skipped — no stop or targets and Override settings off',
   duplicate_provider_signal: 'Duplicate signal',
   explicit_stops_required_when_add_to_existing_off: 'SL/TP required for this channel mode',
   entry_tp_without_sl: 'SL not given — set predefined SL pips in broker configuration',
@@ -47,6 +66,8 @@ export const COPIER_SKIP_REASON_LABELS: Record<string, string> = {
   delete_pendings_no_parent: 'Original trade not found for this reply',
   delete_pendings_requires_reply: 'Must be a reply to the original signal',
   delete_pendings_none: 'No pending orders to cancel',
+  delete_pendings_cancel_failed: 'Pending orders found but none could be cancelled',
+  partial_close_unavailable_for_position_size: 'Partial close refused — position too small to split',
   mgmt_no_open_trades: 'No matching open trade',
   mgmt_no_open_trades_db: 'No open trade in copier',
   mgmt_no_open_trades_broker: 'No open position on broker',
@@ -85,6 +106,8 @@ export const COPIER_SKIP_REASON_DETAILS: Record<string, string> = {
     'Saved settings for this channel are incomplete. Open Account Configuration and finish lot size, trade style, and channel selection.',
   channel_filter_ignored:
     'This message matched an Ignore or Skip keyword configured for the channel in Account Configuration.',
+  basket_modify_skipped_by_channel_filter:
+    'This channel asked us to ignore stop-loss and take-profit changes, so we did not modify the trade you already had open. New entries from this channel still open normally.',
   no_broker_channel_match:
     'No active broker account is linked to this channel. Open Account Configuration → select your broker → Channels tab → enable this channel → Save.',
   copier_paused:
@@ -97,6 +120,8 @@ export const COPIER_SKIP_REASON_DETAILS: Record<string, string> = {
     'This feature requires a higher plan. Upgrade in Billing to enable it.',
   entry_not_execution_eligible:
     'The message was parsed but did not meet execution rules (for example missing NOW, SL, or TP cues for this channel).',
+  entry_missing_predefined_stops:
+    'This is a zone-style entry (for example "Gold Sell Zone 3712 - 3718"). It was skipped because the message did not state a stop loss and at least one target, and your account has Override signal SL and Override signal TPs switched off. Turn both Override settings on in Account Configuration, or ask support to review the channel.',
   duplicate_provider_signal:
     'The same provider signal was already processed recently and was not copied again.',
   explicit_stops_required_when_add_to_existing_off:
@@ -115,6 +140,10 @@ export const COPIER_SKIP_REASON_DETAILS: Record<string, string> = {
     'Cancel-pending instructions must be sent as a reply to the original signal message, not as a standalone message.',
   delete_pendings_none:
     'The copier understood the cancel-pending instruction, but there were no pending orders to cancel for this trade.',
+  delete_pendings_cancel_failed:
+    'The copier found resting pending orders for this trade, but none could be cancelled — the broker refused the request, the order already filled or expired, or the broker was unavailable. Try again, or close them from the Trades page.',
+  partial_close_unavailable_for_position_size:
+    'The copier understood the partial-close instruction, but this position is too small to divide: the requested part would fall below the broker’s minimum lot size. That instruction closed nothing — the trade stayed at its full size. Percentage partial closes need a larger position (raise the channel’s lot size).',
   mgmt_no_open_trades:
     'This management instruction (close, modify, breakeven, etc.) did not match any open trade from this channel.',
   mgmt_no_open_trades_db:
