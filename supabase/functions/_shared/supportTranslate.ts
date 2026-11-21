@@ -165,6 +165,20 @@ export async function ensureMessageTranslation(
     const detected = await detectLocaleWithOpenAI(body);
     if (detected !== sourceLocale) {
       sourceLocale = detected;
+      // Detection took a round-trip, so confirm the text is still the one the
+      // locale was detected on before writing it: a stale locale is not
+      // self-correcting, because a later ensure returns from the cache above.
+      const { data: checkRow, error: checkErr } = await admin
+        .from(table)
+        .select("body")
+        .eq("id", params.messageId)
+        .maybeSingle();
+      if (checkErr) {
+        throw new Error(`Could not verify the message: ${checkErr.message}`);
+      }
+      if (!checkRow || String(checkRow.body ?? "") !== body) {
+        throw new Error("Message changed during translation");
+      }
       const { error: srcErr } = await admin
         .from(table)
         .update({ source_locale: sourceLocale })
@@ -188,11 +202,32 @@ export async function ensureMessageTranslation(
     targetLocale,
   });
 
+  // Freshness check after the model call: an edit during the round-trip
+  // clears `translations`, and writing this result would pin the old wording
+  // under the new text — the cache is keyed by locale alone, so every later
+  // request would keep returning it. Comparing here (rather than with
+  // `.eq("body", ...)`) keeps the body out of the request line: bodies can be
+  // 8 000 chars, which a proxy may reject with 414 and silently disable the
+  // cache for long messages.
+  const { data: freshRow, error: freshErr } = await admin
+    .from(table)
+    .select("body")
+    .eq("id", params.messageId)
+    .maybeSingle();
+  if (freshErr) {
+    throw new Error(`Could not verify the message: ${freshErr.message}`);
+  }
+  if (!freshRow || String(freshRow.body ?? "") !== body) {
+    throw new Error("Message changed during translation");
+  }
+
   const next: TranslationMap = { ...existing, [targetLocale]: translated };
   const { error: updErr } = await admin
     .from(table)
     .update({ translations: next, source_locale: sourceLocale })
     .eq("id", params.messageId);
+  // A failed write only means the cache stays cold; the text handed back is
+  // for the body just verified, so the caller may use it without going stale.
   if (updErr) {
     console.error("translation cache write failed", updErr.message);
   }
