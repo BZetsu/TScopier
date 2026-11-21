@@ -532,6 +532,15 @@ function isConfirmedChannelInvalidError(err: unknown): boolean {
     || code.includes('CHANNEL_PRIVATE')
 }
 
+/** "Could not find the input entity" means the current Telegram session has
+ * never seen this channel (for example after a session re-link). It is not a
+ * permanently invalid channel — the session just needs to relearn it. Do not
+ * treat it as a confirmed invalid channel or arm a long cooldown on it. */
+function isEntityCacheMissError(err: unknown): boolean {
+  const m = safeTelegramErrorMessage(err)
+  return m.includes('Could not find the input entity')
+}
+
 /**
  * True when an MTProto request failed because Telegram is throttling the
  * session. GramJS retries internally (sleeping ~flood-wait seconds × 5) and
@@ -1159,6 +1168,11 @@ export class UserListener {
     // Errors from before the reconnect belong to a different episode; do not let
     // them silence the first error of the next one.
     this.pollEventThrottle.clear()
+    // Clear per-channel resolve cooldowns so a channel that was stuck cooling
+    // down (for example after a Telegram session re-link) gets a fresh
+    // resolution attempt on the next poll instead of waiting out the cooldown
+    // window.
+    this.resetTelegramBackoffState()
     this.startedAt = Date.now()
     this.lastEventAt = Date.now()
     this.lastSuccessfulPollAt = Date.now()
@@ -4499,7 +4513,11 @@ export class UserListener {
       // session-wide poll backoff — do NOT cache them in the 10-min resolve
       // cooldown, or a stale cached flood error would keep re-arming the
       // session backoff (via throwChannelResolveCooldown) for the whole window.
-      if (!isFloodWaitOrRetryExhaustion(err)) {
+      // An entity cache miss ("Could not find the input entity") means the
+      // new Telegram session has never seen this channel yet. It will be
+      // learnable on a later poll once the session has seen the channel, so
+      // do not arm a cooldown that would block retries for 10 minutes.
+      if (!isFloodWaitOrRetryExhaustion(err) && !isEntityCacheMissError(err)) {
         this.setChannelResolveCooldown(row.id, err)
       }
       rethrowIfSessionInvalid(err)
