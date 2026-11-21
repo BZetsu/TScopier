@@ -198,6 +198,17 @@ function tradeFailureCopy(
         retryable: true,
         userActionRequired: false,
       }
+    case 'MTAPI_OLD_VERSION':
+      return {
+        category: 'system',
+        title: 'Trade not copied — trading bridge needs an update',
+        explanation:
+          'The MetaTrader connection bridge is running a build older than your broker accepts (OLD_VERSION). The signal was parsed correctly; the order was refused before it reached the broker. This is a platform issue, not your account settings.',
+        recommendedAction:
+          'No action needed on your account. Support must update the MTAPI bridge image (timurila/mt5rest) on the Contabo VPS. Do not retry old signals — their prices are stale.',
+        retryable: false,
+        userActionRequired: false,
+      }
     case 'BROKER_ORDER_REJECTED':
       return {
         category: 'broker',
@@ -241,6 +252,9 @@ export function tradeFailureReasonFromBrokerMessage(
   safeContext?: Record<string, unknown>,
 ): TradeFailureReason | null {
   const lower = String(message ?? '').toLowerCase()
+  if (/\bold_version\b/.test(lower)) {
+    return tradeFailureReasonFromCode('MTAPI_OLD_VERSION', safeContext)
+  }
   // "Trading is disabled for symbol X" and "Symbol disabled" are not a missing
   // symbol: the instrument exists but the broker is not accepting new orders.
   if (isTradingDisabledMessage(lower)) {

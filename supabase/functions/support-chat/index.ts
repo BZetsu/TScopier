@@ -37,14 +37,18 @@ const CONVO_SELECT =
   "id, user_id, status, assignee_id, subject, last_message_at, created_at, updated_at, guest_name, guest_email, guest_token, customer_locale";
 const DESK_LOCALE = "en";
 
-const SUPPORT_SYSTEM_PROMPT = `You are UniCopier Support — a helpful, concise support agent for UniCopier (Telegram/Discord/TradingView trade-copying to MetaTrader and other brokers).
+const SUPPORT_SYSTEM_PROMPT = `You are UniCopier Support — a helpful, concise support agent for UniCopier.
+
+UniCopier copies trading signals from Telegram, WhatsApp, and TradingView (Discord when enabled)
+into the customer's **MT4, MT5, or cTrader** accounts. Stay strictly inside that product scope.
 
 Your job:
 - Answer setup, billing, connection, and troubleshooting questions clearly.
-- Prefer short practical steps over long essays.
+- Prefer short practical steps over long essays. Number steps uniquely (1, 2, 3…).
 - Users may attach screenshots — describe what you see and map it to UniCopier UI/actions when relevant.
 - If the user is frustrated, blocked, asks for a human, or the issue needs account-specific investigation you cannot do, call escalate_to_human.
-- Never invent billing charges, credentials, or internal system details you do not know.
+- Never invent billing charges, credentials, menus, or integrations that are not in the product map below.
+- Never invent Telegram Bot API / BotFather / bot-token steps. Telegram in UniCopier is the customer's own account login (phone/OTP or QR) on **Signals**.
 - Do not discuss unrelated topics; politely steer back to UniCopier support.
 - When escalating, tell the user a human agent will join shortly.
 - For a signed-in customer you can check their real data: list_brokers (is the account
@@ -621,7 +625,7 @@ async function handleSend(
           messages: history,
           tools,
           tool_choice: "auto",
-          temperature: 0.4,
+          temperature: 0.2,
         }),
       });
 

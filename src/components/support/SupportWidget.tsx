@@ -142,6 +142,45 @@ function PersonAvatar({
   )
 }
 
+function ReplyEtaSlide({ text }: { text: string }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const textRef = useRef<HTMLParagraphElement>(null)
+  const [slidePx, setSlidePx] = useState(0)
+
+  useEffect(() => {
+    const container = containerRef.current
+    const label = textRef.current
+    if (!container || !label) return
+
+    const measure = () => {
+      const next = Math.max(0, Math.ceil(label.scrollWidth - container.clientWidth))
+      setSlidePx(next)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(container)
+    ro.observe(label)
+    return () => ro.disconnect()
+  }, [text])
+
+  return (
+    <div
+      ref={containerRef}
+      className="mt-0.5 w-full min-w-0 overflow-hidden"
+      aria-label={text}
+    >
+      <p
+        ref={textRef}
+        className="support-reply-slide-track whitespace-nowrap text-[11px] text-neutral-500 dark:text-neutral-400"
+        data-needs-slide={slidePx > 0 ? 'true' : 'false'}
+        style={{ ['--support-reply-slide' as string]: `${slidePx}px` }}
+      >
+        {text}
+      </p>
+    </div>
+  )
+}
+
 function HeaderAvatarStack({ avatars }: { avatars: SupportHeaderAvatar[] }) {
   const maxFaces = 3
   const shown = avatars.slice(0, maxFaces)
@@ -315,6 +354,7 @@ export function SupportWidget({
   const [ticketSubmitting, setTicketSubmitting] = useState(false)
   const [createdTicketNumber, setCreatedTicketNumber] = useState<number | null>(null)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [preferNewThread, setPreferNewThread] = useState(false)
   const [teamAvatars, setTeamAvatars] = useState<SupportHeaderAvatar[]>([])
   const [agentProfiles, setAgentProfiles] = useState<Record<string, SupportAgentProfile>>({})
   const [peerTyping, setPeerTyping] = useState(false)
@@ -380,12 +420,12 @@ export function SupportWidget({
     [conversations],
   )
 
+  const showInbox = tab === 'messages' && !activeId && conversations.length > 0 && !preferNewThread
+
   const showComposer =
     tab === 'messages' &&
     guestReady &&
-    (user
-      ? activeId != null || openConversations.length === 0
-      : activeId != null || conversations.length === 0)
+    (activeId != null || preferNewThread || openConversations.length === 0)
 
   const activeConversation = useMemo(
     () => conversations.find(c => c.id === activeId) ?? null,
@@ -399,10 +439,8 @@ export function SupportWidget({
   }, [messages])
 
   const refreshConversations = useCallback(async () => {
-    if (!user) {
-      setConversations([])
-      return
-    }
+    // Guests keep an in-memory list (and guest poll); never wipe it here.
+    if (!user) return
     try {
       const rows = await listSupportConversations(user.id)
       setConversations(rows)
@@ -411,6 +449,13 @@ export function SupportWidget({
       console.warn('support conversations load failed', err)
     }
   }, [user])
+
+  const backToInbox = useCallback(() => {
+    setPreferNewThread(false)
+    setActiveId(null)
+    setMessages([])
+    if (user) void refreshConversations()
+  }, [user, refreshConversations])
 
   const loadThread = useCallback(
     async (conversationId: string) => {
@@ -845,20 +890,26 @@ export function SupportWidget({
     setTab('messages')
     const openConvo = conversations.find(c => c.status !== 'resolved' && c.status !== 'closed')
     if (user && openConvo) {
+      setPreferNewThread(false)
       setActiveId(openConvo.id)
     } else if (!user && guestSession?.conversationId) {
+      setPreferNewThread(false)
       setActiveId(guestSession.conversationId)
     } else if (openConvo) {
+      setPreferNewThread(false)
       setActiveId(openConvo.id)
     } else {
+      setPreferNewThread(true)
       setActiveId(null)
       setMessages([])
     }
   }
 
   const openConversation = (id: string) => {
+    setPreferNewThread(false)
     setActiveId(id)
     setTab('messages')
+    setUnreadCount(0)
   }
 
   const addImageFiles = async (files: FileList | File[]) => {
@@ -1067,8 +1118,6 @@ export function SupportWidget({
     'mt-1.5 w-full rounded-xl border-0 bg-neutral-100/80 px-3.5 py-2.5 text-sm text-neutral-900 outline-none transition placeholder:text-neutral-400 focus:bg-white focus:ring-2 focus:ring-green-400/30 dark:bg-neutral-900 dark:text-neutral-50 dark:placeholder:text-neutral-500 dark:focus:bg-neutral-900 dark:focus:ring-teal-400/25'
   const primaryBtnClass =
     'flex w-full items-center justify-center gap-2 rounded-full bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-green-400 dark:text-neutral-950 dark:hover:bg-green-500'
-  const rowClass =
-    'group flex w-full items-center gap-3 px-3.5 py-3 text-left transition hover:bg-neutral-50 dark:hover:bg-white/[0.03]'
 
   return (
     <div className="pointer-events-none fixed bottom-5 right-5 z-[60] flex flex-col items-end gap-3">
@@ -1078,35 +1127,43 @@ export function SupportWidget({
           role="dialog"
           aria-label={t.supportChat}
         >
-          <header className="relative overflow-hidden px-4 pb-3.5 pt-3.5">
-            <div
-              className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_80%_at_0%_0%,rgba(74,222,128,0.16),transparent_55%),linear-gradient(180deg,#f8faf9_0%,#ffffff_100%)] dark:bg-[radial-gradient(120%_80%_at_0%_0%,rgba(45,212,191,0.12),transparent_55%),linear-gradient(180deg,#171717_0%,#0a0a0a_100%)]"
-              aria-hidden
-            />
-            <div className="relative flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <HeaderAvatarStack avatars={resolvedHeaderAvatars} />
-                <div className="min-w-0">
+          <header className="relative overflow-hidden px-4 pb-8 pt-5">
+            <div className="pointer-events-none absolute inset-0" aria-hidden>
+              <div className="absolute inset-0 bg-[linear-gradient(165deg,#ecfdf5_0%,#f0fdf4_38%,#f8fafc_72%,#ffffff_100%)] dark:bg-[linear-gradient(165deg,#042f2e_0%,#0f172a_42%,#0a0a0a_78%,#0a0a0a_100%)]" />
+              <div className="absolute -left-10 -top-12 h-40 w-40 rounded-full bg-green-300/35 blur-3xl dark:bg-teal-400/20" />
+              <div className="absolute -right-8 top-0 h-32 w-32 rounded-full bg-emerald-200/40 blur-3xl dark:bg-emerald-500/15" />
+              <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-b from-transparent to-white dark:to-neutral-950" />
+            </div>
+            <div className="relative flex items-start justify-between gap-3">
+              <div className="flex min-w-0 flex-1 items-center gap-2.5 pt-0.5">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-neutral-950 shadow-xs ring-1 ring-black/10 dark:ring-white/10">
+                  <img
+                    src="/unicoper-icon-white.svg"
+                    alt="UniCopier"
+                    width={24}
+                    height={24}
+                    className="h-6 w-6 object-contain"
+                    draggable={false}
+                  />
+                </span>
+                <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold tracking-tight text-neutral-900 dark:text-neutral-50">
                     {t.title}
                   </p>
-                  <p className="mt-0.5 flex items-center gap-1.5 truncate text-[11px] text-neutral-500 dark:text-neutral-400">
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-60" />
-                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-green-400" />
-                    </span>
-                    {t.replyEta}
-                  </p>
+                  <ReplyEtaSlide text={t.replyEta} />
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={close}
-                className="rounded-full p-1.5 text-neutral-400 transition hover:bg-black/5 hover:text-neutral-700 dark:hover:bg-white/10 dark:hover:text-neutral-100"
-                aria-label={t.closeSupport}
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <HeaderAvatarStack avatars={resolvedHeaderAvatars} />
+                <button
+                  type="button"
+                  onClick={close}
+                  className="rounded-full p-1.5 text-neutral-400 transition hover:bg-black/5 hover:text-neutral-700 dark:hover:bg-white/10 dark:hover:text-neutral-100"
+                  aria-label={t.closeSupport}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           </header>
 
@@ -1214,29 +1271,38 @@ export function SupportWidget({
                     </button>
                   </form>
                 ) : guestReady ? (
-                  <div className="overflow-hidden rounded-2xl bg-neutral-50/90 dark:bg-white/[0.03]">
-                    <button type="button" onClick={startMessage} className={rowClass}>
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-green-500 shadow-xs ring-1 ring-black/5 dark:bg-neutral-900 dark:text-teal-300 dark:ring-white/10">
-                        <MessageCircle className="h-4 w-4" aria-hidden />
-                      </span>
+                  <div className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={startMessage}
+                      className="group flex w-full items-center gap-3 rounded-2xl bg-white px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] ring-1 ring-black/[0.04] transition hover:ring-black/[0.08] dark:bg-neutral-900 dark:ring-white/10 dark:hover:ring-white/16"
+                    >
                       <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium text-neutral-900 dark:text-neutral-50">
+                        <span className="block text-sm font-semibold text-neutral-900 dark:text-neutral-50">
                           {t.chatWithUs}
                         </span>
-                        <span className="block text-xs text-neutral-500 dark:text-neutral-400">
+                        <span className="mt-0.5 block text-xs text-neutral-500 dark:text-neutral-400">
                           {t.chatWithUsHint}
                         </span>
                       </span>
-                      <ChevronRight className="h-4 w-4 text-neutral-300 transition group-hover:text-neutral-500 dark:text-neutral-600" />
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-green-50 text-green-600 transition group-hover:bg-green-100 dark:bg-teal-950/50 dark:text-teal-300 dark:group-hover:bg-teal-950/80">
+                        <Send className="h-4 w-4" aria-hidden />
+                      </span>
                     </button>
-                    <div className="mx-3.5 h-px bg-neutral-200/70 dark:bg-white/5" />
-                    <button type="button" onClick={openTicketPane} className={rowClass}>
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-green-500 shadow-xs ring-1 ring-black/5 dark:bg-neutral-900 dark:text-teal-300 dark:ring-white/10">
-                        <Ticket className="h-4 w-4" aria-hidden />
+                    <button
+                      type="button"
+                      onClick={openTicketPane}
+                      className="group flex w-full items-center gap-3 rounded-2xl bg-white/70 px-4 py-3 text-left ring-1 ring-black/[0.03] transition hover:bg-white hover:ring-black/[0.06] dark:bg-white/[0.03] dark:ring-white/8 dark:hover:bg-white/[0.05]"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-300">
+                        <Ticket className="h-3.5 w-3.5" aria-hidden />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium text-neutral-900 dark:text-neutral-50">
+                        <span className="block text-sm font-medium text-neutral-800 dark:text-neutral-100">
                           {t.createTicket}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-neutral-400 dark:text-neutral-500">
+                          {t.ticketFollowUp}
                         </span>
                       </span>
                       <ChevronRight className="h-4 w-4 text-neutral-300 transition group-hover:text-neutral-500 dark:text-neutral-600" />
@@ -1292,38 +1358,6 @@ export function SupportWidget({
                   </form>
                 )}
 
-                {guestReady && conversations.length > 0 ? (
-                  <div>
-                    <p className="mb-1.5 px-0.5 text-xs font-medium text-neutral-400">{t.recent}</p>
-                    <ul className="overflow-hidden rounded-2xl bg-neutral-50/90 dark:bg-white/[0.03]">
-                      {conversations.slice(0, 3).map((c, index) => (
-                        <li key={c.id}>
-                          {index > 0 ? (
-                            <div className="mx-3.5 h-px bg-neutral-200/70 dark:bg-white/5" />
-                          ) : null}
-                          <button
-                            type="button"
-                            onClick={() => openConversation(c.id)}
-                            className={rowClass}
-                          >
-                            <span className="min-w-0 flex-1">
-                              <span className="flex items-center justify-between gap-2">
-                                <span className="truncate text-sm font-medium text-neutral-900 dark:text-neutral-50">
-                                  {c.subject?.trim() || t.supportChat}
-                                </span>
-                                <StatusDot status={c.status} t={t} />
-                              </span>
-                              <span className="mt-0.5 block truncate text-xs text-neutral-400">
-                                {formatTime(c.last_message_at)}
-                              </span>
-                            </span>
-                            <ChevronRight className="h-4 w-4 shrink-0 text-neutral-300 group-hover:text-neutral-500 dark:text-neutral-600" />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
               </div>
             ) : (
               <div className="flex h-full min-h-0 flex-col">
@@ -1361,57 +1395,82 @@ export function SupportWidget({
                   </form>
                 ) : (
                   <>
-                    {!activeId && user && openConversations.length > 0 ? (
-                      <ul className="space-y-0 px-3 py-2">
-                        {conversations.map(c => (
-                          <li key={c.id}>
-                            <button
-                              type="button"
-                              onClick={() => openConversation(c.id)}
-                              className="group flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left transition hover:bg-neutral-50 dark:hover:bg-white/[0.03]"
-                            >
-                              <span className="min-w-0 flex-1">
-                                <span className="flex items-center justify-between gap-2 text-sm font-medium text-neutral-900 dark:text-neutral-50">
-                                  <span className="truncate">
-                                    {c.subject?.trim() || t.supportChat}
+                    {showInbox ? (
+                      <div className="space-y-3 px-4 py-3">
+                        <p className="px-0.5 text-xs font-medium text-neutral-400">{t.recent}</p>
+                        <ul className="overflow-hidden rounded-2xl bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] ring-1 ring-black/[0.04] dark:bg-neutral-900 dark:ring-white/10">
+                          {conversations.map((c, index) => {
+                            const preview =
+                              previewBody(messages, c.id, {
+                                youPrefix: t.youPrefix,
+                                supportPrefix: t.supportPrefix,
+                                noMessagesYet: t.noMessagesYet,
+                                sentAnImage: t.sentAnImage,
+                              }) || formatTime(c.last_message_at)
+                            return (
+                              <li key={c.id}>
+                                {index > 0 ? (
+                                  <div className="mx-3.5 h-px bg-neutral-100 dark:bg-white/5" />
+                                ) : null}
+                                <button
+                                  type="button"
+                                  onClick={() => openConversation(c.id)}
+                                  className="group flex w-full items-center gap-3 px-3.5 py-3 text-left transition hover:bg-neutral-50 dark:hover:bg-white/[0.03]"
+                                >
+                                  <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-green-50 ring-1 ring-black/5 dark:bg-teal-950/40 dark:ring-white/10">
+                                    <img
+                                      src="/support-icon.png"
+                                      alt=""
+                                      width={22}
+                                      height={22}
+                                      className="h-[22px] w-[22px] object-cover"
+                                      draggable={false}
+                                    />
                                   </span>
-                                  <StatusDot status={c.status} t={t} />
-                                </span>
-                                <span className="mt-0.5 block truncate text-xs text-neutral-400">
-                                  {previewBody(messages, c.id, {
-                                    youPrefix: t.youPrefix,
-                                    supportPrefix: t.supportPrefix,
-                                    noMessagesYet: t.noMessagesYet,
-                                    sentAnImage: t.sentAnImage,
-                                  }) || formatTime(c.last_message_at)}
-                                </span>
-                              </span>
-                              <ChevronRight className="h-4 w-4 text-neutral-300 dark:text-neutral-600" />
-                            </button>
-                          </li>
-                        ))}
-                        <li className="px-1 pt-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActiveId(null)
-                              setMessages([])
-                            }}
-                            className="w-full rounded-full py-2.5 text-sm font-medium text-green-600 transition hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-950/40"
-                          >
-                            {t.newConversation}
-                          </button>
-                        </li>
-                      </ul>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="flex items-center justify-between gap-2">
+                                      <span className="truncate text-sm font-medium text-neutral-900 dark:text-neutral-50">
+                                        {c.subject?.trim() || t.supportChat}
+                                      </span>
+                                      <span className="shrink-0 text-[11px] text-neutral-400">
+                                        {formatTime(c.last_message_at)}
+                                      </span>
+                                    </span>
+                                    <span className="mt-0.5 flex items-center gap-1.5">
+                                      <span className="min-w-0 flex-1 truncate text-xs text-neutral-400">
+                                        {preview}
+                                      </span>
+                                      <StatusDot status={c.status} t={t} />
+                                    </span>
+                                  </span>
+                                  {unreadCount > 0 && index === 0 ? (
+                                    <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" aria-hidden />
+                                  ) : (
+                                    <ChevronRight className="h-4 w-4 shrink-0 text-neutral-300 dark:text-neutral-600" />
+                                  )}
+                                </button>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPreferNewThread(true)
+                            setActiveId(null)
+                            setMessages([])
+                          }}
+                          className="w-full rounded-full py-2.5 text-sm font-medium text-green-600 transition hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-950/40"
+                        >
+                          {t.newConversation}
+                        </button>
+                      </div>
                     ) : (
                       <>
                         <div className="flex items-center justify-between gap-2 px-3 py-2">
                           <button
                             type="button"
-                            onClick={() => {
-                              setActiveId(null)
-                              void refreshConversations()
-                            }}
+                            onClick={backToInbox}
                             className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
                           >
                             <ArrowLeft className="h-3.5 w-3.5" />
@@ -1845,31 +1904,51 @@ export function SupportWidget({
             </div>
           ) : null}
 
-          <nav className="flex gap-1 px-3 pb-3 pt-1">
+          <nav className="flex gap-1 border-t border-neutral-100 px-2 pb-2.5 pt-2 dark:border-white/8">
             <button
               type="button"
-              onClick={() => setTab('home')}
+              onClick={() => {
+                setTab('home')
+                setHomePane('main')
+              }}
               className={clsx(
-                'flex flex-1 items-center justify-center gap-1.5 rounded-full py-2 text-[12px] font-medium transition',
+                'relative flex flex-1 flex-col items-center gap-0.5 rounded-xl py-1.5 text-[11px] font-medium transition',
                 tab === 'home'
-                  ? 'bg-neutral-900 text-white dark:bg-green-400 dark:text-neutral-950'
-                  : 'text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 dark:hover:bg-neutral-900 dark:hover:text-neutral-200',
+                  ? 'text-green-600 dark:text-teal-300'
+                  : 'text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200',
               )}
             >
-              <Home className="h-3.5 w-3.5" />
+              <span className="relative">
+                <Home className="h-5 w-5" />
+                {openConversations.length > 0 ? (
+                  <span className="absolute -right-2.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-none text-white">
+                    {openConversations.length > 9 ? '9+' : openConversations.length}
+                  </span>
+                ) : null}
+              </span>
               {t.home}
             </button>
             <button
               type="button"
-              onClick={() => setTab('messages')}
+              onClick={() => {
+                setPreferNewThread(false)
+                setTab('messages')
+              }}
               className={clsx(
-                'flex flex-1 items-center justify-center gap-1.5 rounded-full py-2 text-[12px] font-medium transition',
+                'relative flex flex-1 flex-col items-center gap-0.5 rounded-xl py-1.5 text-[11px] font-medium transition',
                 tab === 'messages'
-                  ? 'bg-neutral-900 text-white dark:bg-green-400 dark:text-neutral-950'
-                  : 'text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 dark:hover:bg-neutral-900 dark:hover:text-neutral-200',
+                  ? 'text-green-600 dark:text-teal-300'
+                  : 'text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200',
               )}
             >
-              <MessageCircle className="h-3.5 w-3.5" />
+              <span className="relative">
+                <MessageCircle className="h-5 w-5" />
+                {unreadCount > 0 ? (
+                  <span className="absolute -right-2.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-none text-white">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                ) : null}
+              </span>
               {t.messages}
             </button>
           </nav>

@@ -49,6 +49,30 @@ export function pickListenerWorkerUrl(userId: string, env: EnvLike = Deno.env): 
   )
 }
 
+/**
+ * Primary listener first, then remaining LISTENER_SHARD_URLS.
+ * Used when Edge N disagrees with worker WORKER_SHARD_COUNT (wrong_shard) so
+ * auth can find the process that actually owns the user.
+ */
+export function listenerWorkerUrlCandidates(userId: string, env: EnvLike = Deno.env): string[] {
+  const primary = pickListenerWorkerUrl(userId, env)
+  const shards = listenerShardUrls(env)
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const u of [primary, ...shards]) {
+    if (!u || seen.has(u)) continue
+    seen.add(u)
+    out.push(u)
+  }
+  return out
+}
+
+export function isWrongShardPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false
+  const rec = payload as Record<string, unknown>
+  return rec.reason === "wrong_shard" || rec.error === "wrong_shard"
+}
+
 /** True when any listener URL is configured (fleet or single). */
 export function hasListenerWorkerUrl(env: EnvLike = Deno.env): boolean {
   if (listenerShardUrls(env).length > 0) return true

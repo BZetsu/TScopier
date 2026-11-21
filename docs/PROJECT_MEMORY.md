@@ -58,6 +58,34 @@
 - **Tests/verification:** `dpkg -l nginx` → `ii nginx 1.24.0-2ubuntu7.20`; `systemctl status nginx` → `active (running)` with a clean reload at 01:53:30 CET; external `curl` → `HTTP 2 code=200` with `server accepted h2` (HTTP/2 retained); on-VPS `bash /root/mt4-deploy/06-strip-auth-headers.sh check` → **ALL CHECKS PASSED** (four live probes incl. unauthenticated `/mt4/AccountSummary` → 403, six structural strip locations across `mtapi-tscopier.conf` and `mtapi-tscopier-tunnel.conf`, and the runtime echo gate "MT4 reaches the bridge and echoes no credentials"). Research notes: `docs/scratchpad-nginx-vuln-exposure-2026-11-20.md`.
 - **Deploy state:** **Live in production** (VPS `vmi3597525`, 2026-11-20 ~01:52 CET). No application code involved, so nothing to ship to Railway/Netlify. HTTP/2 remains enabled on port 9443.
 - **Follow-ups:** (1) 36 other system packages remain upgradable on the VPS — schedule a routine `apt upgrade`; (2) SSH on the box is still password-auth only (flagged 2026-10-22) — switch to key-only; (3) consider a periodic `apt update && apt list --upgradable` check (or unattended-upgrades for noble-security) so distro security fixes land within days rather than by manual audit; (4) the live nginx config is gitignored (`docs/nginx-setup/`) — keep the repo copies in `deploy/` in sync when the VPS config changes.
+### 2026-11-20 — Support widget Home/Messages redesign
+
+- **Context:** Widget Home felt cluttered (avatars left, Recent on Home); sample called for Intercom-style layout.
+- **Plain English:** Brand icon stays left; team avatars move right next to close. Home is greeting + “Send us a message” (ticket secondary). Recent conversations live on the Messages tab. Home/Messages tabs show red counters (open chats / unread).
+- **Fix (files):** `src/components/support/SupportWidget.tsx` (taller gradient header, UniCopier mark, reply-ETA RTL slide, avatars right, home CTA, messages inbox, tab badges, `preferNewThread` / `backToInbox`); `src/index.css` `support-reply-slide`; guest refresh no longer wipes the conversation list (that broke “All messages”); `src/i18n/supportWidget/en.ts` copy.
+- **Tests/verification:** Local UI; no backend change.
+- **Deploy state:** Local only (frontend).
+- **Follow-ups:** None.
+
+### 2026-11-20 — OLD_VERSION “failed trades for no reason” (historical) + clearer UX
+
+- **Context:** Users reported many failed XAUUSD entries showing `OLD_VERSION (:0)` in Copier Process.
+- **Plain English:** Those failures were from the **19 Nov morning** MTAPI bridge incident (outdated Manager API build). Production has **0** `OLD_VERSION` rows since the bridge recreate at **10:15 UTC** (last refusal 10:13 UTC). Copying is fine again; the log still shows the old failures.
+- **Root cause (technical):** `mt5rest` `MT5API.Connect()` → `ServerException: OLD_VERSION` (documented in `docs/incidents/incident-2026-11-19-mtapi-old-version.md`). Not a parser or account setting issue.
+- **Fix (files):** Classify `OLD_VERSION` as `MTAPI_OLD_VERSION` in `classifyBrokerFailureReason` / `tradeFailureReasonFromBrokerMessage` / `brokerTradeError`; map in `tradeFailureDisplay` + `brokerBridgeErrorDisplay` so historical logs show “trading bridge needs an update” instead of the raw bridge string.
+- **Tests/verification:** Prod query — last_2h OLD_VERSION=0, after 10:15 UTC=0; worker + vitest cases for the new mapping.
+- **Deploy state:** Code local until worker/frontend ship. Bridge already fixed in production on 2026-11-19.
+- **Follow-ups:** If OLD_VERSION returns, page via existing `mtapi_old_version` alert and recreate Contabo `timurila/mt5rest`.
+
+### 2026-11-20 — Prod wrong_shard blocking Telegram link (N=5 Edge vs N=6 listeners)
+
+- **Context:** Users see “Telegram listener routing is misconfigured (wrong shard)” on QR/phone link.
+- **Plain English:** Listeners run as `0/6`–`4/6` but **no listener shard 5**. Edge `LISTENER_SHARD_URLS` length disagrees with worker `WORKER_SHARD_COUNT=6`, so auth hits the wrong Railway service and is rejected (`wrong_shard`).
+- **Root cause (technical):** Fleet cutover: five live listeners, six-way hash. Recent `listener_events` wrong_shard rows all had `hash%5 ≠ hash%6`.
+- **Fix (files):** `telegram-auth` retries other `LISTENER_SHARD_URLS` on `wrong_shard` (`listenerWorkerUrlCandidates` / `isWrongShardPayload` in `_shared/workerShard.ts`). Deployed to production `sxkpcovbyaficvtkpsdo`.
+- **Tests/verification:** Deno `workerShard.test.ts` 3/3; CLI deploy succeeded.
+- **Deploy state:** `telegram-auth` → production. Ops must still align N (add listener-5 **or** set all workers + Edge to N=5).
+- **Follow-ups:** Fastest permanent fix — N=5: `WORKER_SHARD_COUNT=5` on all listener+trade services; Edge `LISTENER_SHARD_URLS` = five listener bases in order 0–4; trim trade URL list to 5.
 
 ### 2026-11-19 — Zone signals that state their own stop and targets no longer need Override SL/TP
 

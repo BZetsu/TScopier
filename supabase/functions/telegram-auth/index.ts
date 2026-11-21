@@ -9,7 +9,8 @@ import {
 } from "../_shared/authActionEvent.ts"
 import {
   hasListenerWorkerUrl,
-  pickListenerWorkerUrl,
+  isWrongShardPayload,
+  listenerWorkerUrlCandidates,
 } from "../_shared/workerShard.ts"
 
 /**
@@ -163,8 +164,8 @@ Deno.serve(async (req: Request) => {
     // and let any signed-in user act as (and link Telegram as) someone else.
     delete rest.user_id
 
-    const workerUrl = pickListenerWorkerUrl(user.id)
-    if (!workerUrl) {
+    const candidates = listenerWorkerUrlCandidates(user.id)
+    if (candidates.length === 0) {
       console.error("telegram-auth: no listener URL for user shard")
       traceAuthAction({ ok: false, reason: "no_listener_url" })
       return Response.json(
@@ -173,43 +174,76 @@ Deno.serve(async (req: Request) => {
       )
     }
 
-    let workerRes: Response
-    try {
-      workerRes = await fetch(`${workerUrl}${path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-internal-token": WORKER_INTERNAL_TOKEN,
-          // Caller identity for the events the worker writes (e.g. a disconnect).
-          ...(clientId !== "-" ? { "x-client-id": clientId } : {}),
-          ...(clientIp ? { "x-client-ip": clientIp } : {}),
-          ...(ua ? { "x-client-ua": ua } : {}),
-        },
-        body: JSON.stringify({ user_id: user.id, ...rest }),
-        signal: AbortSignal.timeout(WORKER_TIMEOUT_MS),
-      })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      const timedOut = err instanceof DOMException && err.name === "TimeoutError"
-      console.warn(
-        `[telegram-auth] listener fetch ${timedOut ? "timed out" : "failed"}: ${message}`,
-      )
-      traceAuthAction({
-        ok: false,
-        reason: timedOut ? "fetch_timeout" : "fetch_failed",
-        // Never persist shard hostnames: the row is readable by its owner.
-        error: redactWorkerUrls(message),
-      })
-      throw err
+    const forwardHeaders: Record<string, string> = {
+      "content-type": "application/json",
+      "x-internal-token": WORKER_INTERNAL_TOKEN,
+      // Caller identity for the events the worker writes (e.g. a disconnect).
+      ...(clientId !== "-" ? { "x-client-id": clientId } : {}),
+      ...(clientIp ? { "x-client-ip": clientIp } : {}),
+      ...(ua ? { "x-client-ua": ua } : {}),
+    }
+    const forwardBody = JSON.stringify({ user_id: user.id, ...rest })
+
+    // Primary shard first. If LISTENER_SHARD_URLS.length disagrees with listener
+    // WORKER_SHARD_COUNT, the hash index is wrong and the worker returns
+    // wrong_shard — retry other fleet URLs so auth can still complete.
+    let workerRes: Response | null = null
+    let payload: unknown = null
+    for (let i = 0; i < candidates.length; i++) {
+      const workerUrl = candidates[i]!
+      try {
+        workerRes = await fetch(`${workerUrl}${path}`, {
+          method: "POST",
+          headers: forwardHeaders,
+          body: forwardBody,
+          signal: AbortSignal.timeout(WORKER_TIMEOUT_MS),
+        })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        const timedOut = err instanceof DOMException && err.name === "TimeoutError"
+        console.warn(
+          `[telegram-auth] listener fetch ${timedOut ? "timed out" : "failed"} url=${workerUrl} action=${action}: ${message}`,
+        )
+        // Final attempt failed: record why (timeout vs. network error) and rethrow.
+        // Earlier attempts fall through to the next listener URL.
+        if (i === candidates.length - 1) {
+          traceAuthAction({
+            ok: false,
+            reason: timedOut ? "fetch_timeout" : "fetch_failed",
+            // Never persist shard hostnames: the row is readable by its owner.
+            error: redactWorkerUrls(message),
+          })
+          throw err
+        }
+        continue
+      }
+      const text = await workerRes.text()
+      try {
+        payload = text ? JSON.parse(text) : {}
+      } catch {
+        payload = { error: "Invalid response from Telegram service" }
+      }
+      if (isWrongShardPayload(payload) && i < candidates.length - 1) {
+        console.warn(
+          `telegram-auth: wrong_shard from ${workerUrl} action=${action} user=${user.id}; trying next listener`,
+        )
+        continue
+      }
+      if (i > 0) {
+        console.warn(
+          `telegram-auth: recovered via fallback listener ${workerUrl} (primary was ${candidates[0]}) action=${action} user=${user.id}`,
+        )
+      }
+      break
     }
 
-    const text = await workerRes.text()
-    let payload: unknown = text
-    try {
-      payload = text ? JSON.parse(text) : {}
-    } catch {
-      payload = { error: "Invalid response from Telegram service" }
+    if (!workerRes) {
+      return Response.json(
+        { error: "Telegram service is not configured. Contact support." },
+        { status: 503, headers: corsHeaders },
+      )
     }
+
     if (payload && typeof payload === "object" && !Array.isArray(payload)) {
       const rec = payload as Record<string, unknown>
       if (typeof rec.error === "string") {
