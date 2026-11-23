@@ -63,3 +63,22 @@ __pycache__/
 *.pyc
 
 .env*
+
+# Expo / UniCopier mobile
+apps/mobile/.expo/
+apps/mobile/.env
+apps/mobile/.env*.local
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/dist/
+apps/mobile/expo-env.d.ts
+apps/mobile/*.log
+apps/mobile/google-play-service-account.json
+apps/mobile/*.p8
+apps/mobile/*.p12
+apps/mobile/*.jks
+apps/mobile/*.keystore
+apps/mobile/*.mobileprovision
+apps/mobile/*.pem
+# Nested Mobile-app worktree checkout (local aid; never commit)
+apps/TScopier-mobile/

@@ -6,6 +6,15 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-21 — UniCopier Expo mobile ported onto off-migration
+
+- **Context:** Trader mobile lived on `Mobile-app` / worktree; `off-migration` only had a stale `apps/mobile` husk.
+- **Plain English:** The Expo companion app is now in this repo as UniCopier (`com.unicopier.app`, scheme `unicopier`), with a new EAS project and Migration-backed push.
+- **Fix (files):** Deleted husk; copied `apps/mobile` + `packages/{shared,web-lib,web-i18n}`; root `dev:mobile` / `build:mobile` / `typecheck:mobile`; rebranded config/copy/assets; EAS `@tartarix/unicopier` (`7761637d-…`); push migrations + `send-push-notification` on Migration `supmsgcubipmmowrzoub`.
+- **Tests/verification:** `npm run typecheck:mobile` clean; edge function ACTIVE on Migration; `user_push_tokens` + `notify_trade_push` verified.
+- **Deploy state:** App local on `off-migration`. Migrations + `send-push-notification` on Migration only (not staging/production). Set `EXPO_ACCESS_TOKEN` secret and Auth redirect URLs (`unicopier://…`) in dashboard when ready.
+- **Follow-ups:** Add Auth redirect allow-list; optional `@tscopier/*` → `@unicopier/*` rename; remove nested `apps/TScopier-mobile` worktree when done.
+
 ### 2026-11-20 — Support widget Home/Messages redesign
 
 - **Context:** Widget Home felt cluttered (avatars left, Recent on Home); sample called for Intercom-style layout.
