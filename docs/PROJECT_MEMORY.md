@@ -6,6 +6,25 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-23 — Pay with Crypto via Stripe Checkout
+
+- **Context:** Stripe Stablecoins and Crypto is Active (US); Checkout was hard-locked to `payment_method_types: ["card"]`, so crypto never appeared.
+- **Plain English:** Customers can pay UniCopier subscriptions with USDC/crypto at Stripe Checkout (alongside cards). We settle in USD. Pricing pages note “Cards and crypto (USDC) accepted at checkout.”
+- **Root cause (technical):** Explicit `payment_method_types: ["card"]` disabled Stripe dynamic payment methods.
+- **Fix (files):** Removed card-only lock in `supabase/functions/create-checkout-session/index.ts` and `create-social-copy-checkout/index.ts` (kept `payment_method_collection: always`); `docs/stripe-setup.md`; pricing hint via `paymentMethodsHint` + `PricingPlansSection.tsx`.
+- **Tests/verification:** Both functions deployed to Migration then production; confirm Hosted Checkout shows Crypto for an eligible wallet payer and card still works. Spot-check first renewal after a crypto first payment (`save_default_payment_method`) when a live crypto sub exists.
+- **Deploy state:** Edge functions on Migration `supmsgcubipmmowrzoub` and production `sxkpcovbyaficvtkpsdo` (not staging). Frontend pricing hint ships with the next web deploy.
+- **Follow-ups:** Watch crypto renewal behavior; ship frontend copy when web is deployed.
+
+### 2026-11-21 — UniCopier Expo mobile ported onto off-migration
+
+- **Context:** Trader mobile lived on `Mobile-app` / worktree; `off-migration` only had a stale `apps/mobile` husk.
+- **Plain English:** The Expo companion app is now in this repo as UniCopier (`com.unicopier.app`, scheme `unicopier`), with a new EAS project and Migration-backed push.
+- **Fix (files):** Deleted husk; copied `apps/mobile` + `packages/{shared,web-lib,web-i18n}`; root `dev:mobile` / `build:mobile` / `typecheck:mobile`; rebranded config/copy/assets; EAS `@tartarix/unicopier` (`7761637d-…`); push migrations + `send-push-notification` on Migration `supmsgcubipmmowrzoub`.
+- **Tests/verification:** `npm run typecheck:mobile` clean; edge function ACTIVE on Migration; `user_push_tokens` + `notify_trade_push` verified.
+- **Deploy state:** App local on `off-migration`. Migrations + `send-push-notification` on Migration only (not staging/production). Set `EXPO_ACCESS_TOKEN` secret and Auth redirect URLs (`unicopier://…`) in dashboard when ready.
+- **Follow-ups:** Add Auth redirect allow-list; optional `@tscopier/*` → `@unicopier/*` rename; remove nested `apps/TScopier-mobile` worktree when done.
+
 ### 2026-11-21 — Support chat: Liam Nicolas / Genwealth signals not copied, Gen Wealth VIP channel dead since 16 Nov
 
 - **Context:** Customer Liam Nicolas (`b23d53d4-c95b-4858-a00b-8161c0fdd3bc`, username `alphamanagement2022`) reported via support chat that his signals were not being copied — "no trade has ever been opened" and specific signal messages (16 Nov 01:47 "Selling gold now ENTRY: 3876 SL 3886", 16 Nov ~05:28 "selling gold now", 20 Nov 17:22 "Buying gold now ENTRY: 3558") never appeared in Copier Logs.

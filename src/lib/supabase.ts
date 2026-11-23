@@ -12,6 +12,12 @@ function readViteEnv(key: string): string {
   if (typeof fromMeta === 'string' && fromMeta.trim()) return fromMeta.trim()
   const fromProcess = readProcessEnv(key)
   if (fromProcess) return fromProcess
+  // Expo / mobile shared web-lib: EXPO_PUBLIC_* mirrors VITE_*.
+  if (key.startsWith('VITE_')) {
+    const expoKey = key.replace(/^VITE_/, 'EXPO_PUBLIC_')
+    const fromExpo = readProcessEnv(expoKey)
+    if (fromExpo) return fromExpo
+  }
   return ''
 }
 
@@ -20,12 +26,12 @@ const supabaseAnonKey = readViteEnv('VITE_SUPABASE_ANON_KEY')
 
 if (!supabaseUrl || !supabaseAnonKey) {
   const missing = [
-    !supabaseUrl && 'VITE_SUPABASE_URL',
-    !supabaseAnonKey && 'VITE_SUPABASE_ANON_KEY',
+    !supabaseUrl && 'VITE_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_URL',
+    !supabaseAnonKey && 'VITE_SUPABASE_ANON_KEY / EXPO_PUBLIC_SUPABASE_ANON_KEY',
   ].filter(Boolean).join(', ')
   throw new Error(
-    `Missing ${missing}. For Netlify, set these under Site configuration → Environment variables ` +
-      `(names must start with VITE_), scope must include Builds, then trigger a new deploy.`,
+    `Missing ${missing}. For Netlify, set VITE_* under Site configuration → Environment variables ` +
+      `(scope must include Builds), then trigger a new deploy. For Expo, set EXPO_PUBLIC_* in .env / EAS.`,
   )
 }
 

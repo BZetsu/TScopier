@@ -105,9 +105,10 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 2. Checkout metadata includes `supabase_user_id`, `plan`, `extra_accounts`.
 3. Subscription metadata mirrors checkout metadata for portal updates.
 4. **Advanced first-time free trial** — Advanced checkouts for users with no prior `trial_ends_at` get `trial_period_days: 5`. Basic is charged from day one. Existing Stripe `trialing` subscribers keep access until `trial_ends_at`. Users who already used a trial do not get a second one.
-5. Checkout always collects a card (`payment_method_collection: always`). After checkout completes, the webhook sets `payment_settings.save_default_payment_method: on_subscription` on the Stripe subscription for renewals.
+5. Checkout uses **dynamic payment methods** (no hard-coded `payment_method_types`). Stripe shows methods enabled in the Dashboard, including **card** and **Stablecoins and Crypto** when Active. Sessions still set `payment_method_collection: always`. After checkout completes, the webhook sets `payment_settings.save_default_payment_method: on_subscription` on the Stripe subscription for renewals.
 6. Success redirect: `/dashboard?checkout=success` (SubscriptionContext refreshes). Cancel → `/pricing`.
-7. Pricing pages advertise a **5-day free trial on Advanced**.
+7. Pricing pages advertise a **5-day free trial on Advanced** and that cards + crypto (USDC) are accepted at checkout.
+8. **Crypto pay-in:** enable **Settings → Payment methods → Stablecoins and Crypto** (US merchants; not NY). Customers pay via crypto.stripe.com; funds settle in the Stripe balance in **USD**. This is not Crypto Onramp (fiat → buy crypto).
 
 ### Checkout troubleshooting
 
@@ -117,9 +118,9 @@ Common causes:
 
 - User clicked Pay before the card fields finished loading
 - Ad blocker / privacy extension blocking Stripe.js iframes
-- Stripe Link or “automatic” payment method selected without a valid saved card
+- Stripe Link or another automatic payment method selected without a valid saved instrument
 
-**Fixes:** retry in incognito without extensions; ensure all card fields are filled; in Stripe Dashboard disable Checkout preview/beta features if enabled; `create-checkout-session` forces `payment_method_types: [card]` to reduce empty Link/auto submissions.
+**Fixes:** retry in incognito without extensions; ensure card fields are filled; in Stripe Dashboard disable Checkout preview/beta features if enabled; tune which methods appear under **Settings → Payment methods** (Checkout no longer forces card-only).
 
 ## Paywall (plan limits)
 

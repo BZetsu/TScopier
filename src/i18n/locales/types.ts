@@ -2259,6 +2259,8 @@ export interface BacktestTranslations {
 export interface PricingTranslations {
   title: string
   subtitle: string
+  /** Shown under the pricing subtitle — e.g. cards + crypto at checkout. */
+  paymentMethodsHint: string
   skip: string
   monthly: string
   annual: string

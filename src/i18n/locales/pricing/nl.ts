@@ -4,6 +4,7 @@ export const pricingNl: PricingBundleTranslations = {
   pricing: {
     title: 'Kies je plan',
     subtitle: 'Begin vandaag nog met het kopiëren van signalen naar je tradingaccounts.',
+    paymentMethodsHint: 'Kaarten en crypto (USDC) geaccepteerd bij checkout.',
     skip: 'Nu overslaan',
     monthly: 'Maandelijks',
     annual: 'Jaarlijks',

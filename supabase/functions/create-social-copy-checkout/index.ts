@@ -199,10 +199,12 @@ Deno.serve(async (req: Request) => {
       },
     };
 
+    // Omit payment_method_types so Stripe dynamic payment methods apply
+    // (Dashboard-enabled methods, including Stablecoins and Crypto).
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: "subscription",
-      payment_method_types: ["card"],
+      payment_method_collection: "always",
       line_items: [
         {
           quantity: 1,
