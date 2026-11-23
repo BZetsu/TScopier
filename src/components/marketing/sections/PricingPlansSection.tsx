@@ -178,6 +178,7 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
           {lp.title}
         </h1>
         <p className="mt-3 text-base text-neutral-900 dark:text-neutral-50">{lp.subtitle}</p>
+        <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">{pt.paymentMethodsHint}</p>
 
         {checkoutError ? (
           <div

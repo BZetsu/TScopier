@@ -4,6 +4,7 @@ export const pricingJa: PricingBundleTranslations = {
   pricing: {
     title: 'プランを選択',
     subtitle: '今日からあなたの取引口座へシグナルのコピーを始めましょう。',
+    paymentMethodsHint: 'カードと暗号資産（USDC）でチェックアウトできます。',
     skip: '今はスキップ',
     monthly: '月額',
     annual: '年額',

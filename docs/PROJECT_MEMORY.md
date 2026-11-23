@@ -6,6 +6,16 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-23 — Pay with Crypto via Stripe Checkout
+
+- **Context:** Stripe Stablecoins and Crypto is Active (US); Checkout was hard-locked to `payment_method_types: ["card"]`, so crypto never appeared.
+- **Plain English:** Customers can pay UniCopier subscriptions with USDC/crypto at Stripe Checkout (alongside cards). We settle in USD. Pricing pages note “Cards and crypto (USDC) accepted at checkout.”
+- **Root cause (technical):** Explicit `payment_method_types: ["card"]` disabled Stripe dynamic payment methods.
+- **Fix (files):** Removed card-only lock in `supabase/functions/create-checkout-session/index.ts` and `create-social-copy-checkout/index.ts` (kept `payment_method_collection: always`); `docs/stripe-setup.md`; pricing hint via `paymentMethodsHint` + `PricingPlansSection.tsx`.
+- **Tests/verification:** Both functions deployed to Migration then production; confirm Hosted Checkout shows Crypto for an eligible wallet payer and card still works. Spot-check first renewal after a crypto first payment (`save_default_payment_method`) when a live crypto sub exists.
+- **Deploy state:** Edge functions on Migration `supmsgcubipmmowrzoub` and production `sxkpcovbyaficvtkpsdo` (not staging). Frontend pricing hint ships with the next web deploy.
+- **Follow-ups:** Watch crypto renewal behavior; ship frontend copy when web is deployed.
+
 ### 2026-11-21 — UniCopier Expo mobile ported onto off-migration
 
 - **Context:** Trader mobile lived on `Mobile-app` / worktree; `off-migration` only had a stale `apps/mobile` husk.

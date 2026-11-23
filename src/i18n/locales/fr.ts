@@ -253,6 +253,7 @@ export const fr: Translations = {
   pricing: {
     title: 'Choisissez votre plan',
     subtitle: 'Commencez à copier des signaux vers vos comptes de trading aujourd\'hui.',
+    paymentMethodsHint: 'Cartes et crypto (USDC) acceptées au paiement.',
     skip: 'Passer pour le moment',
     monthly: 'Mensuel',
     annual: 'Annuel',

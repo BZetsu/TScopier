@@ -4,6 +4,7 @@ export const pricingAr: PricingBundleTranslations = {
   pricing: {
     title: 'اختر خطتك',
     subtitle: 'ابدأ نسخ الإشارات إلى حسابات التداول اليوم.',
+    paymentMethodsHint: 'البطاقات والعملات المشفرة (USDC) مقبولة عند الدفع.',
     skip: 'تخطّ الآن',
     monthly: 'شهري',
     annual: 'سنوي',

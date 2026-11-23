@@ -4,6 +4,7 @@ export const pricingPl: PricingBundleTranslations = {
   pricing: {
     title: 'Wybierz plan',
     subtitle: 'Zacznij kopiować sygnały na swoje konta tradingowe już dziś.',
+    paymentMethodsHint: 'Karty i krypto (USDC) akceptowane przy płatności.',
     skip: 'Pomiń na razie',
     monthly: 'Miesięcznie',
     annual: 'Rocznie',

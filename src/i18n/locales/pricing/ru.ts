@@ -4,6 +4,7 @@ export const pricingRu: PricingBundleTranslations = {
   pricing: {
     title: 'Выберите тариф',
     subtitle: 'Начните копировать сигналы на свои торговые счета уже сегодня.',
+    paymentMethodsHint: 'Карты и крипто (USDC) принимаются при оплате.',
     skip: 'Пропустить пока',
     monthly: 'Ежемесячно',
     annual: 'Ежегодно',

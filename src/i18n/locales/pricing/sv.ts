@@ -4,6 +4,7 @@ export const pricingSv: PricingBundleTranslations = {
   pricing: {
     title: 'Välj din plan',
     subtitle: 'Börja kopiera signaler till dina tradingkonton redan idag.',
+    paymentMethodsHint: 'Kort och krypto (USDC) accepteras i kassan.',
     skip: 'Hoppa över för nu',
     monthly: 'Månadsvis',
     annual: 'Årsvis',

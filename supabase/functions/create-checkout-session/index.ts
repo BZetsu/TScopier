@@ -180,11 +180,12 @@ Deno.serve(async (req: Request) => {
       ? rawSuccess
       : `${rawSuccess}${rawSuccess.includes("?") ? "&" : "?"}session_id={CHECKOUT_SESSION_ID}`;
 
+    // Omit payment_method_types so Stripe dynamic payment methods apply
+    // (Dashboard-enabled methods, including Stablecoins and Crypto).
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       customer: customerId,
       mode: "subscription",
       line_items: lineItems,
-      payment_method_types: ["card"],
       payment_method_collection: "always",
       success_url: successWithSession,
       cancel_url: cancelUrl || `${origin}/pricing`,
