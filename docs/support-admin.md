@@ -86,6 +86,30 @@ product (`src/components/support/`).
 Access is enforced in the database: agent reads/claims are gated on
 `is_support_agent` / `is_admin()`; the app never uses the service-role key.
 
+## Editing a sent chat message
+
+An agent can correct a message already sent in the Inbox: hover the message, press the
+pencil, change the text, **Save** (Escape cancels, Ctrl/Cmd+Enter saves). The customer
+sees the new wording live — there is deliberately no "edited" label.
+
+The rules live in the database, not the UI
+(`supabase/migrations/20261120090000_support_message_edit.sql`):
+
+- Only rows with `sender_type = 'agent'` can be edited, and only by a support agent or
+  admin (`is_support_agent()` RLS UPDATE policy). Customer messages, AI answers and system
+  notices can never be rewritten.
+- A BEFORE UPDATE trigger rejects changes to `id`, `conversation_id`, `sender_type`,
+  `sender_user_id` and `created_at`, and stamps `edited_at` when `body`/`images` change.
+- The edit clears `translations`, so the customer's stored translation of the old wording
+  cannot outlive the correction; the widget re-translates the new text automatically.
+- The customer widget listens for `UPDATE` on `support_messages`
+  (`src/components/support/SupportWidget.tsx`) so an open thread shows the correction
+  immediately; guests polling every 4 s pick it up on the next poll.
+
+**Deploy order:** apply the migration before shipping the desk build — without the policy
+the update fails with a permission error. Tickets are out of scope: ticket replies stay
+immutable.
+
 ## Stack and layout
 
 - Vite + React 19 + TypeScript + Tailwind CSS 4 + React Router 7 + `@supabase/supabase-js`.

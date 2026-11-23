@@ -751,6 +751,31 @@ export function SupportWidget({
           void refreshConversations()
         },
       )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'support_messages' },
+        payload => {
+          const row = payload.new as SupportMessage
+          if (!row?.conversation_id) return
+          if (!ownedConversationIdsRef.current.has(row.conversation_id)) return
+          const view = viewStateRef.current
+          if (!view.open || view.activeId !== row.conversation_id) return
+          // A support agent corrected a sent message — show the new wording.
+          // No sound or unread bump: nothing new arrived, the old text changed.
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === row.id
+                ? {
+                    ...m,
+                    body: row.body ?? m.body,
+                    translations: row.translations ?? m.translations,
+                    source_locale: row.source_locale ?? m.source_locale,
+                  }
+                : m,
+            ),
+          )
+        },
+      )
       .subscribe()
     return () => {
       void supabase.removeChannel(channel)

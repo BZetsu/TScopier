@@ -2,6 +2,12 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
 import { logAssistantEvent } from "../_shared/listenerEvents.ts"
 import {
+  buildAuthActionDetail,
+  classifyAuthActionOutcome,
+  redactWorkerUrls,
+  type AuthActionOutcome,
+} from "../_shared/authActionEvent.ts"
+import {
   hasListenerWorkerUrl,
   isWrongShardPayload,
   listenerWorkerUrlCandidates,
@@ -47,6 +53,40 @@ const ROUTES: Record<string, string> = {
   backfill_channel_history: "/auth/backfill_channel_history",
 }
 
+/**
+ * Actions a support conversation asks about. Polling actions (qr_status,
+ * list_channels) would bury them, so they are not traced.
+ */
+const TRACED_AUTH_ACTIONS = new Set([
+  "send_code",
+  "verify_code",
+  "start_qr_login",
+  "reconnect_telegram",
+  "disconnect_telegram",
+])
+
+/**
+ * Bound the listener call. A worker that accepts the connection but never
+ * answers must not hang the browser, and must still leave a trace row.
+ */
+const WORKER_TIMEOUT_MS = 30_000
+
+/**
+ * Run a diagnostic write without holding the response back. `waitUntil` keeps
+ * the isolate alive until the insert lands; without it a `void` promise can be
+ * dropped when the response is flushed.
+ */
+function scheduleBackgroundTask(promise: Promise<unknown>): void {
+  const runtime = (globalThis as typeof globalThis & {
+    EdgeRuntime?: { waitUntil(task: Promise<unknown>): void }
+  }).EdgeRuntime
+  if (runtime?.waitUntil) {
+    runtime.waitUntil(promise)
+    return
+  }
+  void promise
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders })
@@ -90,33 +130,29 @@ Deno.serve(async (req: Request) => {
     // request bodies and actions were previously invisible in the gateway log.
     const forwardedFor = req.headers.get("x-forwarded-for") ?? ""
     const clientIp = (req.headers.get("cf-connecting-ip") ?? forwardedFor.split(",")[0] ?? "").trim()
-    const clientId = (req.headers.get("x-client-id") ?? "").trim() || "-"
+    const clientId = (req.headers.get("x-client-id") ?? "").trim().slice(0, 64) || "-"
     const ua = (req.headers.get("user-agent") ?? "").trim().slice(0, 120)
-    {
-      console.log(
-        `[telegram-auth] action=${action} user=${user.id} client=${clientId} ip=${clientIp || "-"} ua=${ua || "-"}`,
-      )
-      // Only the actions a support conversation would ask about. Polling actions
-      // (qr_status, list_channels) would bury them.
-      const traced = new Set([
-        "send_code",
-        "verify_code",
-        "start_qr_login",
-        "reconnect_telegram",
-        "disconnect_telegram",
-      ])
-      if (traced.has(action)) {
+    console.log(
+      `[telegram-auth] action=${action} user=${user.id} client=${clientId} ip=${clientIp || "-"} ua=${ua || "-"}`,
+    )
+    // Only the actions a support conversation would ask about. Polling actions
+    // (qr_status, list_channels) would bury them.
+    //
+    // The event is written AFTER the worker answers, so it records the outcome.
+    // It used to be written before forwarding, which made a rejected call (for
+    // example `wrong_shard`) look like a successful reconnect in the admin panel.
+    // Scheduled, not awaited: a slow insert must not delay or fail an auth call.
+    const traceAuthAction = (outcome: AuthActionOutcome): void => {
+      if (!TRACED_AUTH_ACTIONS.has(action)) return
+      scheduleBackgroundTask(
         logAssistantEvent({
           userId: user.id,
           eventType: "telegram_auth_action",
-          detail: {
-            action,
-            client: clientId,
-            ip: clientIp || null,
-            ua: ua || null,
-          },
-        }).catch(() => {}) // fire-and-forget
-      }
+          detail: buildAuthActionDetail({ action, clientId, ip: clientIp, ua, outcome }),
+        }).catch(() => {
+          // Diagnostics must never break the auth call itself.
+        }),
+      )
     }
 
     const rest = { ...body }
@@ -131,6 +167,7 @@ Deno.serve(async (req: Request) => {
     const candidates = listenerWorkerUrlCandidates(user.id)
     if (candidates.length === 0) {
       console.error("telegram-auth: no listener URL for user shard")
+      traceAuthAction({ ok: false, reason: "no_listener_url" })
       return Response.json(
         { error: "Telegram service is not configured. Contact support." },
         { status: 503, headers: corsHeaders },
@@ -159,13 +196,25 @@ Deno.serve(async (req: Request) => {
           method: "POST",
           headers: forwardHeaders,
           body: forwardBody,
+          signal: AbortSignal.timeout(WORKER_TIMEOUT_MS),
         })
       } catch (err) {
-        console.error(
-          `telegram-auth: fetch failed url=${workerUrl} action=${action}:`,
-          err instanceof Error ? err.message : err,
+        const message = err instanceof Error ? err.message : String(err)
+        const timedOut = err instanceof DOMException && err.name === "TimeoutError"
+        console.warn(
+          `[telegram-auth] listener fetch ${timedOut ? "timed out" : "failed"} url=${workerUrl} action=${action}: ${message}`,
         )
-        if (i === candidates.length - 1) throw err
+        // Final attempt failed: record why (timeout vs. network error) and rethrow.
+        // Earlier attempts fall through to the next listener URL.
+        if (i === candidates.length - 1) {
+          traceAuthAction({
+            ok: false,
+            reason: timedOut ? "fetch_timeout" : "fetch_failed",
+            // Never persist shard hostnames: the row is readable by its owner.
+            error: redactWorkerUrls(message),
+          })
+          throw err
+        }
         continue
       }
       const text = await workerRes.text()
@@ -187,6 +236,7 @@ Deno.serve(async (req: Request) => {
       }
       break
     }
+
     if (!workerRes) {
       return Response.json(
         { error: "Telegram service is not configured. Contact support." },
@@ -204,6 +254,11 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Record the outcome of the action itself, so support can tell a request
+    // that the worker accepted from one it rejected (for example wrong_shard).
+    const outcome = classifyAuthActionOutcome(workerRes.status, workerRes.ok, payload)
+    traceAuthAction(outcome)
+
     // Log every Telegram linking attempt with its outcome so we can see whether
     // the code was actually sent (delivery), how long it was, and why it failed.
     if (action === "send_code" || action === "verify_code") {
@@ -213,7 +268,7 @@ Deno.serve(async (req: Request) => {
       const detail: Record<string, unknown> = {
         action,
         phone: typeof rest.phone === "string" ? rest.phone.slice(0, 4) + "****" : undefined,
-        ok: workerRes.ok && !(rec && typeof rec.error === "string" && rec.error),
+        ok: outcome.ok,
       }
       if (rec) {
         if (typeof rec.delivery === "string") detail.delivery = rec.delivery

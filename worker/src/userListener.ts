@@ -262,6 +262,27 @@ const CHANNEL_RESOLVE_COOLDOWN_MS = (() => {
 })()
 
 /**
+ * Retry delays after an entity cache miss ("Could not find the input entity"),
+ * which is what a Telegram session that has not yet learned a channel reports —
+ * normally right after a session re-link.
+ *
+ * Fast at first so a resolvable channel recovers within seconds instead of
+ * waiting out CHANNEL_RESOLVE_COOLDOWN_MS, then settles to a bounded rate so a
+ * channel that can never resolve (not a member, deleted, renamed) stops
+ * issuing GetDialogs on every poll. Unbounded retries are not an option: one
+ * user with many dead channels produced ~440 requests/min and sustained
+ * flood-waits (incident 2026-08-24).
+ */
+const ENTITY_CACHE_MISS_RETRY_DELAYS_MS = [0, 5_000, 15_000, 60_000, 300_000]
+
+/** Delay before retry number `attempts` (1-based); capped at the last entry. */
+export function entityCacheMissRetryDelayMs(attempts: number): number {
+  const delays = ENTITY_CACHE_MISS_RETRY_DELAYS_MS
+  const index = Math.min(Math.max(attempts - 1, 0), delays.length - 1)
+  return delays[index]!
+}
+
+/**
  * Per-session backoff after a Telegram flood-wait / retry-exhaustion burst.
  * Without it, the fast poll (every 3s) keeps issuing getMessages into a
  * throttled session; each request sleeps inside GramJS (avg 28s) × 5 retries,
@@ -532,6 +553,16 @@ function isConfirmedChannelInvalidError(err: unknown): boolean {
     || code.includes('CHANNEL_PRIVATE')
 }
 
+/** "Could not find the input entity" means the current Telegram session has
+ * not learned this channel yet (for example after a session re-link). It is not
+ * a permanently invalid channel, so it must not be treated as one — no
+ * auto-disable progression. It is retried on the escalating schedule in
+ * ENTITY_CACHE_MISS_RETRY_DELAYS_MS instead of the flat resolve cooldown. */
+function isEntityCacheMissError(err: unknown): boolean {
+  const m = safeTelegramErrorMessage(err)
+  return m.includes('Could not find the input entity')
+}
+
 /**
  * True when an MTProto request failed because Telegram is throttling the
  * session. GramJS retries internally (sleeping ~flood-wait seconds × 5) and
@@ -630,7 +661,7 @@ export class UserListener {
   private channelInvalidFailures = new Map<string, ChannelInvalidFailureState>()
   private autoDisabledChannelRows = new Set<string>()
   /** Cooldown (ms epoch) until the next resolve/join attempt per channel row. */
-  private channelResolveCooldownUntil = new Map<string, { until: number; lastError?: Error }>()
+  private channelResolveCooldownUntil = new Map<string, { until: number; lastError?: Error; resolveAttempts?: number }>()
   /** When the next fast/safety poll may run again after a flood-wait burst (0 = no backoff). */
   private pollBackoffUntil = 0
   /** Flood-wait errors observed during the current poll cycle (used to clear backoff at cycle level). */
@@ -858,10 +889,14 @@ export class UserListener {
   private resetChannelInvalidFailure(row: ChannelRow, source: string): boolean {
     const previous = this.channelInvalidFailures.get(row.id)
     const wasLocallyDisabled = this.autoDisabledChannelRows.delete(row.id)
+    // Always drop the resolve cooldown. A channel whose state is being reset
+    // must be allowed to attempt resolution again immediately, even when it was
+    // never classified invalid: an entity cache miss after a session re-link
+    // leaves no invalid-failure state behind, but does leave a cooldown.
+    this.channelResolveCooldownUntil.delete(row.id)
     if (!previous && !wasLocallyDisabled) return false
 
     this.channelInvalidFailures.delete(row.id)
-    this.channelResolveCooldownUntil.delete(row.id)
     // Start a re-enabled channel back at base fast-poll cadence.
     this.fastPollCleanStreakByRow.delete(row.id)
     const detail = {
@@ -936,6 +971,22 @@ export class UserListener {
     this.channelResolveCooldownUntil.set(rowId, {
       until: Date.now() + CHANNEL_RESOLVE_COOLDOWN_MS,
       lastError: err instanceof Error ? err : undefined,
+    })
+  }
+
+  /**
+   * Arm the escalating retry delay for an entity cache miss instead of the flat
+   * CHANNEL_RESOLVE_COOLDOWN_MS. `resolveAttempts` counts consecutive misses for
+   * this channel row and is dropped whenever the channel resolves (the whole
+   * entry is deleted) or its state is reset, so a recovered channel starts over
+   * at the immediate retry.
+   */
+  private setEntityCacheMissCooldown(rowId: string, err?: unknown): void {
+    const attempts = (this.channelResolveCooldownUntil.get(rowId)?.resolveAttempts ?? 0) + 1
+    this.channelResolveCooldownUntil.set(rowId, {
+      until: Date.now() + entityCacheMissRetryDelayMs(attempts),
+      lastError: err instanceof Error ? err : undefined,
+      resolveAttempts: attempts,
     })
   }
 
@@ -1159,6 +1210,11 @@ export class UserListener {
     // Errors from before the reconnect belong to a different episode; do not let
     // them silence the first error of the next one.
     this.pollEventThrottle.clear()
+    // Clear per-channel resolve cooldowns so a channel that was stuck cooling
+    // down (for example after a Telegram session re-link) gets a fresh
+    // resolution attempt on the next poll instead of waiting out the cooldown
+    // window.
+    this.resetTelegramBackoffState()
     this.startedAt = Date.now()
     this.lastEventAt = Date.now()
     this.lastSuccessfulPollAt = Date.now()
@@ -1455,6 +1511,10 @@ export class UserListener {
     for (const key of added) {
       const row = lookup.get(key)
       if (row) {
+        // Newly monitored (added, or re-enabled after being disabled): drop any
+        // resolve cooldown so the first attempt is immediate instead of waiting
+        // out an escalation left over from while the channel was off.
+        this.channelResolveCooldownUntil.delete(row.id)
         if (row.signal_channel_id) {
           void inheritChannelHistory(this.supabase, this.userId, row.signal_channel_id).catch(err =>
             console.warn(`[userListener] inheritChannelHistory failed channel=${row.id}:`, err),
@@ -4156,7 +4216,15 @@ export class UserListener {
         await this.noteChannelInvalid(row, 'ensure_joined_public_channel', err)
         return
       }
-      this.setChannelResolveCooldown(row.id, err)
+      // An entity cache miss here is the same session-staleness condition the
+      // resolve path handles. Join the escalation rather than overwriting it
+      // with the flat cooldown, which would drop the attempt counter and
+      // restart the schedule for username-bearing channels.
+      if (isEntityCacheMissError(err)) {
+        this.setEntityCacheMissCooldown(row.id, err)
+      } else {
+        this.setChannelResolveCooldown(row.id, err)
+      }
       console.warn(
         `[userListener] ensureJoinedPublicChannel @${username} channel=${row.id}:`,
         msg.slice(0, 200),
@@ -4496,10 +4564,16 @@ export class UserListener {
       return peer
     } catch (err) {
       // Flood / retry-exhaustion errors are transient and handled by the
-      // session-wide poll backoff — do NOT cache them in the 10-min resolve
-      // cooldown, or a stale cached flood error would keep re-arming the
-      // session backoff (via throwChannelResolveCooldown) for the whole window.
-      if (!isFloodWaitOrRetryExhaustion(err)) {
+      // session-wide poll backoff — do NOT cache them in the resolve cooldown,
+      // or a stale cached flood error would keep re-arming the session backoff
+      // (via throwChannelResolveCooldown) for the whole window.
+      // An entity cache miss ("Could not find the input entity") means the
+      // session has not learned this channel yet — normally right after a
+      // re-link. Retry on an escalating schedule: fast while the channel is
+      // still likely to become resolvable, bounded once it is clear it will not.
+      if (isEntityCacheMissError(err)) {
+        this.setEntityCacheMissCooldown(row.id, err)
+      } else if (!isFloodWaitOrRetryExhaustion(err)) {
         this.setChannelResolveCooldown(row.id, err)
       }
       rethrowIfSessionInvalid(err)

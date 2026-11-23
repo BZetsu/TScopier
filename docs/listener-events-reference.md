@@ -95,6 +95,7 @@ The connection episode itself is also visible as `last_disconnected_at` /
 | `telegram_link_success` | Linking completed successfully. | success | 90d |
 | `telegram_link_failed` | Linking failed (auth step error / QR login failure). | error | 90d |
 | `telegram_link_disconnect` | The user's Telegram account was disconnected. | info | 90d |
+| `telegram_auth_action` | A Telegram auth action was requested **and its outcome recorded** (`send_code`, `verify_code`, `start_qr_login`, `reconnect_telegram`, `disconnect_telegram`). `detail`: `{action, client, ip, ua, ok, status?, reason?, error?}`. `ok:false` means the worker rejected or the proxy failed — e.g. `reason:"wrong_shard"` (edge routed to a listener that does not own the user), `fetch_timeout`, `fetch_failed`, `no_listener_url`, or `reason:"requires_password"` (verify accepted, 2FA still needed). Written by the edge proxy **after** the worker answers, never before. | info / error | 30d |
 | `assistant_tool_call` | The AI assistant invoked a **client-side** tool (audit only for client-side tools). | info | 90d |
 
 ---
