@@ -2,6 +2,25 @@
 
 ## Changelog
 
+### 2026-11-23 — Recovery codes for churned users (user-facing redemption + shared backend)
+
+- **Context:** the user asked to gather all people who canceled or did not renew, generate a unique one-time recovery code per person, and let them redeem it in-app via a modal for a 14-day usage extension. Per the owner's directive, the admin UI (create codes, view code list, view audit log) lives in tscopier-admin, not here. This repo keeps: the `subscription_recovery_codes` table migration, the `redeem-recovery-code` edge function (user redemption), the `generate_recovery_code` / `recovery_codes_list` / `recovery_audit_logs` actions on the shared `admin-mutate` / `admin-query` edge functions (needed by tscopier-admin's frontend), and the user-facing "Redeem code" section on the Billing page.
+
+- **Plain English:** A churned customer (canceled, past-due, trial-expired, or never subscribed) receives a unique recovery code from an admin (in tscopier-admin). They sign in to UniCopier, open the Billing page, click "Redeem code," enter the code, and get 14 days of copying access. Codes are single-use and tied to one account. The admin UI shows all codes and an audit log of every generation.
+
+- **Root cause / mechanics (technical):**
+  - New migration `supabase/migrations/20261123000000_subscription_recovery_codes.sql` — table `subscription_recovery_codes` (unique `code`, `user_id` FK to `auth.users`, `days` default 14 capped at 30, `used` flag, `used_at`, optional `expires_at`), RLS select-only (own row or admin).
+  - New edge function `supabase/functions/redeem-recovery-code/index.ts` — authed user redeems: ownership check (`code.user_id === caller.id`), unused + not expired check, grant inserted first then code flipped atomically (rollback grant on race loss), resumes billing-driven copier pause.
+  - `supabase/functions/admin-mutate/index.ts` — re-added `generate_recovery_code` action: admin-only, reason required, 30-day cumulative cap, crypto-random 8-char code with unique-retry, audit-logged (code not stored in plaintext in payload).
+  - `supabase/functions/admin-query/index.ts` — re-added `recovery_codes_list` and `recovery_audit_logs` actions.
+  - Frontend: `src/components/billing/RedeemCodeModal.tsx` (new), `src/lib/redeemRecoveryCode.ts` (new), `src/pages/dashboard/BillingPage.tsx` (redeem section for unsubscribed users), `src/components/billing/SubscriptionBanner.tsx` (redeem link also shown to past-due users), i18n keys added to `en.ts`, `es.ts`, `fr.ts`, and pricing locales (`ar`, `ja`, `nl`, `pl`, `ru`, `sv`).
+
+- **Tests / verification:** `npx tsc -b` **exit 0** · `npx tsc -p tsconfig.app.json --noEmit` **exit 0** · `npx eslint` on all changed frontend files **0 errors**. The pre-existing node:test failure in `tradesIncrementalHistory.test.ts` (date-sensitive, expects 2026-11-12 got 2026-11-16) is unrelated.
+
+- **Deploy state:** **uncommitted** on `staging-merge`, not pushed. Backend edge function actions must be deployed to the Supabase project before tscopier-admin's admin page works. The `subscription_recovery_codes` table migration must be applied to the shared project.
+
+- **Follow-ups:** apply backend edge function changes + migration to staging; verify end-to-end (admin creates code → user redeems → 14 days access → code shows used); tscopier-admin admin page at `/admin/recovery-codes`.
+
 > Per-contributor logs: `docs/PROJECT_MEMORY-MARTINS.md` (Martins / Planmoni App) and
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.

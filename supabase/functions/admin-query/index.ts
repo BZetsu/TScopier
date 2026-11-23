@@ -361,5 +361,109 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  if (action === "recovery_codes_list") {
+    const rows = await optionalRows(
+      supabase
+        .from("subscription_recovery_codes")
+        .select("id, user_id, code, days, used, used_at, expires_at, created_at")
+        .order("created_at", { ascending: false })
+        .limit(500),
+    ) as Array<Record<string, unknown>>;
+
+    const userIds = [...new Set(rows.map((r) => String(r.user_id ?? "")).filter(Boolean))];
+    const profiles = userIds.length > 0
+      ? await optionalRows(
+        supabase.from("user_profiles").select("user_id,display_name,first_name,last_name").in("user_id", userIds),
+      ) as Array<Record<string, unknown>>
+      : [];
+
+    const profileName = new Map<string, string>();
+    for (const p of profiles) {
+      const id = String(p.user_id ?? "");
+      if (!id) continue;
+      const first = String(p.first_name ?? "").trim();
+      const last = String(p.last_name ?? "").trim();
+      const display = String(p.display_name ?? "").trim();
+      profileName.set(id, [first, last].filter(Boolean).join(" ").trim() || display || "User");
+    }
+
+    const emails = await optionalRows(
+      supabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+    ) as { users?: Array<{ id: string; email: string }> };
+
+    const emailByUser = new Map<string, string>();
+    for (const u of (emails?.users ?? [])) {
+      if (userIds.includes(u.id)) emailByUser.set(u.id, u.email ?? "");
+    }
+
+    const codes = rows.map((row) => {
+      const uid = String(row.user_id ?? "");
+      return {
+        ...row,
+        user_name: profileName.get(uid) || "User",
+        user_email: emailByUser.get(uid) || "",
+        is_used: row.used === true,
+        expired: row.expires_at ? new Date(String(row.expires_at)).getTime() <= Date.now() : false,
+      };
+    });
+
+    return Response.json({ codes }, { headers: corsHeaders });
+  }
+
+  if (action === "recovery_audit_logs") {
+    const rows = await optionalRows(
+      supabase
+        .from("admin_audit_logs")
+        .select("id, actor_user_id, target_user_id, action, entity_type, entity_id, reason, request_payload, before_state, after_state, correlation_id, created_at")
+        .in("action", ["generate_recovery_code"])
+        .order("created_at", { ascending: false })
+        .limit(500),
+    ) as Array<Record<string, unknown>>;
+
+    const actorIds = [...new Set(rows.map((r) => String(r.actor_user_id ?? "")).filter(Boolean))];
+    const targetIds = [...new Set(rows.map((r) => String(r.target_user_id ?? "")).filter(Boolean))];
+    const allUserIds = [...new Set([...actorIds, ...targetIds])];
+
+    const profiles = allUserIds.length > 0
+      ? await optionalRows(
+        supabase.from("user_profiles").select("user_id,display_name,first_name,last_name").in("user_id", allUserIds),
+      ) as Array<Record<string, unknown>>
+      : [];
+
+    const profileName = new Map<string, string>();
+    for (const p of profiles) {
+      const id = String(p.user_id ?? "");
+      if (!id) continue;
+      const first = String(p.first_name ?? "").trim();
+      const last = String(p.last_name ?? "").trim();
+      const display = String(p.display_name ?? "").trim();
+      profileName.set(id, [first, last].filter(Boolean).join(" ").trim() || display || "User");
+    }
+
+    const emails = await optionalRows(
+      supabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+    ) as { users?: Array<{ id: string; email: string }> };
+
+    const emailByUser = new Map<string, string>();
+    for (const u of (emails?.users ?? [])) {
+      if (allUserIds.includes(u.id)) emailByUser.set(u.id, u.email ?? "");
+    }
+
+    const logs = rows.map((row) => {
+      const actorId = String(row.actor_user_id ?? "");
+      const targetId = String(row.target_user_id ?? "");
+      return {
+        ...row,
+        actor_name: profileName.get(actorId) || "User",
+        actor_email: emailByUser.get(actorId) || "",
+        target_name: targetId ? (profileName.get(targetId) || "User") : "",
+        target_email: targetId ? (emailByUser.get(targetId) || "") : "",
+        code: row.entity_id ?? "",
+      };
+    });
+
+    return Response.json({ logs }, { headers: corsHeaders });
+  }
+
   return bad(400, "Unknown action");
 });

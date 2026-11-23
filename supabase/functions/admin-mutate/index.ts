@@ -2,6 +2,9 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { adminClient, corsHeaders, requireAuthedAdmin } from "../_shared/adminAuth.ts";
 import { writeAdminAudit } from "../_shared/adminAudit.ts";
 import { isSuspiciousSignupEmail } from "../_shared/emailSignupPolicy.ts";
+import { buildCampaignEmailHtml } from "../_shared/campaignEmailLayout.ts";
+import { resolveEmailLogoUrl } from "../_shared/brandEmailAssets.ts";
+import { mintUnsubscribeToken } from "../_shared/unsubscribeToken.ts";
 
 function bad(status: number, message: string): Response {
   return Response.json({ error: message }, { status, headers: corsHeaders });
@@ -53,6 +56,9 @@ Deno.serve(async (req: Request) => {
     "upsert_alert_recipient",
     "delete_alert_recipient",
     "grant_subscription_extension",
+    "generate_recovery_code",
+    "bulk_generate_recovery_codes",
+    "send_recovery_emails",
   ]);
   const reason = requireReasonActions.has(action) ? requireReason(body) : String(body.reason ?? "").trim() || null;
   if (requireReasonActions.has(action) && !reason) {
@@ -182,6 +188,314 @@ Deno.serve(async (req: Request) => {
     });
     return Response.json(
       { ok: true, extension: row, copier_resumed: Boolean(resumed) },
+      { headers: corsHeaders },
+    );
+  }
+
+  if (action === "generate_recovery_code") {
+    const targetUserId = String(body.target_user_id ?? "").trim();
+    if (!targetUserId) return bad(400, "target_user_id is required");
+    const days = Number(body.days ?? 14);
+    if (!Number.isInteger(days) || days <= 0 || days > 30) {
+      return bad(400, "days must be an integer between 1 and 30");
+    }
+
+    const { data: existingCodes, error: listErr } = await supabase
+      .from("subscription_recovery_codes")
+      .select("days")
+      .eq("user_id", targetUserId);
+    if (listErr) return bad(400, listErr.message);
+    const alreadyGranted = (existingCodes ?? []).reduce(
+      (sum, row) => sum + Number(row.days ?? 0),
+      0,
+    );
+    if (alreadyGranted + days > 30) {
+      return bad(
+        400,
+        `extension cap reached: ${alreadyGranted} of 30 days already granted`,
+      );
+    }
+
+    const { data: target } = await supabase.auth.admin.getUserById(targetUserId);
+    if (!target?.user) return bad(404, "Target user not found");
+
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let code: string | null = null;
+    for (let attempt = 0; attempt < 5 && !code; attempt++) {
+      const bytes = crypto.getRandomValues(new Uint8Array(8));
+      let generated = "";
+      for (const b of bytes) generated += chars[b % chars.length];
+      const { data: inserted, error: insertErr } = await supabase
+        .from("subscription_recovery_codes")
+        .insert({ user_id: targetUserId, code: generated, days })
+        .select("*")
+        .maybeSingle();
+      if (insertErr) continue; // unique violation on code: regenerate
+      code = generated;
+    }
+    if (!code) return bad(400, "failed to generate a unique code");
+
+    await writeAdminAudit(supabase, {
+      actor_user_id: adminUser.id,
+      target_user_id: targetUserId,
+      action,
+      entity_type: "subscription_recovery_codes",
+      entity_id: code,
+      reason: reason ?? null,
+      request_payload: { days },
+      after_state: { user_id: targetUserId, days },
+      correlation_id: correlationId,
+    });
+    return Response.json(
+      { ok: true, code, user_id: targetUserId, days },
+      { headers: corsHeaders },
+    );
+  }
+
+  if (action === "bulk_generate_recovery_codes") {
+    const userIds = Array.isArray(body.user_ids)
+      ? body.user_ids.map((id) => String(id).trim()).filter(Boolean)
+      : [];
+    if (userIds.length === 0) return bad(400, "user_ids is required");
+    if (userIds.length > 200) {
+      return bad(400, "user_ids must not exceed 200 per batch");
+    }
+    const days = Number(body.days ?? 14);
+    if (!Number.isInteger(days) || days <= 0 || days > 30) {
+      return bad(400, "days must be an integer between 1 and 30");
+    }
+
+    const results: Array<{ user_id: string; code?: string; error?: string }> = [];
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+    for (const targetUserId of userIds) {
+      const { data: target } = await supabase.auth.admin.getUserById(targetUserId);
+      if (!target?.user) {
+        results.push({ user_id: targetUserId, error: "user not found" });
+        continue;
+      }
+
+      const { data: existingCodes, error: listErr } = await supabase
+        .from("subscription_recovery_codes")
+        .select("days")
+        .eq("user_id", targetUserId);
+      if (listErr) {
+        results.push({ user_id: targetUserId, error: listErr.message });
+        continue;
+      }
+      const alreadyGranted = (existingCodes ?? []).reduce(
+        (sum, row) => sum + Number(row.days ?? 0),
+        0,
+      );
+      if (alreadyGranted + days > 30) {
+        results.push({
+          user_id: targetUserId,
+          error: `extension cap reached: ${alreadyGranted} of 30 days already granted`,
+        });
+        continue;
+      }
+
+      let code: string | null = null;
+      for (let attempt = 0; attempt < 5 && !code; attempt++) {
+        const bytes = crypto.getRandomValues(new Uint8Array(8));
+        let generated = "";
+        for (const b of bytes) generated += chars[b % chars.length];
+        const { data: inserted, error: insertErr } = await supabase
+          .from("subscription_recovery_codes")
+          .insert({ user_id: targetUserId, code: generated, days })
+          .select("*")
+          .maybeSingle();
+        if (insertErr) continue;
+        code = generated;
+      }
+      if (!code) {
+        results.push({ user_id: targetUserId, error: "failed to generate a unique code" });
+        continue;
+      }
+
+      await writeAdminAudit(supabase, {
+        actor_user_id: adminUser.id,
+        target_user_id: targetUserId,
+        action,
+        entity_type: "subscription_recovery_codes",
+        entity_id: code,
+        reason: reason ?? null,
+        request_payload: { days, bulk: true },
+        after_state: { user_id: targetUserId, code, days },
+        correlation_id: correlationId,
+      });
+      results.push({ user_id: targetUserId, code });
+    }
+
+    const created = results.filter((r) => r.code).length;
+    return Response.json(
+      { ok: true, created, results },
+      { headers: corsHeaders },
+    );
+  }
+
+  if (action === "send_recovery_emails") {
+    const codeIds = Array.isArray(body.code_ids)
+      ? body.code_ids.map((id) => String(id).trim()).filter(Boolean)
+      : [];
+    if (codeIds.length === 0) return bad(400, "code_ids is required");
+    if (codeIds.length > 200) {
+      return bad(400, "code_ids must not exceed 200 per batch");
+    }
+    const subject = String(body.subject ?? "").trim();
+    if (!subject) return bad(400, "subject is required");
+    const bodyTemplate = String(body.body ?? "").trim();
+    if (!bodyTemplate) return bad(400, "body is required");
+
+    const { data: rows, error: rowsErr } = await supabase
+      .from("subscription_recovery_codes")
+      .select("id, user_id, code, days, sent_at, used")
+      .in("id", codeIds);
+    if (rowsErr) return bad(400, rowsErr.message);
+    if (!rows || rows.length === 0) return bad(404, "no codes found");
+
+    const userIds = [...new Set(rows.map((r) => String(r.user_id)).filter(Boolean))];
+    const { data: profiles } = await supabase
+      .from("user_profiles")
+      .select("user_id, display_name, first_name")
+      .in("user_id", userIds);
+    const { data: authUsers } = await supabase.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+    const emailByUser = new Map<string, string>();
+    for (const u of (authUsers?.users ?? [])) {
+      if (userIds.includes(u.id)) emailByUser.set(u.id, u.email ?? "");
+    }
+    const profileByUser = new Map<string, { display_name?: string | null; first_name?: string | null }>();
+    for (const p of (profiles ?? [])) {
+      profileByUser.set(String(p.user_id), p);
+    }
+
+    const appUrl = Deno.env.get("VITE_APP_URL") || "https://app.tscopier.ai";
+    const from = Deno.env.get("RESEND_CAMPAIGN_FROM") || "UniCopier <noreply@tscopier.ai>";
+    const resendKey = Deno.env.get("RESEND_API_KEY");
+
+    const results: Array<{ code_id: string; user_id: string; code: string; ok: boolean; error?: string; email?: string }> = [];
+    const now = new Date().toISOString();
+
+    for (const row of rows) {
+      if (row.sent_at) {
+        results.push({
+          code_id: row.id,
+          user_id: row.user_id,
+          code: row.code,
+          ok: false,
+          error: "already sent",
+        });
+        continue;
+      }
+      if (row.used) {
+        results.push({
+          code_id: row.id,
+          user_id: row.user_id,
+          code: row.code,
+          ok: false,
+          error: "code already used",
+        });
+        continue;
+      }
+
+      const userId = String(row.user_id);
+      const email = emailByUser.get(userId) || "";
+      if (!email) {
+        results.push({ code_id: row.id, user_id, code: row.code, ok: false, error: "no email on file" });
+        continue;
+      }
+
+      const profile = profileByUser.get(userId) ?? {};
+      const firstName = profile.first_name ?? profile.display_name ?? email.split("@")[0] ?? "there";
+      const userName = profile.display_name ?? profile.first_name ?? email.split("@")[0] ?? "there";
+
+      const render = (template: string): string =>
+        template
+          .replace(/\{\{user_name\}\}/g, userName)
+          .replace(/\{\{first_name\}\}/g, firstName)
+          .replace(/\{\{user_email\}\}/g, email)
+          .replace(/\{\{code\}\}/g, row.code)
+          .replace(/\{\{days\}\}/g, String(row.days))
+          .replace(/\{\{app_url\}\}/g, appUrl);
+
+      const emailSubject = render(subject);
+      const emailBody = render(bodyTemplate);
+
+      const logoUrl = resolveEmailLogoUrl({
+        supabaseUrl: Deno.env.get("SUPABASE_URL") ?? "",
+        appUrl,
+        variant: "dark",
+        explicitUrl: Deno.env.get("EMAIL_LOGO_URL"),
+      });
+      const unsubscribeUrl = mintUnsubscribeToken(
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+        userId,
+      );
+
+      const emailHtml = buildCampaignEmailHtml({
+        appUrl,
+        logoUrl,
+        preheader: render(subject),
+        eyebrow: "Recovery Code",
+        title: render(subject),
+        greeting: firstName,
+        bodyHtml: emailBody,
+        primaryCta: {
+          label: "Redeem your code",
+          url: `${appUrl}/billing`,
+        },
+        closingHtml: "If you did not request this, you can ignore this email.",
+        unsubscribeUrl,
+      });
+
+      const sendRes = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendKey ?? ""}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from,
+          to: [email],
+          subject: emailSubject,
+          html: emailHtml,
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const sendData = await sendRes.json().catch(() => ({})) as { id?: string; error?: string };
+
+      if (!sendRes.ok) {
+        results.push({
+          code_id: row.id,
+          user_id,
+          code: row.code,
+          ok: false,
+          error: sendData.error ?? `HTTP ${sendRes.status}`,
+          email,
+        });
+        continue;
+      }
+
+      await supabase
+        .from("subscription_recovery_codes")
+        .update({ sent_at: now, sent_email: email, email_subject: emailSubject })
+        .eq("id", row.id);
+
+      results.push({
+        code_id: row.id,
+        user_id,
+        code: row.code,
+        ok: true,
+        email,
+      });
+    }
+
+    const sent = results.filter((r) => r.ok).length;
+    return Response.json(
+      { ok: true, sent, total: results.length, results },
       { headers: corsHeaders },
     );
   }

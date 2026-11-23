@@ -2358,6 +2358,15 @@ export interface PricingTranslations {
     statusPastDue: string
     trialEnds: string
     choosePlan: string
+    redeemTitle: string
+    redeemSubtitle: string
+    redeemButton: string
+    redeemCodeLabel: string
+    redeemCodePlaceholder: string
+    redeemSuccess: string
+    redeemAlreadyUsed: string
+    redeemExpired: string
+    redeemError: string
     copySubscriptionsTitle: string
     copySubscriptionsHint: string
     copySubscriptionsEmpty: string
