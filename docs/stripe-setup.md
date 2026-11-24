@@ -103,7 +103,7 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 
 1. Choose plan on Billing / app `/pricing` / marketing `/pricing` → in-app **Card vs Crypto** step (optional promo code).
 2. **Card:** `create-subscription-elements` creates an incomplete Stripe Subscription; client confirms with **Payment Element** (`@stripe/react-stripe-js`). Requires `VITE_STRIPE_PUBLISHABLE_KEY`. Entitlement sync via `confirm-checkout` + `stripe-webhook`.
-3. **Crypto:** `create-checkout-session` with `paymentMethod: "crypto"` → Hosted Checkout in `subscription` mode with **dynamic payment methods** (do not pass `payment_method_types: ["crypto"]` — Stripe rejects that). Card is excluded so Checkout prefers Stablecoins/Crypto when Enabled in the Dashboard. Optional `promotionCode`; otherwise `allow_promotion_codes: true`.
+3. **Crypto:** `create-checkout-session` with `paymentMethod: "crypto"` → Hosted Checkout in `subscription` mode, **USD prices only**, **no free trial** on this path (Copygram-style charge-now). Tries `payment_method_types: ["crypto"]` first; if Stripe rejects crypto-on-subscription for the account, falls back to Dashboard dynamic methods. Card/Elements path keeps the Advanced 5-day trial. Optional `promotionCode`; otherwise `allow_promotion_codes: true`. Note: recurring crypto may still require Stripe’s **stablecoin subscriptions** preview separately from the `crypto_payments` capability.
 4. Metadata includes `supabase_user_id`, `plan`, `interval`, `extra_accounts`.
 5. **Advanced first-time free trial** — 5 days when no prior `trial_ends_at` (Elements SetupIntent or Checkout trial). Basic is charged from day one.
 6. Success: `/dashboard?checkout=success` (or in-app Elements confirm → `/billing`). Cancel → `/pricing`.

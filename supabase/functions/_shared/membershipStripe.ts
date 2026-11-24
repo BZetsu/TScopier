@@ -56,6 +56,26 @@ export function requireMembershipPriceId(
   return { priceId };
 }
 
+/** Stablecoin/crypto Checkout requires USD line items. */
+export async function assertMembershipPricesUsd(
+  stripe: Stripe,
+  plan: MembershipPlan,
+  billingInterval: BillingInterval,
+  extraAccounts: number,
+): Promise<void> {
+  const items = buildMembershipLineItems(plan, billingInterval, extraAccounts);
+  for (const item of items) {
+    const priceId = String(item.price ?? "");
+    if (!priceId) continue;
+    const price = await stripe.prices.retrieve(priceId);
+    if (String(price.currency || "").toLowerCase() !== "usd") {
+      throw new Error(
+        `Stripe price ${priceId} is ${price.currency}, not usd. Stablecoin/crypto checkout requires USD prices.`,
+      );
+    }
+  }
+}
+
 export function buildMembershipLineItems(
   plan: MembershipPlan,
   billingInterval: BillingInterval,
@@ -188,4 +208,134 @@ export function membershipMetadata(
     interval: billingInterval,
     extra_accounts: String(extraAccounts || 0),
   };
+}
+
+/** Crypto Checkout is mode=payment (manual renew). Recurring prices cannot be used. */
+export async function buildCryptoPaymentLineItems(
+  stripe: Stripe,
+  plan: MembershipPlan,
+  billingInterval: BillingInterval,
+  extraAccounts: number,
+): Promise<Stripe.Checkout.SessionCreateParams.LineItem[]> {
+  const recurring = buildMembershipLineItems(plan, billingInterval, extraAccounts);
+  const items: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
+  for (const li of recurring) {
+    const priceId = String(li.price ?? "");
+    const price = await stripe.prices.retrieve(priceId);
+    if (String(price.currency || "").toLowerCase() !== "usd") {
+      throw new Error(
+        `Stripe price ${priceId} is ${price.currency}, not usd. Crypto checkout requires USD.`,
+      );
+    }
+    if (price.unit_amount == null) {
+      throw new Error(`Stripe price ${priceId} has no unit_amount`);
+    }
+    const product =
+      typeof price.product === "string" ? price.product : price.product?.id;
+    if (!product) {
+      throw new Error(`Stripe price ${priceId} has no product`);
+    }
+    items.push({
+      quantity: li.quantity ?? 1,
+      price_data: {
+        currency: "usd",
+        unit_amount: price.unit_amount,
+        product,
+      },
+    });
+  }
+  return items;
+}
+
+export function membershipPeriodEndIso(
+  billingInterval: BillingInterval,
+  from: Date = new Date(),
+): string {
+  const d = new Date(from.getTime());
+  if (billingInterval === "annual") {
+    d.setUTCFullYear(d.getUTCFullYear() + 1);
+  } else {
+    d.setUTCMonth(d.getUTCMonth() + 1);
+  }
+  return d.toISOString();
+}
+
+export function parseMembershipCryptoMeta(meta: Record<string, string> | null | undefined): {
+  userId: string;
+  plan: MembershipPlan;
+  interval: BillingInterval;
+  extraAccounts: number;
+} | null {
+  if (!meta || String(meta.checkout_kind ?? "") !== "membership_crypto") return null;
+  const userId = String(meta.supabase_user_id ?? "").trim();
+  const planRaw = String(meta.plan ?? "").toLowerCase();
+  const plan: MembershipPlan | null =
+    planRaw === "basic" || planRaw === "advanced" ? planRaw : null;
+  if (!userId || !plan) return null;
+  const interval: BillingInterval =
+    String(meta.interval ?? "").toLowerCase() === "annual" ? "annual" : "monthly";
+  const extraAccounts = Math.max(
+    0,
+    Math.min(95, Math.floor(Number(meta.extra_accounts ?? 0) || 0)),
+  );
+  return { userId, plan, interval, extraAccounts };
+}
+
+/** Grant / extend local entitlement after a paid crypto (mode=payment) Checkout. */
+export async function upsertMembershipCryptoEntitlement(params: {
+  supabase: SupabaseClient;
+  userId: string;
+  customerId: string | null;
+  plan: MembershipPlan;
+  billingInterval: BillingInterval;
+  extraAccounts: number;
+  /** If still active, stack the new period onto the existing end. */
+  existingPeriodEnd?: string | null;
+}): Promise<{
+  user_id: string;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: null;
+  plan: MembershipPlan;
+  status: "active";
+  extra_accounts: number;
+  trial_ends_at: null;
+  current_period_end: string;
+  canceled_at: null;
+  updated_at: string;
+}> {
+  const {
+    supabase,
+    userId,
+    customerId,
+    plan,
+    billingInterval,
+    extraAccounts,
+    existingPeriodEnd,
+  } = params;
+
+  let from = new Date();
+  if (existingPeriodEnd) {
+    const prev = new Date(existingPeriodEnd);
+    if (!Number.isNaN(prev.getTime()) && prev.getTime() > from.getTime()) {
+      from = prev;
+    }
+  }
+  const currentPeriodEnd = membershipPeriodEndIso(billingInterval, from);
+  const row = {
+    user_id: userId,
+    stripe_customer_id: customerId,
+    stripe_subscription_id: null as null,
+    plan,
+    status: "active" as const,
+    extra_accounts: plan === "advanced" ? extraAccounts : 0,
+    trial_ends_at: null as null,
+    current_period_end: currentPeriodEnd,
+    canceled_at: null as null,
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase
+    .from("subscriptions")
+    .upsert(row, { onConflict: "user_id", ignoreDuplicates: false });
+  if (error) throw new Error(error.message);
+  return row;
 }

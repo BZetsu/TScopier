@@ -201,6 +201,96 @@ Deno.serve(async (req: Request) => {
   const body = await req.json().catch(() => ({} as { [k: string]: unknown }));
   const sessionId = String(body.session_id ?? "").trim() || null;
 
+  // Crypto membership Checkout is mode=payment (no Stripe subscription). Grant locally.
+  if (sessionId) {
+    try {
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      const metaUser = String(session.metadata?.supabase_user_id ?? "").trim();
+      if (metaUser && metaUser !== user.id) {
+        return bad(403, "Checkout session does not belong to this user");
+      }
+      const kind = String(session.metadata?.checkout_kind ?? "");
+      if (kind === "membership_crypto") {
+        if (
+          session.status !== "complete" &&
+          session.payment_status !== "paid" &&
+          session.payment_status !== "no_payment_required"
+        ) {
+          return bad(409, "Checkout session is not complete");
+        }
+        if (
+          session.payment_status !== "paid" &&
+          session.payment_status !== "no_payment_required"
+        ) {
+          return bad(409, "Crypto payment is not paid yet");
+        }
+        const planRaw = String(session.metadata?.plan ?? "").toLowerCase();
+        const plan = planRaw === "advanced" ? "advanced" : "basic";
+        const billingInterval =
+          String(session.metadata?.interval ?? "").toLowerCase() === "annual"
+            ? "annual"
+            : "monthly";
+        const extraAccounts = Math.max(
+          0,
+          Math.min(95, Math.floor(Number(session.metadata?.extra_accounts ?? 0) || 0)),
+        );
+        const customerId =
+          typeof session.customer === "string"
+            ? session.customer
+            : session.customer?.id ?? null;
+
+        const { data: existing } = await supabase
+          .from("subscriptions")
+          .select("current_period_end")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        let from = new Date();
+        if (existing?.current_period_end) {
+          const prev = new Date(existing.current_period_end);
+          if (!Number.isNaN(prev.getTime()) && prev.getTime() > from.getTime()) {
+            from = prev;
+          }
+        }
+        const periodEnd = new Date(from.getTime());
+        if (billingInterval === "annual") {
+          periodEnd.setUTCFullYear(periodEnd.getUTCFullYear() + 1);
+        } else {
+          periodEnd.setUTCMonth(periodEnd.getUTCMonth() + 1);
+        }
+
+        const row = {
+          user_id: user.id,
+          stripe_customer_id: customerId,
+          stripe_subscription_id: null as null,
+          plan,
+          status: "active",
+          extra_accounts: plan === "advanced" ? extraAccounts : 0,
+          trial_ends_at: null as null,
+          current_period_end: periodEnd.toISOString(),
+          canceled_at: null as null,
+          updated_at: new Date().toISOString(),
+        };
+        const { error: upErr } = await supabase
+          .from("subscriptions")
+          .upsert(row, { onConflict: "user_id", ignoreDuplicates: false });
+        if (upErr) return bad(500, upErr.message);
+
+        await supabase
+          .from("user_profiles")
+          .update({ copier_paused: false, copier_pause_reason: null })
+          .eq("user_id", user.id);
+
+        return Response.json(
+          { ok: true, entitlement: row, checkoutKind: "membership_crypto" },
+          { headers: corsHeaders },
+        );
+      }
+    } catch (err) {
+      return bad(500, err instanceof Error ? err.message : "Failed to load Checkout session");
+    }
+  }
+
   let customerId: string;
   try {
     const resolved = await resolveCustomerId(stripe, user, sessionId);

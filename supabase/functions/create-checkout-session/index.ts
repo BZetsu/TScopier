@@ -2,7 +2,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import Stripe from "npm:stripe@17";
 import {
-  buildMembershipLineItems,
+  assertMembershipPricesUsd,
+  buildCryptoPaymentLineItems,
   ensureStripeCustomer,
   guardExistingMembership,
   membershipMetadata,
@@ -73,7 +74,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Hosted Checkout from the new UI is crypto-only; card uses Elements.
     if (paymentMethod !== "crypto") {
       return new Response(
         JSON.stringify({
@@ -117,22 +117,21 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const lineItems = buildMembershipLineItems(
+    const extra = Number(extraAccounts) || 0;
+    await assertMembershipPricesUsd(stripe, plan, billingInterval, extra);
+
+    // UI: "Renewed manually". Stripe forbids crypto on subscription Checkout for
+    // this account — charge one period via mode=payment (Copygram-style).
+    const lineItems = await buildCryptoPaymentLineItems(
+      stripe,
       plan,
       billingInterval,
-      Number(extraAccounts) || 0,
+      extra,
     );
-    const meta = membershipMetadata(user.id, plan, billingInterval, Number(extraAccounts) || 0);
-
-    const subscriptionData: Stripe.Checkout.SessionCreateParams.SubscriptionData = {
-      metadata: meta,
+    const meta = {
+      ...membershipMetadata(user.id, plan, billingInterval, extra),
+      checkout_kind: "membership_crypto",
     };
-    if (plan === "advanced" && !existingSub?.trial_ends_at) {
-      subscriptionData.trial_period_days = 5;
-      subscriptionData.trial_settings = {
-        end_behavior: { missing_payment_method: "create_invoice" },
-      };
-    }
 
     const origin = req.headers.get("origin") || "http://localhost:5173";
     const rawSuccess = String(successUrl || `${origin}/dashboard?checkout=success`).trim();
@@ -140,24 +139,18 @@ Deno.serve(async (req: Request) => {
       ? rawSuccess
       : `${rawSuccess}${rawSuccess.includes("?") ? "&" : "?"}session_id={CHECKOUT_SESSION_ID}`;
 
-    // Do NOT set payment_method_types: ["crypto"] — Stripe rejects crypto when
-    // forced that way in subscription mode. Copygram / Stripe's stablecoin
-    // subscription guide omit the field so Dashboard dynamic methods apply
-    // (Stablecoins and Crypto must be Enabled). Prefer crypto on this path by
-    // excluding card; Stripe still filters to methods compatible with the session.
-    const sessionParams = {
+    const sessionParams: Stripe.Checkout.SessionCreateParams = {
       customer: customerId,
-      mode: "subscription" as const,
+      mode: "payment",
       line_items: lineItems,
-      excluded_payment_method_types: ["card"],
-      payment_method_collection: "always" as const,
+      payment_method_types: ["crypto"],
       success_url: successWithSession,
       cancel_url: cancelUrl || `${origin}/billing`,
       metadata: meta,
-      subscription_data: subscriptionData,
       allow_promotion_codes: !promo.promotionCodeId,
-    } satisfies Stripe.Checkout.SessionCreateParams & {
-      excluded_payment_method_types?: string[];
+      payment_intent_data: {
+        metadata: meta,
+      },
     };
     if (promo.promotionCodeId) {
       sessionParams.discounts = [{ promotion_code: promo.promotionCodeId }];
@@ -172,7 +165,12 @@ Deno.serve(async (req: Request) => {
     }
 
     return new Response(
-      JSON.stringify({ url: session.url }),
+      JSON.stringify({
+        url: session.url,
+        sessionId: session.id,
+        mode: session.mode,
+        paymentMethodTypes: session.payment_method_types ?? [],
+      }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {

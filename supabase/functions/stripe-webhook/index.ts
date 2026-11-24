@@ -6,6 +6,10 @@ import {
   mapStripeSubscriptionStatus,
   entitlementRowFromStripeCustomer,
 } from "../_shared/stripeSubscriptionSync.ts";
+import {
+  parseMembershipCryptoMeta,
+  upsertMembershipCryptoEntitlement,
+} from "../_shared/membershipStripe.ts";
 
 /** Sync local one-row entitlement from *all* Stripe subscriptions on the customer. */
 async function upsertEntitlementFromCustomer(
@@ -17,6 +21,25 @@ async function upsertEntitlementFromCustomer(
 ): Promise<{ plan: string; status: string; extra_accounts: number; trial_ends_at: string | null } | null> {
   const row = await entitlementRowFromStripeCustomer(stripe, userId, customerId, priceIds);
   if (!row) {
+    // Manual crypto membership has no Stripe subscription — do not wipe a paid period.
+    const { data: local } = await supabase
+      .from("subscriptions")
+      .select("stripe_subscription_id, status, current_period_end, plan, extra_accounts, trial_ends_at")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const cryptoPeriodActive =
+      !local?.stripe_subscription_id &&
+      local?.status === "active" &&
+      local?.current_period_end &&
+      new Date(local.current_period_end).getTime() > Date.now();
+    if (cryptoPeriodActive) {
+      return {
+        plan: String(local.plan ?? "basic"),
+        status: "active",
+        extra_accounts: Number(local.extra_accounts ?? 0) || 0,
+        trial_ends_at: local.trial_ends_at ?? null,
+      };
+    }
     await supabase
       .from("subscriptions")
       .update({
@@ -268,6 +291,30 @@ Deno.serve(async (req: Request) => {
             walletLedgerId: session.metadata?.wallet_ledger_id ?? null,
             customerId,
           });
+          break;
+        }
+
+        // Manual crypto membership: one-time payment Checkout → grant period locally.
+        const cryptoMeta = parseMembershipCryptoMeta(session.metadata as Record<string, string>);
+        if (
+          cryptoMeta &&
+          (session.payment_status === "paid" || session.payment_status === "no_payment_required")
+        ) {
+          const { data: existingCrypto } = await supabase
+            .from("subscriptions")
+            .select("current_period_end")
+            .eq("user_id", cryptoMeta.userId)
+            .maybeSingle();
+          await upsertMembershipCryptoEntitlement({
+            supabase,
+            userId: cryptoMeta.userId,
+            customerId,
+            plan: cryptoMeta.plan,
+            billingInterval: cryptoMeta.interval,
+            extraAccounts: cryptoMeta.extraAccounts,
+            existingPeriodEnd: existingCrypto?.current_period_end ?? null,
+          });
+          await restoreCopierAccessOnSubscriptionActive(supabase, cryptoMeta.userId);
           break;
         }
 
