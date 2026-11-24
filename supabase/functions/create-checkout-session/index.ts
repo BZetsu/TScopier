@@ -140,17 +140,24 @@ Deno.serve(async (req: Request) => {
       ? rawSuccess
       : `${rawSuccess}${rawSuccess.includes("?") ? "&" : "?"}session_id={CHECKOUT_SESSION_ID}`;
 
-    const sessionParams: Stripe.Checkout.SessionCreateParams = {
+    // Do NOT set payment_method_types: ["crypto"] — Stripe rejects crypto when
+    // forced that way in subscription mode. Copygram / Stripe's stablecoin
+    // subscription guide omit the field so Dashboard dynamic methods apply
+    // (Stablecoins and Crypto must be Enabled). Prefer crypto on this path by
+    // excluding card; Stripe still filters to methods compatible with the session.
+    const sessionParams = {
       customer: customerId,
-      mode: "subscription",
+      mode: "subscription" as const,
       line_items: lineItems,
-      payment_method_types: ["crypto"],
-      payment_method_collection: "always",
+      excluded_payment_method_types: ["card"],
+      payment_method_collection: "always" as const,
       success_url: successWithSession,
-      cancel_url: cancelUrl || `${origin}/pricing`,
+      cancel_url: cancelUrl || `${origin}/billing`,
       metadata: meta,
       subscription_data: subscriptionData,
       allow_promotion_codes: !promo.promotionCodeId,
+    } satisfies Stripe.Checkout.SessionCreateParams & {
+      excluded_payment_method_types?: string[];
     };
     if (promo.promotionCodeId) {
       sessionParams.discounts = [{ promotion_code: promo.promotionCodeId }];
