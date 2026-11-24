@@ -9,6 +9,7 @@ import type { PreparedEntry } from './entryPrepare'
 import { writeExecutionLog } from '../observability/executionLog'
 import { humanizeOrderSendError } from '../brokerTradeError'
 import { normalizeBrokerTradeTicket } from '../brokerTradeTicket'
+import { reconcileTimedOutStrictPending } from './strictEntryReconcile'
 
 type PlaceOnePendingArgs = {
   ctx: TradeExecutorContext
@@ -190,6 +191,15 @@ async function placeOneStrictPending(args: PlaceOnePendingArgs): Promise<boolean
     console.error(
       `[tradeExecutor] strict entry broker OrderSend failed signal=${signal.id} broker=${broker.id} op=${pendingOp} price=${entryPx}: ${msg}`,
     )
+    // A timeout means the order may have reached the broker even though the ack
+    // never came back. Ask before recording a plain failure: a live order with
+    // no trades row and no signal_entry_pending_orders row is invisible to every
+    // monitor, so nothing would ever cancel it or track its fill. A pending can
+    // never be reported absent, so this check never resends and cannot duplicate.
+    let reconcileNote: string | null = null
+    const check = await reconcileTimedOutStrictPending(args, msg)
+    if (check.adopted) return true
+    if (check.note) reconcileNote = check.note
     await writeExecutionLog(ctx.supabase, {
       user_id: signal.user_id,
       signal_id: signal.id,
@@ -202,7 +212,7 @@ async function placeOneStrictPending(args: PlaceOnePendingArgs): Promise<boolean
         volume,
         symbol,
       } as unknown as Record<string, unknown>,
-      error_message: msg,
+      error_message: reconcileNote ? `${msg} — broker check: ${reconcileNote}` : msg,
     })
     return false
   }
