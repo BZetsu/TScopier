@@ -806,6 +806,12 @@ export const landingNl: LandingTranslations = {
         custom: 'Maatwerk',
       },
       {
+        feature: 'TradingView-webhooks',
+        basic: '2',
+        advanced: 'Onbeperkt',
+        custom: 'Maatwerk',
+      },
+      {
         feature: 'Take-profit niveaus',
         basic: '3 TP\'s',
         advanced: 'Onbeperkte TP\'s/SL\'s',

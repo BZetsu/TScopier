@@ -807,6 +807,12 @@ export const landingEn: LandingTranslations = {
         custom: 'Custom',
       },
       {
+        feature: 'TradingView webhooks',
+        basic: '2',
+        advanced: 'Unlimited',
+        custom: 'Custom',
+      },
+      {
         feature: 'Take-profit levels',
         basic: '3 TPs',
         advanced: 'Unlimited TPs/SLs',

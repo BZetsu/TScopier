@@ -2422,6 +2422,7 @@ export interface PricingTranslations {
     updatePayment: string
     brokerLimit: string
     channelLimit: string
+    tradingViewWebhookLimit: string
     backtestLimit: string
     subscriptionRequired: string
     advancedFeature: string
@@ -2509,6 +2510,19 @@ export interface WalletPageTranslations {
   payoutFeeNote: string
 }
 
+export interface TrustpilotPromptTranslations {
+  eyebrow: string
+  title: string
+  body: string
+  starsAria: string
+  starAria: string
+  tapStars: string
+  selected: string
+  rateCta: string
+  remindLater: string
+  close: string
+}
+
 export interface Translations {
   auth: AuthTranslations
   channelWorker: ChannelWorkerTranslations
@@ -2518,6 +2532,7 @@ export interface Translations {
   common: CommonTranslations
   pricing: PricingTranslations
   landing: LandingTranslations
+  trustpilotPrompt: TrustpilotPromptTranslations
   mirrorTradingPage: MirrorTradingPageTranslations
   mirrorSlaveGuard?: MirrorSlaveGuardTranslations
   copyRisk: CopyRiskTranslations

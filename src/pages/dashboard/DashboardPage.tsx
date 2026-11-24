@@ -3,6 +3,7 @@ import { Link, Outlet, useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Hand, Plus, RefreshCw, Users } from 'lucide-react'
 import clsx from 'clsx'
 import { SubscriptionReminderModal } from '../../components/billing/SubscriptionReminderModal'
+import { TrustpilotRatingModal } from '../../components/feedback/TrustpilotRatingModal'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { useUserProfile } from '../../context/UserProfileContext'
@@ -3099,6 +3100,7 @@ export function DashboardPage() {
   return (
     <PageShell maxWidth="xl" spacing="none" className="space-y-6 px-4 py-5 sm:px-6 sm:py-6 lg:px-8">
       <SubscriptionReminderModal />
+      <TrustpilotRatingModal />
       <PageHeader
         title={dashboardGreeting}
         titleClassName="text-2xl"

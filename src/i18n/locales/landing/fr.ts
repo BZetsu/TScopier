@@ -809,6 +809,12 @@ export const landingFr: LandingTranslations = {
         custom: 'Sur mesure',
       },
       {
+        feature: 'Webhooks TradingView',
+        basic: '2',
+        advanced: 'Illimités',
+        custom: 'Sur mesure',
+      },
+      {
         feature: 'Niveaux de take profit',
         basic: '3 TPs',
         advanced: 'TPs/SLs illimités',

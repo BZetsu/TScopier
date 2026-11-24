@@ -16,7 +16,9 @@ import { UserAvatar } from './UserAvatar'
 import { getAppRouteIcon } from '../../lib/appNavIcons'
 import { DirectionalIcon } from '../ui/DirectionalIcon'
 
-const TRUSTPILOT_REVIEW_URL = 'https://www.trustpilot.com/review/tscopier.ai'
+import { TRUSTPILOT_EVALUATE_URL } from '../../lib/trustpilotPromptStorage'
+
+const TRUSTPILOT_REVIEW_URL = TRUSTPILOT_EVALUATE_URL
 
 export interface UserMenuDropdownProps {
   open: boolean

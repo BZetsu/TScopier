@@ -807,6 +807,12 @@ export const landingAr: LandingTranslations = {
         custom: 'مخصص',
       },
       {
+        feature: 'Webhooks TradingView',
+        basic: '2',
+        advanced: 'غير محدود',
+        custom: 'مخصص',
+      },
+      {
         feature: 'مستويات جني الأرباح',
         basic: '3 TP',
         advanced: 'TP/SL غير محدود',

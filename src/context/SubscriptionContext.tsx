@@ -18,6 +18,7 @@ import {
   maxBacktestsPerMonth,
   maxBrokerAccounts,
   maxTelegramChannels,
+  maxTradingViewWebhooks,
   planLimitsSnapshot,
   type PlanFeatureKey,
   type PlanLimitsSnapshot,
@@ -45,6 +46,7 @@ export interface Subscription {
 export interface SubscriptionUsage {
   brokerAccounts: number
   telegramChannels: number
+  tradingViewWebhooks: number
   backtestsThisMonth: number
 }
 
@@ -72,12 +74,14 @@ interface SubscriptionContextValue {
   canUseFeature: (feature: PlanFeatureKey) => boolean
   canAddBroker: () => boolean
   canAddChannel: () => boolean
+  canAddTradingViewWebhook: () => boolean
   canRunBacktest: () => boolean
 }
 
 const emptyUsage: SubscriptionUsage = {
   brokerAccounts: 0,
   telegramChannels: 0,
+  tradingViewWebhooks: 0,
   backtestsThisMonth: 0,
 }
 
@@ -115,6 +119,7 @@ const SubscriptionContext = createContext<SubscriptionContextValue>({
   limits: {
     maxBrokerAccounts: 0,
     maxTelegramChannels: 0,
+    maxTradingViewWebhooks: 0,
     maxBacktestsPerMonth: 0,
     maxTpRows: 3,
   },
@@ -126,6 +131,7 @@ const SubscriptionContext = createContext<SubscriptionContextValue>({
   canUseFeature: () => false,
   canAddBroker: () => false,
   canAddChannel: () => false,
+  canAddTradingViewWebhook: () => false,
   canRunBacktest: () => false,
 })
 
@@ -194,6 +200,10 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
           .eq('is_active', true)
           .neq('source_kind', 'tradingview'),
         supabase
+          .from('tradingview_webhooks')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', userId),
+        supabase
           .from('backtest_runs')
           .select('id', { count: 'exact', head: true })
           .eq('user_id', userId)
@@ -214,7 +224,8 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     setUsage({
       brokerAccounts: usageResults[0].count ?? 0,
       telegramChannels: usageResults[1].count ?? 0,
-      backtestsThisMonth: usageResults[2].count ?? 0,
+      tradingViewWebhooks: usageResults[2].count ?? 0,
+      backtestsThisMonth: usageResults[3].count ?? 0,
     })
     setResolvedUserId(userId)
     setUsageLoading(false)
@@ -466,6 +477,14 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     return usage.telegramChannels < limit
   }, [isAdmin, activePlan, usage.telegramChannels])
 
+  const canAddTradingViewWebhook = useCallback(() => {
+    if (isAdmin) return true
+    if (!activePlan) return false
+    const limit = maxTradingViewWebhooks(activePlan)
+    if (limit == null) return true
+    return usage.tradingViewWebhooks < limit
+  }, [isAdmin, activePlan, usage.tradingViewWebhooks])
+
   const canRunBacktest = useCallback(() => {
     if (isAdmin) return true
     if (!activePlan) return false
@@ -497,6 +516,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         canUseFeature: canUseFeatureFn,
         canAddBroker,
         canAddChannel,
+        canAddTradingViewWebhook,
         canRunBacktest,
       }}
     >

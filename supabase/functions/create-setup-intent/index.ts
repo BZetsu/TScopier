@@ -44,6 +44,19 @@ Deno.serve(async (req: Request) => {
     } = await supabase.auth.getUser(token);
     if (authError || !user) return bad(401, "Unauthorized");
 
+    let successUrl: string | undefined;
+    let cancelUrl: string | undefined;
+    try {
+      const body = await req.json() as {
+        successUrl?: string;
+        cancelUrl?: string;
+      };
+      successUrl = typeof body.successUrl === "string" ? body.successUrl : undefined;
+      cancelUrl = typeof body.cancelUrl === "string" ? body.cancelUrl : undefined;
+    } catch {
+      // empty body is fine
+    }
+
     const stripe = new Stripe(stripeKey, { apiVersion: stripeApiVersion });
     const { data: existingSub } = await supabase
       .from("subscriptions")
@@ -60,17 +73,34 @@ Deno.serve(async (req: Request) => {
       plan,
     });
 
-    const setupIntent = await stripe.setupIntents.create({
+    const origin = req.headers.get("origin") || "http://localhost:5173";
+    const defaultSuccess =
+      `${origin}/billing?tab=payment_methods&setup=success&session_id={CHECKOUT_SESSION_ID}`;
+    const defaultCancel = `${origin}/billing?tab=payment_methods`;
+
+    // Hosted Checkout setup mode — same pattern as Copygram "Add card".
+    // Omit payment_method_types so Dashboard dynamic methods (Card + wallets) apply.
+    const session = await stripe.checkout.sessions.create({
+      mode: "setup",
       customer: customerId,
-      payment_method_types: ["card"],
-      usage: "off_session",
-      metadata: { supabase_user_id: user.id },
+      currency: "usd",
+      success_url: successUrl || defaultSuccess,
+      cancel_url: cancelUrl || defaultCancel,
+      billing_address_collection: "auto",
+      customer_update: {
+        address: "auto",
+        name: "auto",
+      },
+      setup_intent_data: {
+        metadata: { supabase_user_id: user.id, purpose: "add_card" },
+      },
+      metadata: { supabase_user_id: user.id, purpose: "add_card" },
     });
 
-    if (!setupIntent.client_secret) return bad(500, "SetupIntent client secret missing");
+    if (!session.url) return bad(500, "Checkout session URL missing");
 
     return Response.json(
-      { clientSecret: setupIntent.client_secret },
+      { url: session.url },
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {

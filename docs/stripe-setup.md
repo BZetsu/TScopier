@@ -107,7 +107,7 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 4. Metadata includes `supabase_user_id`, `plan`, `interval`, `extra_accounts`.
 5. **Advanced first-time free trial** — 5 days when no prior `trial_ends_at` (Elements SetupIntent or Checkout trial). Basic is charged from day one.
 6. Success: `/dashboard?checkout=success` (or in-app Elements confirm → `/billing`). Cancel → `/pricing`.
-7. **Payment methods tab** (`/billing?tab=payment_methods`): `create-setup-intent`, `list-payment-methods`, `detach-payment-method` — add/remove cards on-platform via Elements. Customer Portal remains for cancel / rare Stripe tasks.
+7. **Payment methods tab** (`/billing?tab=payment_methods`): `create-setup-intent` opens **Stripe Checkout in `setup` mode** (hosted add-card page, same as Copygram — Card + wallets when eligible); `list-payment-methods` / `detach-payment-method` manage saved cards. Customer Portal remains for cancel / rare Stripe tasks.
 8. **Crypto pay-in:** Dashboard **Stablecoins and Crypto** must be Active (US, not NY). Settlement is USD. Not Crypto Onramp.
 
 ### Checkout troubleshooting

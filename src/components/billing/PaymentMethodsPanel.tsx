@@ -1,58 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
+import { useCallback, useEffect, useState } from 'react'
 import { CreditCard, Plus, Trash2 } from 'lucide-react'
-import { Button } from '../ui/Button'
 import {
-  createSetupIntent,
+  createSetupCheckout,
   detachPaymentMethod,
   listPaymentMethods,
   type SavedCardPaymentMethod,
 } from '../../lib/planCheckout'
-import { getStripe, getStripePublishableKey } from '../../lib/stripeClient'
-
-function AddCardForm({
-  onDone,
-  onError,
-  saveLabel,
-}: {
-  onDone: () => void
-  onError: (message: string) => void
-  saveLabel: string
-}) {
-  const stripe = useStripe()
-  const elements = useElements()
-  const [busy, setBusy] = useState(false)
-
-  const onSubmit = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!stripe || !elements) return
-    setBusy(true)
-    onError('')
-    try {
-      const result = await stripe.confirmSetup({
-        elements,
-        redirect: 'if_required',
-        confirmParams: {
-          return_url: `${window.location.origin}/billing?tab=payment_methods`,
-        },
-      })
-      if (result.error) throw new Error(result.error.message || 'Could not save card')
-      onDone()
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Could not save card')
-      setBusy(false)
-    }
-  }
-
-  return (
-    <form onSubmit={(e) => void onSubmit(e)} className="space-y-4">
-      <PaymentElement />
-      <Button type="submit" className="w-full" loading={busy} disabled={!stripe || !elements}>
-        {saveLabel}
-      </Button>
-    </form>
-  )
-}
 
 export function PaymentMethodsPanel({
   accessToken,
@@ -73,10 +26,8 @@ export function PaymentMethodsPanel({
 }) {
   const [methods, setMethods] = useState<SavedCardPaymentMethod[]>([])
   const [loading, setLoading] = useState(true)
+  const [redirecting, setRedirecting] = useState(false)
   const [error, setError] = useState('')
-  const [adding, setAdding] = useState(false)
-  const [clientSecret, setClientSecret] = useState<string | null>(null)
-  const stripePromise = useMemo(() => getStripe(), [])
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -96,12 +47,13 @@ export function PaymentMethodsPanel({
 
   const startAdd = async () => {
     setError('')
+    setRedirecting(true)
     try {
-      const secret = await createSetupIntent(accessToken)
-      setClientSecret(secret)
-      setAdding(true)
+      const url = await createSetupCheckout(accessToken)
+      window.location.assign(url)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start add-card flow')
+      setRedirecting(false)
     }
   }
 
@@ -128,7 +80,7 @@ export function PaymentMethodsPanel({
 
       {loading ? (
         <p className="mt-8 text-sm text-neutral-500">Loading…</p>
-      ) : methods.length === 0 && !adding ? (
+      ) : methods.length === 0 ? (
         <div className="mt-10 flex flex-col items-center text-center">
           <span className="flex h-12 w-12 items-center justify-center rounded-full bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300">
             <CreditCard className="h-5 w-5" aria-hidden />
@@ -169,37 +121,22 @@ export function PaymentMethodsPanel({
         </ul>
       )}
 
-      {adding && clientSecret && getStripePublishableKey() ? (
-        <div className="mt-6 rounded-xl border border-neutral-200 p-4 dark:border-neutral-700">
-          <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
-            <AddCardForm
-              saveLabel={copy.saveCard}
-              onError={setError}
-              onDone={() => {
-                setAdding(false)
-                setClientSecret(null)
-                void refresh()
-              }}
-            />
-          </Elements>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => void startAdd()}
-          className="mt-6 flex w-full items-center gap-3 rounded-xl border border-dashed border-neutral-300 px-4 py-4 text-left transition-colors hover:border-neutral-400 dark:border-neutral-600"
-        >
-          <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-200 dark:border-neutral-700">
-            <Plus className="h-5 w-5" aria-hidden />
+      <button
+        type="button"
+        onClick={() => void startAdd()}
+        disabled={redirecting}
+        className="mt-6 flex w-full items-center gap-3 rounded-xl border border-dashed border-neutral-300 px-4 py-4 text-left transition-colors hover:border-neutral-400 disabled:opacity-60 dark:border-neutral-600"
+      >
+        <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-200 dark:border-neutral-700">
+          <Plus className="h-5 w-5" aria-hidden />
+        </span>
+        <span>
+          <span className="block text-sm font-semibold text-neutral-950 dark:text-neutral-50">
+            {redirecting ? 'Opening Stripe…' : copy.addCard}
           </span>
-          <span>
-            <span className="block text-sm font-semibold text-neutral-950 dark:text-neutral-50">
-              {copy.addCard}
-            </span>
-            <span className="block text-xs text-neutral-500">{copy.addCardHint}</span>
-          </span>
-        </button>
-      )}
+          <span className="block text-xs text-neutral-500">{copy.addCardHint}</span>
+        </span>
+      </button>
 
       <p className="mt-4 text-xs text-neutral-500">{copy.footerNote}</p>
     </div>

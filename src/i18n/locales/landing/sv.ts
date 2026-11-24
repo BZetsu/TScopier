@@ -807,6 +807,12 @@ export const landingSv: LandingTranslations = {
         custom: 'Beställnings',
       },
       {
+        feature: 'TradingView-webhooks',
+        basic: '2',
+        advanced: 'Obegränsat',
+        custom: 'Beställnings',
+      },
+      {
         feature: 'Take-profit nivåer',
         basic: '3 TP',
         advanced: 'Obegränsade TP/SL',

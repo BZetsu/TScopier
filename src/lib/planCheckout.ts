@@ -76,21 +76,26 @@ export async function startCardSubscriptionElements(params: {
   }
 }
 
-export async function createSetupIntent(accessToken: string): Promise<string> {
+/** Opens Stripe Checkout (setup mode) to add a card — same pattern as Copygram. */
+export async function createSetupCheckout(accessToken: string): Promise<string> {
   const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-setup-intent`
+  const returnTo = `${window.location.origin}/billing?tab=payment_methods`
   const res = await fetch(apiUrl, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: '{}',
+    body: JSON.stringify({
+      successUrl: `${returnTo}&setup=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: returnTo,
+    }),
   })
-  const data = (await res.json()) as { clientSecret?: string; error?: string }
-  if (!res.ok || !data.clientSecret) {
+  const data = (await res.json()) as { url?: string; error?: string }
+  if (!res.ok || !data.url) {
     throw new Error(data.error || 'Could not start add-card flow')
   }
-  return data.clientSecret
+  return data.url
 }
 
 export type SavedCardPaymentMethod = {
