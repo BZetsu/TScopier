@@ -6,6 +6,25 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-24 — Crypto subscription Checkout: stop forcing payment_method_types
+
+- **Context:** Stripe error “payment method `crypto` cannot be used in `subscription` mode” while Dashboard had Stablecoins enabled and Copygram’s monthly crypto Checkout worked.
+- **Plain English:** We were hard-locking Checkout to crypto only. Stripe forbids that flag on subscriptions; Copygram uses Dashboard dynamic methods instead.
+- **Root cause (technical):** `create-checkout-session` set `payment_method_types: ["crypto"]` with `mode: "subscription"`.
+- **Fix (files):** Omit `payment_method_types`; exclude `card` via `excluded_payment_method_types`; cancel URL → `/billing`.
+- **Tests/verification:** Redeploy Migration + production; retry Crypto Continue on Advanced monthly.
+- **Deploy state:** Migration + production `create-checkout-session`.
+- **Follow-ups:** If Checkout still shows non-crypto wallets, tighten exclusions; confirm renewals with a live crypto sub.
+
+### 2026-11-24 — Production deploy: Trustpilot + billing/TV edges
+
+- **Context:** Ship Migration-tested edge work to production.
+- **Plain English:** Production now has the Trustpilot feedback email campaign, hosted Add-card Checkout, and Basic=2 / Advanced=unlimited TradingView webhook limits.
+- **Fix (files):** Deployed to `sxkpcovbyaficvtkpsdo`: `send-subscription-campaigns`, `send-subscription-email`, `create-setup-intent`, `tradingview-webhook`; applied `trustpilot_feedback_campaign` SQL (RPC + daily-cap updates).
+- **Tests/verification:** Deploys succeeded; prod `get_trustpilot_feedback_recipients` returns eligible rows (capped at 50).
+- **Deploy state:** Production. Frontend (rating modal, billing UI) still needs Netlify/web deploy.
+- **Follow-ups:** Confirm prod cron hits `send-subscription-campaigns`; ship web frontend.
+
 ### 2026-11-24 — In-app Trustpilot rating modal
 
 - **Context:** Ask users in-product how they’d rate UniCopier, with a path to Trustpilot.
@@ -21,8 +40,8 @@
 - **Plain English:** Once ever, eligible users get “What do you think about UniCopier?” with a CTA to https://www.trustpilot.com/evaluate/unicopier.com. Sent after trial end, or 5 days after a Basic purchase, or 5 days after signup (whichever comes first). Respects unsubscribes and the 24h cross-campaign cap.
 - **Fix (files):** Migration `get_trustpilot_feedback_recipients` + daily-cap updates; `buildTrustpilotFeedbackEmail` in `subscriptionCampaignEmails.ts`; wired into `send-subscription-campaigns` / `send-subscription-email`.
 - **Tests/verification:** RPC present on Migration; campaign functions redeployed there.
-- **Deploy state:** Migration `supmsgcubipmmowrzoub` (SQL + edge). Promote to production when ready; existing cron for `send-subscription-campaigns` picks it up.
-- **Follow-ups:** Deploy same migration + functions to production.
+- **Deploy state:** Production `sxkpcovbyaficvtkpsdo` (SQL + edge) as of later same-day entry.
+- **Follow-ups:** None.
 
 ### 2026-11-24 — TradingView webhook limits by plan
 
