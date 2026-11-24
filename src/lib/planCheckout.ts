@@ -11,7 +11,8 @@ export async function startPlanCheckout(params: {
   successUrl?: string
   cancelUrl?: string
 }): Promise<string> {
-  const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-checkout-session`
+  // Crypto uses NOWPayments hosted invoice (Stripe crypto Checkout retired).
+  const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-crypto-invoice`
   const res = await fetch(apiUrl, {
     method: 'POST',
     headers: {
@@ -22,8 +23,6 @@ export async function startPlanCheckout(params: {
       plan: params.plan,
       interval: params.interval,
       extraAccounts: params.plan === 'advanced' ? (params.extraAccounts ?? 0) : 0,
-      paymentMethod: params.paymentMethod ?? 'crypto',
-      promotionCode: params.promotionCode?.trim() || undefined,
       successUrl: params.successUrl ?? `${window.location.origin}/dashboard?checkout=success`,
       cancelUrl: params.cancelUrl ?? `${window.location.origin}/billing`,
     }),

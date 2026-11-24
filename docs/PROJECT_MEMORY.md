@@ -6,6 +6,16 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-24 — NOWPayments replaces Stripe for crypto membership
+
+- **Context:** Stripe crypto Checkout kept failing (“No valid payment method types”); user created a NOWPayments account for crypto period buys.
+- **Plain English:** Choosing Crypto on Billing opens a NOWPayments invoice (USDC and other coins). After payment, we activate the plan for one month/year (manual renew). Cards still use Stripe.
+- **Root cause (technical):** Stripe account cannot reliably offer crypto on Checkout; product already modeled manual renew.
+- **Fix (files):** Migration `crypto_invoices`; edges `create-crypto-invoice`, `nowpayments-webhook`; shared `nowpayments.ts` + `resolveMembershipAmountUsd`; `create-checkout-session` returns 410 for crypto; `confirm-checkout` + `planCheckout` / `SubscriptionContext` use `crypto_invoice` order id; amounts still sourced from Stripe price IDs.
+- **Tests/verification:** Migration table applied; deploy edges + set `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET`; smoke Basic crypto invoice → IPN → active entitlement.
+- **Deploy state:** Migration (`supmsgcubipmmowrzoub`). Production after smoke.
+- **Follow-ups:** Point NOWPayments dashboard IPN to `…/functions/v1/nowpayments-webhook`; optional renew reminder email.
+
 ### 2026-11-24 — Crypto Basic: mode=payment manual period (not subscription Checkout)
 
 - **Context:** Selecting Basic + Crypto still showed Stripe’s “No valid payment method types” — unrelated to trial; crypto is not usable on subscription Checkout for this Stripe account.

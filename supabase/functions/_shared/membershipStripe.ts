@@ -210,6 +210,32 @@ export function membershipMetadata(
   };
 }
 
+/** Sum membership Stripe prices into a USD amount for NOWPayments invoices. */
+export async function resolveMembershipAmountUsd(
+  stripe: Stripe,
+  plan: MembershipPlan,
+  billingInterval: BillingInterval,
+  extraAccounts: number,
+): Promise<number> {
+  const items = buildMembershipLineItems(plan, billingInterval, extraAccounts);
+  let cents = 0;
+  for (const li of items) {
+    const priceId = String(li.price ?? "");
+    const price = await stripe.prices.retrieve(priceId);
+    if (String(price.currency || "").toLowerCase() !== "usd") {
+      throw new Error(
+        `Stripe price ${priceId} is ${price.currency}, not usd. Crypto checkout requires USD.`,
+      );
+    }
+    if (price.unit_amount == null) {
+      throw new Error(`Stripe price ${priceId} has no unit_amount`);
+    }
+    cents += price.unit_amount * (li.quantity ?? 1);
+  }
+  if (cents <= 0) throw new Error("Membership amount resolved to zero");
+  return cents / 100;
+}
+
 /** Crypto Checkout is mode=payment (manual renew). Recurring prices cannot be used. */
 export async function buildCryptoPaymentLineItems(
   stripe: Stripe,

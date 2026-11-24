@@ -11,15 +11,13 @@ export async function startPlanCheckout(params: {
   cancelUrl?: string
 }): Promise<string> {
   const { ok, data } = await callEdgeFunction<{ url?: string; error?: string }>(
-    'create-checkout-session',
+    'create-crypto-invoice',
     {
       accessToken: params.accessToken,
       body: {
         plan: params.plan,
         interval: params.interval,
         extraAccounts: params.plan === 'advanced' ? (params.extraAccounts ?? 0) : 0,
-        paymentMethod: params.paymentMethod ?? 'crypto',
-        promotionCode: params.promotionCode?.trim() || undefined,
         successUrl: params.successUrl,
         cancelUrl: params.cancelUrl,
       },

@@ -16,6 +16,9 @@ Configure in the Stripe Dashboard (or via CLI) and store price IDs as Supabase E
 | `STRIPE_ADVANCED_ANNUAL_PRICE_ID` | Advanced annual |
 | `STRIPE_EXTRA_ACCOUNT_PRICE_ID` | Extra broker account (Advanced) monthly |
 | `STRIPE_EXTRA_ACCOUNT_ANNUAL_PRICE_ID` | Extra broker account annual |
+| `NOWPAYMENTS_API_KEY` | NOWPayments API key (crypto invoices) |
+| `NOWPAYMENTS_IPN_SECRET` | NOWPayments IPN HMAC secret |
+| `NOWPAYMENTS_IPN_URL` | Optional override; default `{SUPABASE_URL}/functions/v1/nowpayments-webhook` |
 
 ## Webhook
 
@@ -103,18 +106,18 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 
 1. Choose plan on Billing / app `/pricing` / marketing `/pricing` → in-app **Card vs Crypto** step (optional promo code).
 2. **Card:** `create-subscription-elements` creates an incomplete Stripe Subscription; client confirms with **Payment Element** (`@stripe/react-stripe-js`). Requires `VITE_STRIPE_PUBLISHABLE_KEY`. Entitlement sync via `confirm-checkout` + `stripe-webhook`.
-3. **Crypto:** `create-checkout-session` with `paymentMethod: "crypto"` → Hosted Checkout in `subscription` mode, **USD prices only**, **no free trial** on this path (Copygram-style charge-now). Tries `payment_method_types: ["crypto"]` first; if Stripe rejects crypto-on-subscription for the account, falls back to Dashboard dynamic methods. Card/Elements path keeps the Advanced 5-day trial. Optional `promotionCode`; otherwise `allow_promotion_codes: true`. Note: recurring crypto may still require Stripe’s **stablecoin subscriptions** preview separately from the `crypto_payments` capability.
-4. Metadata includes `supabase_user_id`, `plan`, `interval`, `extra_accounts`.
-5. **Advanced first-time free trial** — 5 days when no prior `trial_ends_at` (Elements SetupIntent or Checkout trial). Basic is charged from day one.
-6. Success: `/dashboard?checkout=success` (or in-app Elements confirm → `/billing`). Cancel → `/pricing`.
+3. **Crypto (NOWPayments):** `create-crypto-invoice` creates a USD-priced hosted invoice (amount from Stripe membership price IDs). Customer pays USDC/other crypto on NOWPayments. IPN → `nowpayments-webhook` grants one period on `subscriptions` (`stripe_subscription_id` null; manual renew). Success URL: `/dashboard?checkout=success&crypto_invoice={order_id}`. Secrets: `NOWPAYMENTS_API_KEY`, `NOWPAYMENTS_IPN_SECRET` (optional `NOWPAYMENTS_IPN_URL`). Point dashboard IPN to `https://<project-ref>.supabase.co/functions/v1/nowpayments-webhook`.
+4. Card metadata / Elements still use Stripe `supabase_user_id`, `plan`, `interval`, `extra_accounts`.
+5. **Advanced first-time free trial** — 5 days when no prior `trial_ends_at` (Elements SetupIntent). Basic is charged from day one. Crypto has no trial (pay for period).
+6. Success: `/dashboard?checkout=success` (card may include `session_id`; crypto includes `crypto_invoice`). Cancel → `/billing`.
 7. **Payment methods tab** (`/billing?tab=payment_methods`): `create-setup-intent` opens **Stripe Checkout in `setup` mode** (hosted add-card page, same as Copygram — Card + wallets when eligible); `list-payment-methods` / `detach-payment-method` manage saved cards. Customer Portal remains for cancel / rare Stripe tasks.
-8. **Crypto pay-in:** Dashboard **Stablecoins and Crypto** must be Active (US, not NY). Settlement is USD. Not Crypto Onramp.
+8. **Stripe crypto Checkout is retired** (`create-checkout-session` returns 410). Use NOWPayments for crypto.
 
 ### Checkout troubleshooting
 
 **Elements (card):** missing `VITE_STRIPE_PUBLISHABLE_KEY`, ad blockers blocking Stripe.js, or invalid promo codes (`invalid_promotion_code`).
 
-**Hosted crypto Checkout:** if Stripe logs show empty card fields, that is a browser/iframe issue on card Checkout — crypto path should only show Crypto. Ensure Dashboard crypto is Active and the session was created with `paymentMethod: "crypto"`.
+**NOWPayments crypto:** missing `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET`, IPN URL not reachable, or signature mismatch (`x-nowpayments-sig`). Check `crypto_invoices` row status and edge logs.
 
 ## Paywall (plan limits)
 
