@@ -46,6 +46,8 @@ export const supportWidgetAr: SupportWidgetTranslations = {
   removeImage: 'إزالة الصورة',
   send: 'إرسال',
   conversationResolved: 'هذه المحادثة محلولة. ابدأ واحدة جديدة من الرئيسية.',
+  rateOnTrustpilot: 'قيّمنا على Trustpilot',
+  rateOnTrustpilotHint: 'شكرًا لمحادثتك معنا — يسعدنا تقييمك.',
   loading: 'جارٍ التحميل…',
   aiName: 'UniCopier AI',
   supportName: 'الدعم',

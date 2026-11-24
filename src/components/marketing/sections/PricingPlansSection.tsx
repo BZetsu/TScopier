@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { Check, Zap } from 'lucide-react'
 import { useT } from '../../../context/LocaleContext'
@@ -8,7 +8,7 @@ import { useSubscription } from '../../../context/SubscriptionContext'
 import { interpolate } from '../../../i18n/interpolate'
 import { appAbsoluteUrl, appUrl } from '../../../lib/site'
 import { HELP_LINKS } from '../../../lib/helpLinks'
-import { startPlanCheckout } from '../../../lib/planCheckout'
+import { checkoutCopyFromT, formatCheckoutPriceLabel } from '../../../lib/checkoutCopy'
 import { getSubscribeCtaLabel } from '../../../lib/subscriptionCta'
 import {
   clearPendingPlanSelection,
@@ -18,6 +18,10 @@ import {
   type PendingPlanSelection,
 } from '../../../lib/pendingPlanSelection'
 import { Button } from '../../ui/Button'
+import {
+  CheckoutPaymentStep,
+  type CheckoutSelection,
+} from '../../billing/CheckoutPaymentStep'
 import {
   PRICING_ADVANCED_INCLUDED_ACCOUNTS,
   pricingDisplayPrices,
@@ -29,6 +33,7 @@ interface PricingPlansSectionProps {
 
 export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSectionProps) {
   const t = useT()
+  const navigate = useNavigate()
   const lp = t.landing.pricing
   const pt = t.pricing
   const [searchParams, setSearchParams] = useSearchParams()
@@ -36,10 +41,16 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
   const [extraAccounts, setExtraAccounts] = useState(0)
 
   const { session } = useAuth()
-  const { effectivePlan, isPastDue, hasTrialExpired, hasActiveSubscription, loading: subLoading } =
-    useSubscription()
-  const [checkoutLoading, setCheckoutLoading] = useState<'basic' | 'advanced' | null>(null)
+  const {
+    effectivePlan,
+    isPastDue,
+    hasTrialExpired,
+    hasActiveSubscription,
+    loading: subLoading,
+    refresh,
+  } = useSubscription()
   const [checkoutError, setCheckoutError] = useState('')
+  const [checkoutSelection, setCheckoutSelection] = useState<CheckoutSelection | null>(null)
   const autoCheckoutStarted = useRef(false)
 
   const advancedCheckoutCta = getSubscribeCtaLabel(t, {
@@ -72,33 +83,21 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
     return appUrl(signupUrlWithPlan(selection, referralFromUrl))
   }
 
-  const startCheckout = async (
+  const openCheckout = (
     plan: 'basic' | 'advanced',
     opts?: { interval?: 'monthly' | 'annual'; extraAccounts?: number },
   ) => {
     if (!session?.access_token || effectivePlan === plan) return
-    const billingInterval = opts?.interval ?? interval
-    const extras = plan === 'advanced' ? (opts?.extraAccounts ?? extraAccounts) : 0
     setCheckoutError('')
-    setCheckoutLoading(plan)
-    try {
-      clearPendingPlanSelection()
-      const url = await startPlanCheckout({
-        accessToken: session.access_token,
-        plan,
-        interval: billingInterval,
-        extraAccounts: extras,
-        successUrl: appAbsoluteUrl('/dashboard?checkout=success'),
-        cancelUrl: `${window.location.origin}/pricing`,
-      })
-      window.location.href = url
-    } catch (err) {
-      setCheckoutError(err instanceof Error ? err.message : pt.checkoutFailed)
-      setCheckoutLoading(null)
-    }
+    clearPendingPlanSelection()
+    setCheckoutSelection({
+      plan,
+      interval: opts?.interval ?? interval,
+      extraAccounts: plan === 'advanced' ? (opts?.extraAccounts ?? extraAccounts) : 0,
+    })
   }
 
-  // Restore pending selection + auto-start Stripe after signup/login.
+  // Restore pending selection + open Card/Crypto checkout after signup/login.
   useEffect(() => {
     if (!isApp || subLoading || hasActiveSubscription || !session?.access_token) return
     if (autoCheckoutStarted.current) return
@@ -120,7 +119,7 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
       next.delete('startCheckout')
       setSearchParams(next, { replace: true })
     }
-    void startCheckout(pending.plan, {
+    openCheckout(pending.plan, {
       interval: pending.interval,
       extraAccounts: pending.extraAccounts,
     })
@@ -149,11 +148,10 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
         <Button
           size="lg"
           className="w-full"
-          loading={checkoutLoading === plan}
-          disabled={checkoutLoading !== null || effectivePlan === plan}
+          disabled={effectivePlan === plan}
           onClick={() => {
             stashPendingPlanSelection(selection)
-            void startCheckout(plan)
+            openCheckout(plan)
           }}
         >
           {effectivePlan === plan ? pt.billing.currentPlan : label}
@@ -168,6 +166,55 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
       >
         {label}
       </a>
+    )
+  }
+
+  if (checkoutSelection && session?.access_token) {
+    const checkoutPrices = pricingDisplayPrices(
+      checkoutSelection.interval,
+      checkoutSelection.extraAccounts,
+    )
+    const amount =
+      checkoutSelection.plan === 'advanced'
+        ? checkoutSelection.interval === 'annual'
+          ? checkoutPrices.advancedAnnualTotal
+          : checkoutPrices.advancedMonthly
+        : checkoutSelection.interval === 'annual'
+          ? checkoutPrices.basicAnnualTotal
+          : checkoutPrices.basicMonthly
+    return (
+      <section className={sectionClass}>
+        {checkoutError ? (
+          <div
+            role="alert"
+            className="mx-auto mb-4 max-w-lg rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200"
+          >
+            {checkoutError}
+          </div>
+        ) : null}
+        <CheckoutPaymentStep
+          selection={checkoutSelection}
+          priceLabel={formatCheckoutPriceLabel(
+            checkoutSelection.interval,
+            amount,
+            pt.perMonth,
+            pt.perYear,
+          )}
+          accessToken={session.access_token}
+          copy={checkoutCopyFromT(t)}
+          successUrl={appAbsoluteUrl('/dashboard?checkout=success')}
+          cancelUrl={`${window.location.origin}/pricing`}
+          onBack={() => {
+            setCheckoutSelection(null)
+            setCheckoutError('')
+          }}
+          onCardSuccess={() => {
+            void refresh()
+            navigate('/billing')
+          }}
+          onError={setCheckoutError}
+        />
+      </section>
     )
   }
 
@@ -299,7 +346,7 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
                 <button
                   type="button"
                   onClick={() => setExtraAccounts((v) => Math.max(0, v - 1))}
-                  disabled={extraAccounts === 0 || checkoutLoading !== null}
+                  disabled={extraAccounts === 0}
                   className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-300 text-neutral-900 transition-colors hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:text-neutral-50 dark:hover:bg-neutral-700"
                 >
                   −
@@ -318,7 +365,7 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
                 <button
                   type="button"
                   onClick={() => setExtraAccounts((v) => Math.min(95, v + 1))}
-                  disabled={extraAccounts >= 95 || checkoutLoading !== null}
+                  disabled={extraAccounts >= 95}
                   className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-300 text-neutral-900 transition-colors hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-600 dark:text-neutral-50 dark:hover:bg-neutral-700"
                 >
                   +

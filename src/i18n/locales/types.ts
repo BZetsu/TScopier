@@ -2375,6 +2375,33 @@ export interface PricingTranslations {
     copyCancelsAtPeriodEnd: string
     copyPeriodEnds: string
     copyEntitlementNote: string
+    tabSubscription: string
+    tabPaymentMethods: string
+    tabReceipts: string
+    planPaymentsEyebrow: string
+    checkoutBadge: string
+    subscribeTo: string
+    howToPay: string
+    payCardTitle: string
+    payCardDescription: string
+    payCardFooter: string
+    payCryptoTitle: string
+    payCryptoDescription: string
+    payCryptoFooter: string
+    addPromoCode: string
+    promoPlaceholder: string
+    applyPromo: string
+    continueCheckout: string
+    backToPlans: string
+    paymentMethodsTitle: string
+    paymentMethodsSubtitle: string
+    paymentMethodsEmptyTitle: string
+    paymentMethodsEmptyHint: string
+    paymentMethodsAddCard: string
+    paymentMethodsAddCardHint: string
+    paymentMethodsSaveCard: string
+    paymentMethodsRemove: string
+    paymentMethodsFooter: string
   }
   checkoutFailed: string
   paywall: {

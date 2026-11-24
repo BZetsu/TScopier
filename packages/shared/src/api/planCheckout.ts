@@ -5,6 +5,8 @@ export async function startPlanCheckout(params: {
   plan: 'basic' | 'advanced'
   interval: 'monthly' | 'annual'
   extraAccounts?: number
+  paymentMethod?: 'card' | 'crypto'
+  promotionCode?: string
   successUrl?: string
   cancelUrl?: string
 }): Promise<string> {
@@ -16,6 +18,8 @@ export async function startPlanCheckout(params: {
         plan: params.plan,
         interval: params.interval,
         extraAccounts: params.plan === 'advanced' ? (params.extraAccounts ?? 0) : 0,
+        paymentMethod: params.paymentMethod ?? 'crypto',
+        promotionCode: params.promotionCode?.trim() || undefined,
         successUrl: params.successUrl,
         cancelUrl: params.cancelUrl,
       },

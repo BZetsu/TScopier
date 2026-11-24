@@ -46,6 +46,8 @@ export const supportWidgetSv: SupportWidgetTranslations = {
   removeImage: 'Ta bort bild',
   send: 'Skicka',
   conversationResolved: 'Denna konversation är löst. Starta en ny från Hem.',
+  rateOnTrustpilot: 'Betygsätt oss på Trustpilot',
+  rateOnTrustpilotHint: 'Tack för chatten — vi skulle gärna ha din recension.',
   loading: 'Laddar…',
   aiName: 'UniCopier AI',
   supportName: 'Support',

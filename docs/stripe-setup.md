@@ -101,26 +101,20 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 
 ## Checkout flow
 
-1. Marketing **Choose a plan** → `/pricing` → select Basic/Advanced → signup/login with plan remembered → Stripe Checkout (`create-checkout-session`).
-2. Checkout metadata includes `supabase_user_id`, `plan`, `extra_accounts`.
-3. Subscription metadata mirrors checkout metadata for portal updates.
-4. **Advanced first-time free trial** — Advanced checkouts for users with no prior `trial_ends_at` get `trial_period_days: 5`. Basic is charged from day one. Existing Stripe `trialing` subscribers keep access until `trial_ends_at`. Users who already used a trial do not get a second one.
-5. Checkout uses **dynamic payment methods** (no hard-coded `payment_method_types`). Stripe shows methods enabled in the Dashboard, including **card** and **Stablecoins and Crypto** when Active. Sessions still set `payment_method_collection: always`. After checkout completes, the webhook sets `payment_settings.save_default_payment_method: on_subscription` on the Stripe subscription for renewals.
-6. Success redirect: `/dashboard?checkout=success` (SubscriptionContext refreshes). Cancel → `/pricing`.
-7. Pricing pages advertise a **5-day free trial on Advanced** and that cards + crypto (USDC) are accepted at checkout.
-8. **Crypto pay-in:** enable **Settings → Payment methods → Stablecoins and Crypto** (US merchants; not NY). Customers pay via crypto.stripe.com; funds settle in the Stripe balance in **USD**. This is not Crypto Onramp (fiat → buy crypto).
+1. Choose plan on Billing / app `/pricing` / marketing `/pricing` → in-app **Card vs Crypto** step (optional promo code).
+2. **Card:** `create-subscription-elements` creates an incomplete Stripe Subscription; client confirms with **Payment Element** (`@stripe/react-stripe-js`). Requires `VITE_STRIPE_PUBLISHABLE_KEY`. Entitlement sync via `confirm-checkout` + `stripe-webhook`.
+3. **Crypto:** `create-checkout-session` with `paymentMethod: "crypto"` → Hosted Checkout `payment_method_types: ["crypto"]` only. Optional `promotionCode` resolves to a Stripe Promotion Code discount; otherwise `allow_promotion_codes: true`.
+4. Metadata includes `supabase_user_id`, `plan`, `interval`, `extra_accounts`.
+5. **Advanced first-time free trial** — 5 days when no prior `trial_ends_at` (Elements SetupIntent or Checkout trial). Basic is charged from day one.
+6. Success: `/dashboard?checkout=success` (or in-app Elements confirm → `/billing`). Cancel → `/pricing`.
+7. **Payment methods tab** (`/billing?tab=payment_methods`): `create-setup-intent`, `list-payment-methods`, `detach-payment-method` — add/remove cards on-platform via Elements. Customer Portal remains for cancel / rare Stripe tasks.
+8. **Crypto pay-in:** Dashboard **Stablecoins and Crypto** must be Active (US, not NY). Settlement is USD. Not Crypto Onramp.
 
 ### Checkout troubleshooting
 
-Checkout runs on Stripe Hosted Checkout (custom domain e.g. `billing.tartarix.com`). If Stripe logs show `parameter_invalid_empty` for `payment_method_data[card][number]` with empty `cvc`/`exp_month`/`number`, the **browser** submitted a blank card form — this is not sent by `create-checkout-session`.
+**Elements (card):** missing `VITE_STRIPE_PUBLISHABLE_KEY`, ad blockers blocking Stripe.js, or invalid promo codes (`invalid_promotion_code`).
 
-Common causes:
-
-- User clicked Pay before the card fields finished loading
-- Ad blocker / privacy extension blocking Stripe.js iframes
-- Stripe Link or another automatic payment method selected without a valid saved instrument
-
-**Fixes:** retry in incognito without extensions; ensure card fields are filled; in Stripe Dashboard disable Checkout preview/beta features if enabled; tune which methods appear under **Settings → Payment methods** (Checkout no longer forces card-only).
+**Hosted crypto Checkout:** if Stripe logs show empty card fields, that is a browser/iframe issue on card Checkout — crypto path should only show Crypto. Ensure Dashboard crypto is Active and the session was created with `paymentMethod: "crypto"`.
 
 ## Paywall (plan limits)
 
@@ -162,7 +156,7 @@ Use `4242 4242 4242 4242`, any future expiry, any CVC, any billing postal code.
 
 ```bash
 supabase db push
-supabase functions deploy stripe-webhook create-checkout-session confirm-checkout customer-portal update-extra-accounts
+supabase functions deploy stripe-webhook create-checkout-session create-subscription-elements create-setup-intent list-payment-methods detach-payment-method confirm-checkout customer-portal update-extra-accounts
 supabase functions deploy backtest-run broker-metatrader
 # Redeploy worker for subscription execution gates
 ```

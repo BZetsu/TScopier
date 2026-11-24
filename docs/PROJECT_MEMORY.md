@@ -6,6 +6,24 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-24 — Billing redesign: Card Elements + Crypto Checkout + promo
+
+- **Context:** Copygram-style subscribe flow — plan → Card vs Crypto, promo codes, add card on-platform.
+- **Plain English:** Choosing a plan opens an in-app checkout step. Card pays on UniCopier via Stripe Payment Element; Crypto opens a crypto-only Stripe Checkout page. Users can save cards under Billing → Payment methods. Promo codes apply on both paths.
+- **Fix (files):** Shared `_shared/membershipStripe.ts`; crypto+promo on `create-checkout-session`; new `create-subscription-elements`, `create-setup-intent`, `list-payment-methods`, `detach-payment-method` (Migration); Billing tabs + checkout UI; PricingPlansSection opens checkout step; `@stripe/stripe-js` + react-stripe-js; i18n + `docs/stripe-setup.md`.
+- **Tests/verification:** Functions deployed to Migration `supmsgcubipmmowrzoub`; `tsc -p tsconfig.app.json` clean. Set `VITE_STRIPE_PUBLISHABLE_KEY` before Card Elements works in UI.
+- **Deploy state:** Edge functions on Migration only (not production). Frontend ships with next web deploy.
+- **Follow-ups:** Deploy functions to production when ready; create Stripe Promotion Codes in Dashboard; smoke Card/Crypto/promo/add-card on Migration.
+
+### 2026-11-24 — Migration Stripe price IDs missing (crypto checkout empty price)
+
+- **Context:** Localhost crypto checkout against Migration failed: Stripe `line_items[0][price]` empty string.
+- **Plain English:** The Migration Supabase project had a Stripe secret key but no Basic/Advanced price ID secrets, so Checkout was created with blank prices.
+- **Fix (files):** Set `STRIPE_*_PRICE_ID` secrets on `supmsgcubipmmowrzoub` from that Stripe account’s active UniCopier prices; `requireMembershipPriceId` validation in `_shared/membershipStripe.ts`; redeployed checkout + elements functions.
+- **Tests/verification:** Secrets listed on Migration; retry Crypto Continue on localhost.
+- **Deploy state:** Migration secrets + functions only.
+- **Follow-ups:** None.
+
 ### 2026-11-24 — Fix Netlify build: `process` types in featureFlags
 
 - **Context:** Netlify `npm run build` failed with TS2591 on `src/lib/featureFlags.ts` (`Cannot find name 'process'`).
