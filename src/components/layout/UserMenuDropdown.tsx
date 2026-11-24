@@ -71,6 +71,7 @@ export function UserMenuDropdown({ open, onClose, onSignOut }: UserMenuDropdownP
 
   const items: MenuItem[] = [
     { id: 'profile', kind: 'link', label: um.profileSettings, icon: getAppRouteIcon('/settings'), path: '/settings' },
+    { id: 'membership', kind: 'link', label: um.membership, icon: getAppRouteIcon('/membership'), path: '/membership' },
     { id: 'billing', kind: 'link', label: um.subscriptionBilling, icon: getAppRouteIcon('/billing'), path: '/billing' },
     { id: 'affiliate', kind: 'link', label: um.affiliateProgram, icon: getAppRouteIcon('/affiliate-program'), path: '/affiliate-program' },
     { id: 'wallet', kind: 'link', label: um.wallet, icon: getAppRouteIcon('/wallet'), path: '/wallet' },

@@ -4,7 +4,7 @@ export const pricingJa: PricingBundleTranslations = {
   pricing: {
     title: 'プランを選択',
     subtitle: '今日からあなたの取引口座へシグナルのコピーを始めましょう。',
-    paymentMethodsHint: 'カードと暗号資産（USDC）でチェックアウトできます。',
+    paymentMethodsHint: '',
     skip: '今はスキップ',
     monthly: '月額',
     annual: '年額',
@@ -19,6 +19,7 @@ export const pricingJa: PricingBundleTranslations = {
     startTrial: '5日間の無料トライアルを始める',
     trialDays: 'Advancedは5日間無料トライアル',
     moneyBackGuarantee: 'Advancedは5日間無料トライアル',
+    weAccept: 'お支払い方法',
     features: '機能',
     popular: '一番人気',
     basicFeatures: [
@@ -77,6 +78,9 @@ export const pricingJa: PricingBundleTranslations = {
       'ボリューム/チーム向け価格',
     ],
     billing: {
+      membershipEyebrow: 'Membership',
+      membershipTitle: 'Membership',
+      membershipSubtitle: 'Choose a plan and manage included account capacity.',
       copyCancelsAtPeriodEnd: '期間終了時に解約',
       copyEntitlementNote: 'コピーを停止してもこのサブスクリプションは解約されません。有効期限まで再開してコピーできます。',
       tabSubscription: 'Subscription',

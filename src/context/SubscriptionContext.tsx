@@ -372,7 +372,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (!checkoutSyncPending) return
     const path = window.location.pathname
-    if (path !== '/pricing' && path !== '/billing') return
+    if (path !== '/pricing' && path !== '/billing' && path !== '/membership') return
     navigate(consumePostAuthRedirect() ?? '/dashboard', { replace: true })
   }, [checkoutSyncPending, navigate])
 
@@ -424,7 +424,6 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       return
     }
     navigate('/billing')
-    // Scroll after the billing route mounts.
     window.setTimeout(scrollToBillingPlans, 80)
   }, [navigate])
 

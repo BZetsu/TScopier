@@ -92,6 +92,7 @@ export const chromeRu: AppChromeTranslations = {
     userMenu: {
       menuLabel: 'Меню аккаунта',
       profileSettings: 'Профиль и настройки',
+      membership: 'Membership',
       subscriptionBilling: 'Подписка и биллинг',
       affiliateProgram: 'Партнерская программа',
       wallet: 'Кошелёк',

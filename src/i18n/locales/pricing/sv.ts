@@ -4,7 +4,7 @@ export const pricingSv: PricingBundleTranslations = {
   pricing: {
     title: 'Välj din plan',
     subtitle: 'Börja kopiera signaler till dina tradingkonton redan idag.',
-    paymentMethodsHint: 'Kort och krypto (USDC) accepteras i kassan.',
+    paymentMethodsHint: '',
     skip: 'Hoppa över för nu',
     monthly: 'Månadsvis',
     annual: 'Årsvis',
@@ -19,6 +19,7 @@ export const pricingSv: PricingBundleTranslations = {
     startTrial: 'Starta din 5-dagars gratis provperiod',
     trialDays: '5 dagars gratis provperiod på Advanced',
     moneyBackGuarantee: '5 dagars gratis provperiod på Advanced',
+    weAccept: 'Vi accepterar',
     features: 'Funktioner',
     popular: 'Mest populär',
     basicFeatures: [
@@ -77,6 +78,9 @@ export const pricingSv: PricingBundleTranslations = {
       'Volym- och teampriser',
     ],
     billing: {
+      membershipEyebrow: 'Membership',
+      membershipTitle: 'Membership',
+      membershipSubtitle: 'Choose a plan and manage included account capacity.',
       copyCancelsAtPeriodEnd: 'avslutas vid periodens slut',
       copyEntitlementNote: 'Att stoppa en kopiering säger upp det här abonnemanget. Du kan börja kopiera igen tills det går ut.',
       tabSubscription: 'Subscription',

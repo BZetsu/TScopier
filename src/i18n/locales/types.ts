@@ -133,6 +133,7 @@ export interface NavTranslations {
   userMenu: {
     menuLabel: string
     profileSettings: string
+    membership: string
     subscriptionBilling: string
     affiliateProgram: string
     wallet: string
@@ -2283,6 +2284,8 @@ export interface PricingTranslations {
   /** Prefer moneyBackGuarantee; both keys advertise the Advanced free trial. */
   trialDays: string
   moneyBackGuarantee: string
+  /** Label above accepted payment method logos under plan cards. */
+  weAccept: string
   features: string
   popular: string
   basicFeatures: string[]
@@ -2306,6 +2309,9 @@ export interface PricingTranslations {
   billing: {
     title: string
     subtitle: string
+    membershipEyebrow: string
+    membershipTitle: string
+    membershipSubtitle: string
     customerId: string
     credit: string
     purchaseSubscription: string

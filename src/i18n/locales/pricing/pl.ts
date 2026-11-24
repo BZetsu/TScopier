@@ -4,7 +4,7 @@ export const pricingPl: PricingBundleTranslations = {
   pricing: {
     title: 'Wybierz plan',
     subtitle: 'Zacznij kopiować sygnały na swoje konta tradingowe już dziś.',
-    paymentMethodsHint: 'Karty i krypto (USDC) akceptowane przy płatności.',
+    paymentMethodsHint: '',
     skip: 'Pomiń na razie',
     monthly: 'Miesięcznie',
     annual: 'Rocznie',
@@ -19,6 +19,7 @@ export const pricingPl: PricingBundleTranslations = {
     startTrial: 'Rozpocznij 5-dniowy bezpłatny okres próbny',
     trialDays: '5-dniowy bezpłatny okres próbny na Advanced',
     moneyBackGuarantee: '5-dniowy bezpłatny okres próbny na Advanced',
+    weAccept: 'Akceptujemy',
     features: 'Funkcje',
     popular: 'Najpopularniejszy',
     basicFeatures: [
@@ -77,6 +78,9 @@ export const pricingPl: PricingBundleTranslations = {
       'Ceny dla wolumenu i zespołów',
     ],
     billing: {
+      membershipEyebrow: 'Membership',
+      membershipTitle: 'Membership',
+      membershipSubtitle: 'Choose a plan and manage included account capacity.',
       copyCancelsAtPeriodEnd: 'anuluje się na koniec okresu',
       copyEntitlementNote: 'Zatrzymanie kopii nie anuluje tej subskrypcji. Możesz zacząć kopiować ponownie do czasu jej wygaśnięcia.',
       tabSubscription: 'Subscription',

@@ -6,6 +6,56 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-24 — “We accept” payment logos on plans
+
+- **Context:** Subscription/pricing needed a clear accepted-methods strip after the trial footer was removed.
+- **Plain English:** Under the plan cards: “We accept” plus Visa, Mastercard, Amex, USDC, and USDT badges.
+- **Fix (files):** `PaymentAcceptedLogos.tsx`; wired in `PricingPlansSection.tsx`; `weAccept` i18n.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-24 — Remove pricing footer trial line
+
+- **Context:** “5-day free trial on Advanced” sat under the plan cards and felt redundant with CTAs.
+- **Plain English:** That footer line is gone from the Subscription/pricing plans section.
+- **Fix (files):** `PricingPlansSection.tsx` — dropped `moneyBackGuarantee` footer.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-24 — Advanced plan card gradient
+
+- **Context:** Advanced plan needed stronger visual weight vs Basic/Custom.
+- **Plain English:** Advanced card uses a soft mint → white (dark: teal → slate) gradient with light bloom accents; extra-accounts panel sits on frosted glass.
+- **Fix (files):** `PricingPlansSection.tsx` Advanced card styles.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-24 — Trim Advanced plan feature bullets
+
+- **Context:** Advanced list repeated Basic-tier filters/news/mirror copy and felt long.
+- **Plain English:** Advanced now leads with “Everything else in Basic” and keeps only the Advanced-specific upgrades (accounts, unlimited sources, range modes, etc.).
+- **Fix (files):** EN/ES/FR `advancedFeatures` in pricing i18n.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-24 — Redesign Subscription plans layout (Basic + Advanced, Custom below)
+
+- **Context:** Subscription (`/billing`) still showed a 3-column Basic | Advanced | Custom grid that underplayed UniCopier sources.
+- **Plain English:** In the app, Basic and Advanced sit side by side; Custom is a full-width band underneath. Feature lists call out Telegram, TradingView webhooks, WhatsApp, and Discord.
+- **Fix (files):** `PricingPlansSection.tsx` app layout; EN/ES/FR plan feature + description copy; Subscription page subtitle.
+- **Deploy state:** Frontend only — next Netlify deploy.
+- **Follow-ups:** Other pricing locale partials (ar/ja/…) still have older feature bullets until translated.
+
+### 2026-11-24 — Swap Membership ↔ Subscription page contents
+
+- **Context:** After the split, plans were on Membership and status on Subscription; product wanted the opposite.
+- **Plain English:** **Membership** (`/membership`) = status, renewals, payment methods, receipts. **Subscription** (`/billing`) = choose/upgrade plans and extra accounts.
+- **Fix (files):** Swapped route components in `App.tsx`; page titles/CTAs/redirects updated accordingly.
+- **Deploy state:** Frontend — next Netlify deploy.
+
+### 2026-11-24 — Split Membership vs Subscription pages
+
+- **Context:** Plans and subscription status lived together on `/billing`.
+- **Plain English:** Split into `/membership` and `/billing` (contents later swapped — see entry above).
+- **Fix (files):** New `MembershipPage`; slimmed `BillingPage`; nav + user menu; i18n.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
 ### 2026-11-24 — Basic crypto invoice +$1 buffer for NOWPayments mins
 
 - **Context:** Popular coins can’t be disabled; Basic $9.99 still fails NP mins on networks like USDT TRC20.

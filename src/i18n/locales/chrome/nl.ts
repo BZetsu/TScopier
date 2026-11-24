@@ -91,6 +91,7 @@ export const chromeNl: AppChromeTranslations = {
     userMenu: {
       menuLabel: 'Accountmenu',
       profileSettings: 'Profiel en instellingen',
+      membership: 'Membership',
       subscriptionBilling: 'Abonnement en facturatie',
       affiliateProgram: 'Affiliateprogramma',
       wallet: 'Wallet',

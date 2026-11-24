@@ -4,7 +4,7 @@ export const pricingNl: PricingBundleTranslations = {
   pricing: {
     title: 'Kies je plan',
     subtitle: 'Begin vandaag nog met het kopiëren van signalen naar je tradingaccounts.',
-    paymentMethodsHint: 'Kaarten en crypto (USDC) geaccepteerd bij checkout.',
+    paymentMethodsHint: '',
     skip: 'Nu overslaan',
     monthly: 'Maandelijks',
     annual: 'Jaarlijks',
@@ -19,6 +19,7 @@ export const pricingNl: PricingBundleTranslations = {
     startTrial: 'Start je gratis proefperiode van 5 dagen',
     trialDays: '5 dagen gratis proefperiode op Advanced',
     moneyBackGuarantee: '5 dagen gratis proefperiode op Advanced',
+    weAccept: 'Wij accepteren',
     features: 'Functies',
     popular: 'Meest populair',
     basicFeatures: [
@@ -77,6 +78,9 @@ export const pricingNl: PricingBundleTranslations = {
       'Volume- en teamprijzen',
     ],
     billing: {
+      membershipEyebrow: 'Membership',
+      membershipTitle: 'Membership',
+      membershipSubtitle: 'Choose a plan and manage included account capacity.',
       copyCancelsAtPeriodEnd: 'eindigt aan het einde van de periode',
       copyEntitlementNote: 'Het stoppen van kopiëren annuleert dit abonnement niet. Je kunt tot het einde van de periode opnieuw beginnen met kopiëren.',
       tabSubscription: 'Subscription',
