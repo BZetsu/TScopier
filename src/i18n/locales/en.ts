@@ -413,7 +413,7 @@ export const en: Translations = {
       payCardDescription: 'Renews each billing cycle. Cancel anytime.',
       payCardFooter: 'Visa, Mastercard and Amex through Stripe',
       payCryptoTitle: 'Crypto',
-      payCryptoDescription: 'USDC and other stablecoins. Cancel anytime.',
+      payCryptoDescription: 'USDC/USDT on Polygon, Solana, or BSC (not Tron/ETH for Basic). Cancel anytime.',
       payCryptoFooter: 'Renewed manually; we email you before it expires',
       addPromoCode: 'Add promo code',
       promoPlaceholder: 'Enter coupon code',

@@ -85,6 +85,8 @@ export async function createNowPaymentsInvoice(params: {
       "x-api-key": params.apiKey,
       "Content-Type": "application/json",
     },
+    // is_fixed_rate:false — fixed-rate pairs often raise network minimums above
+    // Basic ($9.99), which surfaces as "amountTo is too small" on Tron/ETH.
     body: JSON.stringify({
       price_amount: Number(params.priceAmountUsd.toFixed(2)),
       price_currency: "usd",
@@ -93,7 +95,7 @@ export async function createNowPaymentsInvoice(params: {
       success_url: params.successUrl,
       cancel_url: params.cancelUrl,
       ipn_callback_url: params.ipnCallbackUrl,
-      is_fixed_rate: true,
+      is_fixed_rate: false,
       is_fee_paid_by_user: false,
     }),
   });
