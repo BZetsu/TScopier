@@ -6,6 +6,14 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-24 — Sidebar / Advanced CTA: Add More Accounts
+
+- **Context:** Sidebar showed “Start your 5-day free trial” / “Manage billing”; Advanced plan card was stuck on Current plan so extras could only change via a separate Membership card.
+- **Plain English:** Basic → **Upgrade to Advanced**. Advanced → **Add More Accounts**. On Subscription, Advanced subscribers adjust the extras stepper and save via Stripe proration (not a new checkout).
+- **Fix (files):** `getSubscribeCtaLabel` + `addMoreAccounts` i18n; `SidebarPlanCard`; `PricingPlansSection` → `update-extra-accounts`.
+- **Deploy state:** Frontend only — next Netlify deploy.
+- **Follow-ups:** Crypto-only Advanced without Stripe sub still cannot prorate extras via this edge.
+
 ### 2026-11-24 — “We accept” payment logos on plans
 
 - **Context:** Subscription/pricing needed a clear accepted-methods strip after the trial footer was removed.

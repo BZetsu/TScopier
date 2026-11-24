@@ -40,6 +40,7 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
   const [searchParams, setSearchParams] = useSearchParams()
   const [interval, setInterval] = useState<'monthly' | 'annual'>('monthly')
   const [extraAccounts, setExtraAccounts] = useState(0)
+  const [savingExtras, setSavingExtras] = useState(false)
 
   const { session } = useAuth()
   const {
@@ -49,6 +50,7 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
     hasActiveSubscription,
     loading: subLoading,
     refresh,
+    subscription,
   } = useSubscription()
   const [checkoutError, setCheckoutError] = useState('')
   const [checkoutSelection, setCheckoutSelection] = useState<CheckoutSelection | null>(null)
@@ -62,7 +64,15 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
 
   const isApp = variant === 'app'
   const isAnnual = interval === 'annual'
+  const currentExtra = subscription?.extra_accounts ?? 0
+  const isAdvancedSubscriber = isApp && hasActiveSubscription && effectivePlan === 'advanced'
   const prices = pricingDisplayPrices(interval, extraAccounts)
+
+  // Keep Advanced extras stepper in sync with billed quantity.
+  useEffect(() => {
+    if (!isAdvancedSubscriber) return
+    setExtraAccounts(currentExtra)
+  }, [isAdvancedSubscriber, currentExtra])
 
   const formatMoney = (amount: number) => `$${amount.toFixed(2)}`
 
@@ -132,6 +142,34 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
     isApp ? 'px-0 py-4 sm:py-6' : 'px-5 py-16 sm:px-8 sm:py-24',
   )
 
+  const saveExtraAccounts = async () => {
+    if (!session?.access_token || !isAdvancedSubscriber) return
+    if (extraAccounts === currentExtra) return
+    setSavingExtras(true)
+    setCheckoutError('')
+    try {
+      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-extra-accounts`
+      const res = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ extraAccounts }),
+      })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null
+        setCheckoutError(body?.error || pt.checkoutFailed)
+        return
+      }
+      await refresh()
+    } catch {
+      setCheckoutError(pt.checkoutFailed)
+    } finally {
+      setSavingExtras(false)
+    }
+  }
+
   const planCta = (plan: 'basic' | 'advanced', label: string) => {
     const selection: PendingPlanSelection = {
       plan,
@@ -139,6 +177,20 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
       extraAccounts: plan === 'advanced' ? extraAccounts : 0,
     }
     if (session?.access_token) {
+      if (plan === 'advanced' && isAdvancedSubscriber) {
+        const unchanged = extraAccounts === currentExtra
+        return (
+          <Button
+            size="lg"
+            className="w-full"
+            disabled={unchanged || savingExtras}
+            loading={savingExtras}
+            onClick={() => void saveExtraAccounts()}
+          >
+            {unchanged ? pt.billing.currentPlan : pt.paywall.addMoreAccounts}
+          </Button>
+        )
+      }
       return (
         <Button
           size="lg"

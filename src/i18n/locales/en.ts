@@ -437,6 +437,7 @@ export const en: Translations = {
       noPlanReason: "You're on view only mode. Purchase a subscription plan to connect brokers, Telegram channels and backtests",
       upgradeTitle: 'Upgrade required',
       upgradeCta: 'Upgrade to Advanced',
+      addMoreAccounts: 'Add More Accounts',
       purchaseSubscriptionCta: 'Purchase Subscription',
       manageBilling: 'Manage billing',
       updatePaymentTitle: 'Payment did not go through',

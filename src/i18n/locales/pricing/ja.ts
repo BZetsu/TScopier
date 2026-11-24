@@ -194,6 +194,7 @@ export const pricingJa: PricingBundleTranslations = {
         '現在は閲覧専用モードです。ブローカー、Telegramチャンネル、バックテストを接続するにはサブスクリプション購入が必要です',
       upgradeTitle: 'アップグレードが必要です',
       upgradeCta: 'Advancedにアップグレード',
+      addMoreAccounts: 'Add More Accounts',
       purchaseSubscriptionCta: 'サブスクリプションを購入',
       manageBilling: '請求を管理',
       updatePaymentTitle: '支払い方法を更新',

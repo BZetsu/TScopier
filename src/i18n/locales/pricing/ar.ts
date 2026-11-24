@@ -194,6 +194,7 @@ export const pricingAr: PricingBundleTranslations = {
         'أنت في وضع المعاينة فقط. اشترِ خطة اشتراك لربط الوسطاء وقنوات Telegram والاختبارات التاريخية',
       upgradeTitle: 'مطلوب ترقية',
       upgradeCta: 'الترقية إلى المتقدم',
+      addMoreAccounts: 'Add More Accounts',
       purchaseSubscriptionCta: 'شراء اشتراك',
       manageBilling: 'إدارة الفوترة',
       updatePaymentTitle: 'حدّث طريقة الدفع',

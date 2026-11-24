@@ -194,6 +194,7 @@ export const pricingPl: PricingBundleTranslations = {
         'Jesteś w trybie tylko podglądu. Kup plan subskrypcji, aby łączyć brokerów, kanały Telegram i backtesty',
       upgradeTitle: 'Wymagane uaktualnienie',
       upgradeCta: 'Przejdź na Advanced',
+      addMoreAccounts: 'Add More Accounts',
       purchaseSubscriptionCta: 'Kup subskrypcję',
       manageBilling: 'Zarządzaj rozliczeniami',
       updatePaymentTitle: 'Zaktualizuj metodę płatności',

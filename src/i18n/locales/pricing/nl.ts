@@ -194,6 +194,7 @@ export const pricingNl: PricingBundleTranslations = {
         'Je zit in alleen-lezen modus. Koop een abonnement om brokers, Telegram-kanalen en backtests te koppelen',
       upgradeTitle: 'Upgrade vereist',
       upgradeCta: 'Upgrade naar Advanced',
+      addMoreAccounts: 'Add More Accounts',
       purchaseSubscriptionCta: 'Abonnement kopen',
       manageBilling: 'Facturatie beheren',
       updatePaymentTitle: 'Werk je betaalmethode bij',

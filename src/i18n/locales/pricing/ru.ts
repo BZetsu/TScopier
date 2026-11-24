@@ -194,6 +194,7 @@ export const pricingRu: PricingBundleTranslations = {
         'Вы в режиме только просмотра. Купите тариф, чтобы подключать брокеров, каналы Telegram и бэктесты',
       upgradeTitle: 'Требуется обновление',
       upgradeCta: 'Перейти на Advanced',
+      addMoreAccounts: 'Add More Accounts',
       purchaseSubscriptionCta: 'Купить подписку',
       manageBilling: 'Управлять биллингом',
       updatePaymentTitle: 'Обновите способ оплаты',

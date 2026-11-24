@@ -43,10 +43,7 @@ export function SidebarPlanCard({
         ? t.pricing.advanced.name
         : t.pricing.basic.name
 
-  const ctaLabel =
-    hasActiveSubscription && effectivePlan === 'advanced' && !isAdmin
-      ? t.nav.planManage
-      : getSubscribeCtaLabel(t, { isPastDue, effectivePlan, hasTrialExpired })
+  const ctaLabel = getSubscribeCtaLabel(t, { isPastDue, effectivePlan, hasTrialExpired })
 
   const onCta = () => {
     onNavigate?.()

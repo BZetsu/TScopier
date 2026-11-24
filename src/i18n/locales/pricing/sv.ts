@@ -194,6 +194,7 @@ export const pricingSv: PricingBundleTranslations = {
         'Du är i endast visningsläge. Köp en prenumerationsplan för att koppla brokers, Telegram-kanaler och backtester',
       upgradeTitle: 'Uppgradering krävs',
       upgradeCta: 'Uppgradera till Advanced',
+      addMoreAccounts: 'Add More Accounts',
       purchaseSubscriptionCta: 'Köp prenumeration',
       manageBilling: 'Hantera fakturering',
       updatePaymentTitle: 'Uppdatera din betalningsmetod',
