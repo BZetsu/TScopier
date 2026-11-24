@@ -91,6 +91,7 @@ export const chromeSv: AppChromeTranslations = {
     userMenu: {
       menuLabel: 'Kontomeny',
       profileSettings: 'Profil och inställningar',
+      membership: 'Membership',
       subscriptionBilling: 'Prenumeration och fakturering',
       affiliateProgram: 'Affiliateprogram',
       wallet: 'Plånbok',

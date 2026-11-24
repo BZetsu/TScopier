@@ -78,7 +78,7 @@ export async function startCardSubscriptionElements(params: {
 /** Opens Stripe Checkout (setup mode) to add a card — same pattern as Copygram. */
 export async function createSetupCheckout(accessToken: string): Promise<string> {
   const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-setup-intent`
-  const returnTo = `${window.location.origin}/billing?tab=payment_methods`
+  const returnTo = `${window.location.origin}/membership?tab=payment_methods`
   const res = await fetch(apiUrl, {
     method: 'POST',
     headers: {

@@ -92,6 +92,7 @@ export const chromePl: AppChromeTranslations = {
     userMenu: {
       menuLabel: 'Menu konta',
       profileSettings: 'Profil i ustawienia',
+      membership: 'Membership',
       subscriptionBilling: 'Subskrypcja i rozliczenia',
       affiliateProgram: 'Program partnerski',
       wallet: 'Portfel',

@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ExternalLink,
-  Minus,
-  Plus,
   Users,
   Zap,
 } from 'lucide-react'
@@ -20,14 +18,12 @@ import { PageHeader } from '../../components/layout/PageHeader'
 import { BillingTabs, type BillingTabId } from '../../components/billing/BillingTabs'
 import { PaymentMethodsPanel } from '../../components/billing/PaymentMethodsPanel'
 import { ReceiptsPanel } from '../../components/billing/ReceiptsPanel'
-import { PricingPlansSection } from '../../components/marketing/sections/PricingPlansSection'
 import {
   customerRefFromUserId,
   fetchBillingHistory,
   formatBillingMoney,
   type BillingHistoryResponse,
 } from '../../lib/billingApi'
-import { PRICING_ADVANCED_INCLUDED_ACCOUNTS } from '../../lib/pricingPlans'
 import {
   fetchMySocialCopyBilling,
   isActiveSocialCopyBilling,
@@ -73,6 +69,7 @@ function SummaryCard({
 }
 
 export function BillingPage() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const t = useT()
   const { locale } = useLocale()
@@ -83,7 +80,6 @@ export function BillingPage() {
     subscription,
     hasActiveSubscription,
     effectivePlan,
-    refresh,
     isPastDue,
     hasTrialExpired,
   } = useSubscription()
@@ -104,9 +100,6 @@ export function BillingPage() {
   const [portalLoading, setPortalLoading] = useState(false)
   const [cancelLoading, setCancelLoading] = useState(false)
   const [cancelError, setCancelError] = useState('')
-  const [extraCount, setExtraCount] = useState<number | null>(null)
-  const [savingExtras, setSavingExtras] = useState(false)
-  const [extraSaved, setExtraSaved] = useState(false)
   const [copyBilling, setCopyBilling] = useState<MySocialCopyBilling[]>([])
   const [copyBillingLoading, setCopyBillingLoading] = useState(false)
   const [copyBillingError, setCopyBillingError] = useState('')
@@ -144,7 +137,7 @@ export function BillingPage() {
       const url = await startSocialCopyBillingPortal({
         accessToken: session.access_token,
         providerUserId,
-        returnUrl: `${window.location.origin}/billing`,
+        returnUrl: `${window.location.origin}/membership`,
       })
       window.location.assign(url)
     } catch (cause) {
@@ -164,8 +157,6 @@ export function BillingPage() {
 
   const localeTag = locale === 'es' ? 'es-ES' : locale === 'fr' ? 'fr-FR' : 'en-US'
   const customerRef = user ? customerRefFromUserId(user.id) : '—'
-  const currentExtra = subscription?.extra_accounts ?? 0
-  const editingExtra = extraCount ?? currentExtra
 
   const statusLabel = subscription
     ? {
@@ -257,7 +248,7 @@ export function BillingPage() {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        returnUrl: `${window.location.origin}/billing`,
+        returnUrl: `${window.location.origin}/membership`,
         ...(flow ? { flow } : {}),
       }),
     })
@@ -299,29 +290,6 @@ export function BillingPage() {
     && Boolean(subscription?.stripe_subscription_id?.startsWith('sub_'))
     && (subscription?.status === 'active' || subscription?.status === 'trialing')
 
-  const handleSaveExtras = async () => {
-    if (!session || editingExtra === currentExtra) return
-    setSavingExtras(true)
-    setExtraSaved(false)
-    try {
-      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-extra-accounts`
-      await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ extraAccounts: editingExtra }),
-      })
-      await refresh()
-      setExtraCount(null)
-      setExtraSaved(true)
-      setTimeout(() => setExtraSaved(false), 3000)
-    } finally {
-      setSavingExtras(false)
-    }
-  }
-
   const billedValue = typeof billedDisplay === 'string' ? billedDisplay : billedDisplay.value
   const billedHint = typeof billedDisplay === 'string' ? undefined : billedDisplay.hint
 
@@ -331,11 +299,11 @@ export function BillingPage() {
         title={
           <span className="block">
             <span className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-300">
-              {bt.planPaymentsEyebrow}
+              {bt.membershipEyebrow}
             </span>
-            <span className="block">{bt.title}</span>
+            <span className="block">{bt.membershipTitle}</span>
             <span className="mt-1 block text-sm font-normal text-neutral-600 dark:text-neutral-300">
-              {bt.subtitle}
+              {bt.membershipSubtitle}
             </span>
           </span>
         }
@@ -347,18 +315,7 @@ export function BillingPage() {
                 <span className="font-semibold text-neutral-900 dark:text-neutral-100">{customerRef}</span>
               </div>
             </div>
-            <Button
-              className="gap-2"
-              onClick={() => {
-                setActiveTab('subscription')
-                window.requestAnimationFrame(() => {
-                  document.getElementById('billing-plans')?.scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'start',
-                  })
-                })
-              }}
-            >
+            <Button className="gap-2" onClick={() => navigate('/billing')}>
               <Zap className="h-4 w-4" />
               {subscribeCta}
             </Button>
@@ -553,66 +510,6 @@ export function BillingPage() {
           )}
         </Card>
 
-        {hasActiveSubscription && subscription?.plan === 'advanced' && !isAdmin ? (
-          <Card padding="lg">
-            <div className="space-y-4">
-              <div>
-                <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">
-                  {bt.extraAccounts}
-                </h3>
-                <p className="mt-0.5 text-xs text-neutral-900 dark:text-neutral-50">
-                  {interpolate(bt.extraAccountsSummary, {
-                    included: String(PRICING_ADVANCED_INCLUDED_ACCOUNTS),
-                    extra: String(editingExtra),
-                    total: String(PRICING_ADVANCED_INCLUDED_ACCOUNTS + editingExtra),
-                  })}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setExtraCount(Math.max(0, editingExtra - 1))}
-                  disabled={editingExtra === 0 || savingExtras}
-                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-neutral-200 text-neutral-900 transition-colors hover:bg-neutral-50 disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-50 dark:hover:bg-neutral-800"
-                >
-                  <Minus className="h-4 w-4" />
-                </button>
-                <input
-                  type="number"
-                  min={0}
-                  max={95}
-                  value={editingExtra}
-                  onChange={e => setExtraCount(Math.max(0, Math.min(95, Number(e.target.value) || 0)))}
-                  disabled={savingExtras}
-                  className="h-9 w-16 rounded-lg border border-neutral-200 bg-white text-center text-sm font-semibold text-neutral-900 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-50"
-                />
-                <button
-                  type="button"
-                  onClick={() => setExtraCount(Math.min(95, editingExtra + 1))}
-                  disabled={editingExtra >= 95 || savingExtras}
-                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-neutral-200 text-neutral-900 transition-colors hover:bg-neutral-50 disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-50 dark:hover:bg-neutral-800"
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
-
-                {editingExtra !== currentExtra ? (
-                  <Button size="sm" onClick={() => void handleSaveExtras()} loading={savingExtras}>
-                    {t.common.save}
-                  </Button>
-                ) : null}
-              </div>
-
-              {extraSaved ? (
-                <p className="text-xs font-medium text-green-600 dark:text-green-400">{t.settings.saved}</p>
-              ) : null}
-            </div>
-          </Card>
-        ) : null}
-
-        <div id="billing-plans" className="scroll-mt-4">
-          <PricingPlansSection variant="app" />
-        </div>
       </div>
       ) : null}
     </PageShell>

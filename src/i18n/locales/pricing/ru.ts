@@ -4,7 +4,7 @@ export const pricingRu: PricingBundleTranslations = {
   pricing: {
     title: 'Выберите тариф',
     subtitle: 'Начните копировать сигналы на свои торговые счета уже сегодня.',
-    paymentMethodsHint: 'Карты и крипто (USDC) принимаются при оплате.',
+    paymentMethodsHint: '',
     skip: 'Пропустить пока',
     monthly: 'Ежемесячно',
     annual: 'Ежегодно',
@@ -19,6 +19,7 @@ export const pricingRu: PricingBundleTranslations = {
     startTrial: 'Начните 5-дневный бесплатный пробный период',
     trialDays: '5-дневный бесплатный пробный период на Advanced',
     moneyBackGuarantee: '5-дневный бесплатный пробный период на Advanced',
+    weAccept: 'Мы принимаем',
     features: 'Возможности',
     popular: 'Самый популярный',
     basicFeatures: [
@@ -77,6 +78,9 @@ export const pricingRu: PricingBundleTranslations = {
       'Цены для объемов и команд',
     ],
     billing: {
+      membershipEyebrow: 'Membership',
+      membershipTitle: 'Membership',
+      membershipSubtitle: 'Choose a plan and manage included account capacity.',
       copyCancelsAtPeriodEnd: 'расторгается в конце периода',
       copyEntitlementNote: 'Остановка копирования не отменяет эту подписку. Вы можете возобновить копирование до её окончания.',
       tabSubscription: 'Subscription',

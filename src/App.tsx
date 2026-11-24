@@ -109,6 +109,9 @@ const WalletPage = lazy(() =>
 const BillingPage = lazy(() =>
   import('./pages/dashboard/SupportMembershipPages').then(m => ({ default: m.BillingPage })),
 )
+const MembershipPage = lazy(() =>
+  import('./pages/dashboard/SupportMembershipPages').then(m => ({ default: m.MembershipPage })),
+)
 const ContactSupportPage = lazy(() =>
   import('./pages/dashboard/SupportMembershipPages').then(m => ({ default: m.ContactSupportPage })),
 )
@@ -151,7 +154,7 @@ export default function App() {
           <Route path="/reset-password" element={<AuthLayout />} />
           <Route path="/email-unsubscribe" element={<EmailUnsubscribePage />} />
 
-          {/* Legacy app /pricing → billing (plans live on the subscription page). */}
+          {/* Legacy app /pricing → membership (plans live on the membership page). */}
           <Route path="/pricing" element={<PricingToBillingRedirect />} />
 
           {/* Public platform status — usable without login during outages. */}
@@ -239,7 +242,9 @@ export default function App() {
             <Route path="/partner-with-us" element={<LazyPage><PartnerWithUsPage /></LazyPage>} />
             <Route path="/affiliate-program" element={<LazyPage><AffiliateProgramPage /></LazyPage>} />
             <Route path="/wallet" element={<LazyPage><WalletPage /></LazyPage>} />
-            <Route path="/billing" element={<LazyPage><BillingPage /></LazyPage>} />
+            {/* Membership = status/billing; Subscription (/billing) = plans/checkout */}
+            <Route path="/membership" element={<LazyPage><BillingPage /></LazyPage>} />
+            <Route path="/billing" element={<LazyPage><MembershipPage /></LazyPage>} />
             <Route path="/subscriptions" element={<Navigate to="/billing" replace />} />
             <Route path="/performance" element={<LazyPage><PerformancePage /></LazyPage>} />
             <Route path="/portfolio" element={<LazyPage><PortfolioPage /></LazyPage>} />

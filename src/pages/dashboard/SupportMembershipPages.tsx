@@ -17,6 +17,7 @@ export { AffiliateProgramPage } from './AffiliateProgramPage'
 export { WalletPage } from './WalletPage'
 
 export { BillingPage } from './BillingPage'
+export { MembershipPage } from './MembershipPage'
 
 export function SubscriptionsPage() {
   const t = useT()

@@ -91,6 +91,7 @@ export const chromeJa: AppChromeTranslations = {
     userMenu: {
       menuLabel: 'アカウントメニュー',
       profileSettings: 'プロフィールと設定',
+      membership: 'Membership',
       subscriptionBilling: 'サブスクリプションと請求',
       affiliateProgram: 'アフィリエイトプログラム',
       wallet: 'ウォレット',

@@ -4,7 +4,7 @@ export const pricingAr: PricingBundleTranslations = {
   pricing: {
     title: 'اختر خطتك',
     subtitle: 'ابدأ نسخ الإشارات إلى حسابات التداول اليوم.',
-    paymentMethodsHint: 'البطاقات والعملات المشفرة (USDC) مقبولة عند الدفع.',
+    paymentMethodsHint: '',
     skip: 'تخطّ الآن',
     monthly: 'شهري',
     annual: 'سنوي',
@@ -19,6 +19,7 @@ export const pricingAr: PricingBundleTranslations = {
     startTrial: 'ابدأ تجربتك المجانية لمدة 5 أيام',
     trialDays: 'تجربة مجانية لمدة 5 أيام على Advanced',
     moneyBackGuarantee: 'تجربة مجانية لمدة 5 أيام على Advanced',
+    weAccept: 'نقبل',
     features: 'الميزات',
     popular: 'الأكثر شيوعًا',
     basicFeatures: [
@@ -77,6 +78,9 @@ export const pricingAr: PricingBundleTranslations = {
       'أسعار للحجم والفرق',
     ],
     billing: {
+      membershipEyebrow: 'Membership',
+      membershipTitle: 'Membership',
+      membershipSubtitle: 'Choose a plan and manage included account capacity.',
       copyCancelsAtPeriodEnd: 'يلغي عند نهاية الفترة',
       copyEntitlementNote: 'إيقاف النسخ لا يلغي هذا الاشتراك. يمكنك البدء في النسخ مرة أخرى حتى انتهاء صلاحيته.',
       tabSubscription: 'Subscription',

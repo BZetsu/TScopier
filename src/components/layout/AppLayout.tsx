@@ -174,6 +174,7 @@ export function AppLayout({ onAssistantTrigger }: AppLayoutProps) {
       {
         label: t.nav.sections.membership,
         items: [
+          { to: '/membership', label: t.nav.userMenu.membership },
           { to: '/billing', label: t.nav.userMenu.subscriptionBilling },
           { to: '/affiliate-program', label: t.nav.userMenu.affiliateProgram },
         ],
@@ -194,7 +195,13 @@ export function AppLayout({ onAssistantTrigger }: AppLayoutProps) {
   // After Stripe success, paywall may have raced to plan selection before webhook sync. Send back.
   useEffect(() => {
     if (!checkoutSyncPending) return
-    if (location.pathname !== '/pricing' && location.pathname !== '/billing') return
+    if (
+      location.pathname !== '/pricing' &&
+      location.pathname !== '/billing' &&
+      location.pathname !== '/membership'
+    ) {
+      return
+    }
     navigate(consumePostAuthRedirect() ?? '/dashboard', { replace: true })
   }, [checkoutSyncPending, location.pathname, navigate])
 

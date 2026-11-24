@@ -9,6 +9,7 @@ const NAV_ALLOWLIST = new Set([
   '/account-configuration',
   '/channels',
   '/backtest',
+  '/membership',
   '/billing',
   '/contact-support',
   '/pricing',
