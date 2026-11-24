@@ -6,15 +6,25 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
-### 2026-11-24 — Crypto subscription Checkout: stop forcing payment_method_types
+### 2026-11-24 — Crypto Basic: mode=payment manual period (not subscription Checkout)
 
-- **Context:** Stripe error “payment method `crypto` cannot be used in `subscription` mode” while Dashboard had Stablecoins enabled and Copygram’s monthly crypto Checkout worked.
-- **Plain English:** We were hard-locking Checkout to crypto only. Stripe forbids that flag on subscriptions; Copygram uses Dashboard dynamic methods instead.
-- **Root cause (technical):** `create-checkout-session` set `payment_method_types: ["crypto"]` with `mode: "subscription"`.
-- **Fix (files):** Omit `payment_method_types`; exclude `card` via `excluded_payment_method_types`; cancel URL → `/billing`.
-- **Tests/verification:** Redeploy Migration + production; retry Crypto Continue on Advanced monthly.
-- **Deploy state:** Migration + production `create-checkout-session`.
-- **Follow-ups:** If Checkout still shows non-crypto wallets, tighten exclusions; confirm renewals with a live crypto sub.
+- **Context:** Selecting Basic + Crypto still showed Stripe’s “No valid payment method types” — unrelated to trial; crypto is not usable on subscription Checkout for this Stripe account.
+- **Plain English:** Paying with crypto now buys one billing period (monthly/annual) as a one-time Stripe payment, then we turn on the plan until that period ends. Renewals are manual, matching the Billing UI copy.
+- **Root cause (technical):** `create-checkout-session` still used `mode: "subscription"` + `payment_method_types: ["crypto"]`. Stripe crypto works for `mode: "payment"` only here (stablecoin-subscriptions preview not enabled).
+- **Fix (files):** `create-checkout-session` → `mode: "payment"`, one-time USD `price_data` from membership prices, `checkout_kind=membership_crypto`; `membershipStripe.ts` helpers; `stripe-webhook` + `confirm-checkout` grant/extend `subscriptions` (`status=active`, `current_period_end`, `stripe_subscription_id=null`); webhook skips canceling active crypto periods when no Stripe sub exists.
+- **Tests/verification:** Deploy Migration; retry Basic → Crypto; Checkout should open crypto UI; after pay, entitlement active with period end.
+- **Deploy state:** Migration (then production when verified).
+- **Follow-ups:** Optional email before `current_period_end` for manual renew; prod deploy after smoke.
+
+### 2026-11-24 — Crypto Checkout aligned with Copygram + Stripe guidance
+
+- **Context:** Crypto still failed after omitting `payment_method_types`; Stripe confirmed `crypto_payments` is active and said crypto-only Checkout uses `payment_method_types: ["crypto"]` + USD; Copygram charges monthly crypto immediately.
+- **Plain English:** Crypto subscribe now charges right away (no 5-day trial on that path), checks prices are USD, opens a crypto-only Stripe Checkout when Stripe allows it, and falls back to dynamic methods if not.
+- **Root cause (technical):** Crypto path still attached Advanced `trial_period_days` and later `excluded_payment_method_types: ["card"]`, which left subscription Checkout incompatible / empty for crypto.
+- **Fix (files):** `create-checkout-session` — no trial on crypto; USD assert; try `payment_method_types: ["crypto"]` then dynamic fallback; `assertMembershipPricesUsd` in `membershipStripe.ts`.
+- **Tests/verification:** Deploy Migration + production; retry Crypto on Basic/Advanced monthly; inspect returned `sessionId` / `paymentMethodTypes` if needed.
+- **Deploy state:** Migration + production `create-checkout-session` (superseded by mode=payment fix above).
+- **Follow-ups:** Superseded — use payment-mode crypto path.
 
 ### 2026-11-24 — Production deploy: Trustpilot + billing/TV edges
 
