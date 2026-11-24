@@ -6,6 +6,15 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-24 — Basic crypto invoice +$1 buffer for NOWPayments mins
+
+- **Context:** Popular coins can’t be disabled; Basic $9.99 still fails NP mins on networks like USDT TRC20.
+- **Plain English:** Crypto checkout for Basic charges plan price + $1 (e.g. $10.99) so popular coins can complete.
+- **Fix (files):** `create-crypto-invoice` adds `$1` when `plan === "basic"`; stores `base_amount_usd` / `crypto_buffer_usd` in `crypto_invoices.raw`; EN checkout footer notes the buffer.
+- **Tests/verification:** Redeploy prod + Migration; retry Basic crypto with a popular coin.
+- **Deploy state:** Production + Migration after deploy.
+- **Follow-ups:** Frontend copy ships with next web deploy; card path unchanged at $9.99.
+
 ### 2026-11-24 — NOWPayments “amountTo is too small” on Basic $9.99
 
 - **Context:** Production crypto checkout for Basic failed with NOWPayments “amountTo is too small”.

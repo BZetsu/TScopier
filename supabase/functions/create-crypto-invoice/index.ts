@@ -103,12 +103,19 @@ Deno.serve(async (req: Request) => {
       plan,
     });
 
-    const amountUsd = await resolveMembershipAmountUsd(
+    const baseAmountUsd = await resolveMembershipAmountUsd(
       stripe,
       plan,
       billingInterval,
       extraAccounts,
     );
+    // Basic ($9.99) sits under NOWPayments mins on popular networks (e.g. USDT TRC20).
+    // Add $1 so those coins can clear without disabling them in Coins settings.
+    const CRYPTO_BASIC_BUFFER_USD = 1;
+    const amountUsd =
+      plan === "basic"
+        ? Number((baseAmountUsd + CRYPTO_BASIC_BUFFER_USD).toFixed(2))
+        : baseAmountUsd;
 
     const orderId = `np_${crypto.randomUUID().replace(/-/g, "")}`;
     const origin = req.headers.get("origin") || "http://localhost:5173";
@@ -134,7 +141,11 @@ Deno.serve(async (req: Request) => {
         extra_accounts: extraAccounts,
         amount_usd: amountUsd,
         status: "pending",
-        raw: { stripe_customer_id: customerId },
+        raw: {
+          stripe_customer_id: customerId,
+          base_amount_usd: baseAmountUsd,
+          crypto_buffer_usd: plan === "basic" ? CRYPTO_BASIC_BUFFER_USD : 0,
+        },
       })
       .select("id")
       .single();
