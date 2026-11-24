@@ -438,6 +438,7 @@ export const fr: Translations = {
       noPlanReason: 'Parcourez le tableau de bord librement ; connecter brokers, canaux et backtests nécessite un plan actif.',
       upgradeTitle: 'Mise à niveau requise',
       upgradeCta: 'Passer à Advanced',
+      addMoreAccounts: 'Ajouter des comptes',
       purchaseSubscriptionCta: 'Acheter abonnement',
       manageBilling: 'Gérer la facturation',
       updatePaymentTitle: 'Le paiement n\'a pas abouti',

@@ -2421,6 +2421,7 @@ export interface PricingTranslations {
     noPlanReason: string
     upgradeTitle: string
     upgradeCta: string
+    addMoreAccounts: string
     purchaseSubscriptionCta: string
     manageBilling: string
     updatePaymentTitle: string
