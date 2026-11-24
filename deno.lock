@@ -69,6 +69,8 @@
       "dependencies": [
         "npm:@eslint/js@^10.0.1",
         "npm:@marsidev/react-turnstile@^1.6.0",
+        "npm:@stripe/react-stripe-js@^7.1.0",
+        "npm:@stripe/stripe-js@^10.3.0",
         "npm:@supabase/supabase-js@^2.105.3",
         "npm:@tailwindcss/postcss@^4.3.3",
         "npm:@types/node@^24.12.2",

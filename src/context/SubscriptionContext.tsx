@@ -250,14 +250,21 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       setCheckoutSyncPending(true)
       clearPendingPlanSelection()
       const sessionId = params.get('session_id')
+      const cryptoInvoice = params.get('crypto_invoice')
       params.delete('checkout')
-      // Keep session_id until confirm-checkout runs (stripped below after kickoff).
+      try {
+        if (sessionId) sessionStorage.setItem('tsc_checkout_session_id', sessionId)
+        if (cryptoInvoice) sessionStorage.setItem('tsc_crypto_invoice', cryptoInvoice)
+      } catch {
+        // ignore storage failures
+      }
+      // Keep ids until confirm-checkout runs (stripped below after kickoff).
       void (async () => {
         try {
           const { data: sessionData } = await supabase.auth.getSession()
           const accessToken = sessionData.session?.access_token
           if (accessToken) {
-            await confirmCheckoutSession({ accessToken, sessionId })
+            await confirmCheckoutSession({ accessToken, sessionId, cryptoInvoice })
           }
         } catch {
           // Polling below still retries confirm + fetch.
@@ -265,6 +272,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         await fetchSubscription({ background: true })
       })()
       if (sessionId) params.delete('session_id')
+      if (cryptoInvoice) params.delete('crypto_invoice')
     }
     const qs = params.toString()
     const next = `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`
@@ -297,6 +305,12 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     if (!hasActiveSubscription) return
     writeCheckoutSyncPending(false)
     setCheckoutSyncPending(false)
+    try {
+      sessionStorage.removeItem('tsc_checkout_session_id')
+      sessionStorage.removeItem('tsc_crypto_invoice')
+    } catch {
+      // ignore
+    }
   }, [checkoutSyncPending, hasActiveSubscription])
 
   useEffect(() => {
@@ -317,7 +331,15 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
           const { data: sessionData } = await supabase.auth.getSession()
           const accessToken = sessionData.session?.access_token
           if (accessToken) {
-            await confirmCheckoutSession({ accessToken })
+            let sessionId: string | null = null
+            let cryptoInvoice: string | null = null
+            try {
+              sessionId = sessionStorage.getItem('tsc_checkout_session_id')
+              cryptoInvoice = sessionStorage.getItem('tsc_crypto_invoice')
+            } catch {
+              // ignore
+            }
+            await confirmCheckoutSession({ accessToken, sessionId, cryptoInvoice })
           }
         } catch {
           // Keep polling local row.
