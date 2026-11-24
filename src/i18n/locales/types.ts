@@ -67,6 +67,12 @@ export interface NavTranslations {
   openTradesCount: string
   highImpactNewsToday: string
   planFree: string
+  /** Sidebar plan card eyebrow, e.g. "PLAN". */
+  planCardLabel: string
+  /** "{used} of {limit} accounts used" */
+  planAccountsUsed: string
+  /** Advanced CTA on the sidebar plan card → billing. */
+  planManage: string
   settings: string
   help: string
   copierPause: {

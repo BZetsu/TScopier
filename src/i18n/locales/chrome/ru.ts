@@ -48,6 +48,9 @@ export const chromeRu: AppChromeTranslations = {
     openTradesCount: '{count} открыто',
     highImpactNewsToday: 'Новости высокой важности сегодня',
     planFree: 'Бесплатно',
+    planCardLabel: 'Тариф',
+    planAccountsUsed: '{used} из {limit} счетов используется',
+    planManage: 'Управление оплатой',
     settings: 'Настройки',
     help: 'Помощь',
     copierPause: {

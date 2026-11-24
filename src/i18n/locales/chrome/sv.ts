@@ -48,6 +48,9 @@ export const chromeSv: AppChromeTranslations = {
     openTradesCount: '{count} öppna',
     highImpactNewsToday: 'Högpåverkande nyheter idag',
     planFree: 'Gratis',
+    planCardLabel: 'Plan',
+    planAccountsUsed: '{used} av {limit} konton använda',
+    planManage: 'Hantera fakturering',
     settings: 'Inställningar',
     help: 'Hjälp',
     copierPause: {

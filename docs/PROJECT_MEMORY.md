@@ -12,8 +12,17 @@
 - **Plain English:** Choosing a plan opens an in-app checkout step. Card pays on UniCopier via Stripe Payment Element; Crypto opens a crypto-only Stripe Checkout page. Users can save cards under Billing → Payment methods. Promo codes apply on both paths.
 - **Fix (files):** Shared `_shared/membershipStripe.ts`; crypto+promo on `create-checkout-session`; new `create-subscription-elements`, `create-setup-intent`, `list-payment-methods`, `detach-payment-method` (Migration); Billing tabs + checkout UI; PricingPlansSection opens checkout step; `@stripe/stripe-js` + react-stripe-js; i18n + `docs/stripe-setup.md`.
 - **Tests/verification:** Functions deployed to Migration `supmsgcubipmmowrzoub`; `tsc -p tsconfig.app.json` clean. Set `VITE_STRIPE_PUBLISHABLE_KEY` before Card Elements works in UI.
-- **Deploy state:** Edge functions on Migration only (not production). Frontend ships with next web deploy.
-- **Follow-ups:** Deploy functions to production when ready; create Stripe Promotion Codes in Dashboard; smoke Card/Crypto/promo/add-card on Migration.
+- **Deploy state:** Edge functions on Migration `supmsgcubipmmowrzoub` and production `sxkpcovbyaficvtkpsdo` (`create-checkout-session`, `create-subscription-elements`, `create-setup-intent`, `list-payment-methods`, `detach-payment-method`). Frontend ships with next web deploy. Prod already has Stripe price ID secrets.
+- **Follow-ups:** Create Stripe Promotion Codes in Dashboard; set `VITE_STRIPE_PUBLISHABLE_KEY` on Netlify for Card Elements; smoke Card/Crypto/promo/add-card.
+
+### 2026-11-24 — Sidebar Plan / Upgrade card
+
+- **Context:** Wanted a Copygram-style plan card above the Dashboard menu.
+- **Plain English:** The sidebar now shows a Plan card (badge, account usage bar, Upgrade / Manage billing) above the main nav.
+- **Fix (files):** `src/components/layout/SidebarPlanCard.tsx`; wired in `AppLayout.tsx`; nav i18n (`planCardLabel`, `planAccountsUsed`, `planManage`).
+- **Tests/verification:** `tsc -p tsconfig.app.json` clean.
+- **Deploy state:** Local / next frontend deploy.
+- **Follow-ups:** None.
 
 ### 2026-11-24 — Migration Stripe price IDs missing (crypto checkout empty price)
 

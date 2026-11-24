@@ -48,6 +48,9 @@ export const chromePl: AppChromeTranslations = {
     openTradesCount: '{count} otwarte',
     highImpactNewsToday: 'Wiadomości wysokiego wpływu dzisiaj',
     planFree: 'Darmowy',
+    planCardLabel: 'Plan',
+    planAccountsUsed: '{used} z {limit} kont w użyciu',
+    planManage: 'Zarządzaj rozliczeniami',
     settings: 'Ustawienia',
     help: 'Pomoc',
     copierPause: {

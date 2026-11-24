@@ -75,6 +75,9 @@ export const en: Translations = {
     openTradesCount: '{count} Open',
     highImpactNewsToday: 'High impact news today',
     planFree: 'Free',
+    planCardLabel: 'Plan',
+    planAccountsUsed: '{used} of {limit} accounts used',
+    planManage: 'Manage billing',
     settings: 'Settings',
     help: 'Help',
     copierPause: {

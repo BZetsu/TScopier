@@ -48,6 +48,9 @@ export const chromeAr: AppChromeTranslations = {
     openTradesCount: '{count} مفتوحة',
     highImpactNewsToday: 'أخبار عالية التأثير اليوم',
     planFree: 'مجاني',
+    planCardLabel: 'الخطة',
+    planAccountsUsed: '{used} من {limit} حسابات مستخدمة',
+    planManage: 'إدارة الفوترة',
     settings: 'الإعدادات',
     help: 'المساعدة',
     copierPause: {
