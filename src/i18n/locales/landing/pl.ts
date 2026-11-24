@@ -807,6 +807,12 @@ export const landingPl: LandingTranslations = {
         custom: 'Niestandardowe',
       },
       {
+        feature: 'Webhooki TradingView',
+        basic: '2',
+        advanced: 'Bez ograniczeń',
+        custom: 'Niestandardowe',
+      },
+      {
         feature: 'Poziomy realizacji zysku',
         basic: '3 TP',
         advanced: 'Nieograniczona liczba TP/SL',

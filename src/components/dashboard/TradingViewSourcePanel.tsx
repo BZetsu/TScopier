@@ -7,7 +7,9 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { useConfirm } from '../../context/ConfirmDialogContext'
 import { useT } from '../../context/LocaleContext'
+import { useSubscription } from '../../context/SubscriptionContext'
 import { interpolate } from '../../i18n/interpolate'
+import { PLAN_LIMITS } from '../../lib/planLimits'
 import {
   brokersMatchingChannel,
   brokersNotMatchingChannel,
@@ -77,7 +79,15 @@ export function TradingViewSourcePanel({
   const { user } = useAuth()
   const t = useT()
   const confirm = useConfirm()
+  const {
+    canAddTradingViewWebhook,
+    limits,
+    effectivePlan,
+    openUpgrade,
+    refresh: refreshSubscription,
+  } = useSubscription()
   const copy = t.channelsPage
+  const pw = t.pricing.paywall
   const [webhooks, setWebhooks] = useState<WebhookRow[]>([])
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([])
   const [name, setName] = useState('')
@@ -125,7 +135,13 @@ export function TradingViewSourcePanel({
     const result = await action()
     setBusy(false)
     if (result.error) {
-      setError(result.error === 'webhook_limit' ? copy.tradingViewLimit : result.error)
+      setError(
+        result.error === 'webhook_limit'
+          ? interpolate(pw.tradingViewWebhookLimit, {
+              limit: String(limits.maxTradingViewWebhooks ?? PLAN_LIMITS.basic.maxTradingViewWebhooks),
+            })
+          : result.error,
+      )
       return false
     }
     await load()
@@ -133,6 +149,15 @@ export function TradingViewSourcePanel({
   }
 
   const openCreate = () => {
+    if (!canAddTradingViewWebhook()) {
+      setError(
+        interpolate(pw.tradingViewWebhookLimit, {
+          limit: String(limits.maxTradingViewWebhooks ?? PLAN_LIMITS.basic.maxTradingViewWebhooks),
+        }),
+      )
+      openUpgrade('advanced')
+      return
+    }
     setName('')
     setError(null)
     setCreateOpen(true)
@@ -145,17 +170,36 @@ export function TradingViewSourcePanel({
       setError(copy.tradingViewNameRequired)
       return
     }
+    if (!canAddTradingViewWebhook()) {
+      setError(
+        interpolate(pw.tradingViewWebhookLimit, {
+          limit: String(limits.maxTradingViewWebhooks ?? PLAN_LIMITS.basic.maxTradingViewWebhooks),
+        }),
+      )
+      openUpgrade('advanced')
+      return
+    }
     setBusy(true)
     setError(null)
-    const result = await createTradingViewWebhook(supabase, user.id, label)
+    const result = await createTradingViewWebhook(supabase, user.id, label, {
+      plan: effectivePlan,
+    })
     setBusy(false)
     if (result.error || !result.id) {
-      setError(result.error === 'webhook_limit' ? copy.tradingViewLimit : result.error ?? copy.tradingViewNameRequired)
+      setError(
+        result.error === 'webhook_limit'
+          ? interpolate(pw.tradingViewWebhookLimit, {
+              limit: String(limits.maxTradingViewWebhooks ?? PLAN_LIMITS.basic.maxTradingViewWebhooks),
+            })
+          : result.error ?? copy.tradingViewNameRequired,
+      )
+      if (result.error === 'webhook_limit') openUpgrade('advanced')
       return
     }
     setName('')
     setCreateOpen(false)
     await load()
+    void refreshSubscription()
     setConfigureId(result.id)
   }
 
@@ -251,7 +295,12 @@ export function TradingViewSourcePanel({
           <div className="flex items-center justify-between gap-3 border-b border-neutral-100 px-4 py-2.5 dark:border-neutral-800">
             <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">{copy.tradingViewListTitle}</p>
             <div className="flex items-center gap-3">
-              <Button size="sm" onClick={openCreate} aria-label={copy.tradingViewCreate}>
+              <Button
+                size="sm"
+                onClick={openCreate}
+                aria-label={copy.tradingViewCreate}
+                disabled={busy}
+              >
                 <Plus className="h-3.5 w-3.5" />
                 {t.common.add}
               </Button>

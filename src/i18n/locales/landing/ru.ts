@@ -807,6 +807,12 @@ export const landingRu: LandingTranslations = {
         custom: 'Обычай',
       },
       {
+        feature: 'Вебхуки TradingView',
+        basic: '2',
+        advanced: 'Безлимитный',
+        custom: 'Обычай',
+      },
+      {
         feature: 'Уровни тейк-профита',
         basic: '3 ТП',
         advanced: 'Неограниченное количество TP/SL',

@@ -6,6 +6,78 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-24 — In-app Trustpilot rating modal
+
+- **Context:** Ask users in-product how they’d rate UniCopier, with a path to Trustpilot.
+- **Plain English:** On the dashboard, a modal asks “How would you rate your experience?” with stars, **Rate it on Trustpilot** (never show again), and **Remind me later** / close (show again after 7 days or on the next login session).
+- **Fix (files):** `TrustpilotRatingModal`, `trustpilotPromptStorage`, i18n `trustpilotPrompt`, mounted on `DashboardPage`; shared evaluate URL.
+- **Tests/verification:** `trustpilotPromptStorage.test.ts`; `tsc` clean.
+- **Deploy state:** Local / next frontend deploy.
+- **Follow-ups:** None.
+
+### 2026-11-24 — Trustpilot feedback campaign email
+
+- **Context:** Ask users to rate UniCopier on Trustpilot after they’ve had ~5 days with the product.
+- **Plain English:** Once ever, eligible users get “What do you think about UniCopier?” with a CTA to https://www.trustpilot.com/evaluate/unicopier.com. Sent after trial end, or 5 days after a Basic purchase, or 5 days after signup (whichever comes first). Respects unsubscribes and the 24h cross-campaign cap.
+- **Fix (files):** Migration `get_trustpilot_feedback_recipients` + daily-cap updates; `buildTrustpilotFeedbackEmail` in `subscriptionCampaignEmails.ts`; wired into `send-subscription-campaigns` / `send-subscription-email`.
+- **Tests/verification:** RPC present on Migration; campaign functions redeployed there.
+- **Deploy state:** Migration `supmsgcubipmmowrzoub` (SQL + edge). Promote to production when ready; existing cron for `send-subscription-campaigns` picks it up.
+- **Follow-ups:** Deploy same migration + functions to production.
+
+### 2026-11-24 — TradingView webhook limits by plan
+
+- **Context:** Basic vs Advanced needed clear TradingView webhook caps.
+- **Plain English:** Basic can create 2 TradingView webhooks; Advanced has unlimited. Trying to add more on Basic shows an upgrade prompt.
+- **Fix (files):** `maxTradingViewWebhooks` in `planLimits` (src + edge shared); create path in `tradingViewWebhook.ts` + `tradingview-webhook` edge; `canAddTradingViewWebhook` in SubscriptionContext; Pricing/comparison copy.
+- **Tests/verification:** `planLimits.test.ts` (webhook limits); `tsc` clean.
+- **Deploy state:** Edge `tradingview-webhook` on Migration `supmsgcubipmmowrzoub`; frontend local / next deploy.
+- **Follow-ups:** Promote edge to production with the web release.
+
+### 2026-11-24 — Add card opens Stripe Checkout (setup mode)
+
+- **Context:** Copygram “Add card” goes to hosted `checkout.stripe.com` (setup), not an in-app Elements form.
+- **Plain English:** Billing → Payment methods → Add card now redirects to Stripe’s hosted page to save a card (Card + wallets when eligible), then returns to the payment methods tab.
+- **Fix (files):** `create-setup-intent` creates Checkout `mode: setup` and returns `url`; `PaymentMethodsPanel` redirects; `createSetupCheckout` in `planCheckout.ts`; `docs/stripe-setup.md`.
+- **Tests/verification:** Function deploy Migration; click Add card → hosted Checkout.
+- **Deploy state:** Migration `supmsgcubipmmowrzoub` (edge); frontend local / next deploy.
+- **Follow-ups:** Deploy same function to production when promoting.
+
+### 2026-11-24 — Authenticated plan picker lives on Billing
+
+- **Context:** Logged-in “Choose your plan” was a separate `/pricing` page outside Subscription & billing.
+- **Plain English:** Plan selection now sits on the Billing page. App `/pricing` redirects to `/billing`; upgrade CTAs and post-auth checkout resume there too. Marketing site `/pricing` is unchanged.
+- **Fix (files):** `BillingPage` embeds `PricingPlansSection`; `PricingToBillingRedirect` in `App.tsx`; `openPricingPage` / post-auth / reminder modal → `/billing`; assistant `/pricing` → `/billing`; removed unused `AppPricingPage`.
+- **Tests/verification:** `tsc -p tsconfig.app.json` clean; pendingPlan / postAuth / subscriptionNav / assistantActions tests pass.
+- **Deploy state:** Local / next frontend deploy.
+- **Follow-ups:** None.
+
+### 2026-11-24 — Billing redesign: Card Elements + Crypto Checkout + promo
+
+- **Context:** Copygram-style subscribe flow — plan → Card vs Crypto, promo codes, add card on-platform.
+- **Plain English:** Choosing a plan opens an in-app checkout step. Card pays on UniCopier via Stripe Payment Element; Crypto opens a crypto-only Stripe Checkout page. Users can save cards under Billing → Payment methods. Promo codes apply on both paths.
+- **Fix (files):** Shared `_shared/membershipStripe.ts`; crypto+promo on `create-checkout-session`; new `create-subscription-elements`, `create-setup-intent`, `list-payment-methods`, `detach-payment-method` (Migration); Billing tabs + checkout UI; PricingPlansSection opens checkout step; `@stripe/stripe-js` + react-stripe-js; i18n + `docs/stripe-setup.md`.
+- **Tests/verification:** Functions deployed to Migration `supmsgcubipmmowrzoub`; `tsc -p tsconfig.app.json` clean. Set `VITE_STRIPE_PUBLISHABLE_KEY` before Card Elements works in UI.
+- **Deploy state:** Edge functions on Migration `supmsgcubipmmowrzoub` and production `sxkpcovbyaficvtkpsdo` (`create-checkout-session`, `create-subscription-elements`, `create-setup-intent`, `list-payment-methods`, `detach-payment-method`). Frontend ships with next web deploy. Prod already has Stripe price ID secrets.
+- **Follow-ups:** Create Stripe Promotion Codes in Dashboard; set `VITE_STRIPE_PUBLISHABLE_KEY` on Netlify for Card Elements; smoke Card/Crypto/promo/add-card.
+
+### 2026-11-24 — Sidebar Plan / Upgrade card
+
+- **Context:** Wanted a Copygram-style plan card above the Dashboard menu.
+- **Plain English:** The sidebar now shows a Plan card (badge, account usage bar, Upgrade / Manage billing) above the main nav.
+- **Fix (files):** `src/components/layout/SidebarPlanCard.tsx`; wired in `AppLayout.tsx`; nav i18n (`planCardLabel`, `planAccountsUsed`, `planManage`).
+- **Tests/verification:** `tsc -p tsconfig.app.json` clean.
+- **Deploy state:** Local / next frontend deploy.
+- **Follow-ups:** None.
+
+### 2026-11-24 — Migration Stripe price IDs missing (crypto checkout empty price)
+
+- **Context:** Localhost crypto checkout against Migration failed: Stripe `line_items[0][price]` empty string.
+- **Plain English:** The Migration Supabase project had a Stripe secret key but no Basic/Advanced price ID secrets, so Checkout was created with blank prices.
+- **Fix (files):** Set `STRIPE_*_PRICE_ID` secrets on `supmsgcubipmmowrzoub` from that Stripe account’s active UniCopier prices; `requireMembershipPriceId` validation in `_shared/membershipStripe.ts`; redeployed checkout + elements functions.
+- **Tests/verification:** Secrets listed on Migration; retry Crypto Continue on localhost.
+- **Deploy state:** Migration secrets + functions only.
+- **Follow-ups:** None.
+
 ### 2026-11-24 — Fix Netlify build: `process` types in featureFlags
 
 - **Context:** Netlify `npm run build` failed with TS2591 on `src/lib/featureFlags.ts` (`Cannot find name 'process'`).

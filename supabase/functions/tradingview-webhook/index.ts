@@ -1,6 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2"
 import { parseTradingViewAlert } from "../_shared/tradingViewAlert.ts"
+import {
+  effectivePlan,
+  maxTradingViewWebhooks,
+  type SubscriptionPlan,
+} from "../_shared/planLimits.ts"
 import { pickTradeWorkerUrl } from "../_shared/workerShard.ts"
 
 const corsHeaders = {
@@ -9,7 +14,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 }
 
-const MAX_WEBHOOKS_PER_USER = 20
 const RATE_LIMIT_PER_MINUTE = 60
 
 type WebhookRow = {
@@ -73,7 +77,21 @@ async function createWebhook(supabase: SupabaseClient, userId: string, name: str
     .from("tradingview_webhooks")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
-  if ((count ?? 0) >= MAX_WEBHOOKS_PER_USER) {
+
+  const { data: sub } = await supabase
+    .from("subscriptions")
+    .select("plan, status, trial_ends_at")
+    .eq("user_id", userId)
+    .maybeSingle()
+  const plan = effectivePlan(
+    sub?.plan === "basic" || sub?.plan === "advanced"
+      ? (sub.plan as SubscriptionPlan)
+      : null,
+    sub?.status,
+    sub?.trial_ends_at,
+  )
+  const limit = maxTradingViewWebhooks(plan)
+  if (limit != null && (count ?? 0) >= limit) {
     return json(400, { error: "webhook_limit" })
   }
 

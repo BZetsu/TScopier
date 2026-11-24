@@ -30,6 +30,8 @@
   },
   "dependencies": {
     "@marsidev/react-turnstile": "^1.6.0",
+    "@stripe/react-stripe-js": "^7.1.0",
+    "@stripe/stripe-js": "^10.3.0",
     "@supabase/supabase-js": "^2.105.3",
     "clsx": "^2.1.1",
     "framer-motion": "^14.3.0",

@@ -12,6 +12,7 @@ import { getSubscribeCtaLabel } from '../../lib/subscriptionCta'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { HelpSidebarNav } from './HelpSidebarNav'
+import { SidebarPlanCard } from './SidebarPlanCard'
 import { NotificationBell } from './NotificationBell'
 import { CopierPauseToggle } from './CopierPauseToggle'
 import { UserMenuDropdown } from './UserMenuDropdown'
@@ -190,10 +191,10 @@ export function AppLayout({ onAssistantTrigger }: AppLayoutProps) {
 
   // Subscription reminder modal on dashboard handles the nudge. No forced redirect.
 
-  // After Stripe success, paywall may have raced to /pricing before webhook sync. Send back.
+  // After Stripe success, paywall may have raced to plan selection before webhook sync. Send back.
   useEffect(() => {
     if (!checkoutSyncPending) return
-    if (location.pathname !== '/pricing') return
+    if (location.pathname !== '/pricing' && location.pathname !== '/billing') return
     navigate(consumePostAuthRedirect() ?? '/dashboard', { replace: true })
   }, [checkoutSyncPending, location.pathname, navigate])
 
@@ -622,6 +623,12 @@ export function AppLayout({ onAssistantTrigger }: AppLayoutProps) {
           </div>
 
           <nav className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-2.5 py-2">
+            <div className={clsx('pt-1', !sidebarExpanded && 'flex justify-center')}>
+              <SidebarPlanCard
+                collapsed={!sidebarExpanded}
+                onNavigate={() => setMobileNavOpen(false)}
+              />
+            </div>
             {renderNav({
               collapsed: !sidebarExpanded,
               onNavigate: () => setMobileNavOpen(false),

@@ -46,6 +46,8 @@ export const supportWidgetJa: SupportWidgetTranslations = {
   removeImage: '画像を削除',
   send: '送信',
   conversationResolved: 'この会話は解決済みです。ホームから新しい会話を始めてください。',
+  rateOnTrustpilot: 'Trustpilotで評価する',
+  rateOnTrustpilotHint: 'チャットありがとうございました。レビューをいただけると嬉しいです。',
   loading: '読み込み中…',
   aiName: 'UniCopier AI',
   supportName: 'サポート',

@@ -46,7 +46,7 @@ describe('pendingPlanSelection', () => {
       '/signup?plan=basic&interval=monthly&ref=ABC',
     )
     stashPendingPlanSelection({ plan: 'advanced', interval: 'monthly', extraAccounts: 0 })
-    expect(postAuthAppPath()).toMatch(/^\/pricing\?startCheckout=1/)
+    expect(postAuthAppPath()).toMatch(/^\/billing\?startCheckout=1/)
     clearPendingPlanSelection()
     expect(postAuthAppPath()).toMatch(/^\/dashboard/)
   })

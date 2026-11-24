@@ -20,6 +20,7 @@ export const PLAN_LIMITS = {
   basic: {
     maxBrokerAccounts: 1,
     maxTelegramChannels: 5,
+    maxTradingViewWebhooks: 2,
     maxBacktestsPerMonth: 5,
     maxTpRows: 3,
     allowRangeTrading: false,
@@ -28,6 +29,7 @@ export const PLAN_LIMITS = {
     maxBrokerAccountsBase: 5,
     maxBrokerAccountsExtra: 95,
     maxTelegramChannels: null as number | null,
+    maxTradingViewWebhooks: null as number | null,
     maxBacktestsPerMonth: null as number | null,
     maxTpRows: null as number | null,
     allowRangeTrading: true,
@@ -77,6 +79,13 @@ export function maxBrokerAccounts(
 export function maxTelegramChannels(plan: SubscriptionPlan | null | undefined): number | null {
   if (plan === "advanced") return null;
   return PLAN_LIMITS.basic.maxTelegramChannels;
+}
+
+/** Basic: 2 webhooks. Advanced: unlimited (`null`). Inactive plan: 0. */
+export function maxTradingViewWebhooks(plan: SubscriptionPlan | null | undefined): number | null {
+  if (plan === "advanced") return null;
+  if (plan === "basic") return PLAN_LIMITS.basic.maxTradingViewWebhooks;
+  return 0;
 }
 
 export function maxBacktestsPerMonth(plan: SubscriptionPlan | null | undefined): number | null {

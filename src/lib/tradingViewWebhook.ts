@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { disconnectChannelFromBroker } from './brokerChannelLink'
 import {
+  effectivePlan,
+  maxTradingViewWebhooks,
+  type SubscriptionPlan,
+} from './planLimits'
+import {
   normalizeTradingViewAlertConfig,
   type TradingViewAlertConfig,
 } from './tradingViewAlertTemplate'
@@ -8,7 +13,6 @@ import type { BrokerAccount } from '../types/database'
 
 export type { TradingViewAlertConfig }
 
-const MAX_WEBHOOKS_PER_USER = 20
 const WEBHOOKS_CHANGED = 'tradingview-webhooks-changed'
 
 function notifyTradingViewWebhooksChanged(): void {
@@ -39,13 +43,29 @@ export async function createTradingViewWebhook(
   supabase: SupabaseClient,
   userId: string,
   name: string,
+  opts?: { plan?: SubscriptionPlan | null },
 ): Promise<{ error: string | null; id: string | null }> {
   const { count, error: countError } = await supabase
     .from('tradingview_webhooks')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', userId)
   if (countError) return { error: countError.message, id: null }
-  if ((count ?? 0) >= MAX_WEBHOOKS_PER_USER) return { error: 'webhook_limit', id: null }
+
+  let plan: SubscriptionPlan | null | undefined = opts?.plan
+  if (plan === undefined) {
+    const { data: sub } = await supabase
+      .from('subscriptions')
+      .select('plan, status, trial_ends_at')
+      .eq('user_id', userId)
+      .maybeSingle()
+    plan = effectivePlan(
+      sub?.plan === 'basic' || sub?.plan === 'advanced' ? sub.plan : null,
+      sub?.status,
+      sub?.trial_ends_at,
+    )
+  }
+  const limit = maxTradingViewWebhooks(plan)
+  if (limit != null && (count ?? 0) >= limit) return { error: 'webhook_limit', id: null }
 
   const label = name.trim().slice(0, 80) || 'TradingView'
   const channelKey = `tv:${crypto.randomUUID()}`

@@ -800,6 +800,12 @@ export const landingJa: LandingTranslations = {
         custom: 'Custom',
       },
       {
+        feature: 'TradingView Webhook',
+        basic: '2',
+        advanced: '無制限',
+        custom: 'Custom',
+      },
+      {
         feature: 'Take-profitレベル',
         basic: 'TP 3件',
         advanced: 'TP/SL 無制限',
