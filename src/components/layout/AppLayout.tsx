@@ -191,10 +191,10 @@ export function AppLayout({ onAssistantTrigger }: AppLayoutProps) {
 
   // Subscription reminder modal on dashboard handles the nudge. No forced redirect.
 
-  // After Stripe success, paywall may have raced to /pricing before webhook sync. Send back.
+  // After Stripe success, paywall may have raced to plan selection before webhook sync. Send back.
   useEffect(() => {
     if (!checkoutSyncPending) return
-    if (location.pathname !== '/pricing') return
+    if (location.pathname !== '/pricing' && location.pathname !== '/billing') return
     navigate(consumePostAuthRedirect() ?? '/dashboard', { replace: true })
   }, [checkoutSyncPending, location.pathname, navigate])
 

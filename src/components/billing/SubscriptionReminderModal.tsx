@@ -68,15 +68,15 @@ export function SubscriptionReminderModal() {
   const handlePrimary = () => {
     close()
     if (neverTrialed) {
-      navigate('/pricing?startCheckout=1')
+      navigate('/billing?startCheckout=1')
     } else {
-      navigate('/pricing')
+      navigate('/billing')
     }
   }
 
   const handleViewPricing = () => {
     close()
-    navigate('/pricing')
+    navigate('/billing')
   }
 
   const modal = (

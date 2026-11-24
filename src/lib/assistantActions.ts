@@ -22,6 +22,7 @@ const NAV_ALLOWLIST = new Set([
 /** Legacy assistant paths → real routes (avoid /:referralCode catch-all → signup). */
 function normalizeNavPath(path: string): string {
   if (path === '/account-config' || path === '/account-configuration') return '/brokers'
+  if (path === '/pricing') return '/billing'
   return path
 }
 

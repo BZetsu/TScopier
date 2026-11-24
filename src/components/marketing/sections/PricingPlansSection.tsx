@@ -203,7 +203,7 @@ export function PricingPlansSection({ variant = 'marketing' }: PricingPlansSecti
           accessToken={session.access_token}
           copy={checkoutCopyFromT(t)}
           successUrl={appAbsoluteUrl('/dashboard?checkout=success')}
-          cancelUrl={`${window.location.origin}/pricing`}
+          cancelUrl={`${window.location.origin}/billing`}
           onBack={() => {
             setCheckoutSelection(null)
             setCheckoutError('')

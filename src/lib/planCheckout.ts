@@ -25,7 +25,7 @@ export async function startPlanCheckout(params: {
       paymentMethod: params.paymentMethod ?? 'crypto',
       promotionCode: params.promotionCode?.trim() || undefined,
       successUrl: params.successUrl ?? `${window.location.origin}/dashboard?checkout=success`,
-      cancelUrl: params.cancelUrl ?? `${window.location.origin}/pricing`,
+      cancelUrl: params.cancelUrl ?? `${window.location.origin}/billing`,
     }),
   })
   const data = (await res.json()) as { url?: string; error?: string }

@@ -136,8 +136,13 @@ function monthStartUtcIso(): string {
   return monthStart.toISOString()
 }
 
-function scrollToPricingTop() {
+function scrollToBillingPlans() {
   window.requestAnimationFrame(() => {
+    const el = document.getElementById('billing-plans')
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' })
   })
 }
@@ -330,10 +335,11 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     }
   }, [fetchSubscription, userId, checkoutSyncPending])
 
-  // If paywall raced to /pricing before webhook sync, bounce back to dashboard.
+  // If paywall raced to plan selection before webhook sync, bounce back to dashboard.
   useEffect(() => {
     if (!checkoutSyncPending) return
-    if (window.location.pathname !== '/pricing') return
+    const path = window.location.pathname
+    if (path !== '/pricing' && path !== '/billing') return
     navigate(consumePostAuthRedirect() ?? '/dashboard', { replace: true })
   }, [checkoutSyncPending, navigate])
 
@@ -380,11 +386,13 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   ])
 
   const openPricingPage = useCallback(() => {
-    if (window.location.pathname === '/pricing') {
-      scrollToPricingTop()
+    if (window.location.pathname === '/billing') {
+      scrollToBillingPlans()
       return
     }
-    navigate('/pricing')
+    navigate('/billing')
+    // Scroll after the billing route mounts.
+    window.setTimeout(scrollToBillingPlans, 80)
   }, [navigate])
 
   const isPastDue = !isAdmin && subscription?.status === 'past_due'

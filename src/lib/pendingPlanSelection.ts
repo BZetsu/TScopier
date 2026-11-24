@@ -77,12 +77,12 @@ export function signupUrlWithPlan(selection: PendingPlanSelection, ref?: string 
   return `/signup?${params.toString()}`
 }
 
-/** After auth: pending plan → pricing checkout; otherwise dashboard (paywall redirects unpaid). */
+/** After auth: pending plan → billing checkout; otherwise dashboard (paywall redirects unpaid). */
 export function postAuthAppPath(opts?: { startCheckout?: boolean }): string {
   const pending = loadPendingPlanSelection()
   const wantsCheckout = Boolean(pending || opts?.startCheckout)
   // A pending plan keeps priority; otherwise return the visitor to where they came from (e.g. a provider page).
-  let path = wantsCheckout ? '/pricing?startCheckout=1' : peekPostAuthRedirect() ?? '/dashboard'
+  let path = wantsCheckout ? '/billing?startCheckout=1' : peekPostAuthRedirect() ?? '/dashboard'
   // Local dual-shell: keep the app mount even when VITE_DEV_SITE=marketing.
   if (typeof window !== 'undefined') {
     const host = window.location.hostname

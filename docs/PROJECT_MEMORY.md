@@ -6,6 +6,15 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-24 — Authenticated plan picker lives on Billing
+
+- **Context:** Logged-in “Choose your plan” was a separate `/pricing` page outside Subscription & billing.
+- **Plain English:** Plan selection now sits on the Billing page. App `/pricing` redirects to `/billing`; upgrade CTAs and post-auth checkout resume there too. Marketing site `/pricing` is unchanged.
+- **Fix (files):** `BillingPage` embeds `PricingPlansSection`; `PricingToBillingRedirect` in `App.tsx`; `openPricingPage` / post-auth / reminder modal → `/billing`; assistant `/pricing` → `/billing`; removed unused `AppPricingPage`.
+- **Tests/verification:** `tsc -p tsconfig.app.json` clean; pendingPlan / postAuth / subscriptionNav / assistantActions tests pass.
+- **Deploy state:** Local / next frontend deploy.
+- **Follow-ups:** None.
+
 ### 2026-11-24 — Billing redesign: Card Elements + Crypto Checkout + promo
 
 - **Context:** Copygram-style subscribe flow — plan → Card vs Crypto, promo codes, add card on-platform.

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import {
-  CreditCard,
   ExternalLink,
   Minus,
   Plus,
@@ -21,6 +20,7 @@ import { PageHeader } from '../../components/layout/PageHeader'
 import { BillingTabs, type BillingTabId } from '../../components/billing/BillingTabs'
 import { PaymentMethodsPanel } from '../../components/billing/PaymentMethodsPanel'
 import { ReceiptsPanel } from '../../components/billing/ReceiptsPanel'
+import { PricingPlansSection } from '../../components/marketing/sections/PricingPlansSection'
 import {
   customerRefFromUserId,
   fetchBillingHistory,
@@ -73,7 +73,6 @@ function SummaryCard({
 }
 
 export function BillingPage() {
-  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const t = useT()
   const { locale } = useLocale()
@@ -84,7 +83,6 @@ export function BillingPage() {
     subscription,
     hasActiveSubscription,
     effectivePlan,
-    loading: subscriptionLoading,
     refresh,
     isPastDue,
     hasTrialExpired,
@@ -349,7 +347,18 @@ export function BillingPage() {
                 <span className="font-semibold text-neutral-900 dark:text-neutral-100">{customerRef}</span>
               </div>
             </div>
-            <Button className="gap-2" onClick={() => navigate('/pricing')}>
+            <Button
+              className="gap-2"
+              onClick={() => {
+                setActiveTab('subscription')
+                window.requestAnimationFrame(() => {
+                  document.getElementById('billing-plans')?.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'start',
+                  })
+                })
+              }}
+            >
               <Zap className="h-4 w-4" />
               {subscribeCta}
             </Button>
@@ -601,33 +610,9 @@ export function BillingPage() {
           </Card>
         ) : null}
 
-        {!hasActiveSubscription && !subscriptionLoading ? (
-          <Card padding="lg">
-            <div className="flex flex-col items-center py-6 text-center">
-              <CreditCard className="h-10 w-10 text-neutral-900 dark:text-neutral-50" />
-              <p className="mt-4 text-sm text-neutral-900 dark:text-neutral-50">{bt.noPlan}</p>
-              <Button className="mt-4" onClick={() => navigate('/pricing')}>
-                {bt.choosePlan}
-              </Button>
-            </div>
-          </Card>
-        ) : (
-          <Card padding="lg">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
-                  {bt.subscriptionPlans}
-                </h2>
-                <p className="mt-1 text-sm text-neutral-900 dark:text-neutral-50">
-                  {bt.subscriptionPlansIntro}
-                </p>
-              </div>
-              <Button variant="secondary" onClick={() => navigate('/pricing')}>
-                {bt.choosePlan}
-              </Button>
-            </div>
-          </Card>
-        )}
+        <div id="billing-plans" className="scroll-mt-4">
+          <PricingPlansSection variant="app" />
+        </div>
       </div>
       ) : null}
     </PageShell>
