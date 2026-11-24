@@ -119,6 +119,8 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 
 **NOWPayments crypto:** missing `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET`, IPN URL not reachable, or signature mismatch (`x-nowpayments-sig`). Check `crypto_invoices` row status and edge logs.
 
+**“amountTo is too small”:** NOWPayments rejects the selected coin/network when the fiat amount is below that network’s minimum (USDT TRC20 often ~$9–13). **Basic crypto invoices add +$1** (e.g. $10.99) so popular coins can clear; card stays at $9.99. Invoices use `is_fixed_rate: false`.
+
 ## Paywall (plan limits)
 
 | Feature | Basic | Advanced |

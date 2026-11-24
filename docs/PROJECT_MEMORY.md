@@ -6,6 +6,34 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-24 — Basic crypto invoice +$1 buffer for NOWPayments mins
+
+- **Context:** Popular coins can’t be disabled; Basic $9.99 still fails NP mins on networks like USDT TRC20.
+- **Plain English:** Crypto checkout for Basic charges plan price + $1 (e.g. $10.99) so popular coins can complete.
+- **Fix (files):** `create-crypto-invoice` adds `$1` when `plan === "basic"`; stores `base_amount_usd` / `crypto_buffer_usd` in `crypto_invoices.raw`; EN checkout footer notes the buffer.
+- **Tests/verification:** Redeploy prod + Migration; retry Basic crypto with a popular coin.
+- **Deploy state:** Production + Migration after deploy.
+- **Follow-ups:** Frontend copy ships with next web deploy; card path unchanged at $9.99.
+
+### 2026-11-24 — NOWPayments “amountTo is too small” on Basic $9.99
+
+- **Context:** Production crypto checkout for Basic failed with NOWPayments “amountTo is too small”.
+- **Plain English:** Some crypto networks need more than $9.99 (especially USDT on Tron). Customers should pay with USDC/USDT on Polygon, Solana, or BSC.
+- **Root cause (technical):** Hosted invoice lets the customer pick any merchant coin; network minimums + prior `is_fixed_rate: true` raise the floor above Basic.
+- **Fix (files):** `nowpayments.ts` — `is_fixed_rate: false`; EN checkout copy + `docs/stripe-setup.md` guidance; redeploy `create-crypto-invoice`.
+- **Tests/verification:** Redeploy prod (+ Migration); retry Basic with USDC on Polygon/Solana/BSC.
+- **Deploy state:** Production + Migration after deploy.
+- **Follow-ups:** Optionally disable high-min currencies in NOWPayments merchant coins settings.
+
+### 2026-11-24 — NOWPayments crypto edges + schema on production
+
+- **Context:** User asked to deploy NOWPayments functions to production after Migration work.
+- **Plain English:** Production can now create crypto invoices and receive NOWPayments webhooks; the `crypto_invoices` table is live on prod.
+- **Fix (files):** Deployed `create-crypto-invoice`, `nowpayments-webhook`, `confirm-checkout`, `create-checkout-session` → `sxkpcovbyaficvtkpsdo`; applied `20261124131425_crypto_invoices_nowpayments`. CLI relinked to Migration.
+- **Tests/verification:** `sso.tscopier.ai/.../nowpayments-webhook` responds (401 invalid signature without body/sig); `create-crypto-invoice` 401 without JWT; `crypto_invoices` present in prod table stats.
+- **Deploy state:** Production + Migration. Frontend must call new edges (next web deploy if not already).
+- **Follow-ups:** Set/confirm `NOWPAYMENTS_API_KEY` + `NOWPAYMENTS_IPN_SECRET` on prod; dashboard IPN → `https://sso.tscopier.ai/functions/v1/nowpayments-webhook`.
+
 ### 2026-11-24 — NOWPayments replaces Stripe for crypto membership
 
 - **Context:** Stripe crypto Checkout kept failing (“No valid payment method types”); user created a NOWPayments account for crypto period buys.
@@ -13,8 +41,8 @@
 - **Root cause (technical):** Stripe account cannot reliably offer crypto on Checkout; product already modeled manual renew.
 - **Fix (files):** Migration `crypto_invoices`; edges `create-crypto-invoice`, `nowpayments-webhook`; shared `nowpayments.ts` + `resolveMembershipAmountUsd`; `create-checkout-session` returns 410 for crypto; `confirm-checkout` + `planCheckout` / `SubscriptionContext` use `crypto_invoice` order id; amounts still sourced from Stripe price IDs.
 - **Tests/verification:** Migration table applied; deploy edges + set `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET`; smoke Basic crypto invoice → IPN → active entitlement.
-- **Deploy state:** Migration (`supmsgcubipmmowrzoub`). Production after smoke.
-- **Follow-ups:** Point NOWPayments dashboard IPN to `…/functions/v1/nowpayments-webhook`; optional renew reminder email.
+- **Deploy state:** Migration + production (see entry above).
+- **Follow-ups:** Confirm NOWPayments secrets on both projects; IPN URL for prod = `sso.tscopier.ai`.
 
 ### 2026-11-24 — Crypto Basic: mode=payment manual period (not subscription Checkout)
 
