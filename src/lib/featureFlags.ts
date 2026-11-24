@@ -44,6 +44,13 @@ export function resolveBuildFlags(env: {
   }
 }
 
+/** Read process.env without requiring Node/`@types/node` (browser Vite tsconfig). */
+function readProcessEnv(key: string): string | undefined {
+  const proc = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+  const value = proc?.env?.[key]
+  return typeof value === 'string' ? value : undefined
+}
+
 /** Read Vite or Expo env without crashing when `import.meta.env` is undefined (Metro/Hermes). */
 function readBuildEnv(viteKey: string): string | undefined {
   try {
@@ -52,12 +59,10 @@ function readBuildEnv(viteKey: string): string | undefined {
   } catch {
     // import.meta unsupported or env missing
   }
-  if (typeof process !== 'undefined' && process.env) {
-    const expoKey = viteKey.replace(/^VITE_/, 'EXPO_PUBLIC_')
-    const fromProcess = process.env[viteKey] ?? process.env[expoKey]
-    if (typeof fromProcess === 'string') return fromProcess
-  }
-  return undefined
+  const fromProcess = readProcessEnv(viteKey)
+  if (fromProcess !== undefined) return fromProcess
+  const expoKey = viteKey.replace(/^VITE_/, 'EXPO_PUBLIC_')
+  return readProcessEnv(expoKey)
 }
 
 /** Flags for the current build. Unset variables mean the feature is on. */
