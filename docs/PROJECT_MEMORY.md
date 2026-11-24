@@ -6,6 +6,16 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-24 — Fix Netlify build: `process` types in featureFlags
+
+- **Context:** Netlify `npm run build` failed with TS2591 on `src/lib/featureFlags.ts` (`Cannot find name 'process'`).
+- **Plain English:** The web TypeScript config is browser/Vite-only (no Node types). Reading `process.env` for Expo broke the production build.
+- **Root cause (technical):** Direct `process` references under `tsconfig.app.json` (`types: ["vite/client"]` only).
+- **Fix (files):** `src/lib/featureFlags.ts` — read env via `globalThis.process` (same pattern as `supabase.ts`); synced `apps/mobile/packages/web-lib/lib/featureFlags.ts`.
+- **Tests/verification:** `npx tsc -p tsconfig.app.json --noEmit` clean; `vitest run src/lib/featureFlags.test.ts` 5/5.
+- **Deploy state:** Local only until next Netlify deploy of this branch.
+- **Follow-ups:** None.
+
 ### 2026-11-23 — Pay with Crypto via Stripe Checkout
 
 - **Context:** Stripe Stablecoins and Crypto is Active (US); Checkout was hard-locked to `payment_method_types: ["card"]`, so crypto never appeared.
