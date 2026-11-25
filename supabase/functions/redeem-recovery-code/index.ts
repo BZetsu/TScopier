@@ -13,8 +13,9 @@ function bad(status: number, message: string): Response {
   return Response.json({ error: message }, { status, headers: corsHeaders });
 }
 
-/** Days of access granted when a recovery code is redeemed. */
-const GRANT_DAYS = 14;
+/** Fallback when a code row somehow has no usable `days` (the column is
+ * NOT NULL with a 1..30 CHECK, so this is defensive only). */
+const FALLBACK_GRANT_DAYS = 14;
 
 /** Reasons a billing-driven pause may be cleared when access is restored. */
 const RESTARTABLE_PAUSE_REASONS = [
@@ -46,9 +47,12 @@ Deno.serve(async (req: Request) => {
 
     // Find an unused code. The code is tied to one user; the caller must be that
     // user, so codes cannot be shared or redeemed by another account.
+    // `days` is read here because it is what gets granted: the admin's Days
+    // choice, the 30-day cap and the email text all key off this same column,
+    // so hardcoding a duration would let them disagree.
     const { data: existing, error: findErr } = await supabase
       .from("subscription_recovery_codes")
-      .select("id, user_id, expires_at")
+      .select("id, user_id, expires_at, days")
       .eq("code", code)
       .eq("used", false)
       .maybeSingle();
@@ -67,6 +71,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const now = new Date().toISOString();
+    const grantDays = Number(existing.days) > 0 ? Number(existing.days) : FALLBACK_GRANT_DAYS;
 
     // Grant the access extension first, then flip the code used. This ordering
     // means a code can never be consumed without a grant: if the grant insert
@@ -76,7 +81,7 @@ Deno.serve(async (req: Request) => {
       .from("subscription_extensions")
       .insert({
         user_id: user.id,
-        days: GRANT_DAYS,
+        days: grantDays,
         reason: "redeemed recovery code",
         granted_by: null,
       })
@@ -121,7 +126,7 @@ Deno.serve(async (req: Request) => {
       .in("copier_pause_reason", RESTARTABLE_PAUSE_REASONS);
 
     return Response.json(
-      { ok: true, days: GRANT_DAYS, extension: grant },
+      { ok: true, days: grantDays, extension: grant },
       { headers: corsHeaders },
     );
   } catch (err) {
