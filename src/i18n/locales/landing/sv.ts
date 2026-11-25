@@ -42,10 +42,10 @@ export const landingSv: LandingTranslations = {
     },
   },
   hero: {
-    headline: 'Allt-i-ett-kopierare för alla forex- och kryptotraders',
+    headline: 'Copy trading, omdefinierat.',
     headlinePhrases: [],
     subheadline:
-      'Automatisera dina affärer från Telegram, WhatsApp, Discord, TradingView eller ett masterkonto till 8+ mäklarplattformar på under 50 ms. Ingen VPS krävs.',
+      'Exekvera affärer från signalleverantörer på Telegram, WhatsApp och Discord, sätt upp TradingView-webhooks, spegla master till slavkonton eller kopiera beprövade traders till 8+ mäklarplattformar — under 50 ms. Ingen VPS krävs.',
     socialProof: 'TScopier.ai är nu UniCopier',
     primaryCta: 'Välj din plan',
     secondaryCta: 'Se hur det fungerar',

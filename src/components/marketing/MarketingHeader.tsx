@@ -7,7 +7,7 @@ import { LanguageSwitcher } from '../auth/LanguageSwitcher'
 import { useLocale, useT } from '../../context/LocaleContext'
 import { HELP_LINKS } from '../../lib/helpLinks'
 import { marketingUrl } from '../../lib/site'
-import { MarketingAudienceSwitch } from './MarketingAudienceSwitch'
+// import { MarketingAudienceSwitch } from './MarketingAudienceSwitch'
 import { MarketingAuthCta } from './MarketingAuthCta'
 import { MarketingProductMenu, MarketingProductMenuMobile } from './MarketingProductMenu'
 import { useMarketingHeaderTop } from '../../hooks/useMarketingPromoOffset'
@@ -114,7 +114,7 @@ export function MarketingHeader({ overDarkHero = false }: { overDarkHero?: boole
   const onDark = overDarkHero && !scrolled && !mobileOpen
 
   const desktopLinkClass =
-    'whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-900/6 hover:text-neutral-950 dark:text-neutral-300 dark:hover:bg-white/10 dark:hover:text-white'
+    'whitespace-nowrap rounded-full px-3.5 py-1.5 text-base font-medium text-black transition-colors hover:bg-neutral-900/6 hover:text-black dark:text-neutral-300 dark:hover:bg-white/10 dark:hover:text-white'
   const mobileLinkClass =
     'rounded-xl px-3 py-2.5 text-sm font-medium text-neutral-900 transition-colors hover:bg-neutral-900/6 dark:text-neutral-50 dark:hover:bg-white/10'
 
@@ -137,11 +137,12 @@ export function MarketingHeader({ overDarkHero = false }: { overDarkHero?: boole
           <TscopierLogo className="h-10 w-auto sm:h-10" onDark={onDark} />
         </Link>
 
-        {/* Desktop only — mobile uses the switch inside the hamburger drawer. */}
+        {/* Desktop only — mobile uses the switch inside the hamburger drawer.
         <MarketingAudienceSwitch className="hidden xl:inline-flex" />
+        */}
 
         <nav
-          className="hidden min-w-0 flex-1 items-center justify-center gap-0.5 lg:flex"
+          className="hidden min-w-0 items-center gap-0.5 lg:flex"
           aria-label="Main"
         >
           {navItems.map(item =>
@@ -158,7 +159,7 @@ export function MarketingHeader({ overDarkHero = false }: { overDarkHero?: boole
           )}
         </nav>
 
-        <div className="ms-auto flex shrink-0 items-center gap-1 lg:ms-0">
+        <div className="ms-auto flex shrink-0 items-center gap-1">
           {/* Language lives in the mobile drawer; keep the bar control for desktop only. */}
           <LanguageSwitcher className="hidden lg:block" onDark={onDark} />
           <MarketingAuthCta variant="header" />
@@ -189,7 +190,7 @@ export function MarketingHeader({ overDarkHero = false }: { overDarkHero?: boole
           )}
           aria-label="Main mobile"
         >
-          <MarketingAudienceSwitch className="mb-1 grid grid-cols-2" onNavigate={closeMobile} />
+          {/* <MarketingAudienceSwitch className="mb-1 grid grid-cols-2" onNavigate={closeMobile} /> */}
           {navItems.map(item =>
             item.key === 'product' ? (
               <MarketingProductMenuMobile key={item.key} linkClassName={mobileLinkClass} onNavigate={closeMobile} />
