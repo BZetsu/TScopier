@@ -87,18 +87,29 @@ export async function callTelegramAuth<T>(
   action: TelegramAuthAction,
   body: Record<string, unknown>,
 ): Promise<{ ok: boolean; status: number; data: T & { error?: string } }> {
-  const res = await fetch(edgeFnUrl, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
-      'Content-Type': 'application/json',
-      'x-client-id': telegramClientId(),
-    },
-    body: JSON.stringify({ action, ...body }),
-  })
-  const data = await res.json().catch(() => ({})) as T & { error?: string }
-  return { ok: res.ok && !data.error, status: res.status, data }
+  try {
+    const res = await fetch(edgeFnUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+        'Content-Type': 'application/json',
+        'x-client-id': telegramClientId(),
+      },
+      body: JSON.stringify({ action, ...body }),
+    })
+    const data = await res.json().catch(() => ({})) as T & { error?: string }
+    return { ok: res.ok && !data.error, status: res.status, data }
+  } catch (err) {
+    // Network / CORS / DNS — never throw; callers treat ok:false as soft failure.
+    const message =
+      err instanceof TypeError
+        ? 'Could not reach Telegram service. Check your connection and try again.'
+        : err instanceof Error
+          ? err.message
+          : 'Could not reach Telegram service.'
+    return { ok: false, status: 0, data: { error: message } as T & { error?: string } }
+  }
 }
 
 export function resolveTelegramAuthErrorMessage(

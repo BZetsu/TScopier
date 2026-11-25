@@ -6,6 +6,15 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-25 — Telegram Disconnect survives Failed to fetch
+
+- **Context:** Migration Signals showed Connected + “Failed to load Telegram channels”; Disconnect threw `TypeError: Failed to fetch` in `callTelegramAuth` and never cleared the session.
+- **Plain English:** Disconnect still works if the Telegram edge/worker is unreachable — the app clears the local session. Reconnect/load still need a reachable Migration listener.
+- **Root cause (technical):** `fetch` threw on network/CORS; `clearTelegramConnection` had no try/catch so the client-side `telegram_sessions` delete never ran.
+- **Fix (files):** `telegramAuthApi.ts` returns `{ ok:false, status:0 }` instead of throwing; `CopierEnginePage.clearTelegramConnection` always falls back to local session delete.
+- **Deploy state:** Frontend only — next Netlify deploy.
+- **Follow-ups:** Confirm Migration Edge secrets `TELEGRAM_LISTENER_URL` / `LISTENER_SHARD_URLS` + `WORKER_INTERNAL_TOKEN` point at `listener-migration.up.railway.app` (or current Migration listener).
+
 ### 2026-11-25 — Plan account usage counts all broker platforms
 
 - **Context:** Sidebar showed e.g. “1 of 100 accounts used” while a cTrader (or other non-MT) account was connected but ignored.

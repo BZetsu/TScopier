@@ -325,9 +325,14 @@ export function CopierEnginePage() {
   /** Remove Telegram session only (manual disconnect). Keeps configured channels. */
   const clearTelegramConnection = useCallback(async (nextStage: 'idle' | 'phone') => {
     if (!user?.id) return
-    const { ok } = await callTelegramAuth(EDGE_FN, session?.access_token, 'disconnect_telegram', {})
-    if (!ok) {
-      // Fall back to client-side session delete if worker is unreachable / outdated.
+    try {
+      const { ok } = await callTelegramAuth(EDGE_FN, session?.access_token, 'disconnect_telegram', {})
+      if (!ok) {
+        // Fall back to client-side session delete if worker is unreachable / outdated.
+        await supabase.from('telegram_sessions').delete().eq('user_id', user.id)
+      }
+    } catch {
+      // Network/CORS (Failed to fetch) — still clear local session so Disconnect works offline.
       await supabase.from('telegram_sessions').delete().eq('user_id', user.id)
     }
     setHasTgSession(false)
