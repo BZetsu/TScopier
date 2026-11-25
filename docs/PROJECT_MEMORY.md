@@ -6,6 +6,41 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-25 — Translate hero “Copy Trading Redefined”
+
+- **Context:** New EN headline/subheadline needed matching copy in other landing locales.
+- **Plain English:** Hero title and supporting line updated in ES, FR, AR, JA, NL, PL, RU, SV (web + mobile i18n packages).
+- **Fix (files):** `src/i18n/locales/landing/*`, `apps/mobile/packages/web-i18n/lib/locales/landing/*`.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-25 — Remove hero pricing snippet
+
+- **Context:** Hero showed “Basic — $9.99/month · Advanced — $39.99/month” under the CTAs.
+- **Plain English:** That price line is gone from the landing hero.
+- **Fix (files):** `HeroSection.tsx` — removed `MarketingPricingHint`.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-25 — Marketing header nav larger + black
+
+- **Context:** Desktop nav links felt small and grey after left-align.
+- **Plain English:** Header menu text is a bit larger (`text-base`) and black in light mode.
+- **Fix (files):** `MarketingHeader.tsx` `desktopLinkClass`.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-25 — Marketing header nav left-aligned with logo
+
+- **Context:** Desktop nav sat centered in the bar after the audience switch was hidden.
+- **Plain English:** Product / Features / Pricing / FAQ sit next to the logo on the left; language + auth stay on the right.
+- **Fix (files):** `MarketingHeader.tsx` — dropped `flex-1 justify-center` on nav; kept `ms-auto` on the right cluster.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-25 — Hide For Traders / For Providers header switch
+
+- **Context:** Temporary hide of the marketing audience segmented control next to the logo.
+- **Plain English:** “For Traders / For Providers” no longer shows in the marketing header (desktop or mobile drawer).
+- **Fix (files):** Commented out `MarketingAudienceSwitch` usage in `MarketingHeader.tsx`.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
 ### 2026-11-24 — Sidebar / Advanced CTA: Add More Accounts
 
 - **Context:** Sidebar showed “Start your 5-day free trial” / “Manage billing”; Advanced plan card was stuck on Current plan so extras could only change via a separate Membership card.

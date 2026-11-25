@@ -42,10 +42,10 @@ export const landingEs: LandingTranslations = {
     },
   },
   hero: {
-    headline: 'Copiador todo en uno para todo trader de Forex y cripto',
+    headline: 'Copy trading redefinido.',
     headlinePhrases: [],
     subheadline:
-      'Automatiza tus operaciones desde Telegram, WhatsApp, Discord, TradingView o una cuenta maestra a más de 8 plataformas de bróker en menos de 50 ms. Sin VPS.',
+      'Ejecuta operaciones de proveedores de señales en Telegram, WhatsApp y Discord, configura webhooks de TradingView, refleja cuentas máster a esclavas o copia traders contrastados a más de 8 plataformas de bróker, en menos de 50 ms. Sin VPS.',
     socialProof: 'TScopier.ai ahora es UniCopier',
     primaryCta: 'Elige tu plan',
     secondaryCta: 'Ver cómo funciona',

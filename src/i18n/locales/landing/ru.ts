@@ -42,10 +42,10 @@ export const landingRu: LandingTranslations = {
     },
   },
   hero: {
-    headline: 'Универсальный копировщик для каждого трейдера Forex и крипто',
+    headline: 'Копитрейдинг. Переосмыслен.',
     headlinePhrases: [],
     subheadline:
-      'Автоматизируйте сделки из Telegram, WhatsApp, Discord, TradingView или мастер-счёта на 8+ брокерских платформ менее чем за 50 мс. VPS не требуется.',
+      'Исполняйте сделки провайдеров сигналов из Telegram, WhatsApp и Discord, настраивайте TradingView Webhooks, зеркалируйте мастер-счёт на подчинённые или копируйте проверенных трейдеров на 8+ брокерских платформ менее чем за 50 мс. VPS не требуется.',
     socialProof: 'TScopier.ai теперь UniCopier',
     primaryCta: 'Выберите тариф',
     secondaryCta: 'Как это работает',
