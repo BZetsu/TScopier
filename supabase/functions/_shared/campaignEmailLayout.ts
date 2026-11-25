@@ -16,7 +16,7 @@ export const BRAND = {
 const COMPANY_FOOTER = `Tartarix Inc. · 131 Continental Dr, Suite 305<br>
 Newark, DE 19713 US`
 
-function escapeHtml(raw: string): string {
+export function escapeHtml(raw: string): string {
   return String(raw ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

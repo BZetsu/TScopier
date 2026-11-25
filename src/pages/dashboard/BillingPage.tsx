@@ -482,28 +482,26 @@ export function BillingPage() {
           </div>
         ) : null}
 
-        {!hasActiveSubscription && !subscriptionLoading ? (
-          <Card padding="lg">
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400">
-                <svg className="h-5 w-5" aria-hidden fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                </svg>
-              </div>
-              <div className="min-w-0 flex-1">
-                <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                  {bt.redeemTitle}
-                </h2>
-                <p className="mt-0.5 text-sm text-neutral-900 dark:text-neutral-50">
-                  {bt.redeemSubtitle}
-                </p>
-              </div>
-              <Button size="sm" onClick={() => setRedeemOpen(true)} className="gap-2">
-                {bt.redeemButton}
-              </Button>
+        <Card padding="lg">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400">
+              <svg className="h-5 w-5" aria-hidden fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
             </div>
-          </Card>
-        ) : null}
+            <div className="min-w-0 flex-1">
+              <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                {bt.redeemTitle}
+              </h2>
+              <p className="mt-0.5 text-sm text-neutral-900 dark:text-neutral-50">
+                {bt.redeemSubtitle}
+              </p>
+            </div>
+            <Button size="sm" onClick={() => setRedeemOpen(true)} className="gap-2">
+              {bt.redeemButton}
+            </Button>
+          </div>
+        </Card>
 
         <RedeemCodeModal
           open={redeemOpen}

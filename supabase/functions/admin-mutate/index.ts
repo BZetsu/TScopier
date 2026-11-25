@@ -2,9 +2,9 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { adminClient, corsHeaders, requireAuthedAdmin } from "../_shared/adminAuth.ts";
 import { writeAdminAudit } from "../_shared/adminAudit.ts";
 import { isSuspiciousSignupEmail } from "../_shared/emailSignupPolicy.ts";
-import { buildCampaignEmailHtml } from "../_shared/campaignEmailLayout.ts";
+import { buildCampaignEmailHtml, escapeHtml } from "../_shared/campaignEmailLayout.ts";
 import { resolveEmailLogoUrl } from "../_shared/brandEmailAssets.ts";
-import { mintUnsubscribeToken } from "../_shared/unsubscribeToken.ts";
+import { getEmailUnsubscribeUrl } from "../_shared/subscriptionCampaignEmails.ts";
 
 function bad(status: number, message: string): Response {
   return Response.json({ error: message }, { status, headers: corsHeaders });
@@ -13,6 +13,57 @@ function bad(status: number, message: string): Response {
 function requireReason(body: Record<string, unknown>): string | null {
   const reason = String(body.reason ?? "").trim();
   return reason.length > 0 ? reason : null;
+}
+
+/**
+ * Read `expires_in_days` from a create/generate request.
+ *
+ * Contract: an integer 1–365 is a redemption window starting at creation;
+ * 0 means the code never expires; an absent, null or empty value means the
+ * product default of 30 days. Anything else is rejected rather than coerced,
+ * so malformed input can never silently select "never expires".
+ */
+function readExpiryDays(body: Record<string, unknown>): { days: number | null } | { error: string } {
+  const raw = body.expires_in_days;
+  if (raw === undefined || raw === null || (typeof raw === "string" && raw.trim() === "")) {
+    return { days: 30 };
+  }
+
+  const n = typeof raw === "number"
+    ? raw
+    : typeof raw === "string" && /^\d+$/.test(raw.trim())
+      ? Number(raw.trim())
+      : NaN;
+
+  if (n === 0) return { days: null };
+  if (!Number.isInteger(n) || n < 1 || n > 365) {
+    return { error: "expires_in_days must be 0 (never) or an integer between 1 and 365" };
+  }
+  return { days: n };
+}
+
+function expiryIso(days: number | null): string | null {
+  return days === null ? null : new Date(Date.now() + days * 86_400_000).toISOString();
+}
+
+/**
+ * Days a user has already claimed against the 30-day extension cap.
+ *
+ * A redeemed code always counts — excluding it would let a user redeem,
+ * generate, redeem forever. An unused code counts only while it can still be
+ * redeemed, so an expired code releases its slot instead of locking a user out
+ * of every future campaign.
+ */
+function countedGrantDays(
+  rows: Array<{ days?: unknown; used?: unknown; expires_at?: unknown }>,
+): number {
+  const now = Date.now();
+  return rows.reduce((sum, row) => {
+    if (row.used !== true && row.expires_at && new Date(String(row.expires_at)).getTime() <= now) {
+      return sum; // dead row: nothing granted, nothing reserved
+    }
+    return sum + Number(row.days ?? 0);
+  }, 0);
 }
 
 async function snapshotById(
@@ -59,6 +110,8 @@ Deno.serve(async (req: Request) => {
     "generate_recovery_code",
     "bulk_generate_recovery_codes",
     "send_recovery_emails",
+    "revoke_recovery_code",
+    "revoke_all_recovery_codes",
   ]);
   const reason = requireReasonActions.has(action) ? requireReason(body) : String(body.reason ?? "").trim() || null;
   if (requireReasonActions.has(action) && !reason) {
@@ -199,16 +252,16 @@ Deno.serve(async (req: Request) => {
     if (!Number.isInteger(days) || days <= 0 || days > 30) {
       return bad(400, "days must be an integer between 1 and 30");
     }
+    const expiry = readExpiryDays(body);
+    if ("error" in expiry) return bad(400, expiry.error);
+    const expiresAt = expiryIso(expiry.days);
 
     const { data: existingCodes, error: listErr } = await supabase
       .from("subscription_recovery_codes")
-      .select("days")
+      .select("days, used, expires_at")
       .eq("user_id", targetUserId);
     if (listErr) return bad(400, listErr.message);
-    const alreadyGranted = (existingCodes ?? []).reduce(
-      (sum, row) => sum + Number(row.days ?? 0),
-      0,
-    );
+    const alreadyGranted = countedGrantDays(existingCodes ?? []);
     if (alreadyGranted + days > 30) {
       return bad(
         400,
@@ -227,7 +280,7 @@ Deno.serve(async (req: Request) => {
       for (const b of bytes) generated += chars[b % chars.length];
       const { data: inserted, error: insertErr } = await supabase
         .from("subscription_recovery_codes")
-        .insert({ user_id: targetUserId, code: generated, days })
+        .insert({ user_id: targetUserId, code: generated, days, expires_at: expiresAt })
         .select("*")
         .maybeSingle();
       if (insertErr) continue; // unique violation on code: regenerate
@@ -242,12 +295,12 @@ Deno.serve(async (req: Request) => {
       entity_type: "subscription_recovery_codes",
       entity_id: code,
       reason: reason ?? null,
-      request_payload: { days },
-      after_state: { user_id: targetUserId, days },
+      request_payload: { days, expires_in_days: expiry.days },
+      after_state: { user_id: targetUserId, days, expires_at: expiresAt },
       correlation_id: correlationId,
     });
     return Response.json(
-      { ok: true, code, user_id: targetUserId, days },
+      { ok: true, code, user_id: targetUserId, days, expires_at: expiresAt },
       { headers: corsHeaders },
     );
   }
@@ -264,6 +317,9 @@ Deno.serve(async (req: Request) => {
     if (!Number.isInteger(days) || days <= 0 || days > 30) {
       return bad(400, "days must be an integer between 1 and 30");
     }
+    const expiry = readExpiryDays(body);
+    if ("error" in expiry) return bad(400, expiry.error);
+    const expiresAt = expiryIso(expiry.days);
 
     const results: Array<{ user_id: string; code?: string; error?: string }> = [];
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -277,16 +333,13 @@ Deno.serve(async (req: Request) => {
 
       const { data: existingCodes, error: listErr } = await supabase
         .from("subscription_recovery_codes")
-        .select("days")
+        .select("days, used, expires_at")
         .eq("user_id", targetUserId);
       if (listErr) {
         results.push({ user_id: targetUserId, error: listErr.message });
         continue;
       }
-      const alreadyGranted = (existingCodes ?? []).reduce(
-        (sum, row) => sum + Number(row.days ?? 0),
-        0,
-      );
+      const alreadyGranted = countedGrantDays(existingCodes ?? []);
       if (alreadyGranted + days > 30) {
         results.push({
           user_id: targetUserId,
@@ -302,7 +355,7 @@ Deno.serve(async (req: Request) => {
         for (const b of bytes) generated += chars[b % chars.length];
         const { data: inserted, error: insertErr } = await supabase
           .from("subscription_recovery_codes")
-          .insert({ user_id: targetUserId, code: generated, days })
+          .insert({ user_id: targetUserId, code: generated, days, expires_at: expiresAt })
           .select("*")
           .maybeSingle();
         if (insertErr) continue;
@@ -320,8 +373,8 @@ Deno.serve(async (req: Request) => {
         entity_type: "subscription_recovery_codes",
         entity_id: code,
         reason: reason ?? null,
-        request_payload: { days, bulk: true },
-        after_state: { user_id: targetUserId, code, days },
+        request_payload: { days, bulk: true, expires_in_days: expiry.days },
+        after_state: { user_id: targetUserId, code, days, expires_at: expiresAt },
         correlation_id: correlationId,
       });
       results.push({ user_id: targetUserId, code });
@@ -344,12 +397,16 @@ Deno.serve(async (req: Request) => {
     }
     const subject = String(body.subject ?? "").trim();
     if (!subject) return bad(400, "subject is required");
-    const bodyTemplate = String(body.body ?? "").trim();
-    if (!bodyTemplate) return bad(400, "body is required");
+    const heading = String(body.heading ?? subject).trim();
+    const message = String(body.message ?? "").trim();
+    if (!message) return bad(400, "message is required");
+    const ctaLabel = String(body.cta_label ?? "Redeem your code").trim();
+    const ctaUrl = String(body.cta_url ?? "").trim();
+    const personalized = body.personalized !== false;
 
     const { data: rows, error: rowsErr } = await supabase
       .from("subscription_recovery_codes")
-      .select("id, user_id, code, days, sent_at, used")
+      .select("id, user_id, code, days, sent_at, used, expires_at")
       .in("id", codeIds);
     if (rowsErr) return bad(400, rowsErr.message);
     if (!rows || rows.length === 0) return bad(404, "no codes found");
@@ -372,8 +429,8 @@ Deno.serve(async (req: Request) => {
       profileByUser.set(String(p.user_id), p);
     }
 
-    const appUrl = Deno.env.get("VITE_APP_URL") || "https://app.tscopier.ai";
-    const from = Deno.env.get("RESEND_CAMPAIGN_FROM") || "UniCopier <noreply@tscopier.ai>";
+    const appUrl = Deno.env.get("VITE_APP_URL") || "https://app.unicopier.com";
+    const from = Deno.env.get("RESEND_CAMPAIGN_FROM") || "UniCopier <hello@unicopier.com>";
     const resendKey = Deno.env.get("RESEND_API_KEY");
 
     const results: Array<{ code_id: string; user_id: string; code: string; ok: boolean; error?: string; email?: string }> = [];
@@ -400,11 +457,22 @@ Deno.serve(async (req: Request) => {
         });
         continue;
       }
+      // Never email a code that redemption would reject as expired.
+      if (row.expires_at && new Date(String(row.expires_at)).getTime() <= Date.now()) {
+        results.push({
+          code_id: row.id,
+          user_id: row.user_id,
+          code: row.code,
+          ok: false,
+          error: "code expired",
+        });
+        continue;
+      }
 
       const userId = String(row.user_id);
       const email = emailByUser.get(userId) || "";
       if (!email) {
-        results.push({ code_id: row.id, user_id, code: row.code, ok: false, error: "no email on file" });
+        results.push({ code_id: row.id, user_id: userId, code: row.code, ok: false, error: "no email on file" });
         continue;
       }
 
@@ -412,17 +480,38 @@ Deno.serve(async (req: Request) => {
       const firstName = profile.first_name ?? profile.display_name ?? email.split("@")[0] ?? "there";
       const userName = profile.display_name ?? profile.first_name ?? email.split("@")[0] ?? "there";
 
-      const render = (template: string): string =>
-        template
-          .replace(/\{\{user_name\}\}/g, userName)
-          .replace(/\{\{first_name\}\}/g, firstName)
-          .replace(/\{\{user_email\}\}/g, email)
+      const render = (template: string): string => {
+        // {{code}}, {{days}} and {{app_url}} are per-recipient data — always substituted,
+        // otherwise an email could ship with a literal "{{code}}" placeholder.
+        const base = template
           .replace(/\{\{code\}\}/g, row.code)
           .replace(/\{\{days\}\}/g, String(row.days))
           .replace(/\{\{app_url\}\}/g, appUrl);
+        if (!personalized) {
+          // Neutral wording instead of leaving literal {{first_name}} in a generic send.
+          return base
+            .replace(/\{\{user_name\}\}/g, "there")
+            .replace(/\{\{first_name\}\}/g, "there")
+            .replace(/\{\{user_email\}\}/g, "");
+        }
+        return base
+          .replace(/\{\{user_name\}\}/g, userName)
+          .replace(/\{\{first_name\}\}/g, firstName)
+          .replace(/\{\{user_email\}\}/g, email);
+      };
 
       const emailSubject = render(subject);
-      const emailBody = render(bodyTemplate);
+      const emailHeading = render(heading);
+      const emailMessage = render(message);
+
+      // Convert plain text message to HTML paragraphs (escape first, then add <br/>)
+      const messageHtml = emailMessage
+        .replace(/\r\n/g, "\n")
+        .trim()
+        .split(/\n{2,}/)
+        .filter((b) => b.trim().length > 0)
+        .map((block) => `<p style="margin:0 0 16px 0;">${escapeHtml(block).replace(/\n/g, "<br/>")}</p>`)
+        .join("");
 
       const logoUrl = resolveEmailLogoUrl({
         supabaseUrl: Deno.env.get("SUPABASE_URL") ?? "",
@@ -430,7 +519,8 @@ Deno.serve(async (req: Request) => {
         variant: "dark",
         explicitUrl: Deno.env.get("EMAIL_LOGO_URL"),
       });
-      const unsubscribeUrl = mintUnsubscribeToken(
+      const unsubscribeUrl = getEmailUnsubscribeUrl(
+        appUrl,
         Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
         userId,
       );
@@ -438,14 +528,14 @@ Deno.serve(async (req: Request) => {
       const emailHtml = buildCampaignEmailHtml({
         appUrl,
         logoUrl,
-        preheader: render(subject),
+        preheader: emailSubject,
         eyebrow: "Recovery Code",
-        title: render(subject),
+        title: emailHeading,
         greeting: firstName,
-        bodyHtml: emailBody,
+        bodyHtml: messageHtml,
         primaryCta: {
-          label: "Redeem your code",
-          url: `${appUrl}/billing`,
+          label: ctaLabel || "Redeem your code",
+          url: ctaUrl || `${appUrl}/billing`,
         },
         closingHtml: "If you did not request this, you can ignore this email.",
         unsubscribeUrl,
@@ -470,7 +560,7 @@ Deno.serve(async (req: Request) => {
       if (!sendRes.ok) {
         results.push({
           code_id: row.id,
-          user_id,
+          user_id: userId,
           code: row.code,
           ok: false,
           error: sendData.error ?? `HTTP ${sendRes.status}`,
@@ -479,14 +569,27 @@ Deno.serve(async (req: Request) => {
         continue;
       }
 
-      await supabase
+      const { error: updErr } = await supabase
         .from("subscription_recovery_codes")
         .update({ sent_at: now, sent_email: email, email_subject: emailSubject })
         .eq("id", row.id);
 
+      if (updErr) {
+        // The email went out but the row still shows unsent — flag it so it is not resent.
+        results.push({
+          code_id: row.id,
+          user_id: userId,
+          code: row.code,
+          ok: false,
+          error: `Email sent but not recorded (${updErr.message}) — do not resend`,
+          email,
+        });
+        continue;
+      }
+
       results.push({
         code_id: row.id,
-        user_id,
+        user_id: userId,
         code: row.code,
         ok: true,
         email,
@@ -494,10 +597,87 @@ Deno.serve(async (req: Request) => {
     }
 
     const sent = results.filter((r) => r.ok).length;
+    await writeAdminAudit(supabase, {
+      actor_user_id: adminUser.id,
+      action,
+      entity_type: "subscription_recovery_codes",
+      reason: reason ?? null,
+      request_payload: { code_ids: codeIds, subject, personalized },
+      after_state: { sent, total: results.length },
+      correlation_id: correlationId,
+    });
     return Response.json(
       { ok: true, sent, total: results.length, results },
       { headers: corsHeaders },
     );
+  }
+
+  if (action === "revoke_recovery_code") {
+    const codeId = String(body.code_id ?? "").trim();
+    if (!codeId) return bad(400, "code_id is required");
+
+    const { data: existing, error: findErr } = await supabase
+      .from("subscription_recovery_codes")
+      .select("id, user_id, code, used, sent_at")
+      .eq("id", codeId)
+      .maybeSingle();
+    if (findErr) return bad(400, findErr.message);
+    if (!existing) return bad(404, "Code not found");
+    if (existing.used) return bad(400, "Cannot revoke a code that has already been used");
+
+    const { error: delErr } = await supabase
+      .from("subscription_recovery_codes")
+      .delete()
+      .eq("id", codeId)
+      .eq("used", false);
+    if (delErr) return bad(400, delErr.message);
+
+    await writeAdminAudit(supabase, {
+      actor_user_id: adminUser.id,
+      target_user_id: existing.user_id,
+      action,
+      entity_type: "subscription_recovery_codes",
+      entity_id: existing.code,
+      reason: reason ?? null,
+      request_payload: { code_id: codeId },
+      before_state: existing as Record<string, unknown>,
+      after_state: { deleted: true },
+      correlation_id: correlationId,
+    });
+
+    return Response.json({ ok: true, deleted: true }, { headers: corsHeaders });
+  }
+
+  if (action === "revoke_all_recovery_codes") {
+    // Redeemed codes are never deleted: they are the record that access was
+    // granted. Everything else (unused, sent, expired) can be pulled at once.
+    const { data: doomed, error: listErr } = await supabase
+      .from("subscription_recovery_codes")
+      .select("id")
+      .eq("used", false);
+    if (listErr) return bad(400, listErr.message);
+    const count = (doomed ?? []).length;
+    if (count === 0) return bad(404, "No unused codes to revoke");
+
+    const { error: delErr } = await supabase
+      .from("subscription_recovery_codes")
+      .delete()
+      .eq("used", false);
+    if (delErr) return bad(400, delErr.message);
+
+    // Counts only — no plaintext codes in the audit log.
+    await writeAdminAudit(supabase, {
+      actor_user_id: adminUser.id,
+      action,
+      entity_type: "subscription_recovery_codes",
+      reason: reason ?? null,
+      request_payload: { scope: "all_unused", deleted: count },
+      before_state: { unused_count: count },
+      after_state: { deleted: count },
+      correlation_id: correlationId,
+    });
+
+    return Response.json({ ok: true, deleted: count }, { headers: corsHeaders });
   }
 
   if (action === "ban_user") {
