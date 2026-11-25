@@ -88,7 +88,7 @@ export function HeroSection() {
                 </div>
               ) : null}
 
-              <h1 className="text-8xl font-semibold tracking-tighter text-neutral-900 dark:text-neutral-50 sm:text-6xl lg:text-[clamp(7.5rem,5vh,5rem)] lg:leading-[1.05]">
+              <h1 className="text-5xl font-semibold tracking-tighter text-neutral-900 dark:text-neutral-50 sm:text-5xl lg:text-[clamp(7.5rem,5vh,5rem)] lg:leading-[1.05]">
                 {l.hero.headline}
               </h1>
 
