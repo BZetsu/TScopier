@@ -187,12 +187,13 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     const [{ data }, usageResults, extensionResult] = await Promise.all([
       supabase.from('subscriptions').select('*').eq('user_id', userId).maybeSingle(),
       Promise.all([
+        // Count every active broker row (MT4/5, cTrader, Binance, Bybit, etc.) —
+        // same rule as assertBrokerAccountLimit / plan-limit trigger.
         supabase
           .from('broker_accounts')
           .select('id', { count: 'exact', head: true })
           .eq('user_id', userId)
-          .eq('is_active', true)
-          .or('provider.eq.mtapi,fxsocket_account_id.neq.'),
+          .eq('is_active', true),
         supabase
           .from('telegram_channels')
           .select('id', { count: 'exact', head: true })

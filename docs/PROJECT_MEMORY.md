@@ -6,6 +6,15 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-25 — Plan account usage counts all broker platforms
+
+- **Context:** Sidebar showed e.g. “1 of 100 accounts used” while a cTrader (or other non-MT) account was connected but ignored.
+- **Plain English:** Purchased account slots apply to every supported platform (MT4/5, cTrader, Binance, Bybit, KuCoin, etc.), not only MetaTrader.
+- **Root cause (technical):** `SubscriptionContext.fetchSubscription` usage query filtered with `.or('provider.eq.mtapi,fxsocket_account_id.neq.')`.
+- **Fix (files):** Dropped that filter so usage matches `assertBrokerAccountLimit` (all `is_active` `broker_accounts`).
+- **Deploy state:** Frontend only — next Netlify deploy.
+- **Follow-ups:** None — server already enforced the full count on connect.
+
 ### 2026-11-25 — Translate hero “Copy Trading Redefined”
 
 - **Context:** New EN headline/subheadline needed matching copy in other landing locales.
