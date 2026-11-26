@@ -1,13 +1,18 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import {
+  SUPPORT_LOCALES,
   normalizeSupportLocale,
+  parseSupportLocale,
   readCachedTranslation,
   supportLocaleLanguage,
   type SupportLocale,
   type TranslationMap,
 } from "./supportLocales.ts";
 
-const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
+function openAiApiKey(): string {
+  return Deno.env.get("OPENAI_API_KEY") ?? "";
+}
+
 const MODEL =
   Deno.env.get("SUPPORT_TRANSLATE_MODEL")?.trim() ||
   Deno.env.get("SUPPORT_OPENAI_MODEL")?.trim() ||
@@ -21,7 +26,8 @@ export async function translateTextWithOpenAI(params: {
   const { text, sourceLocale, targetLocale } = params;
   if (!text.trim()) return text;
   if (sourceLocale === targetLocale) return text;
-  if (!OPENAI_API_KEY) {
+  const apiKey = openAiApiKey();
+  if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not configured");
   }
 
@@ -31,7 +37,7 @@ export async function translateTextWithOpenAI(params: {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -64,13 +70,17 @@ export async function translateTextWithOpenAI(params: {
   return out;
 }
 
-export async function detectLocaleWithOpenAI(text: string): Promise<SupportLocale> {
-  if (!text.trim() || !OPENAI_API_KEY) return "en";
+/** Detect a locale without treating an unavailable model as proof of English. */
+export async function tryDetectLocaleWithOpenAI(
+  text: string,
+): Promise<SupportLocale | null> {
+  const apiKey = openAiApiKey();
+  if (!text.trim() || !apiKey) return null;
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -79,21 +89,25 @@ export async function detectLocaleWithOpenAI(text: string): Promise<SupportLocal
         messages: [
           {
             role: "system",
-            content:
-              'Detect the language of the message. Reply with ONLY one locale code from: en, es, fr, pl, ru, sv, nl, ja, ar. If unsure, reply "en".',
+            content: `Detect the language of the message. Reply with ONLY one locale code from: ${SUPPORT_LOCALES.join(", ")}. If unsure, reply "en".`,
           },
           { role: "user", content: text.slice(0, 2000) },
         ],
       }),
     });
-    if (!res.ok) return "en";
+    if (!res.ok) return null;
     const json = (await res.json()) as {
       choices?: Array<{ message?: { content?: string | null } }>;
     };
-    return normalizeSupportLocale(String(json.choices?.[0]?.message?.content ?? "en").trim());
+    return parseSupportLocale(String(json.choices?.[0]?.message?.content ?? "").trim());
   } catch {
-    return "en";
+    return null;
   }
+}
+
+/** Backward-compatible detector for callers that need an English fallback. */
+export async function detectLocaleWithOpenAI(text: string): Promise<SupportLocale> {
+  return (await tryDetectLocaleWithOpenAI(text)) ?? "en";
 }
 
 type Channel = "chat" | "ticket";
@@ -102,9 +116,44 @@ function tableFor(channel: Channel): string {
   return channel === "chat" ? "support_messages" : "support_ticket_messages";
 }
 
-/** Cheap script check — Cyrillic/CJK/Arabic often mean source_locale was wrongly defaulted to en. */
+/**
+ * Detect text that is likely Turkish. Turkish uses Latin letters, so script
+ * detection alone cannot find a message that was incorrectly stored as `en`.
+ */
+export function looksTurkish(text: string): boolean {
+  const turkishCharacters = text.match(/[çğıöşü]/gi) ?? [];
+  const hasTurkishWord =
+    /\b(tamam(?:d(?:ı|i)r)?|şimdi|nasıl|neden|nedir|merhaba|teşekkür|yardım|maalesef|değil|çünkü|benim|için|olarak|sonra|önce|güncelleme|sinyal|hesap|hedef|çalışıyor|gönder|mesaj)\b/iu.test(
+      text,
+    );
+  const hasTurkishSuffix = /(?:lar|ler|dır|dir|dur|mış|mış|acak|ecek|iyor)\b/iu.test(text);
+
+  return (
+    hasTurkishWord ||
+    turkishCharacters.length >= 2 ||
+    (turkishCharacters.length >= 1 && hasTurkishSuffix)
+  );
+}
+
+/** Cheap check for text that is unlikely to be English. */
 export function looksNonEnglish(text: string): boolean {
-  return /[\u0400-\u04FF\u0600-\u06FF\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]/.test(text);
+  return (
+    /[\u0400-\u04FF\u0600-\u06FF\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]/.test(text) ||
+    looksTurkish(text)
+  );
+}
+
+/**
+ * Decide whether a new message needs an explicit language check. English can
+ * use the English default, while any other preferred locale is checked so an
+ * English or Turkish message is not mislabeled with the conversation locale.
+ */
+export function shouldDetectSupportMessageLocale(
+  preferredLocale: SupportLocale,
+  text: string,
+): boolean {
+  const hasText = text.trim().length > 0 && text !== "Shared an image";
+  return hasText && (preferredLocale !== "en" || looksNonEnglish(text));
 }
 
 export async function ensureMessageTranslation(
@@ -113,12 +162,16 @@ export async function ensureMessageTranslation(
     channel: Channel;
     messageId: string;
     targetLocale: string;
+    /** Re-detect the original language before using or adding a cached translation. */
+    repairSourceLocale?: boolean;
   },
 ): Promise<{
   text: string;
   source_locale: SupportLocale;
   translated: boolean;
   translations: TranslationMap;
+  source_repaired: boolean;
+  cache_saved: boolean;
 }> {
   const targetLocale = normalizeSupportLocale(params.targetLocale);
   const table = tableFor(params.channel);
@@ -134,8 +187,10 @@ export async function ensureMessageTranslation(
   }
 
   const body = String(row.body ?? "");
-  let sourceLocale = normalizeSupportLocale(row.source_locale as string);
-  const existing =
+  const observedSourceLocale = normalizeSupportLocale(row.source_locale as string);
+  let sourceLocale = observedSourceLocale;
+  let sourceRepaired = false;
+  let existing =
     row.translations && typeof row.translations === "object" && !Array.isArray(row.translations)
       ? ({ ...(row.translations as TranslationMap) } as TranslationMap)
       : ({} as TranslationMap);
@@ -147,27 +202,24 @@ export async function ensureMessageTranslation(
       source_locale: sourceLocale,
       translated: false,
       translations: existing,
+      source_repaired: sourceRepaired,
+      cache_saved: true,
     };
   }
 
-  const cached = readCachedTranslation(existing, targetLocale);
-  if (cached) {
-    return {
-      text: cached,
-      source_locale: sourceLocale,
-      translated: true,
-      translations: existing,
-    };
-  }
-
-  // Old rows defaulted source_locale to "en" even for RU/ES/etc. Detect and correct.
-  if (sourceLocale === targetLocale || (sourceLocale === "en" && looksNonEnglish(body))) {
-    const detected = await detectLocaleWithOpenAI(body);
-    if (detected !== sourceLocale) {
-      sourceLocale = detected;
+  // Only the explicit, authorized repair action may change a stored source
+  // locale. Ordinary customer and guest requests use the stored label as-is.
+  if (params.repairSourceLocale === true) {
+    const detected = await tryDetectLocaleWithOpenAI(body);
+    const correctedLocale =
+      detected === "en" && looksTurkish(body) ? "tr" : detected;
+    if (!correctedLocale) {
+      throw new Error("Language detection unavailable");
+    }
+    if (correctedLocale !== sourceLocale) {
+      sourceLocale = correctedLocale;
       // Detection took a round-trip, so confirm the text is still the one the
-      // locale was detected on before writing it: a stale locale is not
-      // self-correcting, because a later ensure returns from the cache above.
+      // locale was detected on before writing it.
       const { data: checkRow, error: checkErr } = await admin
         .from(table)
         .select("body")
@@ -179,12 +231,36 @@ export async function ensureMessageTranslation(
       if (!checkRow || String(checkRow.body ?? "") !== body) {
         throw new Error("Message changed during translation");
       }
-      const { error: srcErr } = await admin
+      // A correction invalidates every cached translation because those caches
+      // may have been produced while the row still claimed the wrong language.
+      existing = {};
+      const { data: repairedRow, error: srcErr } = await admin
         .from(table)
-        .update({ source_locale: sourceLocale })
-        .eq("id", params.messageId);
-      if (srcErr) console.error("source_locale correct failed", srcErr.message);
+        .update({ source_locale: sourceLocale, translations: existing })
+        .eq("id", params.messageId)
+        .eq("source_locale", observedSourceLocale)
+        .select("id")
+        .maybeSingle();
+      if (srcErr) {
+        throw new Error(`Could not correct the message language: ${srcErr.message}`);
+      }
+      if (!repairedRow) {
+        throw new Error("Message language changed during repair");
+      }
+      sourceRepaired = true;
     }
+  }
+
+  const cached = readCachedTranslation(existing, targetLocale);
+  if (cached) {
+    return {
+      text: cached,
+      source_locale: sourceLocale,
+      translated: true,
+      translations: existing,
+      source_repaired: sourceRepaired,
+      cache_saved: true,
+    };
   }
 
   if (sourceLocale === targetLocale) {
@@ -193,6 +269,8 @@ export async function ensureMessageTranslation(
       source_locale: sourceLocale,
       translated: false,
       translations: existing,
+      source_repaired: sourceRepaired,
+      cache_saved: true,
     };
   }
 
@@ -205,13 +283,14 @@ export async function ensureMessageTranslation(
   // Freshness check after the model call: an edit during the round-trip
   // clears `translations`, and writing this result would pin the old wording
   // under the new text — the cache is keyed by locale alone, so every later
-  // request would keep returning it. Comparing here (rather than with
-  // `.eq("body", ...)`) keeps the body out of the request line: bodies can be
-  // 8 000 chars, which a proxy may reject with 414 and silently disable the
-  // cache for long messages.
+  // request would keep returning it. A concurrent source-locale repair must
+  // also discard this translation because it was produced from the old source
+  // language. Comparing here (rather than with `.eq("body", ...)`) keeps the
+  // body out of the request line: bodies can be 8 000 chars, which a proxy may
+  // reject with 414 and silently disable the cache for long messages.
   const { data: freshRow, error: freshErr } = await admin
     .from(table)
-    .select("body")
+    .select("body, source_locale")
     .eq("id", params.messageId)
     .maybeSingle();
   if (freshErr) {
@@ -220,16 +299,40 @@ export async function ensureMessageTranslation(
   if (!freshRow || String(freshRow.body ?? "") !== body) {
     throw new Error("Message changed during translation");
   }
+  const freshSourceLocale = normalizeSupportLocale(
+    String(freshRow.source_locale ?? "en"),
+  );
+  if (freshSourceLocale !== sourceLocale) {
+    throw new Error("Message language changed during translation");
+  }
 
   const next: TranslationMap = { ...existing, [targetLocale]: translated };
-  const { error: updErr } = await admin
+  // Ordinary requests never write `source_locale`. The conditional update
+  // also prevents a stale translation from being cached if a repair changes
+  // the source language between the freshness check and this write.
+  const { data: updatedRow, error: updErr } = await admin
     .from(table)
-    .update({ translations: next, source_locale: sourceLocale })
-    .eq("id", params.messageId);
-  // A failed write only means the cache stays cold; the text handed back is
-  // for the body just verified, so the caller may use it without going stale.
+    .update({ translations: next })
+    .eq("id", params.messageId)
+    .eq("source_locale", sourceLocale)
+    .select("id")
+    .maybeSingle();
   if (updErr) {
+    if (params.repairSourceLocale === true) {
+      throw new Error(`Could not save the translation cache: ${updErr.message}`);
+    }
     console.error("translation cache write failed", updErr.message);
+    return {
+      text: translated,
+      source_locale: sourceLocale,
+      translated: true,
+      translations: next,
+      source_repaired: sourceRepaired,
+      cache_saved: false,
+    };
+  }
+  if (!updatedRow) {
+    throw new Error("Message language changed during translation");
   }
 
   return {
@@ -237,6 +340,8 @@ export async function ensureMessageTranslation(
     source_locale: sourceLocale,
     translated: true,
     translations: next,
+    source_repaired: sourceRepaired,
+    cache_saved: !updErr,
   };
 }
 

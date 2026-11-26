@@ -86,6 +86,25 @@ product (`src/components/support/`).
 Access is enforced in the database: agent reads/claims are gated on
 `is_support_agent` / `is_admin()`; the app never uses the service-role key.
 
+## Turkish support chat and older messages
+
+Turkish is supported as a **support-chat language**, not as a full product-interface language. A customer using a Turkish browser can therefore write and receive Turkish support chat while the rest of UniCopier safely remains in English. New messages store their detected source locale: Turkish text is stored as `tr`, while English text can remain `en` even in a Turkish conversation. The support assistant replies in the conversation's preferred support language, and the desk receives a cached English translation when needed while the customer sees the original Turkish message.
+
+Apply `supabase/migrations/20261126150000_support_turkish_locale.sql` before deploying `support-chat`, `support-translate`, or the updated widget. The migration adds `tr` to the locale checks on conversations, tickets, chat messages, and ticket messages. Deploying a function that stores `tr` before this migration fails the database check.
+
+Messages written before Turkish was supported can remain marked as English even when their body is Turkish. There is no silent bulk rewrite. An authorized support agent or administrator can call the `support-translate` function with `action: "repair_source_locale"`, a signed-in agent JWT, and either a `conversation_id` or a bounded list of `message_ids`:
+
+```json
+{
+  "action": "repair_source_locale",
+  "channel": "chat",
+  "conversation_id": "<uuid>",
+  "target_locale": "en"
+}
+```
+
+The repair re-detects each original language. If the source locale changes, old translations are cleared and the requested translation is generated again. It never changes the original message body, accepts no guest token, and processes at most 100 messages in one request. Record the operation and its result in the support log before using it on a customer conversation.
+
 ## Agent-facing plan guidance
 
 The source in `tartarixinc/support-admin` adds a static **Plan limits** section to the

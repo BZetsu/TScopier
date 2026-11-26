@@ -2,6 +2,29 @@
 
 ## Changelog
 
+### 2026-11-26 — Turkish support chat and controlled language repair
+
+- **Context:** a customer wrote in Turkish inside support chat, but every message was stored as English and the desk showed the untranslated Turkish body. The product interface was intentionally to remain English; only the support conversation needed Turkish.
+
+- **Plain English:** support chat now accepts Turkish as a separate language choice. A Turkish browser can write and receive Turkish support chat without changing the rest of the product interface. New Turkish messages are recognized before they are saved, and the support desk receives an English translation while the customer sees the original Turkish message. Older messages are not rewritten silently. An authorized support agent can ask the server to re-check the language of a bounded group of old messages; this changes only the language label and cached translations, never the original message text.
+
+- **Root cause / mechanics (technical):** `supabase/functions/_shared/supportLocales.ts` did not include `tr`, so normalization changed Turkish to `en`. The database locale checks also excluded `tr`. `supportTranslate.ts` detected only non-Latin scripts, so Latin-script Turkish was missed, while its OpenAI detection prompt did not allow Turkish. The widget always sent the product-interface locale, which safely fell back to English. Message insertion also used the conversation locale as the message's `source_locale`, so a Turkish browser could not produce a Turkish source label.
+
+- **Fix (files):**
+  - `supabase/functions/_shared/supportLocales.ts` — added Turkish, regional-tag parsing, and Turkish reply-language wording that is separate from the product interface.
+  - `supabase/functions/_shared/supportTranslate.ts` — added Turkish-word and suffix detection, included Turkish in model detection, distinguished a failed detection from an English result, cleared stale translations after a source-locale correction, kept ordinary requests from writing `source_locale`, prevented stale translations from racing with a concurrent repair, and kept the original body immutable.
+  - `supabase/functions/support-chat/index.ts` — checks textual messages when the preferred locale is not English, checks likely non-English text otherwise, stores the detected source locale, and updates the conversation reply language when Turkish is detected.
+  - `supabase/functions/support-translate/index.ts` — added the support-agent-only `repair_source_locale` action with UUID validation and a 100-message batch limit.
+  - `src/lib/supportLocales.ts`, `src/lib/supportChat.ts`, and `src/components/support/SupportWidget.tsx` — resolve support-chat language from the stored product choice, browser language, then active product language while leaving the product interface in English.
+  - `supabase/migrations/20261126150000_support_turkish_locale.sql` — adds `tr` to the conversation, ticket, chat-message, and ticket-message locale checks.
+  - `docs/architecture.md` and `docs/support-admin.md` — document the language flow, trust boundary, repair procedure, and deployment order.
+
+- **Tests / verification:** focused frontend tests **10/10**; focused Edge Function tests **12/12**; root `npx tsc -b` **passed**; Edge Function type check **passed**; scoped ESLint for all newly changed non-baseline files **0 problems**; `SupportWidget.tsx` still has the same 10 pre-existing lint errors as `HEAD`, with no new lint finding in this change; `git diff --check` **passed**. The migration checker correctly reports the new locale migration as not yet applied to staging, along with unrelated pending migrations. Independent code-tester and code-review verdicts are recorded in the final implementation handoff.
+
+- **Deploy state:** source implementation only. No migration or Edge Function was deployed, no live conversation was changed, and Mustafa's existing chat was not repaired. The locale migration must be applied before deploying functions or a widget that can store `tr`.
+
+- **Follow-ups:** after explicit owner approval, apply `20261126150000_support_turkish_locale.sql` to the confirmed target, deploy the updated support functions and widget, then deliberately repair Mustafa's conversation and verify the cached English translations without editing the original bodies.
+
 ### 2026-11-26 — Support AI and agent guidance now use verified plan facts and read-only customer state
 
 - **Context:** customers and support agents needed reliable answers about the Basic and Advanced plan allowances, especially the difference between the number of Telegram signal channels and the number of broker accounts. The support AI previously relied on product prose that could drift from the implementation, and the separate support desk had no concise plan reference. Account-specific answers also needed a safe way to inspect the signed-in customer's current state without exposing broker credentials, session values, payment identifiers, raw signals, or unrelated records.

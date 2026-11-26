@@ -28,7 +28,12 @@ import {
   sanitizeToolArgs,
 } from "../_shared/assistantGuard.ts";
 import { READ_ONLY_TOOL_SCHEMAS, runReadOnlyTool } from "../_shared/readOnlyTools.ts";
-import { eagerEnsureTranslation } from "../_shared/supportTranslate.ts";
+import {
+  eagerEnsureTranslation,
+  looksTurkish,
+  shouldDetectSupportMessageLocale,
+  tryDetectLocaleWithOpenAI,
+} from "../_shared/supportTranslate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -487,7 +492,7 @@ async function handleSend(
   if (!resolved.ok) return bad(resolved.status, resolved.error);
   const convo = resolved.convo;
   const id = convo.id as string;
-  const locale = normalizeSupportLocale(
+  let locale = normalizeSupportLocale(
     String(convo.customer_locale ?? customerLocale),
   );
 
@@ -508,6 +513,26 @@ async function handleSend(
   }
 
   const persistBody = message || (images.length ? "Shared an image" : "");
+
+  // The product UI can fall back to English even when the customer is writing
+  // in another language. Detect likely non-English text before storing it so
+  // the desk receives a translated copy and the AI can reply in that language.
+  let sourceLocale = locale;
+  if (shouldDetectSupportMessageLocale(locale, persistBody)) {
+    const likelyTurkish = looksTurkish(persistBody);
+    const detected = await tryDetectLocaleWithOpenAI(persistBody);
+    const resolvedSourceLocale =
+      detected === "en" && likelyTurkish ? "tr" : detected;
+    if (resolvedSourceLocale) {
+      sourceLocale = resolvedSourceLocale;
+    } else if (likelyTurkish) {
+      sourceLocale = "tr";
+    }
+  }
+  if (sourceLocale === "tr" && locale !== "tr") {
+    locale = "tr";
+    await stampCustomerLocale(admin, convo, locale);
+  }
 
   const replyToRaw = String(body.reply_to_id ?? "").trim();
   let replyToId: string | null = null;
@@ -531,7 +556,7 @@ async function handleSend(
       sender_user_id: actor.kind === "user" ? actor.userId : null,
       body: persistBody,
       images,
-      source_locale: locale,
+      source_locale: sourceLocale,
       translations: {},
       reply_to_id: replyToId,
     })
@@ -543,7 +568,7 @@ async function handleSend(
   }
 
   // Desk default so agents see English quickly; other agent locales fill on demand.
-  if (locale !== DESK_LOCALE) {
+  if (sourceLocale !== DESK_LOCALE) {
     await eagerEnsureTranslation(admin, {
       channel: "chat",
       messageId: userMsg.id as string,

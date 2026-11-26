@@ -33,6 +33,7 @@ import { supabase } from '../../lib/supabase'
 import { appUrl } from '../../lib/site'
 import { isAssistantImageType } from '../../lib/assistantImages'
 import {
+  currentSupportChatLocale,
   ensureOpenSupportConversation,
   escalateSupportConversation,
   fetchSupportAgentProfiles,
@@ -321,7 +322,8 @@ export function SupportWidget({
   headerAvatars,
 }: SupportWidgetProps) {
   const translations = useT()
-  const { locale } = useLocale()
+  const { locale: uiLocale } = useLocale()
+  const supportLocale = useMemo(() => currentSupportChatLocale(uiLocale), [uiLocale])
   const t = translations.supportWidget
   const { user, loading: authLoading } = useAuth()
   const profile = useOptionalUserProfile()?.profile
@@ -472,7 +474,7 @@ export function SupportWidget({
         const { conversation, messages: rows } = await listGuestSupportMessages({
           guestToken: token,
           conversationId,
-          locale,
+          locale: supportLocale,
         })
         ingestConversationMessages(rows, conversation.id)
         setMessages(rows)
@@ -494,7 +496,7 @@ export function SupportWidget({
         setLoadingThread(false)
       }
     },
-    [user, guestSession, ingestConversationMessages, t.errorLoadMessages, locale],
+    [user, guestSession, ingestConversationMessages, t.errorLoadMessages, supportLocale],
   )
 
   useEffect(() => {
@@ -605,7 +607,7 @@ export function SupportWidget({
         const { conversation, messages: rows } = await listGuestSupportMessages({
           guestToken: token,
           conversationId,
-          locale,
+          locale: supportLocale,
         })
         ingestConversationMessages(rows, conversation.id)
         const view = viewStateRef.current
@@ -633,9 +635,9 @@ export function SupportWidget({
     void poll()
     const id = window.setInterval(() => void poll(), 4000)
     return () => window.clearInterval(id)
-  }, [user, guestSession, activeId, ingestConversationMessages, locale])
+  }, [user, guestSession, activeId, ingestConversationMessages, supportLocale])
 
-  // Ensure inbound (ai/agent) messages are shown in the customer's UniCopier locale.
+  // Ensure inbound (ai/agent) messages are shown in the customer's support-chat language.
   useEffect(() => {
     if (!open || !activeId || !messages.length) return
     let cancelled = false
@@ -643,8 +645,8 @@ export function SupportWidget({
       if (m.sender_type === 'user' || m.sender_type === 'system') return false
       if (!m.body || m.body === 'Shared an image') return false
       const source = (m.source_locale || 'en').toLowerCase()
-      if (source === locale) return false
-      return !m.translations?.[locale]
+      if (source === supportLocale) return false
+      return !m.translations?.[supportLocale]
     })
     if (!missing.length) return
 
@@ -655,7 +657,7 @@ export function SupportWidget({
           const result = await ensureSupportTranslation({
             channel: 'chat',
             messageId: m.id,
-            targetLocale: locale,
+            targetLocale: supportLocale,
             guestToken: guestSession?.token ?? null,
           })
           if (cancelled) return
@@ -664,9 +666,10 @@ export function SupportWidget({
               row.id === m.id
                 ? {
                     ...row,
+                    source_locale: result.source_locale ?? row.source_locale,
                     translations: result.translations ?? {
                       ...(row.translations ?? {}),
-                      [locale]: result.text,
+                      [supportLocale]: result.text,
                     },
                   }
                 : row,
@@ -681,7 +684,7 @@ export function SupportWidget({
     return () => {
       cancelled = true
     }
-  }, [open, activeId, messages, locale, guestSession?.token])
+  }, [open, activeId, messages, supportLocale, guestSession?.token])
 
   // Authenticated realtime — listen even when minimized for launcher badge + sound
   useEffect(() => {
@@ -806,7 +809,7 @@ export function SupportWidget({
       const result = await createSupportTicket({
         subject,
         message,
-        locale,
+        locale: supportLocale,
         guest: guestPayload,
       })
       if (!user && result.guest_token) {
@@ -962,7 +965,7 @@ export function SupportWidget({
     try {
       if (user) {
         const conversationId =
-          activeId ?? (await ensureOpenSupportConversation(user.id, locale))
+          activeId ?? (await ensureOpenSupportConversation(user.id, supportLocale))
         const uploaded =
           imagesSnapshot.length > 0
             ? await uploadSupportImages({
@@ -975,7 +978,7 @@ export function SupportWidget({
           message: text,
           conversationId,
           images: uploaded,
-          locale,
+          locale: supportLocale,
           replyToId: replyToSnapshot?.id,
         })
         setActiveId(result.conversation_id)
@@ -1001,7 +1004,7 @@ export function SupportWidget({
         message: text,
         conversationId: activeId,
         imageDataUrls: imagesSnapshot.length > 0 ? imagesSnapshot : undefined,
-        locale,
+        locale: supportLocale,
         replyToId: replyToSnapshot?.id,
         guest,
       })
@@ -1062,7 +1065,7 @@ export function SupportWidget({
     try {
       const guestEscalate =
         !user && guestSession?.token ? { token: guestSession.token } : null
-      await escalateSupportConversation(activeId, guestEscalate, locale)
+      await escalateSupportConversation(activeId, guestEscalate, supportLocale)
       if (user) await refreshConversations()
       await loadThread(activeId)
     } catch (err) {
@@ -1561,7 +1564,7 @@ export function SupportWidget({
                               agent?.display_name ||
                               (isAi ? t.aiName : t.supportName)
                             const showOriginal = Boolean(showOriginalIds[m.id])
-                            const resolved = resolveSupportMessageText(m, locale)
+                            const resolved = resolveSupportMessageText(m, supportLocale)
                             const displayText = showOriginal ? m.body : resolved.text
 
                             return (

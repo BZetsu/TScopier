@@ -516,6 +516,8 @@ flowchart TB
     App --> Tickets
     Email --> Inbound["support-ticket-inbound"]
     Chat --> SupportDB[("Support tables")]
+    Chat --> Translate["support-translate\nLocale detection and cached translations"]
+    Translate --> SupportDB
     Chat --> AccountContext["get_account_context\nRead-only"]
     AccountContext --> AccountDB[("Customer account tables")]
     ProductAssistant --> AssistantChat["assistant-chat"]
@@ -532,11 +534,14 @@ flowchart TB
     Push --> Expo["Expo push service"]
     Expo --> Devices["Registered agent devices"]
     SupportDB --> Desk["Live support desk"]
+    Desk -->|"Ensures an agent-language translation"| Translate
     Operator["Authorized local operator"] -->|"Reads chats via support_admin plugin"| SupportDB
     Operator -->|"Reads selected profile names"| ProfileDB[("user_profiles name fields")]
 ```
 
 The email path is durable. A ticket or chat event is written to an outbox by a database trigger. The scheduled sender retries with backoff and records delivery failures. The `support_notify_backlog` alert rule detects a stuck outbox.
+
+Support-chat language is separate from the product interface language. Turkish (`tr`) is a valid support locale even though the product interface still falls back to English. The widget sends the stored customer choice first, then the browser language, then the active product language; a Turkish browser therefore gets Turkish chat without adding an incomplete Turkish product bundle. `support-chat` checks every textual message when the preferred locale is not English, and checks likely non-English text when the preferred locale is English, before storing the detected `source_locale`. `support-translate` keeps the original body immutable while caching translations by target locale. The `support-translate` `repair_source_locale` action is the controlled path for older rows that were saved as English before Turkish was supported: it requires a support-agent or administrator JWT, accepts at most 100 message IDs, re-detects each original, clears stale translations when the source locale changes, and writes only `source_locale` and `translations`. The migration that adds `tr` to the database locale checks must be applied before functions that can store Turkish.
 
 The mobile-push path is separate and best effort. Database triggers call the service-authenticated `support-push` function, which filters registered agent devices by notification preferences and sends through Expo. A push failure does not block the support write and is not a replacement for the durable email outbox. Whether agents have registered devices and whether the live deployment enables push are external state.
 
@@ -769,6 +774,7 @@ An unspecified function may still perform its own authentication. For example, `
 | Social or mirror copy to a destination broker | Service-role worker or Edge path | Subscription or link state, account mode, filters, writer authority, and idempotency | Cross-user social copy and same-user mirror copy use separate tables and rules |
 | Customer to support | User JWT or guest token | Conversation and ticket ownership check | Guest tokens are bearer secrets for that conversation or ticket |
 | Signed-in customer to support or in-app account tools | User JWT | Server-derived user ID, user-scoped reads, sanitized tool output, and user-scoped opaque broker handles | Account reads are read-only; no model-supplied user ID, credentials, broker login IDs, raw signals, or account-state write path |
+| Support agent to support translation repair | Support-agent or administrator user JWT | Server-side support-role check, UUID validation, and a 100-message batch limit | The repair action changes only `source_locale` and `translations`; the original body remains immutable |
 | Local OpenCode agent to support chats and customer names | Local service-role key or CLI-derived key | Fixed support-table and selected profile-name reads, bounded filters, UUID checks, image origin/path validation, and no write actions | The local plugin bypasses RLS through the service role; keep the key outside the repository and restrict the tool to support data and selected identity fields |
 | Stripe to billing | Stripe signature | Signature verification and event deduplication | Unverified Stripe events are rejected |
 | TradingView to ingest | Path token and optional IP allowlist | Token hash lookup, rate limit, and stable alert-ID idempotency when available | The raw token is not stored as a lookup value; static bodies without an expanded alert ID receive unique keys |
@@ -790,6 +796,7 @@ An unspecified function may still perform its own authentication. For example, `
 - `parse-signal` has `verify_jwt=false`, uses the service-role key internally, performs no request-level user authentication, and can update a supplied signal row. It must not be treated as a normal browser API.
 - `execute-trade` is a deprecated service-role-only parse and logging stub. It does not place orders.
 - `support-ticket-inbound` uses an optional `RESEND_WEBHOOK_SECRET`. The current repository implementation accepts a request when the secret matches, when unsigned requests are explicitly allowed, or when a Svix-style signature header is present. The presence-only signature path is not a cryptographic signature verification in that function and needs review before production use.
+- `support-translate` has `verify_jwt=false` because guests can request their own translations. Its ordinary `ensure` action checks conversation or ticket ownership. The `repair_source_locale` action does not accept a guest token: it requires a support-agent or administrator JWT and a bounded batch.
 - Admin Edge Functions are safe only when the user JWT and active admin check remain in place. The UI guard is not a substitute for the server check.
 
 ## 15. External integrations

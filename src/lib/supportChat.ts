@@ -1,10 +1,19 @@
 import { supabase } from './supabase'
 import { ensureFreshAuthSession } from './fxsocketBroker'
+import { normalizeSupportChatLocale } from './supportLocales'
 import {
   ASSISTANT_MAX_IMAGES,
   fileToAssistantImageDataUrl,
   isAssistantImageType,
 } from './assistantImages'
+
+export {
+  currentSupportChatLocale,
+  normalizeSupportChatLocale,
+  resolveSupportChatLocale,
+  SUPPORT_CHAT_LOCALES,
+  type SupportChatLocale,
+} from './supportLocales'
 
 export const SUPPORT_MAX_IMAGES = ASSISTANT_MAX_IMAGES
 export const SUPPORT_ATTACHMENTS_BUCKET = 'support-attachments'
@@ -101,8 +110,8 @@ export function resolveSupportMessageText(
   message: Pick<SupportMessage, 'body' | 'source_locale' | 'translations'>,
   viewerLocale: string,
 ): { text: string; isTranslated: boolean } {
-  const source = (message.source_locale || 'en').toLowerCase()
-  const viewer = (viewerLocale || 'en').toLowerCase()
+  const source = normalizeSupportChatLocale(message.source_locale)
+  const viewer = normalizeSupportChatLocale(viewerLocale)
   if (source === viewer) return { text: message.body, isTranslated: false }
   const cached = message.translations?.[viewer]
   if (typeof cached === 'string' && cached.trim()) {
@@ -116,7 +125,11 @@ export async function ensureSupportTranslation(params: {
   messageId: string
   targetLocale: string
   guestToken?: string | null
-}): Promise<{ text: string; translations?: Record<string, string> }> {
+}): Promise<{
+  text: string
+  source_locale?: string
+  translations?: Record<string, string>
+}> {
   const headers = params.guestToken ? anonHeaders() : await authOrAnonHeaders()
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/support-translate`
   const res = await fetch(url, {
@@ -132,12 +145,14 @@ export async function ensureSupportTranslation(params: {
   })
   const data = (await res.json().catch(() => ({}))) as {
     text?: string
+    source_locale?: string
     translations?: Record<string, string>
     error?: string
   }
   if (!res.ok) throw new Error(data.error || `Translate failed (${res.status})`)
   return {
     text: data.text ?? '',
+    source_locale: data.source_locale,
     translations: data.translations,
   }
 }
@@ -242,7 +257,7 @@ export async function ensureOpenSupportConversation(
   userId: string,
   locale?: string | null,
 ): Promise<string> {
-  const customerLocale = (locale || 'en').toLowerCase()
+  const customerLocale = normalizeSupportChatLocale(locale)
   const { data: existing, error: existingErr } = await supabase
     .from('support_conversations')
     .select('id, customer_locale')
