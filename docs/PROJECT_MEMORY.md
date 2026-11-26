@@ -2,6 +2,44 @@
 
 ## Changelog
 
+### 2026-11-26 — Support AI and agent guidance now use verified plan facts and read-only customer state
+
+- **Context:** customers and support agents needed reliable answers about the Basic and Advanced plan allowances, especially the difference between the number of Telegram signal channels and the number of broker accounts. The support AI previously relied on product prose that could drift from the implementation, and the separate support desk had no concise plan reference. Account-specific answers also needed a safe way to inspect the signed-in customer's current state without exposing broker credentials, session values, payment identifiers, raw signals, or unrelated records.
+
+- **Plain English:** the support AI and the in-app assistant can now state the verified plan prices and limits from the same source as the product. Guests receive the static plan facts. A signed-in customer can ask for an account-specific answer, and the assistant reads that customer's live plan, channel, and broker state before making the claim. Signal channels and broker accounts are clearly treated as separate limits. The five-channel figure is reported only for active Telegram channels: paused Telegram sources and other source types remain visible but do not increase that number. The change does not change prices, subscriptions, plan enforcement, frontend usage counters, channel setup, broker setup, or signal execution. The separate `tartarixinc/support-admin` repository also now has a static **Plan limits** panel and a Basic-plan channel-capacity reply template for agents.
+
+- **Root cause / mechanics (technical):**
+  - `supabase/functions/_shared/planFacts.ts` is now the canonical source for rendered plan names, prices, and limits; `src/lib/pricingPlans.ts` and both assistant prompts consume it.
+  - `supabase/functions/_shared/planLimits.ts` is the shared Edge/frontend limit core, while `src/lib/planLimits.ts` keeps only frontend-specific settings normalization. `accountPlanContext.ts` calculates the effective plan and limits without changing entitlement enforcement.
+  - `readOnlyTools.ts` derives the user ID from the authenticated request, scopes every account query to that user, does not accept a user ID from the model, and returns an allowlisted summary. Credentials, provider-session values, Stripe IDs, raw signals, internal IDs, broker login IDs, server names, and account-state writes are excluded.
+  - `brokerHandle.ts` provides opaque, user-scoped handles for broker selection. `brokerConnectionStatus.ts` is the shared broker-state resolver, and `src/lib/socialAccount.ts` delegates to it so the assistant and Social Trading eligibility agree. Support trade results no longer include internal signal or broker-account identifiers.
+  - The active Telegram-channel comparison is named `reported_active_telegram_count_within_limit` and is documented as reporting-only, not a whole-account entitlement verdict.
+  - The support prompt treats customer and uploaded content as untrusted data, sanitizes it before model use, and rejects empty sanitized text. `assistantGuard.ts` also removes the unsupported `U+D7FF` code point covered by its sanitizer test.
+  - The support desk uses the intentional versioned static snapshot `plan-facts-v2026-11-25` in `src/lib/supportKnowledge.ts`; its reply template does not assert that a customer is within a limit and requires live-state verification first.
+
+- **Tests / verification:** focused final checks passed: **40/40** Deno tests, **24/24** Vitest tests, **10/10** node:test plan-limit tests, Deno checks, scoped ESLint, root TypeScript, and whitespace checks. The earlier full verification for this implementation passed **597** Vitest tests, **654** node:test tests, both production builds, Deno and TypeScript checks, scoped ESLint, both whitespace checks, and the **85/85** Martins preservation checks. Independent code-tester and code-review verdicts were PASS with no remaining findings.
+
+- **Deploy state:** the support-desk change is live in its repository at commit `6c19eb6b0d6ceb1e270adb2555b8338e8645d9e8` (`tartarixinc/support-admin` `main`). The Unicopier assistant change is commit `844f5401ad456e3822b07b5841c9b3585a13724d`; it was fast-forward pushed to both `upstream/staging` and `bzetu/staging`, and both remote heads were verified at that commit. The affected Supabase Edge Functions have **not** been deployed, so the assistant behavior is not live yet. No production data was changed.
+
+- **Follow-ups:** approve and deploy the relevant Edge Functions to the confirmed environments before relying on live account-state answers; keep the support desk snapshot aligned with the canonical plan facts when either changes; do not use the reporting-only Telegram count as a general entitlement decision.
+
+### 2026-11-26 — Two missing XAUUSD entries confirmed as a Unicode pre-filter skip and a separate pre-link gap
+
+- **Context:** Philani Mkhokhelwa reported two missing entries on 2026-11-25. The investigation was read-only and was kept separate from the plan-limit and support-assistant work. The goal was to identify the exact mechanism behind each missing entry without changing the signal pipeline or sending an unapproved customer explanation.
+
+- **Plain English:** two different timing and format issues explain how the two entries could be absent. The connected GOLD VIP SIGNALS listener received both entries but rejected them before parsing because the channel used styled Unicode letters and digits that the current filter did not recognise. Separately, the two XAUUSD GOLD MASTER entries were published before that channel was connected, so the listener had no opportunity to receive them and did not backfill the older posts. The later GOLD VIP disconnect errors happened after the missed entries and did not cause them. No signal-pipeline code was changed and no reply has been sent to the customer.
+
+- **Root cause / mechanics (technical):**
+  - GOLD VIP messages `3372` (`03:03 UTC`) and `3376` (`06:46 UTC`) were received by the healthy connected listener and logged as `skipped non-signal`. No `signals` row exists for either message. `worker/src/userListener.ts` applies `looksLikeTradingSignal` before parsing; `worker/src/signalTradingHeuristic.ts` checks ASCII numeric context, and `worker/src/tradableSymbol.ts` detects ASCII instrument letters. `worker/src/normalizeTelegramMessageText.ts` removes Telegram/Markdown/HTML formatting but does not apply Unicode NFKC compatibility normalization, so the mathematical bold letters and digits were not recognised. The later disconnect errors began around `08:00 UTC` and could not have caused the earlier skips.
+  - JamesWilsonFast channel row `5069dd2c-dfb6-47c5-b758-6e012ce991de` was created and first seen at `07:38 UTC`. Messages `12382` (`02:07:52 UTC`) and `12383` (`02:09:03 UTC`) predated the link. The first poll was seeded at message `12395`, so those two older posts were not backfilled and did not enter signal history.
+  - The exact production text and the NFKC-normalized equivalent were reproduced against the checked-out worker helpers. The exact text failed the live heuristic; the normalized text passed and detected `XAUUSD` with an ASCII price. The evidence and a draft customer reply are preserved in `docs/scratchpads/missed-signals-philani-2026-11-25.md`.
+
+- **Tests / verification:** production database and Railway checks were read-only. The exact message reproduction matched the production filter result, and the two timeline mechanisms were confirmed independently from production logs and channel state.
+
+- **Deploy state:** no pipeline change, database write, or deployment was made. The already-sent channel-limit reply must not be resent. The missed-signal reply in the scratchpad is draft only and remains blocked pending explicit approval.
+
+- **Follow-ups:** if engineering authorizes a pipeline change, add regression coverage using the exact `3372` and `3376` text, evaluate Unicode compatibility normalization before the live heuristic and price parsing, and separately decide whether newly linked channels should backfill older posts. Ask the customer which channel and approximate times he meant before sending a channel-specific explanation.
+
 ### 2026-11-26 — MTAPI bridge stall fixed: bounded history fan-out, degraded-feed loop break, ConnectByToken skip
 
 - **Context:** customer `alwaysluv` reported order timeouts; `bridge_down` alerts fired repeatedly on 2026-11-25. The investigation with preserved evidence (`docs/scratchpads/bridge-evidence-2026-11-25/`, full write-up in `docs/mtapi-vps-details.md` §6) matched every customer timeout to our own history-read traffic hitting the bridge.
