@@ -1,4 +1,4 @@
-export type Locale = 'en' | 'es' | 'fr' | 'pl' | 'ru' | 'sv' | 'nl' | 'ja' | 'ar'
+export type Locale = 'en' | 'es' | 'fr' | 'de' | 'pl' | 'ru' | 'sv' | 'nl' | 'ja' | 'ar'
 
 export type LocaleOption = {
   code: Locale
@@ -10,7 +10,7 @@ export type LocaleOption = {
 }
 
 const LOCALE_CODES: readonly Locale[] = [
-  'en', 'es', 'fr', 'pl', 'ru', 'sv', 'nl', 'ja', 'ar',
+  'en', 'es', 'fr', 'de', 'pl', 'ru', 'sv', 'nl', 'ja', 'ar',
 ] as const
 
 export function isLocale(value: string | null | undefined): value is Locale {
@@ -38,6 +38,13 @@ export const LOCALES: LocaleOption[] = [
     short: 'FR',
     flagId: 'fr',
     searchText: 'french francais france',
+  },
+  {
+    code: 'de',
+    label: 'Deutsch',
+    short: 'DE',
+    flagId: 'de',
+    searchText: 'german deutsch deutschland germany',
   },
   {
     code: 'pl',

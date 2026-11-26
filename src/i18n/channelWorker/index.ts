@@ -14,6 +14,8 @@ const byLocale: Record<Locale, ChannelWorkerTranslations> = {
   en: channelWorkerEn,
   es: channelWorkerEs,
   fr: channelWorkerFr,
+  // No German bundle yet: these worker-facing labels stay in English.
+  de: channelWorkerEn,
   pl: channelWorkerPl,
   ru: channelWorkerRu,
   sv: channelWorkerSv,
