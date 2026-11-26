@@ -2,6 +2,33 @@
 
 ## Changelog
 
+### 2026-11-26 — Recovery email linked to a page with no redeem box; fixes from the promotion review
+
+- **Context:** the review of the recovery-code promotion returned FAIL with one HIGH and six MEDIUM findings. This entry records the fixes. Two of them were defects in the fix round itself, which is why they are written out in full.
+
+- **Plain English:** the recovery email's button was sending customers to the wrong page. It pointed at the plans page, but the box where a code is entered lives on the Membership page — so a customer who clicked through had nowhere to type the code. The button now points at the Membership page. Two further problems were fixed: the redeem box could only be used once per page load (after redeeming a code it showed a confirmation and never returned to the form), and a customer who opened the email on a device where they were not signed in lost their place entirely and ended up on the dashboard after signing in. The email campaign also silently skipped the oldest customers, because it only looked at the newest thousand accounts — which is exactly the group these emails are for.
+
+- **Root cause / mechanics (technical):**
+  - **Wrong email destination (HIGH):** `admin-mutate` defaulted its CTA to `${appUrl}/billing`, but `/billing` renders `MembershipPage` (the plans page) while the redeem card lives in `BillingPage`, served at `/membership`. The owner's decision was to keep the redeem box on `/membership` and fix the email instead, so the default, and the admin UI's matching default in `tscopier-admin`, both moved to `/membership`.
+  - **The modal-unmount fix was lost and then claimed as done (HIGH):** the earlier fix round made the modal render conditionally — but it did so in `MembershipPage`, which was then discarded when redeem moved back to `BillingPage`. The commit message for `bc50f6ca` therefore claimed "the modal is now mounted only while open" when neither call site was conditional. `RedeemCodeModal` only does `if (!open) return null`, so it stays mounted and `redeemed`/`code` survive a close: after one successful redemption the form never came back. Now conditional at both `BillingPage` and `SubscriptionBanner`. The claim in that commit message is wrong and is corrected here.
+  - **Signed-out recipients lost the destination (MEDIUM):** `/membership` sits behind `ProtectedRoute`, which redirected to `/login` without recording where the visitor was going. `AuthPage` reads `?next=` through `capturePostAuthRedirectFromUrl`, and `postAuthAppPath()` returns `peekPostAuthRedirect() ?? '/dashboard'` — so the redeem page was replaced by the dashboard. `ProtectedRoute` now appends `?next=` with the attempted path, using the existing tested helper rather than a render-time side effect.
+  - **Older customers skipped (MEDIUM):** `send_recovery_emails` resolved addresses with one `listUsers({ page: 1, perPage: 1000 })` call, which returns the newest thousand accounts. The paged `fetchAuthEmails` moved into `_shared/authEmailLookup.ts` and now serves `admin-mutate` and all of `admin-query`, replacing three inline copies including the already-paged one in `users_list`.
+  - **i18n (MEDIUM, mostly fixed earlier):** the modal read its strings through `useT()` and interpolates the `days` the API returns; seven locales changed `14 days` to `{days} days`.
+
+- **Fix (files):**
+  - `src/pages/dashboard/BillingPage.tsx`, `src/components/billing/SubscriptionBanner.tsx` — modal rendered conditionally so it unmounts and resets on close.
+  - `src/components/layout/ProtectedRoute.tsx` — carries the attempted path into `/login?next=`.
+  - `supabase/functions/admin-query/index.ts` — `users_list` now uses the shared paged lookup.
+  - `supabase/functions/_shared/authEmailLookup.ts` — documents the 10-page cap and warns instead of failing silently when the cap is hit or a page is unreadable.
+  - `supabase/functions/admin-mutate/index.ts` — default CTA `/billing` → `/membership`.
+
+- **Tests / verification:** `npx tsc -b` **exit 0** · `npm test` **662 passed / 0 failed** · `deno check --no-lock --node-modules-dir=none` **exit 0** on all three recovery functions · ESLint over the changed files: only the pre-existing `BillingPage.tsx:129` error that reproduces identically on `upstream/main` · `verify-martins-fixes.sh` **85 passed, 0 failed**.
+
+- **Deploy state:** the frontend is not live (Netlify build minutes exhausted). `bc50f6ca`'s edge-function changes were also not deployed when this review ran — production was still on the 2026-11-26 06:43 build with the old `/billing` default. `admin-mutate` and `admin-query` are redeployed from this state.
+
+- **Follow-ups:** (1) `redeemAlreadyUsed` and `redeemExpired` are defined in every locale but never read — the modal shows raw English API errors, so map a status code to those keys or drop them; (2) `redeemSubtitle` still says "14 days" in six pricing bundles; (3) three strings remain keyless English (`Done`, the single-use footnote, `Not signed in`); (4) extract the duplicated resume-billing-pause block, the duplicated recovery-code generator, and `normSymbol`/`numberOrNull`; (5) `authEmailLookup` has no unit test; (6) the same single-page `listUsers` miss-older-users pattern exists in `send-verification-email` and `send-password-reset-email` — separate follow-up; (7) `SubscriptionBanner` is still imported by nothing, so its redeem link never renders — owner decision needed.
+
+
 ### 2026-11-26 — German support chat and agent translation target
 
 - **Context:** the owner requested German support. The scope is the customer support conversation and the language used for agent translations, not the rest of the product interface. There is no complete German product-interface bundle in this repository, so the change does not pretend that the whole product is German.
