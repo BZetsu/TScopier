@@ -86,6 +86,27 @@ product (`src/components/support/`).
 Access is enforced in the database: agent reads/claims are gated on
 `is_support_agent` / `is_admin()`; the app never uses the service-role key.
 
+## Agent-facing plan guidance
+
+The source in `tartarixinc/support-admin` adds a static **Plan limits** section to the
+existing Inbox **User details** panel. It gives agents the verified Basic and Advanced
+broker-account, Telegram-channel, TP/SL-backtest, and take-profit limits. It explains that
+a signal channel and a broker account are separate limits and includes a Basic-plan reply
+template for the common channel-capacity question. The template states the plan allowance
+but does not claim that the customer is within it; agents must verify the live active
+Telegram-channel count through **Open User** before sending it.
+
+This panel contains static product facts only. It does not add a database query, expose
+customer data, or grant the desk access to subscription, channel, or broker records. The
+snapshot is versioned as `plan-facts-v2026-11-25` and must be refreshed from the canonical
+main-repository sources (`supabase/functions/_shared/planFacts.ts` and
+`supabase/functions/_shared/planLimits.ts`) when prices or limits change. The suggested
+reply is derived from that snapshot, and Advanced is stated as five included broker
+accounts that can expand to 100 with paid extra accounts.
+Agents must use the existing **Open User** link when they need to verify the customer's
+live plan, active-channel count, or broker state. The separate repository remains the
+source of truth for this UI change; do not copy it into `apps/support-admin/`.
+
 ## Editing a sent chat message
 
 An agent can correct a message already sent in the Inbox: hover the message, press the

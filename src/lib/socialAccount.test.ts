@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { isVerifiedSocialBrokerTicket, maskBrokerAccountIdentifier, normalizeSocialBrokerTicket, resolveSocialAccountMode } from './socialAccount'
+import {
+  brokerConnectionLabel,
+  isVerifiedSocialBrokerTicket,
+  maskBrokerAccountIdentifier,
+  normalizeSocialBrokerTicket,
+  resolveSocialAccountMode,
+} from './socialAccount'
 import type { BrokerAccount } from '../types/database'
 
 function account(patch: Partial<BrokerAccount>): BrokerAccount {
@@ -38,5 +44,41 @@ describe('social account presentation', () => {
     expect(isVerifiedSocialBrokerTicket('ctrader', '  ')).toBe(false)
     expect(normalizeSocialBrokerTicket('ctrader', '  deal-abc  ')).toBe('deal-abc')
     expect(normalizeSocialBrokerTicket('ctrader', 'bad' + String.fromCharCode(0) + 'id')).toBeNull()
+  })
+
+  it('uses canonical broker error and recovery precedence', () => {
+    expect(brokerConnectionLabel(account({
+      provider: 'mtapi',
+      connection_status: 'error',
+      mtapi_status: 'connected',
+    }))).toBe('Connection error')
+    expect(brokerConnectionLabel(account({
+      provider: 'mtapi',
+      connection_status: 'recovering',
+      mtapi_status: 'connected',
+    }))).toBe('Connecting')
+  })
+
+  it('uses provider-specific state when the generic state is not authoritative', () => {
+    expect(brokerConnectionLabel(account({
+      provider: 'mtapi',
+      connection_status: 'connected',
+      mtapi_status: 'disconnected',
+    }))).toBe('Disconnected')
+    expect(brokerConnectionLabel(account({
+      provider: 'ctrader',
+      connection_status: 'pending',
+      ctrader_status: 'connected',
+    }))).toBe('Connected')
+  })
+
+  it('accepts a known-good terminal as connected', () => {
+    expect(brokerConnectionLabel(account({
+      provider: 'fxsocket',
+      connection_status: 'pending',
+      fxsocket_status: 'pending',
+      terminal_connected: true,
+      trade_allowed: true,
+    }))).toBe('Connected')
   })
 })

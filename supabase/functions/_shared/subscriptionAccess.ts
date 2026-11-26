@@ -20,17 +20,31 @@ export interface UserSubscriptionRow {
   current_period_end?: string | null;
 }
 
-export async function loadUserSubscription(
+export type SubscriptionLoadResult = {
+  data: UserSubscriptionRow | null;
+  error: { message: string } | null;
+};
+
+/** Load a subscription while preserving database errors for authoritative read paths. */
+export async function loadUserSubscriptionResult(
   supabase: SupabaseClient,
   userId: string,
-): Promise<UserSubscriptionRow | null> {
-  const { data } = await supabase
+): Promise<SubscriptionLoadResult> {
+  const { data, error } = await supabase
     .from("subscriptions")
     .select("plan,status,extra_accounts,trial_ends_at,current_period_end")
     .eq("user_id", userId)
     .maybeSingle();
-  if (!data) return null;
-  return data as UserSubscriptionRow;
+  if (error) return { data: null, error: { message: error.message } };
+  return { data: data ? (data as UserSubscriptionRow) : null, error: null };
+}
+
+export async function loadUserSubscription(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<UserSubscriptionRow | null> {
+  const result = await loadUserSubscriptionResult(supabase, userId);
+  return result.data;
 }
 
 function adminUserIdsFromEnv(): Set<string> {
@@ -95,12 +109,17 @@ export function extensionWindowActive(
   return start <= now && start + d * 86_400_000 > now;
 }
 
-/** True when any admin-granted access extension is still live for this user. */
-export async function hasLiveSubscriptionExtension(
+export type SubscriptionExtensionLookupResult = {
+  hasLiveExtension: boolean;
+  error: { message: string } | null;
+};
+
+/** Load extension state while preserving database errors for authoritative read paths. */
+export async function loadLiveSubscriptionExtension(
   supabase: SupabaseClient,
   userId: string,
   sub: SubscriptionTiming | null = null,
-): Promise<boolean> {
+): Promise<SubscriptionExtensionLookupResult> {
   const { data, error } = await supabase
     .from("subscription_extensions")
     .select("days, granted_at")
@@ -108,22 +127,45 @@ export async function hasLiveSubscriptionExtension(
     .order("granted_at", { ascending: false })
     .limit(30);
   if (error) {
+    return { hasLiveExtension: false, error: { message: error.message } };
+  }
+  return {
+    hasLiveExtension: (data ?? []).some((row) =>
+      extensionWindowActive(row.days, row.granted_at, Date.now(), sub),
+    ),
+    error: null,
+  };
+}
+
+/** True when any admin-granted access extension is still live for this user. */
+export async function hasLiveSubscriptionExtension(
+  supabase: SupabaseClient,
+  userId: string,
+  sub: SubscriptionTiming | null = null,
+): Promise<boolean> {
+  const result = await loadLiveSubscriptionExtension(supabase, userId, sub);
+  if (result.error) {
     console.warn(
-      `[subscriptionAccess] extension lookup failed for ${userId}: ${error.message}`,
+      `[subscriptionAccess] extension lookup failed for ${userId}: ${result.error.message}`,
     );
     return false;
   }
-  return (data ?? []).some((row) =>
-    extensionWindowActive(row.days, row.granted_at, Date.now(), sub),
-  );
+  return result.hasLiveExtension;
 }
 
-/** True when user bypasses subscription limits (DB flag, env list, or Auth app_metadata). */
-export async function loadUserIsAdmin(
+export type AdminAccessLoadResult = {
+  isAdmin: boolean;
+  error: { message: string } | null;
+};
+
+/** Resolve admin access while preserving lookup errors for authoritative read paths. */
+export async function loadUserIsAdminResult(
   supabase: SupabaseClient,
   userId: string,
-): Promise<boolean> {
-  if (adminUserIdsFromEnv().has(userId)) return true;
+): Promise<AdminAccessLoadResult> {
+  if (adminUserIdsFromEnv().has(userId)) {
+    return { isAdmin: true, error: null };
+  }
 
   const { data, error } = await supabase
     .from("user_profiles")
@@ -131,28 +173,42 @@ export async function loadUserIsAdmin(
     .eq("user_id", userId)
     .maybeSingle();
 
-  if (error) {
-    console.warn(
-      `[subscriptionAccess] user_profiles.is_admin lookup failed for ${userId}: ${error.message}`,
-    );
-  } else if (isAdminAccessActive(data)) {
-    return true;
+  if (!error && isAdminAccessActive(data)) {
+    return { isAdmin: true, error: null };
   }
 
   try {
     const { data: authData, error: authErr } = await supabase.auth.admin.getUserById(
       userId,
     );
-    if (!authErr && authData?.user) {
-      const meta = authData.user.app_metadata ?? {};
-      if (meta.is_admin === true || meta.role === "admin") return true;
+    if (authErr) {
+      return { isAdmin: false, error: { message: authErr.message } };
+    }
+    const meta = authData?.user?.app_metadata ?? {};
+    if (meta.is_admin === true || meta.role === "admin") {
+      return { isAdmin: true, error: null };
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.warn(`[subscriptionAccess] auth admin lookup failed for ${userId}: ${msg}`);
+    return { isAdmin: false, error: { message: msg } };
   }
 
-  return false;
+  if (error) return { isAdmin: false, error: { message: error.message } };
+  return { isAdmin: false, error: null };
+}
+
+/** True when user bypasses subscription limits (DB flag, env list, or Auth app_metadata). */
+export async function loadUserIsAdmin(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<boolean> {
+  const result = await loadUserIsAdminResult(supabase, userId);
+  if (result.error) {
+    console.warn(
+      `[subscriptionAccess] admin access lookup failed for ${userId}: ${result.error.message}`,
+    );
+  }
+  return result.isAdmin;
 }
 
 export function subscriptionAccessDenied(

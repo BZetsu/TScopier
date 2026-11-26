@@ -1,12 +1,17 @@
-export const PRICING_MONTHLY_BASIC = 9.99
-export const PRICING_MONTHLY_ADVANCED = 39.99
-export const PRICING_MONTHLY_EXTRA_ACCOUNT = 10
+import {
+  PLAN_FACTS,
+  PLAN_MONTHLY_PRICES,
+} from '../../supabase/functions/_shared/planFacts.ts'
+
+export const PRICING_MONTHLY_BASIC = PLAN_MONTHLY_PRICES.basic
+export const PRICING_MONTHLY_ADVANCED = PLAN_MONTHLY_PRICES.advanced
+export const PRICING_MONTHLY_EXTRA_ACCOUNT = PLAN_MONTHLY_PRICES.extraAccount
 
 export const PRICING_ANNUAL_BASIC = +(PRICING_MONTHLY_BASIC * 12 * 0.8).toFixed(2)
 export const PRICING_ANNUAL_ADVANCED = +(PRICING_MONTHLY_ADVANCED * 12 * 0.8).toFixed(2)
 export const PRICING_ANNUAL_EXTRA_ACCOUNT = +(PRICING_MONTHLY_EXTRA_ACCOUNT * 12 * 0.8).toFixed(2)
 
-export const PRICING_ADVANCED_INCLUDED_ACCOUNTS = 5
+export const PRICING_ADVANCED_INCLUDED_ACCOUNTS = PLAN_FACTS.advanced.includedBrokerAccounts
 
 export function pricingDisplayPrices(
   interval: 'monthly' | 'annual',

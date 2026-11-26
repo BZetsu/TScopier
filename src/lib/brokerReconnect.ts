@@ -1,7 +1,15 @@
 import type { BrokerAccount } from '../types/database'
+import {
+  brokerEffectiveConnectionStatus as resolveBrokerEffectiveConnectionStatus,
+  isBrokerSessionConnected as resolveBrokerSessionConnected,
+  isBrokerSessionHealthy as resolveBrokerSessionHealthy,
+  type BrokerConnectionStatusAccount,
+} from '../../supabase/functions/_shared/brokerConnectionStatus.ts'
 import { hasFxsocketBrokerSession, resolveProvider } from './brokerLink'
 
-type BrokerAccountLike = Pick<BrokerAccount, 'fxsocket_status' | 'connection_status'> & {
+type BrokerAccountLike = BrokerConnectionStatusAccount & {
+  fxsocket_status?: BrokerAccount['fxsocket_status']
+  connection_status?: BrokerAccount['connection_status']
   provider?: string | null
   mtapi_status?: string | null
   terminal_connected?: boolean | null
@@ -9,38 +17,23 @@ type BrokerAccountLike = Pick<BrokerAccount, 'fxsocket_status' | 'connection_sta
   live_terminal_health_phase?: 'healthy' | 'unhealthy' | 'checking' | 'paused' | null
 }
 
-/** Prefer a known-good terminal or provider session over a stale pending flag. */
+/** Prefer a known-good terminal or provider state over a stale pending flag. */
 export function brokerEffectiveConnectionStatus(
   account: BrokerAccountLike,
 ): string | null {
-  if (account.connection_status === 'error') {
-    return 'error'
-  }
-  if (account.connection_status === 'recovering') {
-    return 'recovering'
-  }
-  if (account.live_terminal_health_phase === 'healthy') return 'connected'
-  if (account.terminal_connected === true && account.trade_allowed === true) return 'connected'
-
-  const provider = resolveProvider(account)
-  const providerStatus = provider === 'mtapi' ? account.mtapi_status : account.fxsocket_status
-  if (providerStatus === 'connected') return 'connected'
-
-  if (account.connection_status === 'pending') return 'pending'
-  return providerStatus ?? account.connection_status ?? null
+  return resolveBrokerEffectiveConnectionStatus(account)
 }
 
 export function isBrokerSessionHealthy(
   account: BrokerAccountLike,
 ): boolean {
-  const status = brokerEffectiveConnectionStatus(account)
-  return status === 'connected' || status === 'connecting' || status === 'recovering'
+  return resolveBrokerSessionHealthy(account)
 }
 
 export function isBrokerSessionConnected(
   account: BrokerAccountLike,
 ): boolean {
-  return brokerEffectiveConnectionStatus(account) === 'connected'
+  return resolveBrokerSessionConnected(account)
 }
 
 type BrokerAccountLikeReconnect = BrokerAccountLike & {

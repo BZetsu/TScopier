@@ -1,134 +1,34 @@
-export type SubscriptionPlan = 'basic' | 'advanced'
+import {
+  BACKTEST_QUOTA_RUN_MODE,
+  PLAN_LIMITS,
+  canUseFeature,
+  effectivePlan,
+  isSubscriptionActive,
+  isTrialEnded,
+  maxBacktestsPerMonth,
+  maxBrokerAccounts,
+  maxTelegramChannels,
+  maxTradingViewWebhooks,
+  maxTpRows,
+  type PlanFeatureKey,
+  type SubscriptionPlan,
+  type SubscriptionStatus,
+} from '../../supabase/functions/_shared/planLimits.ts'
 
-export type SubscriptionStatus =
-  | 'active'
-  | 'trialing'
-  | 'canceled'
-  | 'past_due'
-  | 'incomplete'
-
-export type PlanFeatureKey =
-  | 'range_trading'
-  | 'reverse_signal'
-  | 'close_worse_entries'
-  | 'auto_management'
-  | 'rr_modes'
-  | 'channel_keyword_filters'
-  | 'multi_trade_style'
-
-export const PLAN_LIMITS = {
-  basic: {
-    maxBrokerAccounts: 1,
-    maxTelegramChannels: 5,
-    maxTradingViewWebhooks: 2,
-    maxBacktestsPerMonth: 5,
-    maxTpRows: 3,
-    allowRangeTrading: false,
-  },
-  advanced: {
-    maxBrokerAccountsBase: 5,
-    maxBrokerAccountsExtra: 95,
-    maxTelegramChannels: null as number | null,
-    maxTradingViewWebhooks: null as number | null,
-    maxBacktestsPerMonth: null as number | null,
-    maxTpRows: null as number | null,
-    allowRangeTrading: true,
-  },
-} as const
-
-/** Only TP/SL simulation runs count toward Basic monthly quota (not signal sync). */
-export const BACKTEST_QUOTA_RUN_MODE = 'tpsl' as const
-
-/** True when trial_ends_at is a parseable timestamp strictly before `now`. */
-export function isTrialEnded(
-  trialEndsAt: string | Date | null | undefined,
-  now: Date = new Date(),
-): boolean {
-  if (trialEndsAt == null || trialEndsAt === '') return false
-  const end =
-    typeof trialEndsAt === 'string' ? Date.parse(trialEndsAt) : trialEndsAt.getTime()
-  if (!Number.isFinite(end)) return false
-  return end < now.getTime()
+export {
+  BACKTEST_QUOTA_RUN_MODE,
+  PLAN_LIMITS,
+  canUseFeature,
+  effectivePlan,
+  isSubscriptionActive,
+  isTrialEnded,
+  maxBacktestsPerMonth,
+  maxBrokerAccounts,
+  maxTelegramChannels,
+  maxTradingViewWebhooks,
+  maxTpRows,
 }
-
-/**
- * Paid `active` always counts. `trialing` counts only while trial_ends_at is
- * unset/unparseable or still in the future — so stuck Stripe sync cannot keep
- * access open after the trial calendar end.
- */
-export function isSubscriptionActive(
-  status: string | null | undefined,
-  trialEndsAt?: string | Date | null,
-): boolean {
-  if (status === 'active') return true
-  if (status === 'trialing') return !isTrialEnded(trialEndsAt)
-  return false
-}
-
-export function maxBrokerAccounts(
-  plan: SubscriptionPlan | null | undefined,
-  extraAccounts = 0,
-): number {
-  if (plan === 'advanced') {
-    return PLAN_LIMITS.advanced.maxBrokerAccountsBase
-      + Math.max(0, Math.min(PLAN_LIMITS.advanced.maxBrokerAccountsExtra, extraAccounts))
-  }
-  return PLAN_LIMITS.basic.maxBrokerAccounts
-}
-
-export function maxTelegramChannels(plan: SubscriptionPlan | null | undefined): number | null {
-  if (plan === 'advanced') return null
-  return PLAN_LIMITS.basic.maxTelegramChannels
-}
-
-/** Basic: 2 webhooks. Advanced: unlimited (`null`). Inactive plan: 0. */
-export function maxTradingViewWebhooks(plan: SubscriptionPlan | null | undefined): number | null {
-  if (plan === 'advanced') return null
-  if (plan === 'basic') return PLAN_LIMITS.basic.maxTradingViewWebhooks
-  return 0
-}
-
-export function maxBacktestsPerMonth(plan: SubscriptionPlan | null | undefined): number | null {
-  if (plan === 'advanced') return null
-  return PLAN_LIMITS.basic.maxBacktestsPerMonth
-}
-
-export function maxTpRows(plan: SubscriptionPlan | null | undefined): number | null {
-  if (plan === 'advanced') return null
-  return PLAN_LIMITS.basic.maxTpRows
-}
-
-export function effectivePlan(
-  plan: SubscriptionPlan | null | undefined,
-  status: string | null | undefined,
-  trialEndsAt?: string | Date | null,
-): SubscriptionPlan | null {
-  if (!isSubscriptionActive(status, trialEndsAt)) return null
-  return plan ?? null
-}
-
-export function canUseFeature(
-  plan: SubscriptionPlan | null | undefined,
-  status: string | null | undefined,
-  feature: PlanFeatureKey,
-  trialEndsAt?: string | Date | null,
-): boolean {
-  const effective = effectivePlan(plan, status, trialEndsAt)
-  if (!effective) return false
-  if (effective === 'advanced') return true
-  switch (feature) {
-    case 'range_trading':
-    case 'reverse_signal':
-    case 'close_worse_entries':
-    case 'auto_management':
-    case 'rr_modes':
-    case 'channel_keyword_filters':
-    case 'multi_trade_style':
-      return false
-    default:
-      return false
-  }
-}
+export type { PlanFeatureKey, SubscriptionPlan, SubscriptionStatus }
 
 /** Plan + status for persisting channel manual settings (admin → advanced/active). */
 export function planContextForManualSettings(
@@ -157,8 +57,10 @@ export function normalizeManualSettingsForPlan<T extends Record<string, unknown>
 ): T {
   const effective = effectivePlan(plan, status, trialEndsAt)
   if (effective === 'advanced') return settings
-  const next = { ...settings } as Record<string, unknown>
 
+  // Keep the frontend's settings behavior local. This differs from the Edge
+  // normalizer by preserving the legacy range-layering defaults.
+  const next = { ...settings } as Record<string, unknown>
   next.trade_style = 'single'
   next.range_trading = false
   next.layering_mode = 'legacy'

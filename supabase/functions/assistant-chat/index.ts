@@ -24,6 +24,12 @@ import {
   summarizeManualPatch,
 } from "../_shared/assistantConfigTools.ts";
 import { logAssistantEvent } from "../_shared/listenerEvents.ts";
+import { createBrokerHandle, isBrokerHandle } from "../_shared/brokerHandle.ts";
+import {
+  summarizeAccountContextAccess,
+  summarizeBrokerForAccountContext,
+  toolGetAccountContext,
+} from "../_shared/readOnlyTools.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -251,7 +257,8 @@ const TOOL_DEFS = [
     type: "function",
     function: {
       name: "get_setup_status",
-      description: "Get Telegram link status, brokers, channels count, and copier pause state.",
+      description:
+        "Get Telegram link status, broker accounts, total/active signal-channel counts, active Telegram-channel reporting count, copier pause state, and the customer's subscription plan with calculated plan limits. Use this before answering plan, Telegram reporting limit, or setup-capacity questions. Do not treat the active Telegram count comparison as a whole-account entitlement verdict.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -277,11 +284,11 @@ const TOOL_DEFS = [
     function: {
       name: "set_broker_active",
       description:
-        "Enable or disable copying on ONE broker (broker_accounts.is_active). Use for stop/resume a specific account (e.g. Exness Demo). is_active=true resumes copying; is_active=false stops it. Never pause other brokers automatically. If plan limit blocks activation, return an error telling the user to pause another active broker or upgrade. Never use set_copier_paused for a single broker.",
+        "Enable or disable copying on ONE broker (broker_accounts.is_active). Use for stop/resume a specific account (e.g. Exness Demo). Resolve the broker with broker_handle from list_brokers or a user-supplied label/login. is_active=true resumes copying; is_active=false stops it. Never pause other brokers automatically. If plan limit blocks activation, return an error telling the user to pause another active broker or upgrade. Never use set_copier_paused for a single broker.",
       parameters: {
         type: "object",
         properties: {
-          broker_account_id: { type: "string" },
+          broker_handle: { type: "string", description: "Opaque broker handle returned by list_brokers" },
           account_login: { type: "string" },
           label: { type: "string", description: "Broker display label, e.g. Exness Demo" },
           is_active: {
@@ -300,7 +307,7 @@ const TOOL_DEFS = [
     function: {
       name: "list_brokers",
       description:
-        "List the user's broker accounts (id, label, account_login / MT login, platform, server, connected).",
+        "List the user's broker accounts with an opaque broker_handle, label, platform, provider, copy state, and effective connection state. Internal IDs, broker login IDs, server names, and provider-session values are omitted.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -317,11 +324,11 @@ const TOOL_DEFS = [
     function: {
       name: "get_channel_config",
       description:
-        "Read current trading config for a broker+channel. Resolve broker by broker_account_id OR account_login (MT login like 928883). Resolve channel by channel_id OR channel_username.",
+        "Read current trading config for a broker+channel. Resolve broker by broker_handle from list_brokers or a user-supplied label/login. Resolve channel by channel_id OR channel_username.",
       parameters: {
         type: "object",
         properties: {
-          broker_account_id: { type: "string" },
+          broker_handle: { type: "string", description: "Opaque broker handle returned by list_brokers" },
           account_login: { type: "string", description: "MT4/MT5 account number / login" },
           channel_id: { type: "string" },
           channel_username: { type: "string" },
@@ -335,11 +342,11 @@ const TOOL_DEFS = [
     function: {
       name: "update_channel_config",
       description:
-        "Create or update trading settings for a channel on a broker (lot size, multi-trade, range, etc.). Call WITHOUT confirmed first so the UI can Confirm; then client re-executes with confirmed=true. Resolve broker by id or account_login; channel by id or username. Only after a confirmed write returns ok may you say settings were updated; then offer save_preset if the user wants a named preset. Opening the config UI is open_broker_config, not this tool.",
+        "Create or update trading settings for a channel on a broker (lot size, multi-trade, range, etc.). Call WITHOUT confirmed first so the UI can Confirm; then client re-executes with confirmed=true. Resolve broker by broker_handle from list_brokers or a user-supplied label/login; channel by id or username. Only after a confirmed write returns ok may you say settings were updated; then offer save_preset if the user wants a named preset. Opening the config UI is open_broker_config, not this tool.",
       parameters: {
         type: "object",
         properties: {
-          broker_account_id: { type: "string" },
+          broker_handle: { type: "string", description: "Opaque broker handle returned by list_brokers" },
           account_login: { type: "string" },
           channel_id: { type: "string" },
           channel_username: { type: "string" },
@@ -374,11 +381,11 @@ const TOOL_DEFS = [
     function: {
       name: "apply_preset",
       description:
-        "Apply a preset to a channel on a broker. Resolve broker by broker_account_id or account_login; channel by channel_id or channel_username. Use confirmed only after UI confirm.",
+        "Apply a preset to a channel on a broker. Resolve broker by broker_handle from list_brokers or a user-supplied label/login; channel by channel_id or channel_username. Use confirmed only after UI confirm.",
       parameters: {
         type: "object",
         properties: {
-          broker_account_id: { type: "string" },
+          broker_handle: { type: "string", description: "Opaque broker handle returned by list_brokers" },
           account_login: { type: "string" },
           channel_id: { type: "string" },
           channel_username: { type: "string" },
@@ -399,7 +406,7 @@ const TOOL_DEFS = [
       parameters: {
         type: "object",
         properties: {
-          broker_account_id: { type: "string" },
+          broker_handle: { type: "string", description: "Opaque broker handle returned by list_brokers" },
           account_login: { type: "string" },
           channel_id: { type: "string" },
           channel_username: { type: "string" },
@@ -606,7 +613,7 @@ const TOOL_DEFS = [
     function: {
       name: "export_account_trades_csv",
       description:
-        "Export the user's Account Trades (broker positions/history from /account-trades) as a downloadable CSV. Use when they ask to export/download trades for analysis (e.g. today's trades as CSV). Defaults to today (local calendar). Optional broker filter via broker_account_id, account_login, or label. The UI downloads the file — do NOT invent trade rows; briefly confirm the export started.",
+        "Export the user's Account Trades (broker positions/history from /account-trades) as a downloadable CSV. Use when they ask to export/download trades for analysis (e.g. today's trades as CSV). Defaults to today (local calendar). Optional broker filter via broker_handle, a user-supplied login, or label. The UI downloads the file — do NOT invent trade rows; briefly confirm the export started.",
       parameters: {
         type: "object",
         properties: {
@@ -614,7 +621,7 @@ const TOOL_DEFS = [
             type: "string",
             description: '"today" (default) or YYYY-MM-DD for the local calendar day of trades opened',
           },
-          broker_account_id: { type: "string" },
+          broker_handle: { type: "string", description: "Opaque broker handle returned by list_brokers" },
           account_login: { type: "string", description: "MT account login, e.g. 928883" },
           label: { type: "string", description: "Broker display label" },
         },
@@ -651,11 +658,11 @@ const TOOL_DEFS = [
     function: {
       name: "open_broker_config",
       description:
-        "Open the Brokers page (/brokers) and the configuration modal for a broker. This only opens the UI — it does NOT change trading settings. Prefer this when the user asks to open broker configuration / account config. If they have multiple brokers and did not specify which, call without identifiers — the tool returns the list so you can ask which one. After they name a broker (label or login), call again with account_login or label.",
+        "Open the Brokers page (/brokers) and the configuration modal for a broker. This only opens the UI — it does NOT change trading settings. Prefer this when the user asks to open broker configuration / account config. If they have multiple brokers and did not specify which, call without identifiers — the tool returns opaque broker handles and labels so you can ask which one. After they name a broker, call again with broker_handle or label.",
       parameters: {
         type: "object",
         properties: {
-          broker_account_id: { type: "string" },
+          broker_handle: { type: "string", description: "Opaque broker handle returned by list_brokers" },
           account_login: { type: "string", description: "MT account login, e.g. 928883" },
           label: { type: "string", description: "Broker display label, e.g. Exness Demo" },
         },
@@ -681,7 +688,7 @@ const TOOL_DEFS = [
         type: "object",
         properties: {
           summary: { type: "string" },
-          broker_account_id: { type: "string" },
+          broker_handle: { type: "string", description: "Opaque broker handle returned by list_brokers" },
           account_login: { type: "string" },
           label: { type: "string" },
           channel_id: { type: "string" },
@@ -700,41 +707,80 @@ type ToolResult = {
   pendingConfirmation?: PendingConfirmation;
 };
 
-async function toolGetSetupStatus(supabase: SupabaseClient, userId: string): Promise<ToolResult> {
-  const [{ data: session }, { data: profile }, { data: brokers }, { data: channels }, { data: sub }] =
-    await Promise.all([
-      supabase.from("telegram_sessions").select("id").eq("user_id", userId).maybeSingle(),
-      supabase.from("user_profiles").select("copier_paused,display_name").eq("user_id", userId).maybeSingle(),
-      supabase
-        .from("broker_accounts")
-        .select("id,label,account_login,platform,is_active,provider,mtapi_session_id,fxsocket_account_id")
-        .eq("user_id", userId),
-      supabase
-        .from("telegram_channels")
-        .select("id,display_name,channel_username,is_active")
-        .eq("user_id", userId)
-        .eq("is_active", true),
-      supabase.from("subscriptions").select("plan,status").eq("user_id", userId).maybeSingle(),
-    ]);
+type SetupAccountContext = {
+  error?: string;
+  subscription?: {
+    effective_plan?: string | null;
+    access?: string | null;
+    [key: string]: unknown;
+  } | null;
+  effective_plan?: string | null;
+  access?: string | null;
+  limits?: Record<string, unknown> | null;
+  usage?: {
+    channels_total?: number;
+    channels_active?: number;
+    telegram_channels_total?: number;
+    telegram_channels_active?: number;
+    reported_active_telegram_count_within_limit?: boolean | null;
+    brokers_total?: number;
+    brokers_active?: number;
+    brokers_connected?: number;
+    brokers_connected_total?: number;
+  };
+};
 
-  const telegramLinked = Boolean(session?.id);
-  const brokerList = brokers ?? [];
-  const connected = brokerList.filter((b) => {
-    if (!b.is_active) return false;
-    return b.provider === "mtapi"
-      ? Boolean(String(b.mtapi_session_id ?? "").trim())
-      : Boolean(String(b.fxsocket_account_id ?? "").trim());
-  }).length;
-
+function accountStateToolError(): ToolResult {
   return {
     content: JSON.stringify({
-      telegram_linked: telegramLinked,
-      copier_paused: profile?.copier_paused === true,
-      display_name: profile?.display_name ?? null,
-      brokers_total: brokerList.length,
-      brokers_connected: connected,
-      channels_active: (channels ?? []).length,
-      subscription: sub ?? null,
+      error: "Unable to verify account state. Please try again.",
+    }),
+  };
+}
+
+async function toolGetSetupStatus(supabase: SupabaseClient, userId: string): Promise<ToolResult> {
+  const [accountResult, sessionResult, profileResult] = await Promise.all([
+    toolGetAccountContext(supabase, userId),
+    supabase.from("telegram_sessions").select("id").eq("user_id", userId).maybeSingle(),
+    supabase
+      .from("user_profiles")
+      .select("copier_paused,display_name")
+      .eq("user_id", userId)
+      .maybeSingle(),
+  ]);
+
+  if (sessionResult.error || profileResult.error) return accountStateToolError();
+
+  let account: SetupAccountContext;
+  try {
+    account = JSON.parse(accountResult.content) as SetupAccountContext;
+  } catch {
+    return accountStateToolError();
+  }
+  if (account.error || !account.usage) return accountStateToolError();
+
+  const usage = account.usage;
+  const accessFields = summarizeAccountContextAccess(account);
+  return {
+    content: JSON.stringify({
+      telegram_linked: Boolean(sessionResult.data?.id),
+      copier_paused: profileResult.data?.copier_paused === true,
+      display_name: profileResult.data?.display_name ?? null,
+      brokers_total: usage.brokers_total ?? 0,
+      brokers_active: usage.brokers_active ?? 0,
+      brokers_connected: usage.brokers_connected ?? 0,
+      brokers_connected_total: usage.brokers_connected_total ?? 0,
+      channels_total: usage.channels_total ?? 0,
+      channels_active: usage.channels_active ?? 0,
+      telegram_channels_total: usage.telegram_channels_total ?? 0,
+      telegram_channels_active: usage.telegram_channels_active ?? 0,
+      reported_active_telegram_count_within_limit:
+        usage.reported_active_telegram_count_within_limit ?? null,
+      subscription: account.subscription ?? null,
+      effective_plan: accessFields.effective_plan,
+      access: accessFields.access,
+      plan_limits: account.limits ?? null,
+      hint: "Use the returned plan and calculated limits for account-specific questions. Compare telegram_channels_active with max_telegram_channels only for the assistant's Telegram-only reporting figure. This comparison is not a whole-account entitlement verdict because product enforcement also considers active non-Telegram sources. brokers_connected counts active-and-connected accounts for compatibility; brokers_connected_total also includes connected accounts that are paused. A null numeric limit means unlimited. Signal channels are not broker accounts.",
     }),
   };
 }
@@ -742,99 +788,114 @@ async function toolGetSetupStatus(supabase: SupabaseClient, userId: string): Pro
 async function toolListBrokers(supabase: SupabaseClient, userId: string): Promise<ToolResult> {
   const { data, error } = await supabase
     .from("broker_accounts")
-    .select("id,label,account_login,platform,is_active,provider,mtapi_session_id,fxsocket_account_id,broker_server,broker_name")
+    .select(
+      "id,label,platform,is_active,provider,connection_status,fxsocket_status,mtapi_status,ctrader_status,binance_status,bybit_status,kucoin_status,dxtrade_status,tradelocker_status,matchtrader_status,terminal_connected,trade_allowed,broker_name",
+    )
     .eq("user_id", userId)
     .order("created_at", { ascending: true });
   if (error) return { content: JSON.stringify({ error: error.message }) };
+
+  const brokers = await Promise.all(
+    (data ?? []).map(async (broker) => ({
+      broker_handle: await createBrokerHandle(userId, String(broker.id)),
+      ...summarizeBrokerForAccountContext(broker),
+    })),
+  );
+
   return {
     content: JSON.stringify({
-      brokers: (data ?? []).map((b) => ({
-        id: b.id,
-        label: b.label || b.broker_name || b.account_login || b.id,
-        account_login: b.account_login ?? null,
-        platform: b.platform,
-        is_active: b.is_active,
-        copying: b.is_active === true,
-        connected: b.provider === "mtapi"
-          ? Boolean(String(b.mtapi_session_id ?? "").trim())
-          : Boolean(String(b.fxsocket_account_id ?? "").trim()),
-        broker_server: b.broker_server ?? null,
-      })),
+      brokers,
+      hint: "Use broker_handle or label when another tool needs a broker. Internal IDs, broker login IDs, server names, and provider-session values are intentionally omitted.",
     }),
   };
 }
 
-type ResolvedBroker = { id: string; account_login: string | null; label: string | null };
+type ResolvedBroker = {
+  id: string;
+  account_login: string | null;
+  label: string | null;
+  platform: string | null;
+  broker_handle: string;
+};
 type ResolvedChannel = { id: string; display_name: string | null; channel_username: string | null };
+
+async function toResolvedBroker(
+  userId: string,
+  broker: { id: string; account_login?: string | null; label?: string | null; platform?: string | null },
+): Promise<ResolvedBroker> {
+  return {
+    id: broker.id,
+    account_login: broker.account_login ?? null,
+    label: broker.label ?? null,
+    platform: broker.platform ?? null,
+    broker_handle: await createBrokerHandle(userId, broker.id),
+  };
+}
 
 async function resolveBroker(
   supabase: SupabaseClient,
   userId: string,
   args: Record<string, unknown>,
 ): Promise<{ broker: ResolvedBroker } | { error: string }> {
+  const handle = String(args.broker_handle ?? "").trim();
   const id = String(args.broker_account_id ?? "").trim();
   const login = String(args.account_login ?? args.broker_login ?? "").trim();
   const labelQuery = String(args.label ?? args.broker_label ?? "").trim().toLowerCase();
 
+  if (handle) {
+    if (!isBrokerHandle(handle)) return { error: "Invalid broker handle" };
+    const { data, error } = await supabase
+      .from("broker_accounts")
+      .select("id,account_login,label,platform")
+      .eq("user_id", userId);
+    if (error) return { error: error.message };
+    for (const broker of data ?? []) {
+      const brokerHandle = await createBrokerHandle(userId, String(broker.id));
+      if (brokerHandle === handle) {
+        return { broker: await toResolvedBroker(userId, broker) };
+      }
+    }
+    return { error: "Broker not found" };
+  }
+
   if (id) {
     const { data, error } = await supabase
       .from("broker_accounts")
-      .select("id,account_login,label")
+      .select("id,account_login,label,platform")
       .eq("id", id)
       .eq("user_id", userId)
       .maybeSingle();
     if (error) return { error: error.message };
     if (!data) return { error: "Broker not found" };
-    return {
-      broker: {
-        id: data.id,
-        account_login: data.account_login ?? null,
-        label: data.label ?? null,
-      },
-    };
+    return { broker: await toResolvedBroker(userId, data) };
   }
 
   if (login) {
     const { data, error } = await supabase
       .from("broker_accounts")
-      .select("id,account_login,label")
+      .select("id,account_login,label,platform")
       .eq("user_id", userId)
       .eq("account_login", login)
       .maybeSingle();
     if (error) return { error: error.message };
-    if (data) {
-      return {
-        broker: {
-          id: data.id,
-          account_login: data.account_login ?? null,
-          label: data.label ?? null,
-        },
-      };
-    }
+    if (data) return { broker: await toResolvedBroker(userId, data) };
+
     // Fallback: scan (logins sometimes stored with whitespace)
     const { data: all } = await supabase
       .from("broker_accounts")
-      .select("id,account_login,label")
+      .select("id,account_login,label,platform")
       .eq("user_id", userId);
     const hit = (all ?? []).find(
       (b) => String(b.account_login ?? "").trim() === login,
     );
-    if (hit) {
-      return {
-        broker: {
-          id: hit.id,
-          account_login: hit.account_login ?? null,
-          label: hit.label ?? null,
-        },
-      };
-    }
-    return { error: `No broker found with account login ${login}` };
+    if (hit) return { broker: await toResolvedBroker(userId, hit) };
+    return { error: "No broker found for the supplied account login" };
   }
 
   if (labelQuery) {
     const { data: all, error } = await supabase
       .from("broker_accounts")
-      .select("id,account_login,label")
+      .select("id,account_login,label,platform")
       .eq("user_id", userId);
     if (error) return { error: error.message };
     const matches = (all ?? []).filter((b) => {
@@ -842,24 +903,17 @@ async function resolveBroker(
       return label === labelQuery || label.includes(labelQuery);
     });
     if (matches.length === 1) {
-      const hit = matches[0];
-      return {
-        broker: {
-          id: hit.id,
-          account_login: hit.account_login ?? null,
-          label: hit.label ?? null,
-        },
-      };
+      return { broker: await toResolvedBroker(userId, matches[0]) };
     }
     if (matches.length > 1) {
       return {
-        error: `Multiple brokers match "${labelQuery}". Specify account_login.`,
+        error: `Multiple brokers match "${labelQuery}". Specify broker_handle or a more specific label.`,
       };
     }
     return { error: `No broker found matching label "${labelQuery}"` };
   }
 
-  return { error: "Provide broker_account_id, account_login, or label" };
+  return { error: "Provide broker_handle, account_login, or label" };
 }
 
 async function resolveChannel(
@@ -1782,11 +1836,10 @@ async function toolSetBrokerActive(
   const brokerRes = await resolveBroker(supabase, userId, args);
   if ("error" in brokerRes) return { content: JSON.stringify({ error: brokerRes.error }) };
   const broker = brokerRes.broker;
-  const name = broker.label || broker.account_login || broker.id;
+  const name = broker.label || "Unnamed account";
 
   const resolvedArgs = {
-    broker_account_id: broker.id,
-    account_login: broker.account_login ?? undefined,
+    broker_handle: broker.broker_handle,
     label: broker.label ?? undefined,
     is_active: isActive,
   };
@@ -1815,12 +1868,12 @@ async function toolSetBrokerActive(
     if (/broker account/i.test(friendly) || /broker_account_limit/i.test(error.message)) {
       const { data: active } = await supabase
         .from("broker_accounts")
-        .select("label,account_login")
+        .select("label")
         .eq("user_id", userId)
         .eq("is_active", true)
         .neq("id", broker.id);
       const names = (active ?? [])
-        .map((b) => b.label || b.account_login)
+        .map((b) => String(b.label ?? "").trim())
         .filter(Boolean)
         .join(", ");
       return {
@@ -1836,9 +1889,8 @@ async function toolSetBrokerActive(
   return {
     content: JSON.stringify({
       ok: true,
-      broker_account_id: broker.id,
+      broker_handle: broker.broker_handle,
       label: broker.label,
-      account_login: broker.account_login,
       is_active: isActive,
     }),
   };
@@ -1897,7 +1949,11 @@ async function toolGetChannelConfig(
 
   return {
     content: JSON.stringify({
-      broker: brokerRes.broker,
+      broker: {
+        broker_handle: brokerRes.broker.broker_handle,
+        label: brokerRes.broker.label,
+        platform: brokerRes.broker.platform,
+      },
       channel: channelRes.channel,
       assigned_to_broker: assigned,
       configured: Boolean(manual),
@@ -1927,14 +1983,14 @@ async function toolUpdateChannelConfig(
   const channelId = channelRes.channel.id;
   const mode = args.copier_mode === "ai" ? "ai" : "manual";
   const patchSummary = String(args.summary ?? "").trim() || summarizeManualPatch(patch);
-  const brokerLabel = brokerRes.broker.account_login || brokerRes.broker.label || brokerId;
+  const brokerLabel = brokerRes.broker.label || "Unnamed account";
   const channelLabel =
     channelRes.channel.channel_username || channelRes.channel.display_name || channelId;
 
   const resolvedArgs = {
-    broker_account_id: brokerId,
+    broker_handle: brokerRes.broker.broker_handle,
     channel_id: channelId,
-    account_login: brokerRes.broker.account_login ?? undefined,
+    label: brokerRes.broker.label ?? undefined,
     channel_username: channelRes.channel.channel_username ?? undefined,
     copier_mode: mode,
     settings: patch,
@@ -2027,9 +2083,9 @@ async function toolUpdateChannelConfig(
   return {
     content: JSON.stringify({
       ok: true,
-      broker_account_id: brokerId,
+      broker_handle: brokerRes.broker.broker_handle,
+      broker_label: brokerRes.broker.label,
       channel_id: channelId,
-      account_login: brokerRes.broker.account_login,
       applied: patch,
       hint: "Offer to save_preset if the user wants to reuse these settings.",
     }),
@@ -2079,7 +2135,7 @@ async function toolApplyPreset(
       pendingConfirmation: {
         tool: "apply_preset",
         args: {
-          broker_account_id: brokerId,
+          broker_handle: brokerRes.broker.broker_handle,
           channel_id: channelId,
           preset_id: preset.id,
         },
@@ -2158,7 +2214,13 @@ async function toolApplyPreset(
   if (upErr) return { content: JSON.stringify({ error: upErr.message }) };
 
   return {
-    content: JSON.stringify({ ok: true, preset: preset.name, broker_account_id: brokerId, channel_id: channelId }),
+    content: JSON.stringify({
+      ok: true,
+      preset: preset.name,
+      broker_handle: brokerRes.broker.broker_handle,
+      broker_label: brokerRes.broker.label,
+      channel_id: channelId,
+    }),
   };
 }
 
@@ -2183,7 +2245,11 @@ async function toolSavePreset(
       content: JSON.stringify({ needs_confirmation: true, name }),
       pendingConfirmation: {
         tool: "save_preset",
-        args: { broker_account_id: brokerId, channel_id: channelId, name },
+        args: {
+          broker_handle: brokerRes.broker.broker_handle,
+          channel_id: channelId,
+          name,
+        },
         summary: `Save current channel settings as preset "${name}"?`,
       },
     };
@@ -2251,15 +2317,17 @@ async function toolSavePreset(
   return { content: JSON.stringify({ ok: true, preset: saved }) };
 }
 
-function brokerChoiceSummary(
-  brokers: Array<{ id: string; account_login: string | null; label: string | null; platform?: string | null }>,
+async function brokerChoiceSummary(
+  userId: string,
+  brokers: Array<{ id: string; label?: string | null; platform?: string | null }>,
 ) {
-  return brokers.map((b) => ({
-    id: b.id,
-    account_login: b.account_login ?? null,
-    label: b.label ?? null,
-    platform: b.platform ?? null,
-  }));
+  return Promise.all(
+    brokers.map(async (broker) => ({
+      broker_handle: await createBrokerHandle(userId, String(broker.id)),
+      label: String(broker.label ?? "").trim() || "Unnamed account",
+      platform: broker.platform ?? null,
+    })),
+  );
 }
 
 async function toolOpenBrokerConfig(
@@ -2269,7 +2337,7 @@ async function toolOpenBrokerConfig(
 ): Promise<ToolResult> {
   const { data: brokers, error } = await supabase
     .from("broker_accounts")
-    .select("id,account_login,label,platform")
+    .select("id,label,platform")
     .eq("user_id", userId)
     .order("created_at", { ascending: true });
   if (error) return { content: JSON.stringify({ error: error.message }) };
@@ -2282,8 +2350,10 @@ async function toolOpenBrokerConfig(
     };
   }
 
+  const choices = await brokerChoiceSummary(userId, list);
   const hasSpecifier = Boolean(
-    String(args.broker_account_id ?? "").trim() ||
+    String(args.broker_handle ?? "").trim() ||
+      String(args.broker_account_id ?? "").trim() ||
       String(args.account_login ?? args.broker_login ?? "").trim() ||
       String(args.label ?? args.broker_label ?? "").trim(),
   );
@@ -2294,19 +2364,23 @@ async function toolOpenBrokerConfig(
       return {
         content: JSON.stringify({
           error: resolved.error,
-          brokers: brokerChoiceSummary(list),
-          hint: "Ask which broker to open, then call open_broker_config with account_login or label.",
+          brokers: choices,
+          hint: "Ask which broker to open, then call open_broker_config with broker_handle or label.",
         }),
       };
     }
-    const name = resolved.broker.label || resolved.broker.account_login || resolved.broker.id;
+    const name = resolved.broker.label || "Unnamed account";
     return {
       content: JSON.stringify({
         queued: true,
         settings_changed: false,
         message:
           "Configuration UI opened only. No trading settings were updated. Tell the user the config modal is open — do not claim settings were saved or updated.",
-        broker: resolved.broker,
+        broker: {
+          broker_handle: resolved.broker.broker_handle,
+          label: name,
+          platform: resolved.broker.platform,
+        },
       }),
       pendingClientAction: {
         type: "open_broker_config",
@@ -2317,20 +2391,19 @@ async function toolOpenBrokerConfig(
   }
 
   if (list.length === 1) {
-    const b = list[0];
-    const name = b.label || b.account_login || b.id;
+    const choice = choices[0];
     return {
       content: JSON.stringify({
         queued: true,
         settings_changed: false,
         message:
           "Configuration UI opened only. No trading settings were updated. Tell the user the config modal is open — do not claim settings were saved or updated.",
-        broker: { id: b.id, account_login: b.account_login ?? null, label: b.label ?? null },
+        broker: choice,
       }),
       pendingClientAction: {
         type: "open_broker_config",
-        summary: `Open configuration for ${name}`,
-        args: { broker_account_id: b.id },
+        summary: `Open configuration for ${choice.label}`,
+        args: { broker_account_id: list[0].id },
       },
     };
   }
@@ -2339,8 +2412,8 @@ async function toolOpenBrokerConfig(
     content: JSON.stringify({
       needs_broker_choice: true,
       message:
-        "Multiple brokers found. Ask the user which broker configuration to open (by label or account login), then call open_broker_config again with account_login or label.",
-      brokers: brokerChoiceSummary(list),
+        "Multiple brokers found. Ask the user which broker configuration to open by label, then call open_broker_config again with broker_handle or label.",
+      brokers: choices,
     }),
   };
 }
@@ -2458,9 +2531,11 @@ async function toolExportAccountTradesCsv(
 
   let brokerId: string | null = null;
   let accountLogin: string | null = null;
+  let brokerHandle: string | null = null;
   let brokerLabel: string | null = null;
 
   const wantsBroker =
+    String(args.broker_handle ?? "").trim() ||
     String(args.broker_account_id ?? "").trim() ||
     String(args.account_login ?? args.broker_login ?? "").trim() ||
     String(args.label ?? args.broker_label ?? "").trim();
@@ -2472,6 +2547,7 @@ async function toolExportAccountTradesCsv(
     }
     brokerId = brokerRes.broker.id;
     accountLogin = brokerRes.broker.account_login;
+    brokerHandle = brokerRes.broker.broker_handle;
     brokerLabel = brokerRes.broker.label;
   }
 
@@ -2483,8 +2559,7 @@ async function toolExportAccountTradesCsv(
     content: JSON.stringify({
       ok: true,
       day,
-      broker_account_id: brokerId,
-      account_login: accountLogin,
+      broker_handle: brokerHandle,
       broker_label: brokerLabel,
       hint:
         "The app downloads Account Trades for that local calendar day as CSV (opened that day). Confirm briefly that the export started / a download card is shown. Do NOT invent trade rows or invent a file. If they need the page, offer open_trades.",

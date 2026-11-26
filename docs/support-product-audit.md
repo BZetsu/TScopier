@@ -1,6 +1,6 @@
 # Support knowledge audit — what actually exists in the app
 
-**Date:** 2026-11-17
+**Date:** 2026-11-17; plan limits re-verified 2026-11-25
 **Purpose:** a verified inventory of the product's real screens, labels and flows, used to
 write `supabase/functions/_shared/supportProductMap.ts` — the only source of UI truth the
 support AI is allowed to use.
@@ -19,6 +19,8 @@ plausible invention, so the fix is coverage, not wording.
 | Broker configuration tabs | `src/i18n/locales/configureModal/en.ts` → `manualSubTabs` |
 | Signal-source tabs and labels | `src/i18n/locales/en.ts` → `channelsPage` |
 | Settings sections | `src/i18n/locales/en.ts` → `settings.sections` |
+| Monthly plan prices | `supabase/functions/_shared/planFacts.ts`, re-exported by `src/lib/pricingPlans.ts` |
+| Broker, channel, backtest, and take-profit limits | `supabase/functions/_shared/planLimits.ts` and the matching entitlement checks |
 
 ---
 
@@ -110,7 +112,54 @@ Subtitle: "Manage which Telegram channels you're monitoring".
   "How to Add to TradingView" steps. Alerts without stop-loss or take-profit prices are
   refused unless the Override options are used.
 
-## 5. Other surfaces
+## 5. Membership, plan limits, and channel capacity
+
+The plan names and monthly prices are canonical in `supabase/functions/_shared/planFacts.ts` and are re-exported by `src/lib/pricingPlans.ts`:
+
+| Plan | Monthly price | Broker accounts | Telegram channels | TP/SL backtests | Take-profit levels |
+|---|---:|---:|---:|---:|---:|
+| Basic | $9.99 | 1 active | Up to 5 active | 5 per month | 3 |
+| Advanced | $39.99 | 5 included, expandable to 100 with paid extras | Unlimited | Unlimited | No fixed row limit |
+
+The limits come from `supabase/functions/_shared/planLimits.ts`, which is also used by
+entitlement checks. For assistant reporting, the Telegram-channel figure counts **active
+Telegram channels only**. TradingView, Discord, and WhatsApp rows remain visible but do
+not inflate that Telegram figure, and paused Telegram channels do not count as active.
+
+This is an assistant reporting rule only. The existing entitlement checker remains
+unchanged and continues to count active non-TradingView source rows. This task does not
+change entitlement enforcement or the frontend usage counter.
+
+A **signal channel** is a source that produces trade instructions. A **broker account**
+is the MT4, MT5, or cTrader destination that receives copied trades. They have separate
+limits, so a customer with two channels is not asking about the Basic one-account broker
+limit.
+
+The customer-facing assistants must use this knowledge in two ways:
+
+- Static facts answer guest questions about plan prices and limits.
+- For a signed-in customer, `support-chat` uses the read-only `get_account_context` tool,
+  while the in-app assistant uses `get_setup_status`. Both report the live plan, calculated
+  limits, and channel counts. The active Telegram count may be compared with the returned
+  Telegram-channel limit for the assistant's Telegram-only reporting figure, but that
+  comparison is not a whole-account entitlement verdict. The broker-account count is a
+  separate figure.
+
+Broker counts are explicit. `brokers_active` includes active accounts, `brokers_connected`
+includes only active and connected accounts, and `brokers_connected_total` also includes
+connected accounts that are paused. Broker connection state comes from the shared resolver
+in `supabase/functions/_shared/brokerConnectionStatus.ts`. The browser facade and the
+Social Trading account label delegate to it, so Account Configuration, Social Trading
+eligibility, and the assistants apply the same error, recovery, terminal-health, and
+provider-state rules.
+
+Neither account path may return credentials, provider-session identifiers, Stripe IDs, raw
+signals, or a write capability. Account summaries also omit internal IDs, broker login IDs,
+and server names. The in-app assistant selects a broker with an opaque, user-scoped
+`broker_handle` that is resolved server-side; the external support-desk repository keeps a
+versioned static snapshot (`plan-facts-v2026-11-25`) rather than adding database access.
+
+## 6. Other surfaces
 
 | Surface | What it is |
 |---|---|
@@ -132,7 +181,7 @@ Subtitle: "Manage which Telegram channels you're monitoring".
 | Settings (`/settings`) | Personal information (name, photo), General settings (defaults for balances, reports, timestamps), Security (password). Email cannot be changed here |
 | Contact Support (`/contact-support`) | The in-app support widget with the AI and the human option |
 
-## 6. What the support AI must never do
+## 7. What the support AI must never do
 
 1. Name a screen, tab or button that is not in this audit.
 2. Describe a catalogue, directory, marketplace, or "browse channels" flow.

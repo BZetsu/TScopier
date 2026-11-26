@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { brokerEffectiveConnectionStatus as sharedBrokerEffectiveConnectionStatus } from '../../supabase/functions/_shared/brokerConnectionStatus.ts'
 import {
   brokerCanReconnect,
   brokerConnectionStatusLabel,
@@ -19,6 +20,38 @@ describe('brokerEffectiveConnectionStatus', () => {
       fxsocket_status: 'error',
       connection_status: 'connected',
     })).toBe('error')
+  })
+
+  it('matches the shared Edge resolver for stale, recovering, and provider-specific states', () => {
+    const cases = [
+      {
+        provider: 'mtapi',
+        connection_status: 'recovering',
+        mtapi_status: 'connected',
+      },
+      {
+        provider: 'ctrader',
+        connection_status: 'connected',
+        ctrader_status: 'error',
+      },
+      {
+        provider: 'fxsocket',
+        connection_status: 'pending',
+        terminal_connected: true,
+        trade_allowed: true,
+      },
+      {
+        provider: 'fxsocket',
+        connection_status: 'disconnected',
+        fxsocket_status: 'disconnected',
+      },
+    ]
+
+    for (const account of cases) {
+      expect(brokerEffectiveConnectionStatus(account)).toBe(
+        sharedBrokerEffectiveConnectionStatus(account),
+      )
+    }
   })
 })
 

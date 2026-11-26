@@ -25,7 +25,7 @@ export const ASSISTANT_MAX_TOOL_DEPTH = 4
 // Control chars are the point of this sanitizer — must be matched, not avoided.
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g
-const ZERO_WIDTH_CHARS = /[\u200b-\u200f\u2060\u2066-\u2069\ufeff]/g
+const ZERO_WIDTH_CHARS = /[\u200b-\u200f\u2060\u2066-\u2069\ufeff\ud7ff]/g
 
 /** Strip control/zero-width chars and clip length. Preserves text fidelity. */
 export function sanitizeAssistantText(

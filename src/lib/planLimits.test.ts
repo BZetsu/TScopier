@@ -16,22 +16,28 @@ test('TradingView webhook limits by plan', () => {
   assert.equal(maxTradingViewWebhooks(null), 0)
 })
 
-test('basic plan normalization forces single trade style', () => {
+test('basic plan normalization forces single trade style and preserves frontend defaults', () => {
   const normalized = normalizeManualSettingsForPlan('basic', 'active', {
     trade_style: 'multi',
     range_trading: true,
   })
   assert.equal(normalized.trade_style, 'single')
   assert.equal(normalized.range_trading, false)
+  assert.equal(normalized.layering_mode, 'legacy')
+  assert.equal(normalized.range_layering_type, 'auto')
 })
 
-test('advanced plan preserves multi trade style', () => {
-  const normalized = normalizeManualSettingsForPlan('advanced', 'active', {
+test('advanced plan preserves settings unchanged', () => {
+  const settings = {
     trade_style: 'multi',
     range_trading: true,
-  })
+  }
+  const normalized = normalizeManualSettingsForPlan('advanced', 'active', settings)
+  assert.equal(normalized, settings)
   assert.equal(normalized.trade_style, 'multi')
   assert.equal(normalized.range_trading, true)
+  assert.equal('layering_mode' in normalized, false)
+  assert.equal('range_layering_type' in normalized, false)
 })
 
 test('trialing is active before trial_ends_at', () => {

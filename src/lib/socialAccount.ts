@@ -1,4 +1,5 @@
 import type { BrokerAccount } from '../types/database'
+import { brokerEffectiveConnectionStatus } from './brokerReconnect'
 
 export type SocialAccountMode = 'demo' | 'live' | 'unknown'
 
@@ -57,17 +58,11 @@ export function brokerConnectionLabel(account: Pick<BrokerAccount,
   | 'dxtrade_status'
   | 'tradelocker_status'
   | 'matchtrader_status'
+  | 'terminal_connected'
+  | 'trade_allowed'
+  | 'live_terminal_health_phase'
 >): string {
-  const providerStatus = account.provider === 'mtapi' ? account.mtapi_status
-    : account.provider === 'ctrader' ? account.ctrader_status
-      : account.provider === 'binance' ? account.binance_status
-        : account.provider === 'bybit' ? account.bybit_status
-          : account.provider === 'kucoin' ? account.kucoin_status
-            : account.provider === 'dxtrade' ? account.dxtrade_status
-              : account.provider === 'tradelocker' ? account.tradelocker_status
-                : account.provider === 'matchtrader' ? account.matchtrader_status
-                  : account.fxsocket_status
-  const status = String(providerStatus ?? account.connection_status ?? '').toLowerCase()
+  const status = brokerEffectiveConnectionStatus(account)
   if (status === 'connected' || status === 'healthy') return 'Connected'
   if (status === 'connecting' || status === 'pending' || status === 'recovering') return 'Connecting'
   if (status === 'error') return 'Connection error'
@@ -99,6 +94,7 @@ export function normalizeSocialBrokerTicket(provider: string | null | undefined,
   }
   if (!SOCIAL_OPAQUE_TICKET_PROVIDERS.has(normalizedProvider)) return null
   const opaque = ticket.trim()
+  // eslint-disable-next-line no-control-regex -- opaque provider tickets must not contain control characters
   return opaque.length > 0 && opaque.length <= 255 && !/[\u0000-\u001f\u007f]/.test(opaque) ? opaque : null
 }
 
