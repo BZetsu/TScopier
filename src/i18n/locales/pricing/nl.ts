@@ -191,7 +191,7 @@ export const pricingNl: PricingBundleTranslations = {
       redeemButton: 'Redeem code',
       redeemCodeLabel: 'Recovery code',
       redeemCodePlaceholder: 'e.g. XK9M2P7Q',
-      redeemSuccess: 'Code redeemed — you now have 14 days of copying access.',
+      redeemSuccess: 'Code redeemed — you now have {days} days of copying access.',
       redeemAlreadyUsed: 'This recovery code was already used.',
       redeemExpired: 'This recovery code has expired.',
       redeemError: 'Failed to redeem recovery code.',

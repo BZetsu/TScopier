@@ -5,12 +5,12 @@ export interface RedeemRecoveryCodeResult {
 }
 
 /**
- * Redeem a one-time recovery code for a 14-day usage extension.
+ * Redeem a one-time recovery code for a usage extension.
  *
  * The code is tied to the signed-in user and can be used once. The edge function
  * verifies ownership, marks the code used, and inserts a subscription_extensions
- * grant so every access check (guard, edge functions, trade worker) treats the
- * 14-day window as live access.
+ * grant of the code's own length (1-30 days) so every access check (guard, edge
+ * functions, trade worker) treats that window as live access.
  */
 export async function redeemRecoveryCode(
   accessToken: string,

@@ -3,6 +3,8 @@ import { useOverlayDismiss } from '../../hooks/useOverlayDismiss'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
 import { useAuth } from '../../context/AuthContext'
+import { useT } from '../../context/LocaleContext'
+import { interpolate } from '../../i18n/interpolate'
 import { redeemRecoveryCode } from '../../lib/redeemRecoveryCode'
 
 interface RedeemCodeModalProps {
@@ -12,17 +14,20 @@ interface RedeemCodeModalProps {
   onRedeemed?: () => void
 }
 
-/** Modal where a user enters a one-time recovery code for a 14-day usage extension. */
+/** Modal where a user enters a one-time recovery code for a usage extension. */
 export function RedeemCodeModal({
   open,
   onClose,
   onRedeemed,
 }: RedeemCodeModalProps) {
+  const t = useT()
+  const bt = t.pricing.billing
   const { session } = useAuth()
   const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [redeemed, setRedeemed] = useState(false)
+  const [grantedDays, setGrantedDays] = useState(0)
 
   const overlayRef = useRef<HTMLDivElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
@@ -40,13 +45,12 @@ export function RedeemCodeModal({
     try {
       const accessToken = session?.access_token
       if (!accessToken) throw new Error('Not signed in')
-      await redeemRecoveryCode(accessToken, code.trim())
+      const result = await redeemRecoveryCode(accessToken, code.trim())
+      setGrantedDays(result.days)
       setRedeemed(true)
       onRedeemed?.()
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to redeem recovery code',
-      )
+      setError(err instanceof Error ? err.message : bt.redeemError)
     } finally {
       setLoading(false)
     }
@@ -81,13 +85,13 @@ export function RedeemCodeModal({
                 id="redeem-code-dialog-title"
                 className="text-base font-semibold text-neutral-900 dark:text-neutral-50"
               >
-                Redeem recovery code
+                {bt.redeemTitle}
               </h2>
               <p
                 id="redeem-code-dialog-body"
                 className="mt-1.5 text-sm text-neutral-900 dark:text-neutral-50 leading-relaxed"
               >
-                Enter your recovery code below.
+                {bt.redeemSubtitle}
               </p>
             </div>
           </div>
@@ -95,7 +99,7 @@ export function RedeemCodeModal({
           {redeemed ? (
             <div className="mt-4 flex flex-col gap-2">
               <p className="text-sm text-green-700 dark:text-green-400">
-                Code redeemed.
+                {interpolate(bt.redeemSuccess, { days: grantedDays })}
               </p>
               <Button type="button" variant="primary" size="sm" onClick={onClose}>
                 Done
@@ -110,8 +114,8 @@ export function RedeemCodeModal({
               ) : null}
               <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3">
                 <Input
-                  label="Recovery code"
-                  placeholder="e.g. XK9M2P7Q"
+                  label={bt.redeemCodeLabel}
+                  placeholder={bt.redeemCodePlaceholder}
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
                   disabled={loading}
@@ -124,7 +128,7 @@ export function RedeemCodeModal({
                   loading={loading}
                   disabled={loading || !code.trim()}
                 >
-                  Redeem code
+                  {bt.redeemButton}
                 </Button>
               </form>
               <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
@@ -136,7 +140,7 @@ export function RedeemCodeModal({
                 onClick={onClose}
                 className="mt-3 text-xs underline text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
               >
-                Cancel
+                {t.common.cancel}
               </button>
             </>
           )}

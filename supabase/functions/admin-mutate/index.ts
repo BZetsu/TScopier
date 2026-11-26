@@ -3,6 +3,7 @@ import { adminClient, corsHeaders, requireAuthedAdmin } from "../_shared/adminAu
 import { writeAdminAudit } from "../_shared/adminAudit.ts";
 import { isSuspiciousSignupEmail } from "../_shared/emailSignupPolicy.ts";
 import { buildCampaignEmailHtml, escapeHtml } from "../_shared/campaignEmailLayout.ts";
+import { fetchAuthEmails } from "../_shared/authEmailLookup.ts";
 import { resolveEmailLogoUrl } from "../_shared/brandEmailAssets.ts";
 import { getEmailUnsubscribeUrl } from "../_shared/subscriptionCampaignEmails.ts";
 
@@ -416,14 +417,9 @@ Deno.serve(async (req: Request) => {
       .from("user_profiles")
       .select("user_id, display_name, first_name")
       .in("user_id", userIds);
-    const { data: authUsers } = await supabase.auth.admin.listUsers({
-      page: 1,
-      perPage: 1000,
-    });
-    const emailByUser = new Map<string, string>();
-    for (const u of (authUsers?.users ?? [])) {
-      if (userIds.includes(u.id)) emailByUser.set(u.id, u.email ?? "");
-    }
+    // Paged lookup: a single listUsers page returns the newest 1000 accounts and
+    // silently misses older ones — exactly the churned cohort we are emailing.
+    const emailByUser = await fetchAuthEmails(supabase, userIds);
     const profileByUser = new Map<string, { display_name?: string | null; first_name?: string | null }>();
     for (const p of (profiles ?? [])) {
       profileByUser.set(String(p.user_id), p);
@@ -535,7 +531,9 @@ Deno.serve(async (req: Request) => {
         bodyHtml: messageHtml,
         primaryCta: {
           label: ctaLabel || "Redeem your code",
-          url: ctaUrl || `${appUrl}/billing`,
+          // /billing renders the plans page (MembershipPage), which has no redeem
+          // entry point; the redeem card lives on /membership (BillingPage).
+          url: ctaUrl || `${appUrl}/membership`,
         },
         closingHtml: "If you did not request this, you can ignore this email.",
         unsubscribeUrl,
