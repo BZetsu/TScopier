@@ -278,7 +278,7 @@ Deno.serve(async (req: Request) => {
       const bytes = crypto.getRandomValues(new Uint8Array(8));
       let generated = "";
       for (const b of bytes) generated += chars[b % chars.length];
-      const { data: inserted, error: insertErr } = await supabase
+      const { error: insertErr } = await supabase
         .from("subscription_recovery_codes")
         .insert({ user_id: targetUserId, code: generated, days, expires_at: expiresAt })
         .select("*")
@@ -353,7 +353,7 @@ Deno.serve(async (req: Request) => {
         const bytes = crypto.getRandomValues(new Uint8Array(8));
         let generated = "";
         for (const b of bytes) generated += chars[b % chars.length];
-        const { data: inserted, error: insertErr } = await supabase
+        const { error: insertErr } = await supabase
           .from("subscription_recovery_codes")
           .insert({ user_id: targetUserId, code: generated, days, expires_at: expiresAt })
           .select("*")
