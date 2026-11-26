@@ -535,7 +535,7 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
     return { listener, anyListener, clients: allClients, sessions }
   }
 
-  it('owned malformed recovery removes old message and edit handlers before client replacement', async () => {
+  it('owned malformed recovery removes old message, edit and deletion handlers before client replacement', async () => {
     await withFastMalformedRecovery(async () => {
       const { anyListener, clients, sessions } = await makeOwnedListenerWithSubscribedHandlers()
       const oldClient = clients[0]
@@ -543,9 +543,9 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
       await anyListener.client.onError?.(malformedRpcError())
 
       assert.equal(oldClient.activeHandlerCount(), 0)
-      assert.equal(oldClient.removeCount(), 2)
-      assert.equal(clients[1].activeHandlerCount(), 2)
-      assert.equal(clients[1].addCount(), 2)
+      assert.equal(oldClient.removeCount(), 3)
+      assert.equal(clients[1].activeHandlerCount(), 3)
+      assert.equal(clients[1].addCount(), 3)
       assert.deepEqual(sessions, ['saved-session', 'persisted-session'])
       assert.equal(oldClient.events.indexOf('old:remove') < oldClient.events.indexOf('old:disconnect'), true)
       await anyListener.stop()
@@ -562,8 +562,8 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
       await anyListener.client.onError?.(malformedRpcError())
 
       assert.equal(oldClient.activeHandlerCount(), 0)
-      assert.equal(oldClient.removeCount(), 2)
-      assert.equal(clients[1].activeHandlerCount(), 2)
+      assert.equal(oldClient.removeCount(), 3)
+      assert.equal(clients[1].activeHandlerCount(), 3)
       await anyListener.stop()
     })
   })
@@ -577,13 +577,13 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
 
       await anyListener.client.onError?.(malformedRpcError())
       assert.equal(oldClient.activeHandlerCount(), 0)
-      assert.equal(secondClient.activeHandlerCount(), 2)
+      assert.equal(secondClient.activeHandlerCount(), 3)
 
       await anyListener.client.onError?.(malformedRpcError())
       assert.equal(secondClient.activeHandlerCount(), 0)
-      assert.equal(secondClient.removeCount(), 2)
-      assert.equal(thirdClient.activeHandlerCount(), 2)
-      assert.equal(thirdClient.addCount(), 2)
+      assert.equal(secondClient.removeCount(), 3)
+      assert.equal(thirdClient.activeHandlerCount(), 3)
+      assert.equal(thirdClient.addCount(), 3)
       await anyListener.stop()
     })
   })
@@ -600,7 +600,7 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
       await delay(10)
 
       assert.equal(oldClient.activeHandlerCount(), 0)
-      assert.equal(oldClient.removeCount(), 2)
+      assert.equal(oldClient.removeCount(), 3)
       assert.equal(newClient.activeHandlerCount(), 0)
       assert.equal(anyListener.isConnected, false)
       await anyListener.stop()
@@ -619,7 +619,7 @@ describe('UserListener AUTH_KEY_DUPLICATED lifecycle', () => {
       const recovery = anyListener.client.onError?.(malformedRpcError()) ?? Promise.resolve()
       await delay(10)
       assert.equal(oldClient.activeHandlerCount(), 0)
-      assert.equal(oldClient.removeCount(), 2)
+      assert.equal(oldClient.removeCount(), 3)
 
       const stop = anyListener.stop()
       releaseDisconnect()

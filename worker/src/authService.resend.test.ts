@@ -317,7 +317,10 @@ describe('AuthService resendCode', () => {
     )
 
     await service.sendCode('user-1', '+15551234567')
-    now = 116_000
+    // 2f7c82e0 (2026-11-19) raised the app-only reuse window to 90s
+    // (APP_ONLY_SEND_CODE_DEBOUNCE_MS); 16s was enough before it existed.
+    // This is the case the test name promises: after the debounce window.
+    now = 100_000 + 90_000 + 1_000
     await service.sendCode('user-1', '+15551234567')
     assert.equal(requests.length, 2)
     await service.shutdown()

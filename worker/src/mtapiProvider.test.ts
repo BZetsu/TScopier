@@ -743,3 +743,149 @@ test('orderHistory recovers a session-gone reply without a second transport retr
   assert.deepEqual(await api.orderHistory('session', 'from', 'to'), [{ ticket: 9 }])
   assert.deepEqual(pathSequence, ['/OrderHistory', '/CheckConnect', '/OrderHistory'])
 })
+
+test('ConnectByToken is disabled after the bridge reports its missing MongoDB registry', async () => {
+  const endpoints: string[] = []
+  const api = provider(url => {
+    endpoints.push(url.pathname)
+    if (url.pathname === '/CheckConnect') {
+      return new Response(JSON.stringify({ code: 'INVALID_TOKEN', message: 'gone' }), { status: 201 })
+    }
+    if (url.pathname === '/ConnectByToken') {
+      return new Response(
+        JSON.stringify({ message: 'Service started without MongoDB.ConnectByToken env var' }),
+        { status: 500 },
+      )
+    }
+    return new Response('{}', { status: 404 })
+  })
+  let recovered = 0
+  api.setRecoveryHandler(async () => {
+    recovered += 1
+    return 'new-token'
+  })
+
+  // First call: the real HTTP round-trip happens and the signature is learned.
+  await api.ensureConnected('old-token')
+  assert.deepEqual(endpoints, ['/CheckConnect', '/ConnectByToken'])
+  assert.equal(recovered, 1)
+
+  // Second call: no ConnectByToken HTTP call — the cached error is rethrown
+  // instead — and the recovery path still runs exactly as before.
+  await api.ensureConnected('old-token')
+  assert.deepEqual(endpoints, [
+    '/CheckConnect', '/ConnectByToken',
+    '/CheckConnect',
+  ])
+  assert.equal(recovered, 2)
+})
+
+test('connectByToken rethrows the cached missing-MongoDB error without an HTTP call', async () => {
+  let tokenCalls = 0
+  const api = provider(url => {
+    if (url.pathname === '/ConnectByToken') {
+      tokenCalls += 1
+      return new Response(
+        JSON.stringify({ message: 'Service started without MongoDB.ConnectByToken env var' }),
+        { status: 500 },
+      )
+    }
+    return new Response('{}', { status: 404 })
+  })
+
+  await assert.rejects(
+    () => api.connectByToken('sess'),
+    (error: unknown) => error instanceof Error && error.message.includes('MongoDB'),
+  )
+  assert.equal(tokenCalls, 1)
+  // Cached: the second attempt throws the same error with no bridge request.
+  await assert.rejects(
+    () => api.connectByToken('sess'),
+    (error: unknown) => error instanceof Error && error.message.includes('MongoDB'),
+  )
+  assert.equal(tokenCalls, 1)
+})
+
+test('a non-MongoDB ConnectByToken failure does not disable the endpoint', async () => {
+  let tokenCalls = 0
+  const api = provider(url => {
+    if (url.pathname === '/ConnectByToken') {
+      tokenCalls += 1
+      if (tokenCalls === 1) {
+        return new Response(JSON.stringify({ message: 'boom transient' }), { status: 500 })
+      }
+      return new Response('token-2')
+    }
+    return new Response('{}', { status: 404 })
+  })
+
+  await assert.rejects(() => api.connectByToken('sess'), /boom transient/)
+  await api.connectByToken('sess')
+  assert.equal(tokenCalls, 2)
+})
+
+test('ConnectByToken verdict is per bridge host: an MT5-only failure never disables MT4', async () => {
+  const oldM4 = process.env.MTAPI_MT4_BASE_URL
+  const oldM5 = process.env.MTAPI_MT5_BASE_URL
+  process.env.MTAPI_MT4_BASE_URL = 'http://mt4-bridge.test'
+  process.env.MTAPI_MT5_BASE_URL = 'http://mt5-bridge.test'
+  try {
+    const hits: string[] = []
+    const api = provider(url => {
+      hits.push(url.host)
+      if (url.host === 'mt5-bridge.test') {
+        return new Response(
+          JSON.stringify({ message: 'Service started without MongoDB.ConnectByToken env var' }),
+          { status: 500 },
+        )
+      }
+      return new Response('token-4')
+    })
+    api.seedPlatformCache('sess-mt4', 'MT4')
+    api.seedPlatformCache('sess-mt5', 'MT5')
+
+    await assert.rejects(() => api.connectByToken('sess-mt5'), /MongoDB/)
+    // The MT4 bridge (a different container) must still be probed...
+    await api.connectByToken('sess-mt4')
+    // ...and the MT5 verdict is remembered (no second MT5 request).
+    await assert.rejects(() => api.connectByToken('sess-mt5'), /MongoDB/)
+    assert.deepEqual(hits, ['mt5-bridge.test', 'mt4-bridge.test'])
+  } finally {
+    if (oldM4 == null) delete process.env.MTAPI_MT4_BASE_URL
+    else process.env.MTAPI_MT4_BASE_URL = oldM4
+    if (oldM5 == null) delete process.env.MTAPI_MT5_BASE_URL
+    else process.env.MTAPI_MT5_BASE_URL = oldM5
+  }
+})
+
+test('ConnectByToken re-probes a host after the retry interval elapses', async () => {
+  let tokenCalls = 0
+  const api = provider(url => {
+    if (url.pathname === '/ConnectByToken') {
+      tokenCalls += 1
+      if (tokenCalls === 1) {
+        return new Response(
+          JSON.stringify({ message: 'Service started without MongoDB.ConnectByToken env var' }),
+          { status: 500 },
+        )
+      }
+      return new Response('token-later')
+    }
+    return new Response('{}', { status: 404 })
+  })
+
+  await assert.rejects(() => api.connectByToken('sess'), /MongoDB/)
+  // Inside the retry window: served from the verdict, no HTTP.
+  await assert.rejects(() => api.connectByToken('sess'), /MongoDB/)
+  assert.equal(tokenCalls, 1)
+
+  // Past the window: one real re-probe, which now succeeds (bridge fixed).
+  const realNow = Date.now
+  try {
+    Date.now = () => realNow() + 61 * 60 * 1000
+    await api.connectByToken('sess')
+  } finally {
+    Date.now = realNow
+  }
+  assert.equal(tokenCalls, 2)
+})

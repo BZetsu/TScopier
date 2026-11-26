@@ -17,8 +17,10 @@ import {
 } from '../lib/tradesSessionCache'
 import {
   TRADES_FULL_HISTORY_REFRESH_MS,
-  incrementalHistoryFrom,
   mergeIncrementalTrades,
+  nextFullHistoryAt,
+  resolveHistoryReadMode,
+  resolveHistoryWindow,
 } from '../lib/tradesIncrementalHistory'
 import { useDashboardRealtime } from './useDashboardRealtime'
 import {
@@ -102,6 +104,9 @@ export function useTradesData(userId: string | undefined) {
   const hasLiveRowsRef = useRef(false)
   const lastHydrationAtRef = useRef(0)
   const loadSeqRef = useRef(0)
+  // Tracks the previous load's degraded flag so the first healthy load after
+  // an outage can do one bounded self-heal full read (resolveHistoryReadMode).
+  const wasDegradedRef = useRef(false)
 
   const applyPayload = useCallback((payload: TradesCachePayload, fetchedAt: number) => {
     fingerprintRef.current = payload.fingerprint
@@ -150,17 +155,29 @@ export function useTradesData(userId: string | undefined) {
       }
 
       // Normal refreshes request only the recent window; the full history is
-      // re-read once a day to drop deleted or corrected old rows.
+      // re-read once a day to drop deleted or corrected old rows — and never
+      // while the feed is degraded (that loop amplified the 2026-11-25 bridge
+      // stalls; see tradesIncrementalHistory.resolveHistoryReadMode).
       const fullHistoryAt = historyCache?.data.fullHistoryAt ?? historyCache?.fetchedAt ?? 0
-      let historyFrom = BROKER_FULL_HISTORY_FROM
+      const degradedNow = getLiveFeedStatus().degraded
+      const recoveredFromDegraded = !degradedNow && wasDegradedRef.current
+      wasDegradedRef.current = degradedNow
+      const readMode = resolveHistoryReadMode({
+        hasCache: historyCache != null,
+        degraded: degradedNow,
+        recoveredFromDegraded,
+        now,
+        fullHistoryAt,
+      })
+      const window = resolveHistoryWindow({
+        readMode,
+        cacheTrades: historyCache?.data.trades ?? null,
+        now,
+      })
+      const historyFrom = window.historyFrom
       let incrementalCache: TradesCachePayload | null = null
-      if (
-        historyCache &&
-        now - fullHistoryAt < TRADES_FULL_HISTORY_REFRESH_MS &&
-        !getLiveFeedStatus().degraded
-      ) {
+      if (window.incrementalCache && historyCache) {
         incrementalCache = historyCache.data
-        historyFrom = incrementalHistoryFrom(historyCache.data.trades, now)
       }
 
       // Only a load that actually fetches may invalidate an in-flight
@@ -214,7 +231,12 @@ export function useTradesData(userId: string | undefined) {
         const payload: TradesCachePayload = {
           trades: merged,
           fingerprint,
-          fullHistoryAt: incrementalCache ? fullHistoryAt : fetchedAt,
+          fullHistoryAt: nextFullHistoryAt({
+            readMode,
+            hasIncrementalCache: incrementalCache != null,
+            previousMarker: fullHistoryAt,
+            fetchedAt,
+          }),
         }
         writeSessionCache(key, payload)
         applyPayload(payload, fetchedAt)
@@ -303,6 +325,9 @@ export function useTradesData(userId: string | undefined) {
       // Any live rows on screen belong to the previous user.
       hasLiveRowsRef.current = false
       lastHydrationAtRef.current = 0
+      // The previous user's degraded state must not drive this user's first
+      // read into the recovery-full branch.
+      wasDegradedRef.current = false
       const key = tradesCacheKey(userId)
       const cached = peekSessionCache<TradesCachePayload>(key, TRADES_CACHE_TTL_MS)
       if (cached) {

@@ -2,6 +2,43 @@
 
 ## Changelog
 
+### 2026-11-26 — MTAPI bridge stall fixed: bounded history fan-out, degraded-feed loop break, ConnectByToken skip
+
+- **Context:** customer `alwaysluv` reported order timeouts; `bridge_down` alerts fired repeatedly on 2026-11-25. The investigation with preserved evidence (`docs/scratchpads/bridge-evidence-2026-11-25/`, full write-up in `docs/mtapi-vps-details.md` §6) matched every customer timeout to our own history-read traffic hitting the bridge.
+
+- **Plain English:** our edge functions were sending the trading bridge about 218 history requests at the same time for a single account-history read. The bridge processes one request at a time, so it buried itself, missed its 5-second health check, and every customer order placed during those windows timed out. Two things multiplied the load: a "degraded feed" flag that forced a full 26-year history re-read every 15 seconds (failures created more load, which created more failures), and about 10,636 calls a day asking the bridge to connect by token when the bridge had already answered "no database" — every one failing, every one pointless. The fix spreads history requests out (four at a time), makes a struggling feed read only the recent window with one bounded catch-up after recovery, and makes the worker remember the bridge's "no database" answer for an hour instead of re-asking. Since the first fix reached production on 2026-11-25, the bridge has not alerted once and answers in about 1.2 seconds.
+
+- **Root cause (technical):** `mtapi-broker`/`fxsocket-broker` full-history reads fanned out ~218 parallel 45-day chunks (`Promise.allSettled`) per read; the MTAPI bridge (serial terminal) queued them, `/health` exceeded the 5 s probe → `bridge_down` → in-flight OrderSend timeouts. Amplifiers: `resolveHistoryReadMode` returned `full` while degraded, re-running the whole read each poll; and `ConnectByToken` retried on the bridge's missing-MongoDB error 10,636×/day.
+
+- **Fix (files):**
+  - `supabase/functions/_shared/fxsocketTrades.ts` — `allSettledBounded` with `HISTORY_CHUNK_CONCURRENCY = 4` caps in-flight chunks (Fix 1).
+  - `src/lib/tradesIncrementalHistory.ts` + `src/hooks/useTradesData.ts` — degraded feeds always read the incremental window; one bounded catch-up after recovery (Fix 2).
+  - `worker/src/mtapiProvider.ts` — per-host `connectByTokenUnsupported` map with 60-minute TTL re-probe; `isBridgeMissingMongoDbError` (Fix 3).
+  - `docs/architecture.md` — §17.4 "MTAPI bridge load rules"; `docs/mtapi-vps-details.md` (new) — VPS details, root cause, MongoDB attach runbook.
+
+- **Tests/verification:** code review round 1 FAIL (two HIGHs: degraded-before-cache ordering, missing per-host ConnectByToken cache) → both fixed → round 2 PASS_WITH_NOTES with no blocking findings; code-tester PASS_WITH_NOTES. Gates: worker 3411/3411, node 655/655, edge 20/20, Martins preservation 85/85, lint adds no new findings (2 errors pre-existing at HEAD), `tsc -b` exit 0.
+
+- **Deploy state:** Fix 1 deployed to production edge (`mtapi-broker`, `fxsocket-broker`, project `sxkpcovbyaficvtkpsdo`) on 2026-11-25; no `bridge_down` alert since 18:35 UTC 2026-11-25. Fix 2 ships with the next Netlify frontend build and Fix 3 with the next Railway worker deploy — neither is deployed yet. Code committed to `staging` for the PR to main.
+
+- **Follow-ups:** MongoDB attach Saturday 2026-11-29 per `docs/mtapi-vps-details.md` §9 (Step 1 env-var-name check still outstanding); 48-hour measurement vs the 2026-11-25 baseline (failed reads 37% → target <5%, `bridge_down` 9–13/day → 0–1/day, timeout rows 100 → ~0); `alwaysluv` cleanup (12 stale pending rows, resting `SellLimit` on account 34250909, chat reply).
+
+### 2026-11-26 — 15 pre-existing worker test failures repaired (test-side only, owner-signed)
+
+- **Context:** the full worker suite was red with 15 failures before any bridge-fix work. Proven pre-existing: a fresh worktree at pure HEAD reproduced them identically, and all four breaking commits are ancestors of `upstream/main` (main is red on the same tests).
+
+- **Plain English:** four recent changes by Martins/Planmoni updated behavior but left the tests expecting the old behavior, so 15 tests failed on every run. We updated only the tests — his production code was not touched, as required — and the exact group that failed 15 now passes 106 out of 106.
+
+- **Root cause (technical):** `b4bebcd1` switched basket reconcile from `.eq('status','open')` to `.in('status',[...])` (mock lacked `in`); `2f7c82e0` raised the app-only sendCode reuse window to 90 s (test advanced only 16 s); `781e7d85` made zones parse "without inventing SL/TP" (catalog still pinned the invented stop 4040); `ba8230e7` added a third listener handler for close-trade-on-signal-deletion (tests pinned 2 handlers).
+
+- **Fix (files):** `worker/src/engine/v2ReconcileMonitor.test.ts` (mock `in` stub), `worker/src/authService.resend.test.ts` (advance past the 90 s window), `scripts/signal-catalog.json` (`entry_now_plain#1` → `sl: null` + note), `worker/src/sessionManager.shutdown.test.ts` (11 count assertions 2→3 + title).
+
+- **Tests/verification:** the exact 4-file combination that failed 15 → 106/106; full gates green (worker 3411/3411, node 655/655); owner sign-off given 2026-11-26 per AGENTS.md.
+
+- **Deploy state:** ships with this staging push; test-only, no production behavior change.
+
+- **Follow-ups:** if zone-stop policy or handler registration changes again, move the expectations deliberately (documented in the catalog note), never the source.
+
+
 ### 2026-11-26 — Recovery codes promoted towards main: production schema applied, `upstream/main` merged into staging, PR prepared
 
 - **Context:** the goal was to move the churned-user recovery-code feature (generate, email, redeem) from `staging` into `upstream/main`, with the SQL run in production first. The owner applied the five recovery migrations in the production Supabase dashboard, and they were verified there before any code was deployed. The remaining work was to bring `upstream/main` into `staging` so the pull request would contain only the recovery feature and not thirty-three unrelated commits, to resolve the one file that both sides had changed, and to prepare the branch and description for the pull request.

@@ -1,7 +1,7 @@
 # Unicopier system architecture
 
 - **Status:** Canonical system-wide architecture
-- **Source snapshot:** `staging-merge` at `c3ad1d29`, reviewed 2026-11-25
+- **Source snapshot:** `staging-merge` at `e3159d7f`, reviewed 2026-11-25
 - **Scope:** This repository and the external applications and services it calls
 
 ## 1. Purpose and authority
@@ -83,6 +83,8 @@ Unicopier receives trading instructions from supported sources, turns them into 
 | `apps/support-admin/` | Historical copy of the support desk | **Not live source. Do not edit or deploy.** |
 | `apps/mobile/` | Expo and iOS artifacts without an application entry point | Not a runnable application in this checkout |
 | `apps/docs/` | Referenced by root scripts and CI but absent | Missing component, not an active application |
+| `.opencode/plugins/support-admin/` | Local OpenCode read-only support chat and image reader | Local agent extension; not part of the deployed product |
+| `.opencode/skills/support-admin/` | Local skill instructions for the support reader | Local agent guidance; not runtime code |
 | `tartarixinc/support-admin` | Live support desk at `unicopier.support` | External source of truth for the support UI |
 | `tartarixinc/tscopier-admin` | Separate deep operations dashboard | External source of truth for that dashboard |
 | `docs/` | Architecture, runbooks, incidents, memory, and project records | Supporting documentation; this file is canonical for architecture |
@@ -443,7 +445,7 @@ Source-specific behavior:
 
 - Discord uses one gateway process per bot token and records installation, guild, and channel state.
 - WhatsApp reads linked groups only, stores Baileys credentials in encrypted form, writes `source_kind=whatsapp`, and never sends messages or manages groups.
-- TradingView requests use a path token and may use an IP allowlist. The worker also records the delivery idempotency key and rejects a repeated body key.
+- TradingView requests use a path token and may use an IP allowlist. The worker records a delivery idempotency key and rejects a repeated delivery only when the alert expands to the same stable alert ID. An identical static body without an expanded ID intentionally receives a new key and is accepted on every provider fire.
 
 ### 10.4 Broker connection and provider transition
 
@@ -498,7 +500,7 @@ sequenceDiagram
     DB-->>UI: Realtime or refreshed subscription state
 ```
 
-The browser can also ask the `confirm-checkout` function to reconcile a checkout that completed before the webhook arrived. Subscription changes can pause or restore copier access and close or restore broker connections according to the shared access rules.
+The browser can also ask the `confirm-checkout` function to reconcile a checkout that completed before the webhook arrived. Subscription changes pause or restore copier execution and remove listener leases when access is revoked. Expired FxSocket accounts are disconnected by a separate scheduled job after the subscription grace period; restoring a subscription does not recreate a broker session.
 
 ### 10.6 Support
 
@@ -507,22 +509,46 @@ flowchart TB
     Widget["Customer widget\nSigned-in user or guest"]
     Email["Resend inbound email"]
     App["Product support pages"]
+    ProductAssistant["In-app assistant"]
 
     Widget --> Chat["support-chat"]
     Widget --> Tickets["support-tickets"]
     App --> Tickets
     Email --> Inbound["support-ticket-inbound"]
     Chat --> SupportDB[("Support tables")]
+    Chat --> AccountContext["get_account_context\nRead-only"]
+    AccountContext --> AccountDB[("Customer account tables")]
+    ProductAssistant --> AssistantChat["assistant-chat"]
+    AssistantChat --> SetupStatus["get_setup_status and list_brokers\nRead-only setup state"]
+    SetupStatus --> AccountDB
     Tickets --> SupportDB
     Inbound --> SupportDB
     SupportDB --> Trigger["Database trigger"]
     Trigger --> Outbox[("support_notification_outbox")]
     Outbox --> Cron["support-notify scheduled job"]
     Cron --> Resend["Agent email"]
+    SupportDB --> PushTrigger["Database push trigger"]
+    PushTrigger --> Push["support-push\nService-authenticated"]
+    Push --> Expo["Expo push service"]
+    Expo --> Devices["Registered agent devices"]
     SupportDB --> Desk["Live support desk"]
+    Operator["Authorized local operator"] -->|"Reads chats via support_admin plugin"| SupportDB
+    Operator -->|"Reads selected profile names"| ProfileDB[("user_profiles name fields")]
 ```
 
-The support notification path is durable. A ticket or chat event is written to an outbox by a database trigger. The scheduled sender retries with backoff and records delivery failures. The `support_notify_backlog` alert rule detects a stuck outbox.
+The email path is durable. A ticket or chat event is written to an outbox by a database trigger. The scheduled sender retries with backoff and records delivery failures. The `support_notify_backlog` alert rule detects a stuck outbox.
+
+The mobile-push path is separate and best effort. Database triggers call the service-authenticated `support-push` function, which filters registered agent devices by notification preferences and sends through Expo. A push failure does not block the support write and is not a replacement for the durable email outbox. Whether agents have registered devices and whether the live deployment enables push are external state.
+
+A signed-in customer can ask the support AI for live plan and setup facts. The AI calls the read-only `get_account_context` tool. The function derives the user ID from the authenticated request, scopes every account query to that ID, and returns only the subscription state, calculated limits, channel summary, broker-account summary, and usage counts. It does not accept a user ID from the model and does not expose internal IDs, broker login IDs, server names, credentials, provider-session identifiers, Stripe IDs, raw signals, or write operations. If a required database read fails, the tool returns an explicit verification error instead of an empty or inactive account state. Guests receive static plan facts and are asked to sign in for account-specific state.
+
+The in-app assistant follows the same account-state boundary through its existing `get_setup_status` and `list_brokers` tools. Those tools read only the authenticated user's setup. When the assistant must select a broker for a later action, the model receives an opaque, user-scoped `broker_handle`; the function resolves that handle server-side within the same user scope. Database broker IDs, broker login IDs, server names, and provider-session values are not returned in the model-visible broker summaries.
+
+The browser and Edge Functions use the same broker connection-state resolver in `supabase/functions/_shared/brokerConnectionStatus.ts`. Error and recovering states take precedence, a known-good terminal or connected provider state is accepted, and a provider error is not hidden by a stale generic state. The browser facade in `src/lib/brokerReconnect.ts` delegates to this resolver, and the Social Trading account label also uses that facade. The shared resolver keeps Account Configuration, Social Trading eligibility, and assistant answers consistent.
+
+For assistant reporting, the Telegram-channel figure counts active Telegram sources only. TradingView, Discord, WhatsApp, and paused Telegram rows remain visible but do not inflate that assistant figure. This is a reporting comparison, not a whole-account entitlement verdict: the product's entitlement enforcement also considers active non-Telegram sources. `brokers_connected` means active and connected for compatibility, while `brokers_connected_total` also includes connected accounts that are paused. The existing entitlement checker and frontend usage counter are unchanged and continue to count active non-TradingView source rows.
+
+Plan prices and rendered limit facts have one canonical source in the main repository: `supabase/functions/_shared/planFacts.ts` uses the shared entitlement core in `supabase/functions/_shared/planLimits.ts`, and the product pricing and frontend plan-limit modules build on those files. The external support-desk repository cannot import runtime code from this repository, so it keeps the versioned static snapshot `plan-facts-v2026-11-25`. These shared facts do not change prices, subscriptions, or entitlement enforcement.
 
 The live desk is also documented as providing a Customers view that links a customer to their support records. That view lives in the external `tartarixinc/support-admin` repository and was not independently inspected in this source-only audit.
 
@@ -532,6 +558,8 @@ The support desk deep links are an external contract:
 - `/?chat=<uuid>` opens one conversation.
 
 Alert email must continue to use those exact query parameters.
+
+A project-local OpenCode plugin can read the same support chats for an authorized operator. The `support_admin` tool at [`.opencode/plugins/support-admin/index.ts`](../.opencode/plugins/support-admin/index.ts) supports listing conversations, reading one thread, and fetching one image as an inline attachment. It is deliberately read-only: it exposes fixed `support_conversations` and `support_messages` reads plus a selected `user_profiles` identity read (`user_id`, `display_name`, `username`, `first_name`, and `last_name`) for signed-in customers, assigned agents, and message senders. The returned profile shape is exactly those five fields plus the derived `name`, which prefers the display name, then the combined first and last name, then the username. It requires UUID or bounded filters, never returns `guest_token` or profile email/address fields, and validates image URLs as HTTPS objects in the `support-attachments` bucket from an allowed storage origin before fetching them. Conversation search covers guest details, subject, and signed-in customer display names, usernames, first names, and last names. Search text is matched literally, and searches broad enough to exceed the bounded profile-ID limit fail explicitly instead of returning an incomplete result. It obtains a service-role key from dedicated environment variables or the locally authenticated Supabase CLI; the key is never written to the repository or returned by the tool. The companion skill at [`.opencode/skills/support-admin/SKILL.md`](../.opencode/skills/support-admin/SKILL.md) documents the read-only workflow. This is a local operator tool, not a deployed product endpoint, and it cannot claim, reply, resolve, close, edit, or reassign a chat.
 
 ### 10.7 Social copy and mirror copy
 
@@ -575,7 +603,7 @@ flowchart TB
     MirrorEvent --> Dashboard
 ```
 
-The two paths share broker-session, writer-authority, symbol-mapping, sizing, and idempotency helpers but keep separate tables and execution records.
+The two paths share broker-session resolution, write-authority checks, position normalization, sizing, and volume-clamping helpers. They keep separate symbol-mapping implementations, execution-event tables, claiming logic, mappings, and audit records.
 
 Social copy uses a paid subscription between a follower and an approved provider. The reconciler can run in a worker monitor or in the `social-copy-reconcile` Edge Function; database leases and `skip locked` prevent both from owning the same subscription at once. It applies the subscription's account-mode, filters, sizing, symbol map, stop, and target rules.
 
@@ -640,11 +668,11 @@ No single layer is sufficient by itself. Changes to dispatch or execution must p
 
 ### 12.1 Scale and ownership
 
-The reviewed `c3ad1d29` snapshot contains 306 SQL migration files. A static inventory of that committed snapshot found:
+The reviewed `a4a2dcc4` snapshot contains 309 SQL migration files. A static inventory of that committed snapshot found:
 
 - 110 unique created tables;
 - 3 views;
-- 204 unique created function names;
+- 205 unique created function names;
 - 108 table-level RLS enablement statements;
 - 218 policy creation statements;
 - 19 historical cron declarations for 15 unique job names.
@@ -740,9 +768,12 @@ An unspecified function may still perform its own authentication. For example, `
 | Provider to trade worker | Provider session and writer epoch | Database write lease and provider transition state | A stale writer is rejected before a broker mutation |
 | Social or mirror copy to a destination broker | Service-role worker or Edge path | Subscription or link state, account mode, filters, writer authority, and idempotency | Cross-user social copy and same-user mirror copy use separate tables and rules |
 | Customer to support | User JWT or guest token | Conversation and ticket ownership check | Guest tokens are bearer secrets for that conversation or ticket |
+| Signed-in customer to support or in-app account tools | User JWT | Server-derived user ID, user-scoped reads, sanitized tool output, and user-scoped opaque broker handles | Account reads are read-only; no model-supplied user ID, credentials, broker login IDs, raw signals, or account-state write path |
+| Local OpenCode agent to support chats and customer names | Local service-role key or CLI-derived key | Fixed support-table and selected profile-name reads, bounded filters, UUID checks, image origin/path validation, and no write actions | The local plugin bypasses RLS through the service role; keep the key outside the repository and restrict the tool to support data and selected identity fields |
 | Stripe to billing | Stripe signature | Signature verification and event deduplication | Unverified Stripe events are rejected |
-| TradingView to ingest | Path token and optional IP allowlist | Token hash lookup, rate limit, and delivery idempotency | The raw token is not stored as a lookup value |
+| TradingView to ingest | Path token and optional IP allowlist | Token hash lookup, rate limit, and stable alert-ID idempotency when available | The raw token is not stored as a lookup value; static bodies without an expanded alert ID receive unique keys |
 | Resend to inbound support | Optional shared secret | Current function checks a configured secret | See the open security items below |
+| Database trigger to support push | Service-role or dedicated service key | `support-push` verifies the service credential and filters agent tokens and preferences | Mobile push is best effort and does not replace the durable email outbox |
 
 ### 14.1 Credential and secret handling
 
@@ -751,6 +782,7 @@ An unspecified function may still perform its own authentication. For example, `
 - Telegram sessions and WhatsApp credentials have separate encryption helpers.
 - Edge Function secrets are Supabase secrets. Worker secrets are Railway environment variables. Frontend `VITE_*` values are public build values and must never contain a service-role key.
 - `WORKER_INTERNAL_TOKEN`, service-role keys, provider API keys, AI keys, Stripe secrets, Resend keys, encryption keys, and webhook secrets must remain outside source control.
+- The local `support_admin` OpenCode plugin reads `SUPPORT_ADMIN_SERVICE_ROLE_KEY` (or `SUPPORT_ADMIN_SUPABASE_SERVICE_ROLE_KEY`) when set; otherwise it uses the locally authenticated Supabase CLI to obtain a temporary key. It must never persist that key in the repository or expose it in tool output.
 - Logs and health records should contain fingerprints or redacted values, not raw secrets.
 
 ### 14.2 High-value boundaries
@@ -769,12 +801,13 @@ An unspecified function may still perform its own authentication. For example, `
 | WhatsApp Baileys | Optional source groups | WhatsApp to standalone listener; read only |
 | TradingView | Webhook alerts | TradingView to Edge or worker ingest |
 | FxSocket | MT4 and MT5 broker operations | Worker or broker Edge Function to FxSocket |
-| MTAPI | MT4 and MT5 bridge operations | Worker to MTAPI bridge |
+| MTAPI | MT4 and MT5 bridge operations | Worker (orders, management) and broker Edge Functions (history/summary reads) to MTAPI bridge |
 | cTrader | cTrader Open API account and order operations | Worker or broker Edge Function to cTrader |
 | Binance, Bybit, KuCoin | Crypto venue accounts and orders | Worker or broker Edge Function to venue API |
 | DXTrade, TradeLocker, MatchTrader | Additional broker accounts and orders | Worker or broker Edge Function to provider API |
 | Stripe | Checkout, subscription, invoice, affiliate payment state | App to Stripe; signed webhook to Edge Function |
 | Resend | Verification, support, campaign, and alert email | Supabase to Resend; inbound webhook to support Edge Function |
+| Expo push service | Optional mobile support notifications for registered agents | Database trigger to service-authenticated `support-push`, then Supabase to Expo |
 | OpenAI and Cerebras | AI parsing, support, assistant, translation, and credit probes | Worker or Edge Function to model provider |
 | Cloudflare Turnstile | Signup, login, reset, and support-desk abuse protection | Browser to Cloudflare; token to Supabase Auth |
 | Sentry | Worker and Edge errors, business events, and check-ins | Runtime to Sentry |
@@ -815,7 +848,7 @@ The table gives repository defaults, not live values. A deployment environment c
 | Broker and dependency health | `system_probe_state`, `system_probe_events`, and `system_probe_samples` |
 | Signal execution | `signals`, `trade_execution_logs`, dispatch claims, and pipeline timestamps |
 | Broker convergence | Trade rows, pending legs, partial targets, broker order history, and reconciliation monitors |
-| Support delivery | `support_notification_outbox`, attempts, last error, and sent time |
+| Support delivery | `support_notification_outbox`, attempts, last error, sent time, and optional agent push tokens and preferences |
 | Alerts | `alert_rules`, `alert_events`, recipients, and delivery state |
 
 Lease freshness alone does not prove that Telegram is connected. Copier health requires a connected listener, current ownership, and a fresh successful probe.
@@ -830,6 +863,14 @@ Important rule families include bridge availability, stale probes, MTAPI errors 
 
 The `public-status` Edge Function returns a sanitized view of selected probes and firing alerts. It does not expose account data, raw errors, or secret values.
 
+### 17.4 MTAPI bridge load rules
+
+The bridge serves one MT5 terminal serially, so request shape matters more than request count. Three rules keep reads from stalling it (root cause of the 2026-11-25 order-timeout incident; full evidence in `docs/mtapi-vps-details.md`):
+
+- **Bounded history-chunk fan-out.** Edge Functions split full-history reads (`2000-01-01 → now`) into 45-day chunks and fetch them through `allSettledBounded` with at most `HISTORY_CHUNK_CONCURRENCY` (4) in flight — never an unbounded `Promise.allSettled(chunks.map(...))`. The MT4/MT5 terminal walks the range serially; an unbounded fan-out queues until `/health` misses the 5 s probe timeout, which triggers `bridge_down` and times out customer `OrderSend` calls.
+- **No full-history reads while the feed is degraded.** A degraded feed requests only the incremental window (`resolveHistoryReadMode`); forcing a full read on every refresh during an outage is an amplification loop, because the read failures are what raise the degraded flag. One bounded self-heal full read runs after recovery, at most once per hour.
+- **Worker polling is paced, not bursty.** Background reads (`AccountSummary`, `OpenedOrders`, `CheckConnect`) go through the broker gateway's priority lanes; `ConnectByToken` short-circuits when the bridge reports it has no MongoDB session registry instead of re-failing on every session check — the verdict is keyed per bridge host (MT4 and MT5 are separate containers) and paused for at most 60 minutes before one re-probe, so attaching MongoDB later takes effect without a worker restart.
+
 ## 18. Failure recovery
 
 | Failure | Detection | Recovery path |
@@ -843,6 +884,7 @@ The `public-status` Edge Function returns a sanitized view of selected probes an
 | Broker call times out or returns unknown | Broker error classification and reconciliation | Read broker state, compare with the database, and fence uncertain writes |
 | Broker session disconnects | Provider connection error | Reconnect provider session; account remains inactive until ready |
 | Provider transition starts | Writer epoch and transition state | Old provider writes are rejected; new writer takes over after transition |
+| Subscription access expires | Subscription status, copier pause state, and listener leases | Pause copier execution and remove listener leases; after the grace period, the scheduled job disconnects the expired FxSocket account. Reconnecting requires the normal provider connection flow |
 | AI provider is unavailable | Provider error or health probe | Deterministic fallback or the next configured provider, depending on parse mode |
 | Social or mirror copy has an uncertain broker outcome | Execution event and mapping state remain uncertain | Read the destination venue, keep a possibly live copy fenced, and do not retry the uncertain open as a new order |
 | Database write fails | RPC or PostgREST error | Retain the source record, use fallback dispatch, and reconcile from persisted state |
@@ -869,7 +911,7 @@ This section describes facts that live outside the source snapshot. Confirm them
 | `axdcledcyhyvzrnfkwat` | Inherited TScopier staging project | Confirm whether Unicopier staging still uses it |
 | `sxkpcovbyaficvtkpsdo` | Inherited TScopier production project and historically named by `AGENTS.md` as the support desk project | Confirm the live support and product target |
 
-The repository contains conflicting historical support backend references. The support guide and its old environment example name `supmsgcubipmmowrzoub`, while `AGENTS.md` previously named `sxkpcovbyaficvtkpsdo` for support. The current guides now label the mapping as unresolved, but the live Netlify environment and the live support repository must still establish the correct target before any migration, function deployment, or support change.
+The repository contains conflicting historical support backend references. The support guide and its old environment example name `supmsgcubipmmowrzoub`, while `AGENTS.md` previously named `sxkpcovbyaficvtkpsdo` for support. The current guides now label the mapping as unresolved, but the live Netlify environment and the live support repository must still establish the correct target before any migration, function deployment, or support change. The local `support_admin` OpenCode plugin currently defaults to `sxkpcovbyaficvtkpsdo`, matching the live support repository README; that default is local configuration, not proof that every deployment target is correct.
 
 ### 19.2 Frontend deployment
 
@@ -910,7 +952,7 @@ Before deploying functions that depend on a new schema:
 5. Deploy functions.
 6. Run a real end-to-end check against non-production accounts.
 
-The support notification migration is a known ordering example: `support-ticket-inbound` writes `support_tickets.source`, and `support-notify` reads it. Deploying either function before the column exists causes inbound email failures.
+The support notification migration is a known ordering example: `support-ticket-inbound` writes `support_tickets.source`, and `support-notify` reads it. If the inbound function is deployed before the column exists, its ticket insert fails. If the notifier is deployed first, its ticket read fails and the row remains queued for retry. Apply the migration before deploying either function.
 
 ## 20. Testing and change verification
 
@@ -959,7 +1001,7 @@ These items are source-verified unless stated otherwise. They are not all code d
 |---|---|---|---|
 | High | `parse-signal` has no request-level authentication while using service-role access | `supabase/config.toml` and `supabase/functions/parse-signal/index.ts` | Restrict or redesign this endpoint before treating it as public |
 | High | `support-ticket-inbound` can accept a request based on the presence of a signature header without local cryptographic verification in the current function | `supabase/functions/support-ticket-inbound/index.ts` | Verify the provider signature properly or require the shared secret; remove unsigned mode from production |
-| High | `get_churned_users()` is `SECURITY DEFINER` and currently executable by `anon` and `authenticated`, so the churned-user cohort is readable without authentication | `has_function_privilege` returned true for both roles on staging; caller is only `admin-query` (service role). Fix written as `supabase/migrations/20261126000000_get_churned_users_service_role_only.sql`, not yet applied | Apply the migration to every target project, then confirm `has_function_privilege('anon','public.get_churned_users()','execute')` and the `authenticated` equivalent both return false |
+| High | `get_churned_users()` was introduced as `SECURITY DEFINER` with default `PUBLIC` execution and an explicit `authenticated` grant, so the churned-user cohort could be readable without authentication | Migrations `20261124000000_get_churned_users_rpc.sql` and `20261125000000_get_churned_users_live_codes.sql`; the only repository caller is `admin-query`, which uses the service-role client. The same commit adds `20261126000000_get_churned_users_service_role_only.sql` to restrict execution, and its commit message records that restriction as not yet applied | Apply the restriction migration to every target project, then confirm `has_function_privilege('anon','public.get_churned_users()','execute')` and the `authenticated` equivalent both return false |
 | High | The live support project mapping is unresolved | Historical references in `docs/support-admin.md`, `docs/unicopier.md`, `apps/support-admin/.env.example`, and `AGENTS.md` | Confirm the live product and support project IDs, then update every guide |
 | High | The support UI admits an active admin while the latest database helper can require the explicit support-agent flag | `apps/support-admin/src/lib/supportAccess.ts` and migration `20261120150000_support_agent_flag_sync_available.sql` | Align the live desk and database contract; the mirror is not the place to patch the live app |
 | Medium | The mirror-copy startup comment says the feature is default-off, while the implemented default is enabled | `worker/src/index.ts` and `worker/src/mirrorCopy/mirrorCopyMonitor.ts` | Confirm the intended live default and align the code comment or behavior |
@@ -981,7 +1023,7 @@ The table below records the principal architecture-adjacent documents. Other top
 | Document | Status | Use |
 |---|---|---|
 | [docs/unicopier.md](./unicopier.md) | Supporting product overview | Short introduction and repository map; architecture details come from this document |
-| [docs/railway-architecture.md](./railway-architecture.md) | Supporting worker note; superseded for system topology | Worker role details only; this document is the deployment map |
+| [docs/railway-architecture.md](./railway-architecture.md) | Supporting worker note; superseded for system topology | Worker roles and deployment procedures; system behavior and data flows link to the canonical sections |
 | [docs/support-admin.md](./support-admin.md) | Supporting operational guide; contains unresolved project references | Support procedures, not the system map |
 | [docs/support-notifications.md](./support-notifications.md) | Supporting runbook | Support outbox and email behavior |
 | [docs/backoffice-deployment.md](./backoffice-deployment.md) | Supporting deployment guide | Backoffice build, authorization, and external Netlify settings |

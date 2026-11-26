@@ -278,6 +278,10 @@ function makeV2Supabase(opts: {
     b.select = (value: string) => { selected = value; return b }
     b.eq = () => b
     b.gte = () => b
+    // b4bebcd1 replaced the `.eq('status', 'open')` filter with
+    // `.in('status', ['open','pending'])` in basketSlTpReconcile; the mock
+    // stubs filters without evaluating them, so `in` stubs the same way.
+    b.in = () => b
     b.order = () => b
     b.limit = () => {
       if (table === 'trades') return Promise.resolve({ data: opts.legs, error: null })

@@ -544,7 +544,7 @@
       "expect": {
         "action": "buy",
         "symbol": "XAUUSD",
-        "sl": 4040,
+        "sl": null,
         "tp": [
           4050,
           4055,
@@ -556,7 +556,8 @@
         "regression",
         "liveSend",
         "fewshot"
-      ]
+      ],
+      "note": "Zone no longer invents a stop (781e7d85 parses ZONES \"without inventing SL/TP\"; \"SL : PREMIUM\" is non-numeric). Expectation moved from 4040 on 2026-11-26 — deliberate behaviour change, test-side repair; keep passing until zone-stop policy changes again."
     },
     {
       "id": "entry_now_plain#2",

@@ -112,6 +112,27 @@ function isSessionGone(error: unknown): boolean {
   return text.includes('INVALID_TOKEN') || text.includes('CLIENT WITH ID')
 }
 
+/**
+ * The bridge's own configuration error when it was started without the
+ * MongoDB session registry: `Service started without MongoDB.ConnectByToken
+ * env var`. Only `ConnectByToken` needs MongoDB, so seeing this signature
+ * means token-based recovery can never succeed on this bridge build until it
+ * is given a `MongoDB=...` env var.
+ */
+function isBridgeMissingMongoDbError(error: unknown): boolean {
+  if (!(error instanceof MtapiApiError)) return false
+  return /Service started without MongoDB/i.test(error.message)
+}
+
+/**
+ * How long a "bridge has no MongoDB" verdict suppresses ConnectByToken for
+ * one bridge host before one re-probe is allowed. Bounded: adding MongoDB to
+ * a bridge then takes effect within an hour even if the worker is not
+ * restarted, while a still-missing registry costs at most one failed request
+ * per hour per host (down from 10,636/day).
+ */
+const CONNECT_BY_TOKEN_RETRY_MS = 60 * 60 * 1000
+
 const tradeOpGate = createConcurrencyGate()
 /** Cross-account OrderSendSafe lane — many brokers share one MTAPI bridge. */
 const globalOrderGate = createConcurrencyGate()
@@ -254,6 +275,15 @@ export class MtapiProvider implements BrokerProvider {
    * cancel path on the other. See `orderCancel`.
    */
   private readonly cancelEndpointMissingHosts = new Set<string>()
+  /**
+   * Per bridge host (resolved base URL): the first `ConnectByToken` failure
+   * caused by the bridge running without its MongoDB session registry, with
+   * the time it was seen. Later calls rethrow it without an HTTP round-trip
+   * until the retry interval elapses (see `connectByToken`). Keyed per host
+   * because MT4 and MT5 are separate bridge containers — one lacking MongoDB
+   * must not disable token recovery on the other. Empty until observed.
+   */
+  private readonly connectByTokenUnsupported = new Map<string, { error: MtapiApiError; seenAt: number }>()
 
   constructor(options: MtapiProviderOptions = {}) {
     this.fetchImpl = options.fetchImpl ?? fetch
@@ -475,11 +505,46 @@ export class MtapiProvider implements BrokerProvider {
   }
 
   async connectByToken(id: string): Promise<void> {
-    const body = await this.request('ConnectByToken', {}, { sessionId: id })
-    const token = String(body ?? '').trim().replace(/^["']|["']$/g, '')
-    if (token && token.toUpperCase() !== 'OK') {
-      this.canonicalSession.set(id, token)
-      this.seedPlatformCache(token, this.platform(id))
+    // The bridge answers every ConnectByToken with the same configuration
+    // error while it runs without a MongoDB session registry (10,636 failing
+    // calls/day, all wasted — see docs/mtapi-vps-details.md §6). Remember the
+    // first real failure per bridge host and rethrow it without an HTTP
+    // round-trip until the retry interval elapses: identical error type and
+    // message for every caller, no wasted request, no exception logged by the
+    // bridge. MT4 and MT5 are separate containers, so the verdict is keyed by
+    // the resolved base URL — one bridge lacking MongoDB never disables the
+    // other — and it expires after CONNECT_BY_TOKEN_RETRY_MS, so attaching
+    // MongoDB takes effect within an hour even without a worker restart.
+    const host = baseUrl(this.platform(id))
+    const cached = this.connectByTokenUnsupported.get(host)
+    if (cached) {
+      if (Date.now() - cached.seenAt < CONNECT_BY_TOKEN_RETRY_MS) {
+        // Fresh instance per throw: same message/status/code, but the stack
+        // points at this call rather than the first failure.
+        throw new MtapiApiError(cached.error.message, cached.error.status, cached.error.code)
+      }
+      this.connectByTokenUnsupported.delete(host) // retry window elapsed — re-probe below
+    }
+    try {
+      const body = await this.request('ConnectByToken', {}, { sessionId: id })
+      const token = String(body ?? '').trim().replace(/^["']|["']$/g, '')
+      if (token && token.toUpperCase() !== 'OK') {
+        this.canonicalSession.set(id, token)
+        this.seedPlatformCache(token, this.platform(id))
+      }
+    } catch (error) {
+      if (isBridgeMissingMongoDbError(error)) {
+        this.connectByTokenUnsupported.set(host, {
+          error: error as MtapiApiError,
+          seenAt: Date.now(),
+        })
+        console.warn(
+          `[mtapiProvider] bridge ${host || '(no base URL)'} has no MongoDB session registry —`
+          + ' ConnectByToken paused for this host for 60 min'
+          + ` (${error instanceof Error ? error.message : String(error)})`,
+        )
+      }
+      throw error
     }
   }
 

@@ -1,7 +1,10 @@
 import { assertEquals, assertNotEquals, assertRejects } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
+  allSettledBounded,
+  fetchClosedHistoryForBaseline,
   fetchFxsocketBrokerTrades,
   fetchTradesListFromOrderHistory,
+  HISTORY_CHUNK_CONCURRENCY,
   mapPositionHistoryRow,
   type MtHistorySource,
 } from "./fxsocketTrades.ts"
@@ -325,4 +328,95 @@ Deno.test("fetchFxsocketBrokerTrades: default source throws when history fails",
     Error,
     "ORDER_HISTORY_NOT_READY",
   )
+})
+
+// ── Bounded history-chunk concurrency (2026-11-25 bridge-stall fix) ────────
+
+Deno.test("allSettledBounded: never exceeds the concurrency limit", async () => {
+  let inFlight = 0
+  let peak = 0
+  const items = Array.from({ length: 40 }, (_, i) => i)
+  const results = await allSettledBounded(items, 4, async () => {
+    inFlight += 1
+    peak = Math.max(peak, inFlight)
+    await new Promise(resolve => setTimeout(resolve, 2))
+    inFlight -= 1
+    return "ok"
+  })
+  assertEquals(peak, 4)
+  assertEquals(results.length, 40)
+  assertEquals(results.every(r => r.status === "fulfilled"), true)
+})
+
+Deno.test("allSettledBounded: results keep input order and rejection shape", async () => {
+  const items = [0, 1, 2, 3, 4, 5, 6, 7]
+  const results = await allSettledBounded(items, 3, async (i) => {
+    await new Promise(resolve => setTimeout(resolve, (7 - i) % 3))
+    if (i === 3) throw new Error("boom-3")
+    return i * 2
+  })
+  assertEquals(results.length, 8)
+  assertEquals(results[0], { status: "fulfilled", value: 0 })
+  assertEquals(results[2], { status: "fulfilled", value: 4 })
+  assertEquals(results[3]!.status, "rejected")
+  if (results[3]!.status === "rejected") {
+    assertEquals((results[3]!.reason as Error).message, "boom-3")
+  }
+  assertEquals(results[7], { status: "fulfilled", value: 14 })
+})
+
+Deno.test("allSettledBounded: limit larger than input runs everything", async () => {
+  const results = await allSettledBounded([1, 2], 50, (i) => Promise.resolve(i))
+  assertEquals(results, [
+    { status: "fulfilled", value: 1 },
+    { status: "fulfilled", value: 2 },
+  ])
+})
+
+Deno.test("allSettledBounded: empty input resolves to empty results", async () => {
+  const results = await allSettledBounded([], 4, () => Promise.resolve("never"))
+  assertEquals(results, [])
+})
+
+/**
+ * A 26-year full-history read (the shape that stalled the bridge) must never
+ * have more than HISTORY_CHUNK_CONCURRENCY chunk requests in flight, and must
+ * still merge every chunk's rows.
+ */
+Deno.test("fetchClosedHistoryForBaseline: full-history read is bounded to HISTORY_CHUNK_CONCURRENCY in flight", async () => {
+  let inFlight = 0
+  let peak = 0
+  let calls = 0
+  const source: MtHistorySource = {
+    openedOrders: () => Promise.resolve([]),
+    orderHistory: async () => {
+      const chunkNo = (calls += 1)
+      inFlight += 1
+      peak = Math.max(peak, inFlight)
+      await new Promise(resolve => setTimeout(resolve, 2))
+      inFlight -= 1
+      // Unique ticket per chunk so the merge cannot dedupe rows away.
+      return [{ ...mtapiClosedOrder, ticket: 3276777659 + chunkNo }]
+    },
+    positionHistory: () => Promise.resolve([]),
+    closedHistorySource: "order_history",
+  }
+  const rows = await fetchClosedHistoryForBaseline(source, sessionBroker, {
+    historyFrom: "2000-01-01T00:00:00",
+    historyTo: "2026-11-25T00:00:00",
+    historyProfile: "trades",
+  })
+  // 26 years / 45-day chunks ≈ 211 chunks — the old code fired all at once.
+  assertEquals(calls > 100, true, `expected >100 chunks, got ${calls}`)
+  assertEquals(peak <= HISTORY_CHUNK_CONCURRENCY, true, `peak in-flight was ${peak}`)
+  assertEquals(rows.length, calls, "every chunk's row must survive the merge")
+})
+
+Deno.test("allSettledBounded: non-finite limits still process every item (no undefined holes)", async () => {
+  for (const limit of [NaN, Infinity, -Infinity]) {
+    const results = await allSettledBounded([1, 2, 3], limit, (i) => Promise.resolve(i * 2))
+    assertEquals(results.length, 3, `limit=${limit}`)
+    assertEquals(results[2], { status: "fulfilled", value: 6 }, `limit=${limit}`)
+    assertEquals(results.every(r => r !== undefined), true, `limit=${limit} produced a hole`)
+  }
 })

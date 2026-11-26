@@ -321,6 +321,51 @@ function formatHistoryChunk(d: Date): string {
   return d.toISOString().slice(0, 19)
 }
 
+/**
+ * Maximum history chunks in flight against the bridge at once.
+ *
+ * The bridge serves one MT5 terminal serially: firing every chunk of a
+ * 26-year range simultaneously (the old `Promise.allSettled(chunks.map(...))`)
+ * queued hundreds of requests behind it until `/health` could no longer answer
+ * inside the probe's 5 s — the 2026-11-25 stall storm (see
+ * `docs/mtapi-vps-details.md` §6). Four keeps a full read moving while leaving
+ * room for `OrderSend` and `/health` between chunks.
+ */
+export const HISTORY_CHUNK_CONCURRENCY = 4
+
+/**
+ * `Promise.allSettled` with a concurrency cap: same result shape (fulfilled /
+ * rejected entries in input order, partial failures never throw) so callers
+ * and `throwIfAllChunksRejected` behave identically — only the number of
+ * simultaneous requests changes.
+ */
+export async function allSettledBounded<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<Array<PromiseSettledResult<R>>> {
+  const results: Array<PromiseSettledResult<R> | undefined> = new Array(items.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const index = next
+      next += 1
+      if (index >= items.length) return
+      try {
+        results[index] = { status: "fulfilled", value: await fn(items[index] as T) }
+      } catch (reason) {
+        results[index] = { status: "rejected", reason }
+      }
+    }
+  }
+  // Non-finite limit (NaN, ±Infinity) must not produce zero workers or an
+  // array of undefined holes — fall back to a single worker.
+  const bounded = Number.isFinite(limit) ? Math.max(1, Math.min(Math.floor(limit), items.length)) : 1
+  const workers = Array.from({ length: Math.max(1, bounded) }, () => worker())
+  await Promise.all(workers)
+  return results as Array<PromiseSettledResult<R>>
+}
+
 function buildHistoryChunks(fromIso: string, toIso: string): Array<{ from: string; to: string }> {
   const start = parseHistoryIso(fromIso)
   const end = parseHistoryIso(toIso)
@@ -395,8 +440,10 @@ export async function fetchClosedHistoryForBaseline(
 
   const merged = new Map<string, RawMtOrder>()
   const chunks = buildHistoryChunks(opts.historyFrom, opts.historyTo)
-  const orderSettled = await Promise.allSettled(
-    chunks.map(chunk => fx.orderHistory(sessionId, chunk.from, chunk.to, platform)),
+  const orderSettled = await allSettledBounded(
+    chunks,
+    HISTORY_CHUNK_CONCURRENCY,
+    chunk => fx.orderHistory(sessionId, chunk.from, chunk.to, platform),
   )
   throwIfAllChunksRejected(orderSettled)
 
@@ -442,8 +489,10 @@ export async function fetchBalanceCashFlowFromOrderHistory(
 
   const merged = new Map<string, RawMtOrder>()
   const chunks = buildHistoryChunks(opts.historyFrom, opts.historyTo)
-  const orderSettled = await Promise.allSettled(
-    chunks.map(chunk => fx.orderHistory(sessionId, chunk.from, chunk.to, platform)),
+  const orderSettled = await allSettledBounded(
+    chunks,
+    HISTORY_CHUNK_CONCURRENCY,
+    chunk => fx.orderHistory(sessionId, chunk.from, chunk.to, platform),
   )
   throwIfAllChunksRejected(orderSettled)
 
@@ -555,8 +604,10 @@ export async function fetchTradesListFromPositionHistory(
   const platform = brokerApiPlatform(broker)
 
   const chunks = buildPositionHistoryDateChunks(opts.historyFrom, opts.historyTo)
-  const settled = await Promise.allSettled(
-    chunks.map(chunk => fx.positionHistory(sessionId, chunk.from, chunk.to, platform)),
+  const settled = await allSettledBounded(
+    chunks,
+    HISTORY_CHUNK_CONCURRENCY,
+    chunk => fx.positionHistory(sessionId, chunk.from, chunk.to, platform),
   )
   throwIfAllChunksRejected(settled)
 
