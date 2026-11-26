@@ -18,7 +18,15 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
     )
   }
 
-  if (!user) return <Navigate to="/login" replace />
+  if (!user) {
+    // Carry the attempted path into the login URL. An email link opened on a
+    // device with no session lands here first, and without ?next= the visitor
+    // is sent to the dashboard after sign-in instead of back to the page the
+    // link pointed at. AuthPage reads ?next= through
+    // capturePostAuthRedirectFromUrl, which validates it as an internal path.
+    const next = encodeURIComponent(location.pathname + location.search)
+    return <Navigate to={`/login?next=${next}`} replace />
+  }
 
   if (!isEmailVerified(user, emailVerifiedAt)) {
     return <Navigate to={verifyEmailPath(user.email)} replace />

@@ -234,23 +234,7 @@ Deno.serve(async (req: Request) => {
       balanceByUser.set(uid, (balanceByUser.get(uid) ?? 0) + bal);
     }
 
-    const emailByUser = new Map<string, string>();
-    if (userIds.length > 0) {
-      const wanted = new Set(userIds);
-      let page = 1;
-      const perPage = 1000;
-      while (wanted.size > emailByUser.size && page <= 10) {
-        const { data: authPage } = await supabase.auth.admin.listUsers({ page, perPage });
-        const authUsers = authPage?.users ?? [];
-        for (const authUser of authUsers) {
-          if (wanted.has(authUser.id)) {
-            emailByUser.set(authUser.id, authUser.email ?? "");
-          }
-        }
-        if (authUsers.length < perPage) break;
-        page += 1;
-      }
-    }
+    const emailByUser = await fetchAuthEmails(supabase, userIds);
 
     const users = rows.map((r) => {
       const uid = String(r.user_id ?? "");

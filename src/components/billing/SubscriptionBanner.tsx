@@ -37,11 +37,13 @@ export function SubscriptionBanner() {
           Redeem it for 14 days of access
         </button>
       </p>
-      <RedeemCodeModal
-        open={redeemOpen}
-        onClose={() => setRedeemOpen(false)}
-        onRedeemed={refresh}
-      />
+      {redeemOpen ? (
+        <RedeemCodeModal
+          open
+          onClose={() => setRedeemOpen(false)}
+          onRedeemed={refresh}
+        />
+      ) : null}
     </>
   )
 }

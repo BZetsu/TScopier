@@ -348,11 +348,13 @@ export function BillingPage() {
         </div>
       </Card>
 
-      <RedeemCodeModal
-        open={redeemOpen}
-        onClose={() => setRedeemOpen(false)}
-        onRedeemed={refresh}
-      />
+      {redeemOpen ? (
+        <RedeemCodeModal
+          open
+          onClose={() => setRedeemOpen(false)}
+          onRedeemed={refresh}
+        />
+      ) : null}
 
       <div className="mt-6">
         <BillingTabs
