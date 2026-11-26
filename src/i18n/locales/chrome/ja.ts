@@ -48,6 +48,9 @@ export const chromeJa: AppChromeTranslations = {
     openTradesCount: '{count} 保有',
     highImpactNewsToday: '本日の重要ニュース',
     planFree: '無料',
+    planCardLabel: 'プラン',
+    planAccountsUsed: '{used} / {limit} アカウント使用中',
+    planManage: '請求を管理',
     settings: '設定',
     help: 'ヘルプ',
     copierPause: {
@@ -88,6 +91,7 @@ export const chromeJa: AppChromeTranslations = {
     userMenu: {
       menuLabel: 'アカウントメニュー',
       profileSettings: 'プロフィールと設定',
+      membership: 'Membership',
       subscriptionBilling: 'サブスクリプションと請求',
       affiliateProgram: 'アフィリエイトプログラム',
       wallet: 'ウォレット',

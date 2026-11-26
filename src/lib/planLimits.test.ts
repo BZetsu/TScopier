@@ -5,9 +5,16 @@ import {
   isSubscriptionActive,
   isTrialEnded,
   manualSettingsUseAdvancedFeatures,
+  maxTradingViewWebhooks,
   normalizeManualSettingsForPlan,
 } from './planLimits.ts'
 import { hasTrialExpired } from './subscriptionCta.ts'
+
+test('TradingView webhook limits by plan', () => {
+  assert.equal(maxTradingViewWebhooks('basic'), 2)
+  assert.equal(maxTradingViewWebhooks('advanced'), null)
+  assert.equal(maxTradingViewWebhooks(null), 0)
+})
 
 test('basic plan normalization forces single trade style', () => {
   const normalized = normalizeManualSettingsForPlan('basic', 'active', {

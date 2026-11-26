@@ -16,6 +16,9 @@ Configure in the Stripe Dashboard (or via CLI) and store price IDs as Supabase E
 | `STRIPE_ADVANCED_ANNUAL_PRICE_ID` | Advanced annual |
 | `STRIPE_EXTRA_ACCOUNT_PRICE_ID` | Extra broker account (Advanced) monthly |
 | `STRIPE_EXTRA_ACCOUNT_ANNUAL_PRICE_ID` | Extra broker account annual |
+| `NOWPAYMENTS_API_KEY` | NOWPayments API key (crypto invoices) |
+| `NOWPAYMENTS_IPN_SECRET` | NOWPayments IPN HMAC secret |
+| `NOWPAYMENTS_IPN_URL` | Optional override; default `{SUPABASE_URL}/functions/v1/nowpayments-webhook` |
 
 ## Webhook
 
@@ -101,25 +104,22 @@ Enable in Stripe Dashboard: plan changes, cancellation, payment method updates. 
 
 ## Checkout flow
 
-1. Marketing **Choose a plan** → `/pricing` → select Basic/Advanced → signup/login with plan remembered → Stripe Checkout (`create-checkout-session`).
-2. Checkout metadata includes `supabase_user_id`, `plan`, `extra_accounts`.
-3. Subscription metadata mirrors checkout metadata for portal updates.
-4. **Advanced first-time free trial** — Advanced checkouts for users with no prior `trial_ends_at` get `trial_period_days: 5`. Basic is charged from day one. Existing Stripe `trialing` subscribers keep access until `trial_ends_at`. Users who already used a trial do not get a second one.
-5. Checkout always collects a card (`payment_method_collection: always`). After checkout completes, the webhook sets `payment_settings.save_default_payment_method: on_subscription` on the Stripe subscription for renewals.
-6. Success redirect: `/dashboard?checkout=success` (SubscriptionContext refreshes). Cancel → `/pricing`.
-7. Pricing pages advertise a **5-day free trial on Advanced**.
+1. Choose plan on Billing / app `/pricing` / marketing `/pricing` → in-app **Card vs Crypto** step (optional promo code).
+2. **Card:** `create-subscription-elements` creates an incomplete Stripe Subscription; client confirms with **Payment Element** (`@stripe/react-stripe-js`). Requires `VITE_STRIPE_PUBLISHABLE_KEY`. Entitlement sync via `confirm-checkout` + `stripe-webhook`.
+3. **Crypto (NOWPayments):** `create-crypto-invoice` creates a USD-priced hosted invoice (amount from Stripe membership price IDs). Customer pays USDC/other crypto on NOWPayments. IPN → `nowpayments-webhook` grants one period on `subscriptions` (`stripe_subscription_id` null; manual renew). Success URL: `/dashboard?checkout=success&crypto_invoice={order_id}`. Secrets: `NOWPAYMENTS_API_KEY`, `NOWPAYMENTS_IPN_SECRET` (optional `NOWPAYMENTS_IPN_URL`). Point dashboard IPN to `https://<project-ref>.supabase.co/functions/v1/nowpayments-webhook`.
+4. Card metadata / Elements still use Stripe `supabase_user_id`, `plan`, `interval`, `extra_accounts`.
+5. **Advanced first-time free trial** — 5 days when no prior `trial_ends_at` (Elements SetupIntent). Basic is charged from day one. Crypto has no trial (pay for period).
+6. Success: `/dashboard?checkout=success` (card may include `session_id`; crypto includes `crypto_invoice`). Cancel → `/billing`.
+7. **Payment methods tab** (`/billing?tab=payment_methods`): `create-setup-intent` opens **Stripe Checkout in `setup` mode** (hosted add-card page, same as Copygram — Card + wallets when eligible); `list-payment-methods` / `detach-payment-method` manage saved cards. Customer Portal remains for cancel / rare Stripe tasks.
+8. **Stripe crypto Checkout is retired** (`create-checkout-session` returns 410). Use NOWPayments for crypto.
 
 ### Checkout troubleshooting
 
-Checkout runs on Stripe Hosted Checkout (custom domain e.g. `billing.tartarix.com`). If Stripe logs show `parameter_invalid_empty` for `payment_method_data[card][number]` with empty `cvc`/`exp_month`/`number`, the **browser** submitted a blank card form — this is not sent by `create-checkout-session`.
+**Elements (card):** missing `VITE_STRIPE_PUBLISHABLE_KEY`, ad blockers blocking Stripe.js, or invalid promo codes (`invalid_promotion_code`).
 
-Common causes:
+**NOWPayments crypto:** missing `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET`, IPN URL not reachable, or signature mismatch (`x-nowpayments-sig`). Check `crypto_invoices` row status and edge logs.
 
-- User clicked Pay before the card fields finished loading
-- Ad blocker / privacy extension blocking Stripe.js iframes
-- Stripe Link or “automatic” payment method selected without a valid saved card
-
-**Fixes:** retry in incognito without extensions; ensure all card fields are filled; in Stripe Dashboard disable Checkout preview/beta features if enabled; `create-checkout-session` forces `payment_method_types: [card]` to reduce empty Link/auto submissions.
+**“amountTo is too small”:** NOWPayments rejects the selected coin/network when the fiat amount is below that network’s minimum (USDT TRC20 often ~$9–13). **Basic crypto invoices add +$1** (e.g. $10.99) so popular coins can clear; card stays at $9.99. Invoices use `is_fixed_rate: false`.
 
 ## Paywall (plan limits)
 
@@ -161,7 +161,7 @@ Use `4242 4242 4242 4242`, any future expiry, any CVC, any billing postal code.
 
 ```bash
 supabase db push
-supabase functions deploy stripe-webhook create-checkout-session confirm-checkout customer-portal update-extra-accounts
+supabase functions deploy stripe-webhook create-checkout-session create-subscription-elements create-setup-intent list-payment-methods detach-payment-method confirm-checkout customer-portal update-extra-accounts
 supabase functions deploy backtest-run broker-metatrader
 # Redeploy worker for subscription execution gates
 ```

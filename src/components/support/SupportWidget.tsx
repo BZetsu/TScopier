@@ -17,7 +17,6 @@ import {
   MessageCircle,
   Reply,
   Send,
-  Star,
   Ticket,
   UserRound,
   X,
@@ -44,10 +43,8 @@ import {
   loginUrlForSupportReturn,
   readSupportGuestSession,
   ensureSupportTranslation,
-  getSupportConversationFeedbackStatus,
   resolveSupportMessageText,
   sendSupportMessage,
-  submitSupportConversationFeedback,
   SUPPORT_MAX_IMAGES,
   uploadSupportImages,
   writeSupportGuestSession,
@@ -336,11 +333,6 @@ export function SupportWidget({
   const [draft, setDraft] = useState('')
   const [draftImages, setDraftImages] = useState<string[]>([])
   const [replyTo, setReplyTo] = useState<SupportMessage | null>(null)
-  const [feedbackDone, setFeedbackDone] = useState(false)
-  const [feedbackRating, setFeedbackRating] = useState(0)
-  const [feedbackComment, setFeedbackComment] = useState('')
-  const [feedbackBusy, setFeedbackBusy] = useState(false)
-  const [feedbackHover, setFeedbackHover] = useState(0)
   const [attaching, setAttaching] = useState(false)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
@@ -569,34 +561,7 @@ export function SupportWidget({
     setReplyTo(null)
     setDraft('')
     setDraftImages([])
-    setFeedbackDone(false)
-    setFeedbackRating(0)
-    setFeedbackComment('')
-    setFeedbackHover(0)
   }, [activeId])
-
-  useEffect(() => {
-    if (!activeId || !activeConversation) return
-    if (activeConversation.status !== 'resolved' && activeConversation.status !== 'closed') {
-      setFeedbackDone(false)
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      try {
-        const status = await getSupportConversationFeedbackStatus({
-          conversationId: activeId,
-          guestToken: user ? null : guestSession?.token,
-        })
-        if (!cancelled) setFeedbackDone(status.hasResponse)
-      } catch {
-        if (!cancelled) setFeedbackDone(false)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [activeId, activeConversation?.status, user, guestSession?.token])
 
   useEffect(() => {
     if (!activeId) {
@@ -1677,108 +1642,20 @@ export function SupportWidget({
               {error ? <p className="mb-2 px-1 text-xs text-red-500">{error}</p> : null}
               {activeConversation?.status === 'resolved' ||
               activeConversation?.status === 'closed' ? (
-                feedbackDone ? (
-                  <p className="rounded-2xl bg-neutral-50 px-3 py-3 text-xs text-neutral-500 dark:bg-white/[0.03]">
-                    {t.conversationResolved}
+                <div className="space-y-2 rounded-2xl bg-neutral-50 px-3 py-3 dark:bg-white/[0.03]">
+                  <p className="text-xs text-neutral-500">{t.conversationResolved}</p>
+                  <p className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
+                    {t.rateOnTrustpilotHint}
                   </p>
-                ) : (
-                  <div className="space-y-2 rounded-2xl bg-neutral-50 px-3 py-3 dark:bg-white/[0.03]">
-                    <p className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
-                      How was your support experience?
-                    </p>
-                    <div className="flex items-center gap-1">
-                      {Array.from({ length: 5 }, (_, i) => {
-                        const value = i + 1
-                        const active = (feedbackHover || feedbackRating) >= value
-                        return (
-                          <button
-                            key={value}
-                            type="button"
-                            className="rounded-md p-0.5 transition hover:scale-110"
-                            aria-label={`Rate ${value} out of 5`}
-                            disabled={feedbackBusy}
-                            onMouseEnter={() => setFeedbackHover(value)}
-                            onMouseLeave={() => setFeedbackHover(0)}
-                            onClick={() => setFeedbackRating(value)}
-                          >
-                            <Star
-                              className={clsx(
-                                'h-6 w-6',
-                                active
-                                  ? 'fill-amber-400 text-amber-400'
-                                  : 'text-neutral-300 dark:text-neutral-600',
-                              )}
-                            />
-                          </button>
-                        )
-                      })}
-                    </div>
-                    <textarea
-                      value={feedbackComment}
-                      onChange={e => setFeedbackComment(e.target.value)}
-                      rows={2}
-                      placeholder="Optional comment"
-                      disabled={feedbackBusy}
-                      className="w-full resize-none rounded-xl border border-neutral-200 bg-white px-2.5 py-2 text-xs text-neutral-800 outline-none focus:border-green-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
-                    />
-                    <div className="flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        className="text-xs font-medium text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200"
-                        disabled={feedbackBusy}
-                        onClick={() => {
-                          void (async () => {
-                            setFeedbackBusy(true)
-                            try {
-                              await submitSupportConversationFeedback({
-                                conversationId: activeConversation.id,
-                                skipped: true,
-                                guestToken: user ? null : guestSession?.token,
-                              })
-                              setFeedbackDone(true)
-                            } catch (err) {
-                              setError(
-                                err instanceof Error ? err.message : 'Could not skip feedback',
-                              )
-                            } finally {
-                              setFeedbackBusy(false)
-                            }
-                          })()
-                        }}
-                      >
-                        Skip
-                      </button>
-                      <button
-                        type="button"
-                        disabled={feedbackBusy || feedbackRating < 1}
-                        className="rounded-full bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40 dark:bg-green-400 dark:text-neutral-950"
-                        onClick={() => {
-                          void (async () => {
-                            setFeedbackBusy(true)
-                            setError('')
-                            try {
-                              await submitSupportConversationFeedback({
-                                conversationId: activeConversation.id,
-                                rating: feedbackRating,
-                                comment: feedbackComment.trim() || null,
-                                guestToken: user ? null : guestSession?.token,
-                              })
-                              setFeedbackDone(true)
-                            } catch (err) {
-                              setError(
-                                err instanceof Error ? err.message : 'Could not submit feedback',
-                              )
-                            } finally {
-                              setFeedbackBusy(false)
-                            }
-                          })()
-                        }}
-                      >
-                        {feedbackBusy ? 'Sending…' : 'Submit'}
-                      </button>
-                    </div>
-                  </div>
-                )
+                  <a
+                    href="https://www.trustpilot.com/evaluate/unicopier.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex w-full items-center justify-center rounded-full bg-[#00B67A] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#009965]"
+                  >
+                    {t.rateOnTrustpilot}
+                  </a>
+                </div>
               ) : (
                 <form
                   className="space-y-2"

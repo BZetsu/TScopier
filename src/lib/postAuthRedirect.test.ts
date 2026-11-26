@@ -50,7 +50,7 @@ describe('postAuthRedirect', () => {
     stashPostAuthRedirect('/social-trading/u-1?copy=1')
     expect(postAuthAppPath()).toBe('/social-trading/u-1?copy=1')
     stashPendingPlanSelection({ plan: 'basic', interval: 'monthly', extraAccounts: 0 })
-    expect(postAuthAppPath()).toBe('/pricing?startCheckout=1')
+    expect(postAuthAppPath()).toBe('/billing?startCheckout=1')
     expect(peekPostAuthRedirect()).toBe('/social-trading/u-1?copy=1')
   })
 

@@ -16,7 +16,9 @@ import { UserAvatar } from './UserAvatar'
 import { getAppRouteIcon } from '../../lib/appNavIcons'
 import { DirectionalIcon } from '../ui/DirectionalIcon'
 
-const TRUSTPILOT_REVIEW_URL = 'https://www.trustpilot.com/review/tscopier.ai'
+import { TRUSTPILOT_EVALUATE_URL } from '../../lib/trustpilotPromptStorage'
+
+const TRUSTPILOT_REVIEW_URL = TRUSTPILOT_EVALUATE_URL
 
 export interface UserMenuDropdownProps {
   open: boolean
@@ -69,6 +71,7 @@ export function UserMenuDropdown({ open, onClose, onSignOut }: UserMenuDropdownP
 
   const items: MenuItem[] = [
     { id: 'profile', kind: 'link', label: um.profileSettings, icon: getAppRouteIcon('/settings'), path: '/settings' },
+    { id: 'membership', kind: 'link', label: um.membership, icon: getAppRouteIcon('/membership'), path: '/membership' },
     { id: 'billing', kind: 'link', label: um.subscriptionBilling, icon: getAppRouteIcon('/billing'), path: '/billing' },
     { id: 'affiliate', kind: 'link', label: um.affiliateProgram, icon: getAppRouteIcon('/affiliate-program'), path: '/affiliate-program' },
     { id: 'wallet', kind: 'link', label: um.wallet, icon: getAppRouteIcon('/wallet'), path: '/wallet' },

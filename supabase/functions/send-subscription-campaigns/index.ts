@@ -164,6 +164,57 @@ async function processTrialExpired(): Promise<number> {
   return sent;
 }
 
+async function processTrustpilotFeedback(): Promise<number> {
+  const { data: eligibleUsers, error } = await supabase.rpc(
+    "get_trustpilot_feedback_recipients",
+  );
+
+  if (error) {
+    console.error(
+      "[send-subscription-campaigns] trustpilot_feedback rpc:",
+      error.message,
+    );
+    return 0;
+  }
+  if (!eligibleUsers?.length) return 0;
+
+  let sent = 0;
+  for (const user of eligibleUsers as EmailRecipient[]) {
+    const unsubscribeUrl = getEmailUnsubscribeUrl(
+      APP_URL,
+      SUPABASE_SERVICE_ROLE_KEY,
+      user.user_id,
+    );
+    const html = buildSubscriptionCampaignHtml(
+      "trustpilot_feedback",
+      user,
+      unsubscribeUrl,
+      APP_URL,
+      LOGO_URL,
+    );
+    const result = await sendEmail(
+      user.email,
+      SUBSCRIPTION_CAMPAIGN_SUBJECTS.trustpilot_feedback,
+      html,
+    );
+
+    if (result.ok) {
+      await supabase.from("email_campaign_log").insert({
+        user_id: user.user_id,
+        campaign_type: "trustpilot_feedback",
+        email_address: user.email,
+        metadata: {
+          triggered_by: "cron",
+          resend_id: result.resendId ?? null,
+        },
+      });
+      sent++;
+    }
+  }
+
+  return sent;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -172,12 +223,14 @@ Deno.serve(async (req: Request) => {
   try {
     const nudgeSent = await processNoSubscriptionNudge();
     const trialSent = await processTrialExpired();
+    const trustpilotSent = await processTrustpilotFeedback();
 
     return new Response(
       JSON.stringify({
         success: true,
         no_subscription_nudge_sent: nudgeSent,
         trial_expired_sent: trialSent,
+        trustpilot_feedback_sent: trustpilotSent,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

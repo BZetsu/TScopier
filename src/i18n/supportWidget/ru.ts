@@ -46,6 +46,8 @@ export const supportWidgetRu: SupportWidgetTranslations = {
   removeImage: 'Удалить изображение',
   send: 'Отправить',
   conversationResolved: 'Этот разговор закрыт. Начните новый с главной.',
+  rateOnTrustpilot: 'Оцените нас на Trustpilot',
+  rateOnTrustpilotHint: 'Спасибо за общение — будем рады вашему отзыву.',
   loading: 'Загрузка…',
   aiName: 'UniCopier ИИ',
   supportName: 'Поддержка',

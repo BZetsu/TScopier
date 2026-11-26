@@ -200,6 +200,53 @@ Deno.serve(async (req: Request) => {
 
   const body = await req.json().catch(() => ({} as { [k: string]: unknown }));
   const sessionId = String(body.session_id ?? "").trim() || null;
+  const cryptoInvoiceOrderId =
+    String(body.crypto_invoice ?? body.order_id ?? "").trim() || null;
+
+  // NOWPayments crypto invoice — grant if IPN already finished, or wait if still pending.
+  if (cryptoInvoiceOrderId) {
+    const { data: invoice, error: invErr } = await supabase
+      .from("crypto_invoices")
+      .select("*")
+      .eq("order_id", cryptoInvoiceOrderId)
+      .maybeSingle();
+    if (invErr) return bad(500, invErr.message);
+    if (!invoice) return bad(404, "Crypto invoice not found");
+    if (invoice.user_id !== user.id) {
+      return bad(403, "Crypto invoice does not belong to this user");
+    }
+
+    if (invoice.status === "finished") {
+      const { data: sub } = await supabase
+        .from("subscriptions")
+        .select("plan,status,extra_accounts,current_period_end,stripe_customer_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      return Response.json(
+        {
+          ok: true,
+          entitlement: sub,
+          checkoutKind: "membership_crypto_nowpayments",
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    if (invoice.status === "failed" || invoice.status === "expired") {
+      return bad(409, `Crypto invoice ${invoice.status}`);
+    }
+
+    // Still pending — client will poll; IPN grants entitlement.
+    return Response.json(
+      {
+        ok: false,
+        entitlement: null,
+        note: "Crypto payment not confirmed yet",
+        checkoutKind: "membership_crypto_nowpayments",
+      },
+      { status: 202, headers: corsHeaders },
+    );
+  }
 
   let customerId: string;
   try {

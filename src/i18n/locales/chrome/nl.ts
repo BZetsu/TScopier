@@ -48,6 +48,9 @@ export const chromeNl: AppChromeTranslations = {
     openTradesCount: '{count} open',
     highImpactNewsToday: 'Hoog-impactnieuws vandaag',
     planFree: 'Gratis',
+    planCardLabel: 'Plan',
+    planAccountsUsed: '{used} van {limit} accounts in gebruik',
+    planManage: 'Facturering beheren',
     settings: 'Instellingen',
     help: 'Hulp',
     copierPause: {
@@ -88,6 +91,7 @@ export const chromeNl: AppChromeTranslations = {
     userMenu: {
       menuLabel: 'Accountmenu',
       profileSettings: 'Profiel en instellingen',
+      membership: 'Membership',
       subscriptionBilling: 'Abonnement en facturatie',
       affiliateProgram: 'Affiliateprogramma',
       wallet: 'Wallet',

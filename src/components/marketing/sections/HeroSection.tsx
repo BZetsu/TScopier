@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom'
 import { HeroDashboardPreview } from '../HeroDashboardPreview'
 import { ContainerScroll } from '../../ui/container-scroll-animation'
 import { MarketingAuthCta } from '../MarketingAuthCta'
-import { MarketingPricingHint } from '../MarketingPricingHint'
 import { useT } from '../../../context/LocaleContext'
 import { useLandingAnnouncement } from '../../../hooks/useLandingAnnouncement'
 import type { LandingAnnouncement } from '../../../lib/landingAnnouncement'
@@ -89,11 +88,11 @@ export function HeroSection() {
                 </div>
               ) : null}
 
-              <h1 className="text-4xl font-semibold tracking-tighter text-neutral-900 dark:text-neutral-50 sm:text-6xl lg:text-[clamp(4.5rem,7vh,5rem)] lg:leading-[1.05]">
+              <h1 className="text-5xl font-semibold tracking-tighter text-neutral-900 dark:text-neutral-50 sm:text-5xl lg:text-[clamp(7.5rem,5vh,5rem)] lg:leading-[1.05]">
                 {l.hero.headline}
               </h1>
 
-              <p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-neutral-600 dark:text-neutral-300 sm:text-lg">
+              <p className="mx-auto mt-5 lg:max-w-3xl max-w-lg text-base leading-tight text-neutral-900 dark:text-neutral-300 sm:text-lg">
                 {l.hero.subheadline}
               </p>
 
@@ -106,12 +105,6 @@ export function HeroSection() {
                   {l.hero.secondaryCta}
                 </a>
               </div>
-
-              <MarketingPricingHint
-                basic={l.pricingSnippet.basic}
-                advanced={l.pricingSnippet.advanced}
-                className="mt-4 text-center text-[0.6875rem] leading-relaxed text-neutral-500 dark:text-neutral-400"
-              />
             </div>
           }
         >

@@ -48,6 +48,9 @@ export const chromeAr: AppChromeTranslations = {
     openTradesCount: '{count} مفتوحة',
     highImpactNewsToday: 'أخبار عالية التأثير اليوم',
     planFree: 'مجاني',
+    planCardLabel: 'الخطة',
+    planAccountsUsed: '{used} من {limit} حسابات مستخدمة',
+    planManage: 'إدارة الفوترة',
     settings: 'الإعدادات',
     help: 'المساعدة',
     copierPause: {
@@ -88,6 +91,7 @@ export const chromeAr: AppChromeTranslations = {
     userMenu: {
       menuLabel: 'قائمة الحساب',
       profileSettings: 'الملف الشخصي والإعدادات',
+      membership: 'Membership',
       subscriptionBilling: 'الاشتراك والفوترة',
       affiliateProgram: 'برنامج الإحالة',
       wallet: 'المحفظة',

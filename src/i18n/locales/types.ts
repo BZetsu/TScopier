@@ -67,6 +67,12 @@ export interface NavTranslations {
   openTradesCount: string
   highImpactNewsToday: string
   planFree: string
+  /** Sidebar plan card eyebrow, e.g. "PLAN". */
+  planCardLabel: string
+  /** "{used} of {limit} accounts used" */
+  planAccountsUsed: string
+  /** Advanced CTA on the sidebar plan card → billing. */
+  planManage: string
   settings: string
   help: string
   copierPause: {
@@ -127,6 +133,7 @@ export interface NavTranslations {
   userMenu: {
     menuLabel: string
     profileSettings: string
+    membership: string
     subscriptionBilling: string
     affiliateProgram: string
     wallet: string
@@ -2259,6 +2266,8 @@ export interface BacktestTranslations {
 export interface PricingTranslations {
   title: string
   subtitle: string
+  /** Shown under the pricing subtitle — e.g. cards + crypto at checkout. */
+  paymentMethodsHint: string
   skip: string
   monthly: string
   annual: string
@@ -2275,6 +2284,8 @@ export interface PricingTranslations {
   /** Prefer moneyBackGuarantee; both keys advertise the Advanced free trial. */
   trialDays: string
   moneyBackGuarantee: string
+  /** Label above accepted payment method logos under plan cards. */
+  weAccept: string
   features: string
   popular: string
   basicFeatures: string[]
@@ -2298,6 +2309,9 @@ export interface PricingTranslations {
   billing: {
     title: string
     subtitle: string
+    membershipEyebrow: string
+    membershipTitle: string
+    membershipSubtitle: string
     customerId: string
     credit: string
     purchaseSubscription: string
@@ -2382,6 +2396,33 @@ export interface PricingTranslations {
     copyCancelsAtPeriodEnd: string
     copyPeriodEnds: string
     copyEntitlementNote: string
+    tabSubscription: string
+    tabPaymentMethods: string
+    tabReceipts: string
+    planPaymentsEyebrow: string
+    checkoutBadge: string
+    subscribeTo: string
+    howToPay: string
+    payCardTitle: string
+    payCardDescription: string
+    payCardFooter: string
+    payCryptoTitle: string
+    payCryptoDescription: string
+    payCryptoFooter: string
+    addPromoCode: string
+    promoPlaceholder: string
+    applyPromo: string
+    continueCheckout: string
+    backToPlans: string
+    paymentMethodsTitle: string
+    paymentMethodsSubtitle: string
+    paymentMethodsEmptyTitle: string
+    paymentMethodsEmptyHint: string
+    paymentMethodsAddCard: string
+    paymentMethodsAddCardHint: string
+    paymentMethodsSaveCard: string
+    paymentMethodsRemove: string
+    paymentMethodsFooter: string
   }
   checkoutFailed: string
   paywall: {
@@ -2389,6 +2430,7 @@ export interface PricingTranslations {
     noPlanReason: string
     upgradeTitle: string
     upgradeCta: string
+    addMoreAccounts: string
     purchaseSubscriptionCta: string
     manageBilling: string
     updatePaymentTitle: string
@@ -2396,6 +2438,7 @@ export interface PricingTranslations {
     updatePayment: string
     brokerLimit: string
     channelLimit: string
+    tradingViewWebhookLimit: string
     backtestLimit: string
     subscriptionRequired: string
     advancedFeature: string
@@ -2483,6 +2526,19 @@ export interface WalletPageTranslations {
   payoutFeeNote: string
 }
 
+export interface TrustpilotPromptTranslations {
+  eyebrow: string
+  title: string
+  body: string
+  starsAria: string
+  starAria: string
+  tapStars: string
+  selected: string
+  rateCta: string
+  remindLater: string
+  close: string
+}
+
 export interface Translations {
   auth: AuthTranslations
   channelWorker: ChannelWorkerTranslations
@@ -2492,6 +2548,7 @@ export interface Translations {
   common: CommonTranslations
   pricing: PricingTranslations
   landing: LandingTranslations
+  trustpilotPrompt: TrustpilotPromptTranslations
   mirrorTradingPage: MirrorTradingPageTranslations
   mirrorSlaveGuard?: MirrorSlaveGuardTranslations
   copyRisk: CopyRiskTranslations

@@ -42,10 +42,10 @@ export const landingAr: LandingTranslations = {
     },
   },
   hero: {
-    headline: 'ناسخ شامل لكل متداول فوركس وعملات رقمية',
+    headline: 'إعادة تعريف نسخ التداول.',
     headlinePhrases: [],
     subheadline:
-      'أتمت تداولاتك من Telegram أو WhatsApp أو Discord أو TradingView أو حساب رئيسي إلى أكثر من 8 منصات وساطة في أقل من 50 مللي ثانية. بدون VPS.',
+      'نفّذ صفقات مزودي الإشارات على Telegram وWhatsApp وDiscord، وأعدّ Webhooks لـ TradingView، وزامن الحساب الرئيسي مع الحسابات التابعة، أو انسخ متداولين موثوقين إلى أكثر من 8 منصات وساطة في أقل من 50 مللي ثانية. بدون VPS.',
     socialProof: 'أصبح TScopier.ai الآن UniCopier',
     primaryCta: 'اختر خطتك',
     secondaryCta: 'شاهد كيف يعمل',
@@ -803,6 +803,12 @@ export const landingAr: LandingTranslations = {
       {
         feature: 'قنوات Telegram',
         basic: '5',
+        advanced: 'غير محدود',
+        custom: 'مخصص',
+      },
+      {
+        feature: 'Webhooks TradingView',
+        basic: '2',
         advanced: 'غير محدود',
         custom: 'مخصص',
       },

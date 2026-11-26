@@ -9,6 +9,9 @@
     "build": "tsc -b && vite build",
     "dev:backoffice": "npm --prefix apps/backoffice run dev",
     "build:backoffice": "npm --prefix apps/backoffice run build",
+    "dev:mobile": "npm --prefix apps/mobile run start",
+    "build:mobile": "npm --prefix apps/mobile run build",
+    "typecheck:mobile": "npm --prefix apps/mobile run typecheck",
     "dev:docs": "npm --prefix apps/docs run dev",
     "build:docs": "npm --prefix apps/docs run build",
     "lint": "eslint .",
@@ -27,6 +30,8 @@
   },
   "dependencies": {
     "@marsidev/react-turnstile": "^1.6.0",
+    "@stripe/react-stripe-js": "^7.1.0",
+    "@stripe/stripe-js": "^10.3.0",
     "@supabase/supabase-js": "^2.105.3",
     "clsx": "^2.1.1",
     "framer-motion": "^14.3.0",
@@ -58,5 +63,6 @@
     "typescript-eslint": "^8.58.2",
     "vite": "^8.2.4",
     "vitest": "^4.1.11"
-  }
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

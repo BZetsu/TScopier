@@ -1,7 +1,8 @@
-/** Confirm Stripe Checkout and sync local subscription entitlement. */
+/** Confirm Stripe or NOWPayments checkout and sync local subscription entitlement. */
 export async function confirmCheckoutSession(params: {
   accessToken: string
   sessionId?: string | null
+  cryptoInvoice?: string | null
 }): Promise<{ ok: boolean; entitlement?: { plan: string; status: string } | null }> {
   const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/confirm-checkout`
   const res = await fetch(apiUrl, {
@@ -12,6 +13,7 @@ export async function confirmCheckoutSession(params: {
     },
     body: JSON.stringify({
       session_id: params.sessionId || undefined,
+      crypto_invoice: params.cryptoInvoice || undefined,
     }),
   })
   const data = (await res.json().catch(() => ({}))) as {

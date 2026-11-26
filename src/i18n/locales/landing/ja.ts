@@ -42,10 +42,10 @@ export const landingJa: LandingTranslations = {
     },
   },
   hero: {
-    headline: 'すべてのFX・暗号資産トレーダーのためのオールインワンコピア',
+    headline: 'コピー取引を再定義する。',
     headlinePhrases: [],
     subheadline:
-      'Telegram、WhatsApp、Discord、TradingView、またはマスター口座から8以上のブローカーへ、50ms未満で取引を自動化。VPSは不要です。',
+      'Telegram・WhatsApp・Discordのシグナル提供者の取引を執行し、TradingViewのWebhookを設定し、マスターからスレーブ口座へミラーリング、または実績あるトレーダーを8以上のブローカーへ、50ms未満でコピー。VPSは不要です。',
     socialProof: 'TScopier.aiは UniCopier になりました',
     primaryCta: 'プランを選ぶ',
     secondaryCta: '使い方を見る',
@@ -796,6 +796,12 @@ export const landingJa: LandingTranslations = {
       {
         feature: 'Telegramチャンネル',
         basic: '5',
+        advanced: '無制限',
+        custom: 'Custom',
+      },
+      {
+        feature: 'TradingView Webhook',
+        basic: '2',
         advanced: '無制限',
         custom: 'Custom',
       },

@@ -18,6 +18,7 @@ import {
   maxBacktestsPerMonth,
   maxBrokerAccounts,
   maxTelegramChannels,
+  maxTradingViewWebhooks,
   planLimitsSnapshot,
   type PlanFeatureKey,
   type PlanLimitsSnapshot,
@@ -45,6 +46,7 @@ export interface Subscription {
 export interface SubscriptionUsage {
   brokerAccounts: number
   telegramChannels: number
+  tradingViewWebhooks: number
   backtestsThisMonth: number
 }
 
@@ -72,12 +74,14 @@ interface SubscriptionContextValue {
   canUseFeature: (feature: PlanFeatureKey) => boolean
   canAddBroker: () => boolean
   canAddChannel: () => boolean
+  canAddTradingViewWebhook: () => boolean
   canRunBacktest: () => boolean
 }
 
 const emptyUsage: SubscriptionUsage = {
   brokerAccounts: 0,
   telegramChannels: 0,
+  tradingViewWebhooks: 0,
   backtestsThisMonth: 0,
 }
 
@@ -115,6 +119,7 @@ const SubscriptionContext = createContext<SubscriptionContextValue>({
   limits: {
     maxBrokerAccounts: 0,
     maxTelegramChannels: 0,
+    maxTradingViewWebhooks: 0,
     maxBacktestsPerMonth: 0,
     maxTpRows: 3,
   },
@@ -126,6 +131,7 @@ const SubscriptionContext = createContext<SubscriptionContextValue>({
   canUseFeature: () => false,
   canAddBroker: () => false,
   canAddChannel: () => false,
+  canAddTradingViewWebhook: () => false,
   canRunBacktest: () => false,
 })
 
@@ -136,8 +142,13 @@ function monthStartUtcIso(): string {
   return monthStart.toISOString()
 }
 
-function scrollToPricingTop() {
+function scrollToBillingPlans() {
   window.requestAnimationFrame(() => {
+    const el = document.getElementById('billing-plans')
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' })
   })
 }
@@ -176,18 +187,23 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     const [{ data }, usageResults, extensionResult] = await Promise.all([
       supabase.from('subscriptions').select('*').eq('user_id', userId).maybeSingle(),
       Promise.all([
+        // Count every active broker row (MT4/5, cTrader, Binance, Bybit, etc.) —
+        // same rule as assertBrokerAccountLimit / plan-limit trigger.
         supabase
           .from('broker_accounts')
           .select('id', { count: 'exact', head: true })
           .eq('user_id', userId)
-          .eq('is_active', true)
-          .or('provider.eq.mtapi,fxsocket_account_id.neq.'),
+          .eq('is_active', true),
         supabase
           .from('telegram_channels')
           .select('id', { count: 'exact', head: true })
           .eq('user_id', userId)
           .eq('is_active', true)
           .neq('source_kind', 'tradingview'),
+        supabase
+          .from('tradingview_webhooks')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', userId),
         supabase
           .from('backtest_runs')
           .select('id', { count: 'exact', head: true })
@@ -209,7 +225,8 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     setUsage({
       brokerAccounts: usageResults[0].count ?? 0,
       telegramChannels: usageResults[1].count ?? 0,
-      backtestsThisMonth: usageResults[2].count ?? 0,
+      tradingViewWebhooks: usageResults[2].count ?? 0,
+      backtestsThisMonth: usageResults[3].count ?? 0,
     })
     setResolvedUserId(userId)
     setUsageLoading(false)
@@ -234,14 +251,21 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       setCheckoutSyncPending(true)
       clearPendingPlanSelection()
       const sessionId = params.get('session_id')
+      const cryptoInvoice = params.get('crypto_invoice')
       params.delete('checkout')
-      // Keep session_id until confirm-checkout runs (stripped below after kickoff).
+      try {
+        if (sessionId) sessionStorage.setItem('tsc_checkout_session_id', sessionId)
+        if (cryptoInvoice) sessionStorage.setItem('tsc_crypto_invoice', cryptoInvoice)
+      } catch {
+        // ignore storage failures
+      }
+      // Keep ids until confirm-checkout runs (stripped below after kickoff).
       void (async () => {
         try {
           const { data: sessionData } = await supabase.auth.getSession()
           const accessToken = sessionData.session?.access_token
           if (accessToken) {
-            await confirmCheckoutSession({ accessToken, sessionId })
+            await confirmCheckoutSession({ accessToken, sessionId, cryptoInvoice })
           }
         } catch {
           // Polling below still retries confirm + fetch.
@@ -249,6 +273,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         await fetchSubscription({ background: true })
       })()
       if (sessionId) params.delete('session_id')
+      if (cryptoInvoice) params.delete('crypto_invoice')
     }
     const qs = params.toString()
     const next = `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`
@@ -281,6 +306,12 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     if (!hasActiveSubscription) return
     writeCheckoutSyncPending(false)
     setCheckoutSyncPending(false)
+    try {
+      sessionStorage.removeItem('tsc_checkout_session_id')
+      sessionStorage.removeItem('tsc_crypto_invoice')
+    } catch {
+      // ignore
+    }
   }, [checkoutSyncPending, hasActiveSubscription])
 
   useEffect(() => {
@@ -301,7 +332,15 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
           const { data: sessionData } = await supabase.auth.getSession()
           const accessToken = sessionData.session?.access_token
           if (accessToken) {
-            await confirmCheckoutSession({ accessToken })
+            let sessionId: string | null = null
+            let cryptoInvoice: string | null = null
+            try {
+              sessionId = sessionStorage.getItem('tsc_checkout_session_id')
+              cryptoInvoice = sessionStorage.getItem('tsc_crypto_invoice')
+            } catch {
+              // ignore
+            }
+            await confirmCheckoutSession({ accessToken, sessionId, cryptoInvoice })
           }
         } catch {
           // Keep polling local row.
@@ -330,10 +369,11 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     }
   }, [fetchSubscription, userId, checkoutSyncPending])
 
-  // If paywall raced to /pricing before webhook sync, bounce back to dashboard.
+  // If paywall raced to plan selection before webhook sync, bounce back to dashboard.
   useEffect(() => {
     if (!checkoutSyncPending) return
-    if (window.location.pathname !== '/pricing') return
+    const path = window.location.pathname
+    if (path !== '/pricing' && path !== '/billing' && path !== '/membership') return
     navigate(consumePostAuthRedirect() ?? '/dashboard', { replace: true })
   }, [checkoutSyncPending, navigate])
 
@@ -380,11 +420,12 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   ])
 
   const openPricingPage = useCallback(() => {
-    if (window.location.pathname === '/pricing') {
-      scrollToPricingTop()
+    if (window.location.pathname === '/billing') {
+      scrollToBillingPlans()
       return
     }
-    navigate('/pricing')
+    navigate('/billing')
+    window.setTimeout(scrollToBillingPlans, 80)
   }, [navigate])
 
   const isPastDue = !isAdmin && subscription?.status === 'past_due'
@@ -458,6 +499,14 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     return usage.telegramChannels < limit
   }, [isAdmin, activePlan, usage.telegramChannels])
 
+  const canAddTradingViewWebhook = useCallback(() => {
+    if (isAdmin) return true
+    if (!activePlan) return false
+    const limit = maxTradingViewWebhooks(activePlan)
+    if (limit == null) return true
+    return usage.tradingViewWebhooks < limit
+  }, [isAdmin, activePlan, usage.tradingViewWebhooks])
+
   const canRunBacktest = useCallback(() => {
     if (isAdmin) return true
     if (!activePlan) return false
@@ -489,6 +538,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         canUseFeature: canUseFeatureFn,
         canAddBroker,
         canAddChannel,
+        canAddTradingViewWebhook,
         canRunBacktest,
       }}
     >

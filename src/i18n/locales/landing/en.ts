@@ -42,10 +42,10 @@ export const landingEn: LandingTranslations = {
     },
   },
   hero: {
-    headline: 'All-In-One Copier for Every Forex & Crypto Trader',
+    headline: 'Copy Trading Redefined.',
     headlinePhrases: [],
     subheadline:
-      'Copy trades from Telegram, WhatsApp, Discord, TradingView, or a Master Account to 8+ broker platforms in under 50ms. No VPS required.',
+      'Execute trades from signal providers on Telegram, WhatsApp and Discord, Set up TradingView Webhooks, Mirror Master to Slave Accounts or Copy Proven Traders to 8+ broker platforms, under 50ms. No VPS required.',
     socialProof: 'TScopier.ai is now UniCopier',
     primaryCta: 'Choose your plan',
     secondaryCta: 'See how it works',
@@ -803,6 +803,12 @@ export const landingEn: LandingTranslations = {
       {
         feature: 'Telegram channels',
         basic: '5',
+        advanced: 'Unlimited',
+        custom: 'Custom',
+      },
+      {
+        feature: 'TradingView webhooks',
+        basic: '2',
         advanced: 'Unlimited',
         custom: 'Custom',
       },

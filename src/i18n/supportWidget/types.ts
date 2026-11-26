@@ -44,6 +44,8 @@ export type SupportWidgetTranslations = {
   removeImage: string
   send: string
   conversationResolved: string
+  rateOnTrustpilot: string
+  rateOnTrustpilotHint: string
   loading: string
   aiName: string
   supportName: string

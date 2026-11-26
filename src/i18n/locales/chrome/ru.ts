@@ -48,6 +48,9 @@ export const chromeRu: AppChromeTranslations = {
     openTradesCount: '{count} открыто',
     highImpactNewsToday: 'Новости высокой важности сегодня',
     planFree: 'Бесплатно',
+    planCardLabel: 'Тариф',
+    planAccountsUsed: '{used} из {limit} счетов используется',
+    planManage: 'Управление оплатой',
     settings: 'Настройки',
     help: 'Помощь',
     copierPause: {
@@ -89,6 +92,7 @@ export const chromeRu: AppChromeTranslations = {
     userMenu: {
       menuLabel: 'Меню аккаунта',
       profileSettings: 'Профиль и настройки',
+      membership: 'Membership',
       subscriptionBilling: 'Подписка и биллинг',
       affiliateProgram: 'Партнерская программа',
       wallet: 'Кошелёк',

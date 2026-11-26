@@ -48,6 +48,9 @@ export const chromeSv: AppChromeTranslations = {
     openTradesCount: '{count} öppna',
     highImpactNewsToday: 'Högpåverkande nyheter idag',
     planFree: 'Gratis',
+    planCardLabel: 'Plan',
+    planAccountsUsed: '{used} av {limit} konton använda',
+    planManage: 'Hantera fakturering',
     settings: 'Inställningar',
     help: 'Hjälp',
     copierPause: {
@@ -88,6 +91,7 @@ export const chromeSv: AppChromeTranslations = {
     userMenu: {
       menuLabel: 'Kontomeny',
       profileSettings: 'Profil och inställningar',
+      membership: 'Membership',
       subscriptionBilling: 'Prenumeration och fakturering',
       affiliateProgram: 'Affiliateprogram',
       wallet: 'Plånbok',

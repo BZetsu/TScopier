@@ -6,7 +6,8 @@ import { mintUnsubscribeToken } from "./unsubscribeToken.ts";
 
 export type SubscriptionCampaignType =
   | "no_subscription_nudge"
-  | "trial_expired";
+  | "trial_expired"
+  | "trustpilot_feedback";
 
 export interface EmailRecipient {
   user_id: string;
@@ -15,6 +16,9 @@ export interface EmailRecipient {
   first_name: string | null;
 }
 
+export const TRUSTPILOT_EVALUATE_URL =
+  "https://www.trustpilot.com/evaluate/unicopier.com";
+
 export const SUBSCRIPTION_CAMPAIGN_SUBJECTS: Record<
   SubscriptionCampaignType,
   string
@@ -22,6 +26,7 @@ export const SUBSCRIPTION_CAMPAIGN_SUBJECTS: Record<
   no_subscription_nudge:
     "Activate UniCopier — start copying Telegram signals to your broker",
   trial_expired: "Your UniCopier trial ended — subscribe to resume copying",
+  trustpilot_feedback: "What do you think about UniCopier?",
 };
 
 export const UNSUBSCRIBE_RECOVERY_SUBJECT =
@@ -146,6 +151,47 @@ export function buildTrialExpiredEmail(
   });
 }
 
+export function buildTrustpilotFeedbackEmail(
+  recipient: EmailRecipient,
+  unsubscribeUrl: string,
+  appUrl: string,
+  logoUrl: string,
+): string {
+  const name = recipientFirstName(recipient);
+
+  return buildCampaignEmailHtml({
+    appUrl,
+    logoUrl,
+    preheader:
+      "What do you think about UniCopier? Rate us on Trustpilot and help others decide.",
+    eyebrow: "Your feedback matters",
+    title: "What do you think about UniCopier?",
+    greeting: name,
+    bodyHtml: `
+      <p style="margin:0 0 16px 0;">You've had a few days with UniCopier — we'd love to hear how it's going.</p>
+      <p style="margin:0 0 16px 0;"><strong style="color:#0f172a;">Rate UniCopier on Trustpilot</strong> and help other traders decide whether it's the right signal copier for them.</p>
+      <p style="margin:0;">Honest reviews (good or constructive) help us improve and help the next trader choose with confidence. It only takes a minute.</p>
+    `,
+    infoBox: {
+      title: "Rate us on Trustpilot",
+      bodyHtml: `
+        <p style="margin:0;">Click the button below to open Trustpilot and leave a review for <strong>unicopier.com</strong>. Thank you for supporting UniCopier.</p>
+      `,
+    },
+    primaryCta: {
+      label: "Rate us on Trustpilot",
+      url: TRUSTPILOT_EVALUATE_URL,
+    },
+    secondaryCta: {
+      label: "Open your dashboard",
+      url: `${appUrl}/dashboard`,
+    },
+    closingHtml:
+      `Thanks for being part of UniCopier — every review helps the community. If something isn't working, reply to this email or use in-app <strong>Help &amp; Support</strong> and we'll help.`,
+    unsubscribeUrl,
+  });
+}
+
 export function buildSubscriptionCampaignHtml(
   campaign: SubscriptionCampaignType,
   recipient: EmailRecipient,
@@ -156,13 +202,20 @@ export function buildSubscriptionCampaignHtml(
   if (campaign === "no_subscription_nudge") {
     return buildNoSubscriptionEmail(recipient, unsubscribeUrl, appUrl, logoUrl);
   }
+  if (campaign === "trustpilot_feedback") {
+    return buildTrustpilotFeedbackEmail(recipient, unsubscribeUrl, appUrl, logoUrl);
+  }
   return buildTrialExpiredEmail(recipient, unsubscribeUrl, appUrl, logoUrl);
 }
 
 export function isSubscriptionCampaignType(
   value: string,
 ): value is SubscriptionCampaignType {
-  return value === "no_subscription_nudge" || value === "trial_expired";
+  return (
+    value === "no_subscription_nudge" ||
+    value === "trial_expired" ||
+    value === "trustpilot_feedback"
+  );
 }
 
 export function buildUnsubscribeRecoveryEmail(

@@ -86,6 +86,285 @@
 > `docs/PROJECT_MEMORY-EMMA.md` (+ the MTAPI one). Entries written by them are attributed
 > in the entry itself; their own files remain the complete record of their work.
 
+### 2026-11-25 — Telegram Disconnect survives Failed to fetch
+
+- **Context:** Migration Signals showed Connected + “Failed to load Telegram channels”; Disconnect threw `TypeError: Failed to fetch` in `callTelegramAuth` and never cleared the session.
+- **Plain English:** Disconnect still works if the Telegram edge/worker is unreachable — the app clears the local session. Reconnect/load still need a reachable Migration listener.
+- **Root cause (technical):** `fetch` threw on network/CORS; `clearTelegramConnection` had no try/catch so the client-side `telegram_sessions` delete never ran.
+- **Fix (files):** `telegramAuthApi.ts` returns `{ ok:false, status:0 }` instead of throwing; `CopierEnginePage.clearTelegramConnection` always falls back to local session delete.
+- **Deploy state:** Frontend only — next Netlify deploy.
+- **Follow-ups:** Confirm Migration Edge secrets `TELEGRAM_LISTENER_URL` / `LISTENER_SHARD_URLS` + `WORKER_INTERNAL_TOKEN` point at `listener-migration.up.railway.app` (or current Migration listener).
+
+### 2026-11-25 — Plan account usage counts all broker platforms
+
+- **Context:** Sidebar showed e.g. “1 of 100 accounts used” while a cTrader (or other non-MT) account was connected but ignored.
+- **Plain English:** Purchased account slots apply to every supported platform (MT4/5, cTrader, Binance, Bybit, KuCoin, etc.), not only MetaTrader.
+- **Root cause (technical):** `SubscriptionContext.fetchSubscription` usage query filtered with `.or('provider.eq.mtapi,fxsocket_account_id.neq.')`.
+- **Fix (files):** Dropped that filter so usage matches `assertBrokerAccountLimit` (all `is_active` `broker_accounts`).
+- **Deploy state:** Frontend only — next Netlify deploy.
+- **Follow-ups:** None — server already enforced the full count on connect.
+
+### 2026-11-25 — Translate hero “Copy Trading Redefined”
+
+- **Context:** New EN headline/subheadline needed matching copy in other landing locales.
+- **Plain English:** Hero title and supporting line updated in ES, FR, AR, JA, NL, PL, RU, SV (web + mobile i18n packages).
+- **Fix (files):** `src/i18n/locales/landing/*`, `apps/mobile/packages/web-i18n/lib/locales/landing/*`.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-25 — Remove hero pricing snippet
+
+- **Context:** Hero showed “Basic — $9.99/month · Advanced — $39.99/month” under the CTAs.
+- **Plain English:** That price line is gone from the landing hero.
+- **Fix (files):** `HeroSection.tsx` — removed `MarketingPricingHint`.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-25 — Marketing header nav larger + black
+
+- **Context:** Desktop nav links felt small and grey after left-align.
+- **Plain English:** Header menu text is a bit larger (`text-base`) and black in light mode.
+- **Fix (files):** `MarketingHeader.tsx` `desktopLinkClass`.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-25 — Marketing header nav left-aligned with logo
+
+- **Context:** Desktop nav sat centered in the bar after the audience switch was hidden.
+- **Plain English:** Product / Features / Pricing / FAQ sit next to the logo on the left; language + auth stay on the right.
+- **Fix (files):** `MarketingHeader.tsx` — dropped `flex-1 justify-center` on nav; kept `ms-auto` on the right cluster.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-25 — Hide For Traders / For Providers header switch
+
+- **Context:** Temporary hide of the marketing audience segmented control next to the logo.
+- **Plain English:** “For Traders / For Providers” no longer shows in the marketing header (desktop or mobile drawer).
+- **Fix (files):** Commented out `MarketingAudienceSwitch` usage in `MarketingHeader.tsx`.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-24 — Sidebar / Advanced CTA: Add More Accounts
+
+- **Context:** Sidebar showed “Start your 5-day free trial” / “Manage billing”; Advanced plan card was stuck on Current plan so extras could only change via a separate Membership card.
+- **Plain English:** Basic → **Upgrade to Advanced**. Advanced → **Add More Accounts**. On Subscription, Advanced subscribers adjust the extras stepper and save via Stripe proration (not a new checkout).
+- **Fix (files):** `getSubscribeCtaLabel` + `addMoreAccounts` i18n; `SidebarPlanCard`; `PricingPlansSection` → `update-extra-accounts`.
+- **Deploy state:** Frontend only — next Netlify deploy.
+- **Follow-ups:** Crypto-only Advanced without Stripe sub still cannot prorate extras via this edge.
+
+### 2026-11-24 — “We accept” payment logos on plans
+
+- **Context:** Subscription/pricing needed a clear accepted-methods strip after the trial footer was removed.
+- **Plain English:** Under the plan cards: “We accept” plus Visa, Mastercard, Amex, USDC, and USDT badges.
+- **Fix (files):** `PaymentAcceptedLogos.tsx`; wired in `PricingPlansSection.tsx`; `weAccept` i18n.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-24 — Remove pricing footer trial line
+
+- **Context:** “5-day free trial on Advanced” sat under the plan cards and felt redundant with CTAs.
+- **Plain English:** That footer line is gone from the Subscription/pricing plans section.
+- **Fix (files):** `PricingPlansSection.tsx` — dropped `moneyBackGuarantee` footer.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-24 — Advanced plan card gradient
+
+- **Context:** Advanced plan needed stronger visual weight vs Basic/Custom.
+- **Plain English:** Advanced card uses a soft mint → white (dark: teal → slate) gradient with light bloom accents; extra-accounts panel sits on frosted glass.
+- **Fix (files):** `PricingPlansSection.tsx` Advanced card styles.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-24 — Trim Advanced plan feature bullets
+
+- **Context:** Advanced list repeated Basic-tier filters/news/mirror copy and felt long.
+- **Plain English:** Advanced now leads with “Everything else in Basic” and keeps only the Advanced-specific upgrades (accounts, unlimited sources, range modes, etc.).
+- **Fix (files):** EN/ES/FR `advancedFeatures` in pricing i18n.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-24 — Redesign Subscription plans layout (Basic + Advanced, Custom below)
+
+- **Context:** Subscription (`/billing`) still showed a 3-column Basic | Advanced | Custom grid that underplayed UniCopier sources.
+- **Plain English:** In the app, Basic and Advanced sit side by side; Custom is a full-width band underneath. Feature lists call out Telegram, TradingView webhooks, WhatsApp, and Discord.
+- **Fix (files):** `PricingPlansSection.tsx` app layout; EN/ES/FR plan feature + description copy; Subscription page subtitle.
+- **Deploy state:** Frontend only — next Netlify deploy.
+- **Follow-ups:** Other pricing locale partials (ar/ja/…) still have older feature bullets until translated.
+
+### 2026-11-24 — Swap Membership ↔ Subscription page contents
+
+- **Context:** After the split, plans were on Membership and status on Subscription; product wanted the opposite.
+- **Plain English:** **Membership** (`/membership`) = status, renewals, payment methods, receipts. **Subscription** (`/billing`) = choose/upgrade plans and extra accounts.
+- **Fix (files):** Swapped route components in `App.tsx`; page titles/CTAs/redirects updated accordingly.
+- **Deploy state:** Frontend — next Netlify deploy.
+
+### 2026-11-24 — Split Membership vs Subscription pages
+
+- **Context:** Plans and subscription status lived together on `/billing`.
+- **Plain English:** Split into `/membership` and `/billing` (contents later swapped — see entry above).
+- **Fix (files):** New `MembershipPage`; slimmed `BillingPage`; nav + user menu; i18n.
+- **Deploy state:** Frontend only — next Netlify deploy.
+
+### 2026-11-24 — Basic crypto invoice +$1 buffer for NOWPayments mins
+
+- **Context:** Popular coins can’t be disabled; Basic $9.99 still fails NP mins on networks like USDT TRC20.
+- **Plain English:** Crypto checkout for Basic charges plan price + $1 (e.g. $10.99) so popular coins can complete.
+- **Fix (files):** `create-crypto-invoice` adds `$1` when `plan === "basic"`; stores `base_amount_usd` / `crypto_buffer_usd` in `crypto_invoices.raw`; EN checkout footer notes the buffer.
+- **Tests/verification:** Redeploy prod + Migration; retry Basic crypto with a popular coin.
+- **Deploy state:** Production + Migration after deploy.
+- **Follow-ups:** Frontend copy ships with next web deploy; card path unchanged at $9.99.
+
+### 2026-11-24 — NOWPayments “amountTo is too small” on Basic $9.99
+
+- **Context:** Production crypto checkout for Basic failed with NOWPayments “amountTo is too small”.
+- **Plain English:** Some crypto networks need more than $9.99 (especially USDT on Tron). Customers should pay with USDC/USDT on Polygon, Solana, or BSC.
+- **Root cause (technical):** Hosted invoice lets the customer pick any merchant coin; network minimums + prior `is_fixed_rate: true` raise the floor above Basic.
+- **Fix (files):** `nowpayments.ts` — `is_fixed_rate: false`; EN checkout copy + `docs/stripe-setup.md` guidance; redeploy `create-crypto-invoice`.
+- **Tests/verification:** Redeploy prod (+ Migration); retry Basic with USDC on Polygon/Solana/BSC.
+- **Deploy state:** Production + Migration after deploy.
+- **Follow-ups:** Optionally disable high-min currencies in NOWPayments merchant coins settings.
+
+### 2026-11-24 — NOWPayments crypto edges + schema on production
+
+- **Context:** User asked to deploy NOWPayments functions to production after Migration work.
+- **Plain English:** Production can now create crypto invoices and receive NOWPayments webhooks; the `crypto_invoices` table is live on prod.
+- **Fix (files):** Deployed `create-crypto-invoice`, `nowpayments-webhook`, `confirm-checkout`, `create-checkout-session` → `sxkpcovbyaficvtkpsdo`; applied `20261124131425_crypto_invoices_nowpayments`. CLI relinked to Migration.
+- **Tests/verification:** `sso.tscopier.ai/.../nowpayments-webhook` responds (401 invalid signature without body/sig); `create-crypto-invoice` 401 without JWT; `crypto_invoices` present in prod table stats.
+- **Deploy state:** Production + Migration. Frontend must call new edges (next web deploy if not already).
+- **Follow-ups:** Set/confirm `NOWPAYMENTS_API_KEY` + `NOWPAYMENTS_IPN_SECRET` on prod; dashboard IPN → `https://sso.tscopier.ai/functions/v1/nowpayments-webhook`.
+
+### 2026-11-24 — NOWPayments replaces Stripe for crypto membership
+
+- **Context:** Stripe crypto Checkout kept failing (“No valid payment method types”); user created a NOWPayments account for crypto period buys.
+- **Plain English:** Choosing Crypto on Billing opens a NOWPayments invoice (USDC and other coins). After payment, we activate the plan for one month/year (manual renew). Cards still use Stripe.
+- **Root cause (technical):** Stripe account cannot reliably offer crypto on Checkout; product already modeled manual renew.
+- **Fix (files):** Migration `crypto_invoices`; edges `create-crypto-invoice`, `nowpayments-webhook`; shared `nowpayments.ts` + `resolveMembershipAmountUsd`; `create-checkout-session` returns 410 for crypto; `confirm-checkout` + `planCheckout` / `SubscriptionContext` use `crypto_invoice` order id; amounts still sourced from Stripe price IDs.
+- **Tests/verification:** Migration table applied; deploy edges + set `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET`; smoke Basic crypto invoice → IPN → active entitlement.
+- **Deploy state:** Migration + production (see entry above).
+- **Follow-ups:** Confirm NOWPayments secrets on both projects; IPN URL for prod = `sso.tscopier.ai`.
+
+### 2026-11-24 — Crypto Basic: mode=payment manual period (not subscription Checkout)
+
+- **Context:** Selecting Basic + Crypto still showed Stripe’s “No valid payment method types” — unrelated to trial; crypto is not usable on subscription Checkout for this Stripe account.
+- **Plain English:** Paying with crypto now buys one billing period (monthly/annual) as a one-time Stripe payment, then we turn on the plan until that period ends. Renewals are manual, matching the Billing UI copy.
+- **Root cause (technical):** `create-checkout-session` still used `mode: "subscription"` + `payment_method_types: ["crypto"]`. Stripe crypto works for `mode: "payment"` only here (stablecoin-subscriptions preview not enabled).
+- **Fix (files):** `create-checkout-session` → `mode: "payment"`, one-time USD `price_data` from membership prices, `checkout_kind=membership_crypto`; `membershipStripe.ts` helpers; `stripe-webhook` + `confirm-checkout` grant/extend `subscriptions` (`status=active`, `current_period_end`, `stripe_subscription_id=null`); webhook skips canceling active crypto periods when no Stripe sub exists.
+- **Tests/verification:** Deploy Migration; retry Basic → Crypto; Checkout should open crypto UI; after pay, entitlement active with period end.
+- **Deploy state:** Migration (then production when verified).
+- **Follow-ups:** Optional email before `current_period_end` for manual renew; prod deploy after smoke.
+
+### 2026-11-24 — Crypto Checkout aligned with Copygram + Stripe guidance
+
+- **Context:** Crypto still failed after omitting `payment_method_types`; Stripe confirmed `crypto_payments` is active and said crypto-only Checkout uses `payment_method_types: ["crypto"]` + USD; Copygram charges monthly crypto immediately.
+- **Plain English:** Crypto subscribe now charges right away (no 5-day trial on that path), checks prices are USD, opens a crypto-only Stripe Checkout when Stripe allows it, and falls back to dynamic methods if not.
+- **Root cause (technical):** Crypto path still attached Advanced `trial_period_days` and later `excluded_payment_method_types: ["card"]`, which left subscription Checkout incompatible / empty for crypto.
+- **Fix (files):** `create-checkout-session` — no trial on crypto; USD assert; try `payment_method_types: ["crypto"]` then dynamic fallback; `assertMembershipPricesUsd` in `membershipStripe.ts`.
+- **Tests/verification:** Deploy Migration + production; retry Crypto on Basic/Advanced monthly; inspect returned `sessionId` / `paymentMethodTypes` if needed.
+- **Deploy state:** Migration + production `create-checkout-session` (superseded by mode=payment fix above).
+- **Follow-ups:** Superseded — use payment-mode crypto path.
+
+### 2026-11-24 — Production deploy: Trustpilot + billing/TV edges
+
+- **Context:** Ship Migration-tested edge work to production.
+- **Plain English:** Production now has the Trustpilot feedback email campaign, hosted Add-card Checkout, and Basic=2 / Advanced=unlimited TradingView webhook limits.
+- **Fix (files):** Deployed to `sxkpcovbyaficvtkpsdo`: `send-subscription-campaigns`, `send-subscription-email`, `create-setup-intent`, `tradingview-webhook`; applied `trustpilot_feedback_campaign` SQL (RPC + daily-cap updates).
+- **Tests/verification:** Deploys succeeded; prod `get_trustpilot_feedback_recipients` returns eligible rows (capped at 50).
+- **Deploy state:** Production. Frontend (rating modal, billing UI) still needs Netlify/web deploy.
+- **Follow-ups:** Confirm prod cron hits `send-subscription-campaigns`; ship web frontend.
+
+### 2026-11-24 — In-app Trustpilot rating modal
+
+- **Context:** Ask users in-product how they’d rate UniCopier, with a path to Trustpilot.
+- **Plain English:** On the dashboard, a modal asks “How would you rate your experience?” with stars, **Rate it on Trustpilot** (never show again), and **Remind me later** / close (show again after 7 days or on the next login session).
+- **Fix (files):** `TrustpilotRatingModal`, `trustpilotPromptStorage`, i18n `trustpilotPrompt`, mounted on `DashboardPage`; shared evaluate URL.
+- **Tests/verification:** `trustpilotPromptStorage.test.ts`; `tsc` clean.
+- **Deploy state:** Local / next frontend deploy.
+- **Follow-ups:** None.
+
+### 2026-11-24 — Trustpilot feedback campaign email
+
+- **Context:** Ask users to rate UniCopier on Trustpilot after they’ve had ~5 days with the product.
+- **Plain English:** Once ever, eligible users get “What do you think about UniCopier?” with a CTA to https://www.trustpilot.com/evaluate/unicopier.com. Sent after trial end, or 5 days after a Basic purchase, or 5 days after signup (whichever comes first). Respects unsubscribes and the 24h cross-campaign cap.
+- **Fix (files):** Migration `get_trustpilot_feedback_recipients` + daily-cap updates; `buildTrustpilotFeedbackEmail` in `subscriptionCampaignEmails.ts`; wired into `send-subscription-campaigns` / `send-subscription-email`.
+- **Tests/verification:** RPC present on Migration; campaign functions redeployed there.
+- **Deploy state:** Production `sxkpcovbyaficvtkpsdo` (SQL + edge) as of later same-day entry.
+- **Follow-ups:** None.
+
+### 2026-11-24 — TradingView webhook limits by plan
+
+- **Context:** Basic vs Advanced needed clear TradingView webhook caps.
+- **Plain English:** Basic can create 2 TradingView webhooks; Advanced has unlimited. Trying to add more on Basic shows an upgrade prompt.
+- **Fix (files):** `maxTradingViewWebhooks` in `planLimits` (src + edge shared); create path in `tradingViewWebhook.ts` + `tradingview-webhook` edge; `canAddTradingViewWebhook` in SubscriptionContext; Pricing/comparison copy.
+- **Tests/verification:** `planLimits.test.ts` (webhook limits); `tsc` clean.
+- **Deploy state:** Edge `tradingview-webhook` on Migration `supmsgcubipmmowrzoub`; frontend local / next deploy.
+- **Follow-ups:** Promote edge to production with the web release.
+
+### 2026-11-24 — Add card opens Stripe Checkout (setup mode)
+
+- **Context:** Copygram “Add card” goes to hosted `checkout.stripe.com` (setup), not an in-app Elements form.
+- **Plain English:** Billing → Payment methods → Add card now redirects to Stripe’s hosted page to save a card (Card + wallets when eligible), then returns to the payment methods tab.
+- **Fix (files):** `create-setup-intent` creates Checkout `mode: setup` and returns `url`; `PaymentMethodsPanel` redirects; `createSetupCheckout` in `planCheckout.ts`; `docs/stripe-setup.md`.
+- **Tests/verification:** Function deploy Migration; click Add card → hosted Checkout.
+- **Deploy state:** Migration `supmsgcubipmmowrzoub` (edge); frontend local / next deploy.
+- **Follow-ups:** Deploy same function to production when promoting.
+
+### 2026-11-24 — Authenticated plan picker lives on Billing
+
+- **Context:** Logged-in “Choose your plan” was a separate `/pricing` page outside Subscription & billing.
+- **Plain English:** Plan selection now sits on the Billing page. App `/pricing` redirects to `/billing`; upgrade CTAs and post-auth checkout resume there too. Marketing site `/pricing` is unchanged.
+- **Fix (files):** `BillingPage` embeds `PricingPlansSection`; `PricingToBillingRedirect` in `App.tsx`; `openPricingPage` / post-auth / reminder modal → `/billing`; assistant `/pricing` → `/billing`; removed unused `AppPricingPage`.
+- **Tests/verification:** `tsc -p tsconfig.app.json` clean; pendingPlan / postAuth / subscriptionNav / assistantActions tests pass.
+- **Deploy state:** Local / next frontend deploy.
+- **Follow-ups:** None.
+
+### 2026-11-24 — Billing redesign: Card Elements + Crypto Checkout + promo
+
+- **Context:** Copygram-style subscribe flow — plan → Card vs Crypto, promo codes, add card on-platform.
+- **Plain English:** Choosing a plan opens an in-app checkout step. Card pays on UniCopier via Stripe Payment Element; Crypto opens a crypto-only Stripe Checkout page. Users can save cards under Billing → Payment methods. Promo codes apply on both paths.
+- **Fix (files):** Shared `_shared/membershipStripe.ts`; crypto+promo on `create-checkout-session`; new `create-subscription-elements`, `create-setup-intent`, `list-payment-methods`, `detach-payment-method` (Migration); Billing tabs + checkout UI; PricingPlansSection opens checkout step; `@stripe/stripe-js` + react-stripe-js; i18n + `docs/stripe-setup.md`.
+- **Tests/verification:** Functions deployed to Migration `supmsgcubipmmowrzoub`; `tsc -p tsconfig.app.json` clean. Set `VITE_STRIPE_PUBLISHABLE_KEY` before Card Elements works in UI.
+- **Deploy state:** Edge functions on Migration `supmsgcubipmmowrzoub` and production `sxkpcovbyaficvtkpsdo` (`create-checkout-session`, `create-subscription-elements`, `create-setup-intent`, `list-payment-methods`, `detach-payment-method`). Frontend ships with next web deploy. Prod already has Stripe price ID secrets.
+- **Follow-ups:** Create Stripe Promotion Codes in Dashboard; set `VITE_STRIPE_PUBLISHABLE_KEY` on Netlify for Card Elements; smoke Card/Crypto/promo/add-card.
+
+### 2026-11-24 — Sidebar Plan / Upgrade card
+
+- **Context:** Wanted a Copygram-style plan card above the Dashboard menu.
+- **Plain English:** The sidebar now shows a Plan card (badge, account usage bar, Upgrade / Manage billing) above the main nav.
+- **Fix (files):** `src/components/layout/SidebarPlanCard.tsx`; wired in `AppLayout.tsx`; nav i18n (`planCardLabel`, `planAccountsUsed`, `planManage`).
+- **Tests/verification:** `tsc -p tsconfig.app.json` clean.
+- **Deploy state:** Local / next frontend deploy.
+- **Follow-ups:** None.
+
+### 2026-11-24 — Migration Stripe price IDs missing (crypto checkout empty price)
+
+- **Context:** Localhost crypto checkout against Migration failed: Stripe `line_items[0][price]` empty string.
+- **Plain English:** The Migration Supabase project had a Stripe secret key but no Basic/Advanced price ID secrets, so Checkout was created with blank prices.
+- **Fix (files):** Set `STRIPE_*_PRICE_ID` secrets on `supmsgcubipmmowrzoub` from that Stripe account’s active UniCopier prices; `requireMembershipPriceId` validation in `_shared/membershipStripe.ts`; redeployed checkout + elements functions.
+- **Tests/verification:** Secrets listed on Migration; retry Crypto Continue on localhost.
+- **Deploy state:** Migration secrets + functions only.
+- **Follow-ups:** None.
+
+### 2026-11-24 — Fix Netlify build: `process` types in featureFlags
+
+- **Context:** Netlify `npm run build` failed with TS2591 on `src/lib/featureFlags.ts` (`Cannot find name 'process'`).
+- **Plain English:** The web TypeScript config is browser/Vite-only (no Node types). Reading `process.env` for Expo broke the production build.
+- **Root cause (technical):** Direct `process` references under `tsconfig.app.json` (`types: ["vite/client"]` only).
+- **Fix (files):** `src/lib/featureFlags.ts` — read env via `globalThis.process` (same pattern as `supabase.ts`); synced `apps/mobile/packages/web-lib/lib/featureFlags.ts`.
+- **Tests/verification:** `npx tsc -p tsconfig.app.json --noEmit` clean; `vitest run src/lib/featureFlags.test.ts` 5/5.
+- **Deploy state:** Local only until next Netlify deploy of this branch.
+- **Follow-ups:** None.
+
+### 2026-11-23 — Pay with Crypto via Stripe Checkout
+
+- **Context:** Stripe Stablecoins and Crypto is Active (US); Checkout was hard-locked to `payment_method_types: ["card"]`, so crypto never appeared.
+- **Plain English:** Customers can pay UniCopier subscriptions with USDC/crypto at Stripe Checkout (alongside cards). We settle in USD. Pricing pages note “Cards and crypto (USDC) accepted at checkout.”
+- **Root cause (technical):** Explicit `payment_method_types: ["card"]` disabled Stripe dynamic payment methods.
+- **Fix (files):** Removed card-only lock in `supabase/functions/create-checkout-session/index.ts` and `create-social-copy-checkout/index.ts` (kept `payment_method_collection: always`); `docs/stripe-setup.md`; pricing hint via `paymentMethodsHint` + `PricingPlansSection.tsx`.
+- **Tests/verification:** Both functions deployed to Migration then production; confirm Hosted Checkout shows Crypto for an eligible wallet payer and card still works. Spot-check first renewal after a crypto first payment (`save_default_payment_method`) when a live crypto sub exists.
+- **Deploy state:** Edge functions on Migration `supmsgcubipmmowrzoub` and production `sxkpcovbyaficvtkpsdo` (not staging). Frontend pricing hint ships with the next web deploy.
+- **Follow-ups:** Watch crypto renewal behavior; ship frontend copy when web is deployed.
+
+### 2026-11-21 — UniCopier Expo mobile ported onto off-migration
+
+- **Context:** Trader mobile lived on `Mobile-app` / worktree; `off-migration` only had a stale `apps/mobile` husk.
+- **Plain English:** The Expo companion app is now in this repo as UniCopier (`com.unicopier.app`, scheme `unicopier`), with a new EAS project and Migration-backed push.
+- **Fix (files):** Deleted husk; copied `apps/mobile` + `packages/{shared,web-lib,web-i18n}`; root `dev:mobile` / `build:mobile` / `typecheck:mobile`; rebranded config/copy/assets; EAS `@tartarix/unicopier` (`7761637d-…`); push migrations + `send-push-notification` on Migration `supmsgcubipmmowrzoub`.
+- **Tests/verification:** `npm run typecheck:mobile` clean; edge function ACTIVE on Migration; `user_push_tokens` + `notify_trade_push` verified.
+- **Deploy state:** App local on `off-migration`. Migrations + `send-push-notification` on Migration only (not staging/production). Set `EXPO_ACCESS_TOKEN` secret and Auth redirect URLs (`unicopier://…`) in dashboard when ready.
+- **Follow-ups:** Add Auth redirect allow-list; optional `@tscopier/*` → `@unicopier/*` rename; remove nested `apps/TScopier-mobile` worktree when done.
+
 ### 2026-11-21 — Support chat: Liam Nicolas / Genwealth signals not copied, Gen Wealth VIP channel dead since 16 Nov
 
 - **Context:** Customer Liam Nicolas (`b23d53d4-c95b-4858-a00b-8161c0fdd3bc`, username `alphamanagement2022`) reported via support chat that his signals were not being copied — "no trade has ever been opened" and specific signal messages (16 Nov 01:47 "Selling gold now ENTRY: 3876 SL 3886", 16 Nov ~05:28 "selling gold now", 20 Nov 17:22 "Buying gold now ENTRY: 3558") never appeared in Copier Logs.

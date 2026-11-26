@@ -42,10 +42,10 @@ export const landingNl: LandingTranslations = {
     },
   },
   hero: {
-    headline: 'All-in-one kopieertool voor elke forex- en cryptotrader',
+    headline: 'Copy trading heruitgevonden.',
     headlinePhrases: [],
     subheadline:
-      'Automatiseer je trades vanuit Telegram, WhatsApp, Discord, TradingView of een masteraccount naar 8+ brokerplatformen in minder dan 50 ms. Geen VPS nodig.',
+      'Voer trades uit van signaalproviders op Telegram, WhatsApp en Discord, stel TradingView-webhooks in, spiegel master- naar slave-accounts of kopieer bewezen traders naar 8+ brokerplatformen, in minder dan 50 ms. Geen VPS nodig.',
     socialProof: 'TScopier.ai is nu UniCopier',
     primaryCta: 'Kies je abonnement',
     secondaryCta: 'Zo werkt het',
@@ -802,6 +802,12 @@ export const landingNl: LandingTranslations = {
       {
         feature: 'Telegram-kanalen',
         basic: '5',
+        advanced: 'Onbeperkt',
+        custom: 'Maatwerk',
+      },
+      {
+        feature: 'TradingView-webhooks',
+        basic: '2',
         advanced: 'Onbeperkt',
         custom: 'Maatwerk',
       },

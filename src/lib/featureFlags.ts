@@ -44,10 +44,31 @@ export function resolveBuildFlags(env: {
   }
 }
 
+/** Read process.env without requiring Node/`@types/node` (browser Vite tsconfig). */
+function readProcessEnv(key: string): string | undefined {
+  const proc = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+  const value = proc?.env?.[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+/** Read Vite or Expo env without crashing when `import.meta.env` is undefined (Metro/Hermes). */
+function readBuildEnv(viteKey: string): string | undefined {
+  try {
+    const fromMeta = import.meta.env?.[viteKey]
+    if (typeof fromMeta === 'string') return fromMeta
+  } catch {
+    // import.meta unsupported or env missing
+  }
+  const fromProcess = readProcessEnv(viteKey)
+  if (fromProcess !== undefined) return fromProcess
+  const expoKey = viteKey.replace(/^VITE_/, 'EXPO_PUBLIC_')
+  return readProcessEnv(expoKey)
+}
+
 /** Flags for the current build. Unset variables mean the feature is on. */
 export const buildFlags: BuildFeatureFlags = resolveBuildFlags({
-  extraSources: import.meta.env.VITE_ENABLE_EXTRA_SOURCES as string | undefined,
-  socialTrading: import.meta.env.VITE_ENABLE_SOCIAL_TRADING as string | undefined,
+  extraSources: readBuildEnv('VITE_ENABLE_EXTRA_SOURCES'),
+  socialTrading: readBuildEnv('VITE_ENABLE_SOCIAL_TRADING'),
 })
 
 /** Sources that show "Coming soon" while the switch is off: they have no worker yet. */

@@ -8,10 +8,11 @@ type SubscribeCtaOptions = {
   hasTrialExpired: boolean
 }
 
-/** Primary subscribe / upgrade button label for users without an active Advanced plan. */
+/** Primary subscribe / upgrade / add-accounts button label. */
 export function getSubscribeCtaLabel(t: Translations, opts: SubscribeCtaOptions): string {
   const pw = t.pricing.paywall
   if (opts.isPastDue) return pw.updatePayment
+  if (opts.effectivePlan === 'advanced') return pw.addMoreAccounts
   if (opts.effectivePlan === 'basic') return pw.upgradeCta
   if (opts.hasTrialExpired) return pw.purchaseSubscriptionCta
   return t.pricing.startTrial

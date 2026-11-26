@@ -54,7 +54,7 @@ Deno.serve(async (req: Request) => {
       return new Response(
         JSON.stringify({
           error:
-            `Unknown campaign: ${campaign}. Valid: no_subscription_nudge, trial_expired`,
+            `Unknown campaign: ${campaign}. Valid: no_subscription_nudge, trial_expired, trustpilot_feedback`,
         }),
         {
           status: 400,

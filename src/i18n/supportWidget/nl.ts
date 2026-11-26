@@ -46,6 +46,8 @@ export const supportWidgetNl: SupportWidgetTranslations = {
   removeImage: 'Afbeelding verwijderen',
   send: 'Versturen',
   conversationResolved: 'Deze conversatie is opgelost. Start een nieuwe vanaf Home.',
+  rateOnTrustpilot: 'Beoordeel ons op Trustpilot',
+  rateOnTrustpilotHint: 'Bedankt voor het gesprek — we waarderen je review graag.',
   loading: 'Laden…',
   aiName: 'UniCopier AI',
   supportName: 'Support',
