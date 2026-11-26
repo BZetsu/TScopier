@@ -7,6 +7,8 @@ const localeLoaders: Record<Locale, () => Promise<Translations>> = {
   es: () => import('./es').then(m => m.es),
   fr: () => import('./fr').then(m => m.fr),
   de: () => import('./de').then(m => m.de),
+  pt: () => import('./pt').then(m => m.pt),
+  it: () => import('./it').then(m => m.it),
   pl: () => import('./pl').then(m => m.pl),
   ru: () => import('./ru').then(m => m.ru),
   sv: () => import('./sv').then(m => m.sv),

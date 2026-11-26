@@ -53,4 +53,16 @@
     <rect y="0.667" width="3" height="0.666" fill="#DD0000"/>
     <rect y="1.333" width="3" height="0.667" fill="#FFCE00"/>
   </symbol>
+  <symbol id="pt" viewBox="0 0 3 2">
+    <rect width="1.2" height="2" fill="#006600"/>
+    <rect x="1.2" width="1.8" height="2" fill="#FF0000"/>
+    <circle cx="1.2" cy="1" r="0.34" fill="#FFE900"/>
+    <circle cx="1.2" cy="1" r="0.2" fill="#FF0000"/>
+    <rect x="1.02" y="0.78" width="0.36" height="0.44" fill="#fff"/>
+  </symbol>
+  <symbol id="it" viewBox="0 0 3 2">
+    <rect width="1" height="2" fill="#009246"/>
+    <rect x="1" width="1" height="2" fill="#fff"/>
+    <rect x="2" width="1" height="2" fill="#CE2B37"/>
+  </symbol>
 </svg>

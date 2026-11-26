@@ -14,9 +14,11 @@ const byLocale: Record<Locale, AuthTranslations> = {
   en: authEn,
   es: authEs,
   fr: authFr,
-  // No German auth bundle yet: the sign-in/sign-up screens stay in English
-  // until one exists. getAuthTranslations also falls back to authEn.
+  // No German/Portuguese/Italian auth bundle yet: the sign-in/sign-up screens
+  // stay in English until one exists. getAuthTranslations also falls back.
   de: authEn,
+  pt: authEn,
+  it: authEn,
   pl: authPl,
   ru: authRu,
   sv: authSv,
