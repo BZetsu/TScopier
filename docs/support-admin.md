@@ -86,13 +86,15 @@ product (`src/components/support/`).
 Access is enforced in the database: agent reads/claims are gated on
 `is_support_agent` / `is_admin()`; the app never uses the service-role key.
 
-## Turkish support chat and older messages
+## German and Turkish support chat and older messages
 
-Turkish is supported as a **support-chat language**, not as a full product-interface language. A customer using a Turkish browser can therefore write and receive Turkish support chat while the rest of UniCopier safely remains in English. New messages store their detected source locale: Turkish text is stored as `tr`, while English text can remain `en` even in a Turkish conversation. The support assistant replies in the conversation's preferred support language, and the desk receives a cached English translation when needed while the customer sees the original Turkish message.
+German and Turkish are supported as **support-chat languages**, not as full product-interface languages. A customer using a German or Turkish browser can therefore write and receive support chat in that language while the rest of UniCopier safely remains in English. New support-chat messages and inbound email replies store their detected source locale: German text is stored as `de`, Turkish text as `tr`, and English text can remain `en` even in a German or Turkish conversation. A ticket created inside the product uses the requested ticket language for its first message. The support assistant replies in the conversation's preferred support language, and the desk receives a cached English translation when needed while the customer sees the original message.
 
-Apply `supabase/migrations/20261126150000_support_turkish_locale.sql` before deploying `support-chat`, `support-translate`, or the updated widget. The migration adds `tr` to the locale checks on conversations, tickets, chat messages, and ticket messages. Deploying a function that stores `tr` before this migration fails the database check.
+Apply `supabase/migrations/20261126150000_support_turkish_locale.sql` first, then apply `supabase/migrations/20261126160000_support_german_locale.sql`. The German migration adds `de` while retaining `tr` in the locale checks on conversations, tickets, chat messages, and ticket messages. Do not apply them in the opposite order. Deploying a function that stores `de` or `tr` before the required migrations are applied fails the database check. Publish the updated product frontend and affected Edge Functions only after both migrations are in place.
 
-Messages written before Turkish was supported can remain marked as English even when their body is Turkish. There is no silent bulk rewrite. An authorized support agent or administrator can call the `support-translate` function with `action: "repair_source_locale"`, a signed-in agent JWT, and either a `conversation_id` or a bounded list of `message_ids`:
+The normal browser flow gives a German browser `de` and a Turkish browser `tr`. An explicit stored English product-language choice still wins over the browser language. This release does not add a German heuristic under an explicit English preference because German and English share many words; use the controlled repair path below for an older row that needs its language corrected. In the support desk source, agents can choose **Deutsch** in both the desktop and mobile chat-language picker.
+
+Messages written before a locale was supported can remain marked as English even when their body is German or Turkish. There is no silent bulk rewrite. An authorized support agent or administrator can call the `support-translate` function with `action: "repair_source_locale"`, a signed-in agent JWT, and either a `conversation_id` or a bounded list of `message_ids`:
 
 ```json
 {

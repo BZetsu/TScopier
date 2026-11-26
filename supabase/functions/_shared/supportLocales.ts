@@ -9,6 +9,7 @@ export const SUPPORT_LOCALES = [
   "nl",
   "ja",
   "ar",
+  "de",
   "tr",
 ] as const;
 
@@ -24,6 +25,7 @@ const LOCALE_LANGUAGES: Record<SupportLocale, string> = {
   nl: "Dutch",
   ja: "Japanese",
   ar: "Arabic",
+  de: "German",
   tr: "Turkish",
 };
 

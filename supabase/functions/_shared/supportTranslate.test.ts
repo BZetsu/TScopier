@@ -4,6 +4,7 @@ import {
   looksNonEnglish,
   looksTurkish,
   shouldDetectSupportMessageLocale,
+  tryDetectLocaleWithOpenAI,
 } from "./supportTranslate.ts";
 
 type MessageRow = {
@@ -98,7 +99,38 @@ Deno.test("Turkish detection recognizes Turkish text without misclassifying comm
   assertEquals(looksNonEnglish("Merhaba"), true);
 });
 
+Deno.test("German detection recognizes German text and includes de in the model contract", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = Deno.env.get("OPENAI_API_KEY");
+
+  Deno.env.set("OPENAI_API_KEY", "test-key");
+  globalThis.fetch = async (_input, init) => {
+    const request = String(init?.body ?? "");
+    const payload = JSON.parse(request) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const systemPrompt = payload.messages.find((message) => message.role === "system")?.content ?? "";
+    assertEquals(/(^|,\s)de(,|$)/m.test(systemPrompt), true);
+
+    return Response.json({
+      choices: [{ message: { content: "de" } }],
+    });
+  };
+
+  try {
+    assertEquals(await tryDetectLocaleWithOpenAI("Das Signal ist nicht angekommen"), "de");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey == null) Deno.env.delete("OPENAI_API_KEY");
+    else Deno.env.set("OPENAI_API_KEY", originalApiKey);
+  }
+});
+
 Deno.test("new-message detection checks non-English preferred locales", () => {
+  assertEquals(
+    shouldDetectSupportMessageLocale("de", "Das Signal ist nicht angekommen"),
+    true,
+  );
   assertEquals(
     shouldDetectSupportMessageLocale("tr", "The signal update did not arrive"),
     true,
@@ -167,6 +199,54 @@ Deno.test("an explicit repair corrects the Turkish source locale and caches Engl
     assertEquals(second.text, "Okay, I understand the second signal update.");
     assertEquals(modelCalls, 2, "a cached translation must not call the model again");
     assertEquals(updates.length, 2, "a cached translation must not write again");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey == null) Deno.env.delete("OPENAI_API_KEY");
+    else Deno.env.set("OPENAI_API_KEY", originalApiKey);
+  }
+});
+
+Deno.test("an explicit repair corrects the German source locale and clears stale translations", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = Deno.env.get("OPENAI_API_KEY");
+
+  Deno.env.set("OPENAI_API_KEY", "test-key");
+  globalThis.fetch = async (_input, init) => {
+    const request = String(init?.body ?? "");
+    if (request.includes("Detect the language of the message")) {
+      return Response.json({
+        choices: [{ message: { content: "de" } }],
+      });
+    }
+    if (request.includes("Source language: German")) {
+      return Response.json({
+        choices: [{ message: { content: "The signal did not arrive." } }],
+      });
+    }
+    throw new Error("Unexpected OpenAI request");
+  };
+
+  try {
+    const { admin, row, updates } = fakeAdmin({
+      id: "message-german",
+      body: "Das Signal ist nicht angekommen",
+      source_locale: "en",
+      translations: { en: "Stale English translation" },
+    });
+
+    const repaired = await ensureMessageTranslation(admin, {
+      channel: "chat",
+      messageId: "message-german",
+      targetLocale: "en",
+      repairSourceLocale: true,
+    });
+
+    assertEquals(repaired.source_locale, "de");
+    assertEquals(repaired.source_repaired, true);
+    assertEquals(repaired.text, "The signal did not arrive.");
+    assertEquals(row.source_locale, "de");
+    assertEquals(row.translations.en, "The signal did not arrive.");
+    assertEquals(updates.length, 2);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalApiKey == null) Deno.env.delete("OPENAI_API_KEY");

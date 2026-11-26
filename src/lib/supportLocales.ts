@@ -1,8 +1,8 @@
 import { LOCALE_STORAGE_KEY } from '../i18n/types'
 
 /**
- * Support chat may use Turkish even when the product interface does not yet
- * have a Turkish bundle. Keep this list aligned with the Edge Function's
+ * Support chat may use German or Turkish even when the product interface does
+ * not yet have those bundles. Keep this list aligned with the Edge Function's
  * SUPPORT_LOCALES contract.
  */
 export const SUPPORT_CHAT_LOCALES = [
@@ -15,6 +15,7 @@ export const SUPPORT_CHAT_LOCALES = [
   'nl',
   'ja',
   'ar',
+  'de',
   'tr',
 ] as const
 
@@ -35,8 +36,8 @@ export function normalizeSupportChatLocale(raw?: string | null): SupportChatLoca
 
 /**
  * A stored product choice wins, then the browser language, then the active
- * product locale. This lets Turkish browsers use Turkish support chat while
- * the rest of the product safely remains in English.
+ * product locale. This lets German and Turkish browsers use their language in
+ * support chat while the rest of the product safely remains in English.
  */
 export function resolveSupportChatLocale(params: {
   uiLocale?: string | null

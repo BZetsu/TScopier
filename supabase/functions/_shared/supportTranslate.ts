@@ -146,7 +146,7 @@ export function looksNonEnglish(text: string): boolean {
 /**
  * Decide whether a new message needs an explicit language check. English can
  * use the English default, while any other preferred locale is checked so an
- * English or Turkish message is not mislabeled with the conversation locale.
+ * English message is not mislabeled with the conversation locale.
  */
 export function shouldDetectSupportMessageLocale(
   preferredLocale: SupportLocale,

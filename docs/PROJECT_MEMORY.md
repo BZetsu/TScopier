@@ -2,6 +2,32 @@
 
 ## Changelog
 
+### 2026-11-26 — German support chat and agent translation target
+
+- **Context:** the owner requested German support. The scope is the customer support conversation and the language used for agent translations, not the rest of the product interface. There is no complete German product-interface bundle in this repository, so the change does not pretend that the whole product is German.
+
+- **Plain English:** a customer using a German browser now receives German support chat. The customer's original message remains unchanged, while the support desk can display the cached translation for the agent's chosen language. Support agents can choose **Deutsch** in both the desktop and mobile support desk. German regional tags such as `de-DE` are treated as German. A customer who deliberately saved English still receives English support. Turkish support continues to work, and prices, plan limits, account access, trade handling, and signal processing are unchanged.
+
+- **Root cause / mechanics (technical):**
+  - `src/lib/supportLocales.ts` and `supabase/functions/_shared/supportLocales.ts` did not include `de`, so a German browser locale was normalized to English and the Edge language-detection and reply-language contracts did not recognize German.
+  - The database locale checks allowed only the original locales through `ar`; a row that stored `de` would fail the check.
+  - The live support desk has separate desktop and mobile locale lists in `tartarixinc/support-admin`, and neither list included `de`.
+  - German and English share many words, so the cheap detector used when a customer explicitly prefers English does not guess German. The normal German-browser path sends `de` as the preferred support locale, which causes the existing model-based language check to run. This avoids incorrectly treating ordinary English text as German.
+
+- **Fix (files):**
+  - `src/lib/supportLocales.ts` and `src/lib/supportLocales.test.ts` — added German browser-support resolution while preserving the stored-language priority and Turkish behavior.
+  - `supabase/functions/_shared/supportLocales.ts` and `supabase/functions/_shared/supportLocales.test.ts` — added `de`, German reply-language wording, and German cached-translation coverage.
+  - `supabase/functions/_shared/supportTranslate.test.ts` — covered German model detection and the controlled source-locale repair path, including removal of stale translations.
+  - `supabase/migrations/20261126160000_support_german_locale.sql` — adds `de` while retaining `tr` in the conversation, ticket, chat-message, and ticket-message locale checks.
+  - `docs/architecture.md` and `docs/support-admin.md` — documented the German/Turkish flow, the explicit-English rule, and the required migration order.
+  - `tartarixinc/support-admin/src/lib/agentLocale.ts` and `tartarixinc/support-admin/mobile/src/lib/agentLocale.ts` — added **Deutsch** to the separate desktop and mobile agent locale pickers.
+
+- **Tests / verification:** focused frontend tests **7/7**; focused Edge Function tests **15/15**; full frontend suite **602/602** Vitest and **662/662** node:test; root `npx tsc -b` **passed**; Deno checks for `support-chat`, `support-translate`, `support-tickets`, and `support-ticket-inbound` with `--node-modules-dir=auto --no-lock` **passed**; scoped ESLint and whitespace checks **passed**. The separate support-desk desktop production build **passed**. Its mobile type check found one existing unrelated error in `mobile/src/components/IssueCategoryPicker.tsx` and no error in the German locale change. Independent code-tester and code-review verdicts are PASS_WITH_NOTES with no blocking findings and are recorded in the final implementation handoff.
+
+- **Deploy state:** source implementation only. No migration or Edge Function was deployed, no support conversation was changed, and no customer message was sent. Both the Turkish and German locale migrations are still absent from staging and production. The separate support-desk German change is local on `feat/support-admin-german-locale` and has not been pushed.
+
+- **Follow-ups:** after explicit owner approval, apply `20261116090000_support_message_translations.sql` on any target that lacks the support translation columns, then apply `20261126150000_support_turkish_locale.sql` and `20261126160000_support_german_locale.sql`. Verify all four live constraints contain both `tr` and `de`, deploy the four affected support Edge Functions, publish the updated product frontend and separate support-desk change, and complete one German test chat.
+
 ### 2026-11-26 — Turkish support chat and controlled language repair
 
 - **Context:** a customer wrote in Turkish inside support chat, but every message was stored as English and the desk showed the untranslated Turkish body. The product interface was intentionally to remain English; only the support conversation needed Turkish.
