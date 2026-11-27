@@ -65,4 +65,10 @@
     <rect x="1" width="1" height="2" fill="#fff"/>
     <rect x="2" width="1" height="2" fill="#CE2B37"/>
   </symbol>
+  <symbol id="tr" viewBox="0 0 3 2">
+    <rect width="3" height="2" fill="#E30A17"/>
+    <circle cx="1.05" cy="1" r="0.42" fill="#fff"/>
+    <circle cx="1.2" cy="1" r="0.34" fill="#E30A17"/>
+    <path fill="#fff" d="M1.85 0.78l0.052 0.149 0.207 0.003-0.125 0.095 0.045 0.151-0.129-0.09-0.129 0.09 0.045-0.151-0.125-0.095 0.207-0.003z"/>
+  </symbol>
 </svg>

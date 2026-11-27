@@ -388,7 +388,7 @@ export const landingSv: LandingTranslations = {
       },
       multilingual: {
         languagesBadge: '10+ språk',
-        moreLanguages: 'Tyska, arabiska, portugisiska, italienska med mera',
+        moreLanguages: 'Turkiska, tyska, arabiska, portugisiska, italienska med mera',
         parsedLabel: 'Tolkad',
         ribbonFlags: ['us', 'gb', 'es', 'fr', 'pl', 'ru', 'se', 'nl', 'jp'],
         signals: [

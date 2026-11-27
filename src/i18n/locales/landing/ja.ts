@@ -384,7 +384,7 @@ export const landingJa: LandingTranslations = {
       },
       multilingual: {
         languagesBadge: '10以上の言語',
-        moreLanguages: 'ドイツ語・アラビア語・ポルトガル語・イタリア語ほか',
+        moreLanguages: 'トルコ語・ドイツ語・アラビア語・ポルトガル語・イタリア語ほか',
         parsedLabel: '解析済み',
         ribbonFlags: ['us', 'gb', 'es', 'fr', 'pl', 'ru', 'se', 'nl', 'jp'],
         signals: [

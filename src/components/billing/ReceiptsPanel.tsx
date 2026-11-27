@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ChevronLeft, ChevronRight, Info, Receipt } from 'lucide-react'
 import { useT, useLocale } from '../../context/LocaleContext'
+import { LOCALE_DATE_TAGS } from '../../i18n/types'
 import { Button } from '../ui/Button'
 import {
   fetchBillingHistory,
@@ -46,7 +47,7 @@ export function ReceiptsPanel({ accessToken }: { accessToken: string }) {
   const t = useT()
   const bt = t.pricing.billing
   const { locale } = useLocale()
-  const localeTag = locale === 'es' ? 'es-ES' : locale === 'fr' ? 'fr-FR' : 'en-US'
+  const localeTag = LOCALE_DATE_TAGS[locale] ?? 'en-US'
 
   const [invoicePages, setInvoicePages] = useState<BillingInvoice[][]>([])
   const [invoicePageIndex, setInvoicePageIndex] = useState(0)

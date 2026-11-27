@@ -868,6 +868,8 @@ test('channelWorker skipReasons key parity across all locales', async () => {
   const { channelWorkerPl } = await import('../i18n/channelWorker/pl')
   const { channelWorkerRu } = await import('../i18n/channelWorker/ru')
   const { channelWorkerSv } = await import('../i18n/channelWorker/sv')
+  const { channelWorkerDe } = await import('../i18n/channelWorker/de')
+  const { channelWorkerTr } = await import('../i18n/channelWorker/tr')
 
   const base = Object.keys(channelWorkerEn.skipReasons).sort()
   const locales: Record<string, { skipReasons: Record<string, string> }> = {
@@ -879,6 +881,8 @@ test('channelWorker skipReasons key parity across all locales', async () => {
     pl: channelWorkerPl,
     ru: channelWorkerRu,
     sv: channelWorkerSv,
+    de: channelWorkerDe,
+    tr: channelWorkerTr,
   }
   for (const [name, bundle] of Object.entries(locales)) {
     assert.deepEqual(

@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { ArrowUpRight, Check, CircleCheck, Copy, Layers, Loader2, Pencil, RotateCcw, TriangleAlert, UserPlus, X } from 'lucide-react'
 import { useNotifications } from '../../context/NotificationsContext'
 import { useLocale, useT } from '../../context/LocaleContext'
+import { LOCALE_DATE_TAGS } from '../../i18n/types'
 import { formatRelative } from '../../lib/formatRelative'
 import { groupNotificationsByDay } from '../../lib/notificationDayGroups'
 import type { TradeNotificationHeadline } from '../../lib/tradeNotifications'
@@ -49,12 +50,6 @@ function headlineMeta(headline: TradeNotificationHeadline): {
   }
 }
 
-const LOCALE_BCP: Record<string, string> = {
-  en: 'en-US',
-  fr: 'fr-FR',
-  es: 'es-ES',
-}
-
 export function NotificationDropdown({ open, onClose }: NotificationDropdownProps) {
   const t = useT()
   const { locale } = useLocale()
@@ -68,7 +63,7 @@ export function NotificationDropdown({ open, onClose }: NotificationDropdownProp
       groupNotificationsByDay(items, {
         today: nn.dayToday,
         yesterday: nn.dayYesterday,
-        locale: LOCALE_BCP[locale] ?? locale,
+        locale: LOCALE_DATE_TAGS[locale] ?? locale,
       }),
     [items, nn.dayToday, nn.dayYesterday, locale],
   )

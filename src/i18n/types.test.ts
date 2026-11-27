@@ -12,7 +12,7 @@ test('isLocale: accepts all supported locale codes', () => {
     assert.equal(isLocale(opt.code), true)
   }
   assert.equal(isLocale('de'), true)
-  assert.equal(isLocale('tr'), false, 'the product UI still falls back to English for Turkish')
+  assert.equal(isLocale('tr'), true, 'Turkish is a full product locale in the language picker')
   assert.equal(isLocale(''), false)
   assert.equal(isLocale(null), false)
 })

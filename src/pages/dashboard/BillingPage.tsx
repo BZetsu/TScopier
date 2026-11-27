@@ -6,6 +6,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { useT, useLocale } from '../../context/LocaleContext'
+import { LOCALE_DATE_TAGS } from '../../i18n/types'
 import { useAuth } from '../../context/AuthContext'
 import { useSubscription } from '../../context/SubscriptionContext'
 import { useUserProfile } from '../../context/UserProfileContext'
@@ -158,7 +159,7 @@ export function BillingPage() {
 
   const [billingMeta, setBillingMeta] = useState<Omit<BillingHistoryResponse, 'invoices'> | null>(null)
 
-  const localeTag = locale === 'es' ? 'es-ES' : locale === 'fr' ? 'fr-FR' : 'en-US'
+  const localeTag = LOCALE_DATE_TAGS[locale] ?? 'en-US'
   const customerRef = user ? customerRefFromUserId(user.id) : '—'
 
   const statusLabel = subscription

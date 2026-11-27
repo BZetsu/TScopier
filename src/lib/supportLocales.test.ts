@@ -29,14 +29,14 @@ test('an unsupported locale safely falls back to English', () => {
   )
 })
 
-test('German browser language supports German chat while the product UI remains English', () => {
+test('German browser language supplies German chat when the product locale is English', () => {
   assert.equal(
     resolveSupportChatLocale({ uiLocale: 'en', browserLocale: 'de-DE' }),
     'de',
   )
 })
 
-test('Turkish browser language supports Turkish chat while the product UI remains English', () => {
+test('Turkish browser language supplies Turkish chat when the product locale is English', () => {
   assert.equal(
     resolveSupportChatLocale({ uiLocale: 'en', browserLocale: 'tr-TR' }),
     'tr',

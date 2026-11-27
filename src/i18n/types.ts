@@ -1,4 +1,4 @@
-export type Locale = 'en' | 'es' | 'fr' | 'de' | 'pt' | 'it' | 'pl' | 'ru' | 'sv' | 'nl' | 'ja' | 'ar'
+export type Locale = 'en' | 'es' | 'fr' | 'de' | 'pt' | 'it' | 'pl' | 'ru' | 'sv' | 'nl' | 'ja' | 'ar' | 'tr'
 
 export type LocaleOption = {
   code: Locale
@@ -10,7 +10,7 @@ export type LocaleOption = {
 }
 
 const LOCALE_CODES: readonly Locale[] = [
-  'en', 'es', 'fr', 'de', 'pt', 'it', 'pl', 'ru', 'sv', 'nl', 'ja', 'ar',
+  'en', 'es', 'fr', 'de', 'pt', 'it', 'pl', 'ru', 'sv', 'nl', 'ja', 'ar', 'tr',
 ] as const
 
 export function isLocale(value: string | null | undefined): value is Locale {
@@ -102,6 +102,13 @@ export const LOCALES: LocaleOption[] = [
     flagId: 'sa',
     searchText: 'arabic arabic msa saudi arabia middle east',
   },
+  {
+    code: 'tr',
+    label: 'Türkçe',
+    short: 'TR',
+    flagId: 'tr',
+    searchText: 'turkish turkce türkiye turkey istanbul',
+  },
 ]
 
 export const RTL_LOCALES: readonly Locale[] = ['ar']
@@ -117,6 +124,19 @@ export function localeDirection(locale: Locale): 'rtl' | 'ltr' {
 export const DEFAULT_LOCALE: Locale = 'en'
 
 export const LOCALE_STORAGE_KEY = 'tscopier-locale'
+
+/**
+ * BCP 47 tags for date and number formatting. Locales without an entry fall
+ * back to the bare locale code (itself a valid BCP 47 tag) or to the caller's
+ * default, so this map only pins the tags where a region matters.
+ */
+export const LOCALE_DATE_TAGS: Partial<Record<Locale, string>> = {
+  en: 'en-US',
+  es: 'es-ES',
+  fr: 'fr-FR',
+  de: 'de-DE',
+  tr: 'tr-TR',
+}
 
 /** Case- and diacritic-insensitive substring match for language picker search. */
 export function normalizeLocaleSearchText(value: string): string {

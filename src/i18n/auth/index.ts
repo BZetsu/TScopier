@@ -9,14 +9,16 @@ import { authNl } from './nl'
 import { authPl } from './pl'
 import { authRu } from './ru'
 import { authSv } from './sv'
+import { authDe } from './de'
+import { authTr } from './tr'
 
 const byLocale: Record<Locale, AuthTranslations> = {
   en: authEn,
   es: authEs,
   fr: authFr,
-  // No German/Portuguese/Italian auth bundle yet: the sign-in/sign-up screens
+  // No Portuguese/Italian auth bundle yet: the sign-in/sign-up screens
   // stay in English until one exists. getAuthTranslations also falls back.
-  de: authEn,
+  de: authDe,
   pt: authEn,
   it: authEn,
   pl: authPl,
@@ -25,6 +27,7 @@ const byLocale: Record<Locale, AuthTranslations> = {
   nl: authNl,
   ja: authJa,
   ar: authAr,
+  tr: authTr,
 }
 
 export function getAuthTranslations(locale: Locale): AuthTranslations {

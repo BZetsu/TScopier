@@ -388,7 +388,7 @@ export const landingAr: LandingTranslations = {
       },
       multilingual: {
         languagesBadge: 'أكثر من 10 لغات',
-        moreLanguages: 'الألمانية والعربية والبرتغالية والإيطالية والمزيد',
+        moreLanguages: 'التركية والألمانية والعربية والبرتغالية والإيطالية والمزيد',
         parsedLabel: 'تم التحليل',
         ribbonFlags: ['us', 'gb', 'es', 'fr', 'pl', 'ru', 'se', 'nl', 'jp'],
         signals: [

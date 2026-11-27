@@ -271,3 +271,63 @@ export const detailModalAr: CopierDetailModalTranslations = {
     'يرجى شرح مشكلة نسخ هذه الصفقة باستخدام السبب المنظم أدناه. أجب بالعربية.',
   askAiAboutIssue: 'اسأل الذكاء الاصطناعي عن هذه المشكلة',
 }
+
+export const detailModalDe: CopierDetailModalTranslations = {
+  title: 'Signaldetails',
+  close: 'Schließen',
+  status: 'Status',
+  reason: 'Grund',
+  whatHappened: 'Was ist passiert',
+  channel: 'Kanal',
+  destination: 'Ziel',
+  symbol: 'Symbol',
+  action: 'Aktion',
+  levels: 'Geparste Levels',
+  entry: 'Einstieg',
+  stopLoss: 'Stop-Loss',
+  takeProfit: 'Take-Profit',
+  signalMessage: 'Telegram-Nachricht',
+  technicalCode: 'Technischer Code',
+  timeline: 'Zeitachse der Ausführung',
+  loadingTimeline: 'Ausführungsdetails werden geladen…',
+  noTimeline: 'Es wurden keine weiteren Ausführungsereignisse aufgezeichnet.',
+  viewDetails: 'Details anzeigen',
+  receivedAt: 'Empfangen',
+  closedAt: 'Geschlossen',
+  explainWithAi: 'Mit AI erklären',
+  explainSignalPrompt:
+    'Bitte erklären Sie in klarer, alltäglicher Sprache, was mit diesem Handelssignal passiert ist. Antworten Sie auf Deutsch.',
+  explainFailurePrompt:
+    'Bitte erklären Sie dieses Problem mit dem Kopieren von Trades anhand der unten genannten strukturierten Gründe. Antworten Sie auf Deutsch.',
+  askAiAboutIssue: 'AI zu diesem Problem befragen',
+}
+
+export const detailModalTr: CopierDetailModalTranslations = {
+  title: 'Sinyal detayları',
+  close: 'Kapat',
+  status: 'Durum',
+  reason: 'Sebep',
+  whatHappened: 'Ne oldu',
+  channel: 'Kanal',
+  destination: 'Hedef',
+  symbol: 'Sembol',
+  action: 'Eylem',
+  levels: 'Ayrıştırılan seviyeler',
+  entry: 'Giriş',
+  stopLoss: 'Stop loss',
+  takeProfit: 'Take profit',
+  signalMessage: 'Telegram mesajı',
+  technicalCode: 'Teknik kod',
+  timeline: 'İşlem zaman çizelgesi',
+  loadingTimeline: 'İşlem detayları yükleniyor…',
+  noTimeline: 'Ek işlem olayı kaydedilmedi.',
+  viewDetails: 'Detayları görüntüle',
+  receivedAt: 'Alınma',
+  closedAt: 'Kapanma',
+  explainWithAi: 'AI ile açıkla',
+  explainSignalPrompt:
+    'Lütfen bu işlem sinyaliyle ne olduğunu açık ve günlük bir dille anlatın. Türkçe yanıt verin.',
+  explainFailurePrompt:
+    'Lütfen bu işlem kopyalama sorununu aşağıdaki yapılandırılmış sebepi kullanarak anlatın. Türkçe yanıt verin.',
+  askAiAboutIssue: 'AI’ye bu soru hakkında soru sorun',
+}

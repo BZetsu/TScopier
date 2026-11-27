@@ -1,0 +1,235 @@
+import type { ChannelWorkerTranslations } from './types'
+
+export const channelWorkerTr: ChannelWorkerTranslations = {
+  onOpenTrade: 'açık işleminizde',
+  onSymbol: '{symbol} için',
+  forSymbol: ' {symbol} için',
+  fromChannel: ' {channel} kanalından',
+  errSuffix: ': {detail}',
+  symbolExempted: 'sembol işlemlerden muaf',
+  several: 'birkaç',
+  all: 'tüm',
+  leg: 'bacak',
+  legs: 'bacak',
+  notPlaced: 'emir verilmedi',
+  noMatchingOpenTrade: 'eşleşen açık işlem yok',
+  partialUpdate: 'kısmi güncelleme',
+  legsUpdated: '{modified}/{openLegs} bacak güncellendi',
+  awaitingTicket: '; {count} Ticket bekliyor',
+  brokerErrors: '; {count} broker hatası',
+  egError: ' — örn. {error}',
+  lotsParen: ' ({lots} lot)',
+  sideBuy: 'alış',
+  sideSell: 'satış',
+  verbBuy: 'alış',
+  verbSell: 'satış',
+  verbTrade: 'işlem',
+  priceAt: ' {price} fiyatından',
+  slTo: ' {sl} düzeyine',
+  slAt: ' {sl} düzeyinde',
+  slParen: ' (SL {sl})',
+  legsDetail: ' ({count} {legsLabel})',
+
+  pipelineReading: 'Kanal mesajı{for} okunuyor…',
+  pipelineUnderstood: 'Kanal mesajı{for} anlaşıldı.',
+  pipelineCouldNotRead: 'Kanal mesajı{for} okunamadı{err}',
+  keywordCouldNotUnderstand: 'Mesaj{for} anlaşılamadı{err}',
+
+  planFallbackNamed: '{symbol} için emir planı düzenlendi (birden fazla emir yerine tek emir kullanılıyor).',
+  planFallbackGeneric: 'Emir planı düzenlendi (birden fazla emir yerine tek emir kullanılıyor).',
+  planFallbackPartialTpMinLot:
+    'Kısmi TP’ler atlandı: lot bölünecek kadar küçük olduğundan broker’da yalnızca son take profit emri veriliyor.',
+  planFallbackPartialTpMinLotNamed:
+    '{symbol} için kısmi TP’ler atlandı: lot bölünecek kadar küçük olduğundan broker’da yalnızca son take profit emri veriliyor.',
+
+  orderDidNotPlaceNamed: '{on} emir verilmedi{err}',
+  orderDidNotPlaceGeneric: 'Emir verilmedi{err}',
+  orderDidNotPlaceSkipped: '{on} emir verilmedi ({reason}).',
+  orderCouldNotVerb: '{symbol} için {verb} emri verilemedi{err}',
+  orderCouldNotPlace: 'Emir verilemedi{err}',
+  orderPending: '{on} bekleyen {side} emri {price} fiyatından verildi{lots}.',
+  orderOpened: '{on} {lots}{side} işlemi{price} açıldı.',
+  orderSent: '{on} emir broker’a gönderildi.',
+
+  virtualInsertedNamed: '{symbol} için {count} katmanlı giriş emri ayarlandı.',
+  virtualInsertedGeneric: 'Açık işleminizde {count} katmanlı giriş emri ayarlandı.',
+  virtualFired: 'Katmanlı giriş emri tetiklendi{on}.',
+  virtualCancelled: 'Bekleyen katmanlı emir iptal edildi{on}.',
+  virtualExpired: '{on} bekleyen katmanlı emrin süresi doldu.',
+  virtualFailedNamed: '{symbol} için katmanlı giriş emirleri verilemedi{err}',
+  virtualFailedGeneric: 'Katmanlı giriş emirleri verilemedi{err}',
+
+  entryPlaced: 'Bekleyen giriş emri verildi{on}.',
+  entryFilled: 'Giriş emri dolduruldu{on}.',
+  entryCancelled: 'Bekleyen giriş emri iptal edildi{on}.',
+  entryFailed: 'Giriş emri başarısız oldu{on}{err}',
+
+  rangeEntryWaitingNoPrice: '{side} bekliyor — fiyat aralığı bekleniyor.',
+  rangeEntryWaitingAtPrice: '{side} bekliyor — @ {price} fiyatı bekleniyor.',
+  rangeEntryWaitingZone: '{side} bekliyor — {lo}–{hi} fiyat aralığı bekleniyor.',
+  rangeEntryFired: '{side} giriş yapıldı{on} (fiyat sinyal aralığına ulaştı).',
+  rangeEntryExpired: '{side} bekleyen emrin süresi doldu — giriş penceresi kapandı.',
+  rangeEntryTpBeforeEntry: '{side} bekleyen emrin süresi doldu — girişten önce take profit seviyesine ulaşıldı.',
+  rangeEntrySlBeforeEntry: '{side} bekleyen emrin süresi doldu — girişten önce stop loss seviyesine ulaşıldı.',
+  rangeEntryUpdated: '{side} bekleyen emir — sinyal aralığı {lo}–{hi} olarak güncellendi.',
+  rangeEntryCancelled: '{side} bekleyen emir iptal edildi ({reason}).',
+  rangeEntryWakeRetry: '{side} bekleyen emir — fiyat aralıktan çıktı; yeniden bekleniyor.',
+
+  mergeAddedNamed: '{symbol} için mevcut pozisyona eklendi.',
+  mergeAddedGeneric: 'Açık işleminize eklendi.',
+  mergeSlTpSuccessNamed:
+    '{symbol} için {count} açık {legsLabel} üzerinde stop loss ve take profit güncellendi (yeni işlem açılmadı).',
+  mergeSlTpSuccessGeneric:
+    'Açık işleminiz{legsDetail} üzerinde stop loss ve take profit güncellendi — yeni işlem açılmadı.',
+  mergeUserMsgNamed: '{message} ({symbol}).',
+  mergeCouldNotUpdateNamed: 'Açık {symbol} bacaklarının tamamı güncellenemedi ({detail}{extra})',
+  mergeCouldNotUpdateGeneric: 'Açık bacakların tamamı güncellenemedi ({detail}{extra})',
+  mergeAnchorNamed: 'Açık {symbol} sepetine SL/TP uygulanıyor.',
+  mergeAnchorGeneric: 'Açık işlem sepetinize SL/TP uygulanıyor.',
+
+  oppositeCloseNamed: 'Yeni bir işlem açılmadan önce {symbol} için ters pozisyon kapatıldı.',
+  oppositeCloseGeneric: 'Yeni bir işlem açılmadan önce ters pozisyon kapatıldı.',
+  partialTpFired: '{on} take profit seviyesi ulaşıldı — pozisyonun bir kısmı kapatıldı.',
+  trailingMoved: 'Trailing stop{on}{sl} kaydırıldı.',
+  trailingCouldNot: 'Trailing stop güncellenemedi{on}{err}',
+  autoBeHalf: 'Otomatik yönetim: stop loss{on} breakeven seviyesine taşındı ve yarısı kapatıldı{sl}.',
+  autoBe: 'Otomatik yönetim: stop loss{on}{sl} breakeven seviyesine taşındı.',
+  autoBeFailed: 'Otomatik yönetim stop loss’u{on} breakeven seviyesine taşıyamadı{err}',
+  cweCloseNamed: '{symbol} kapatıldı (kanal kapatma kuralı).',
+  cweCloseGeneric: 'Açık işleminiz kapatıldı (kanal kapatma kuralı).',
+  genericFailedNamed: '{symbol} işlenirken bir sorun oluştu{err}',
+  genericFailedGeneric: 'Bir sorun oluştu{err}',
+
+  understood: 'Anlaşıldı',
+  completed: 'Tamamlandı',
+  signalBuyNamed: '{prefix}: {symbol} alınacak.',
+  signalBuyGeneric: '{prefix}: alış sinyali.',
+  signalSellNamed: '{prefix}: {symbol} satılacak.',
+  signalSellGeneric: '{prefix}: satış sinyali.',
+  signalCloseNamed: '{prefix}: {symbol} kapatılacak.',
+  signalCloseGeneric: '{prefix}: açık işleminiz kapatılacak.',
+  signalCloseWorseNamed: '{prefix}: {symbol} üzerindeki daha kötü girişler kapatılacak.',
+  signalCloseWorseGeneric: '{prefix}: açık işleminizdeki daha kötü girişler kapatılacak.',
+  signalBreakevenUnderstood: 'Anlaşıldı: stop loss{on} breakeven seviyesine taşınacak.',
+  signalBreakevenCompleted: 'Stop loss{on} breakeven seviyesine taşındı.',
+  signalPartialProfit: '{prefix}: {on} kısmi kar alındı{pct}.',
+  signalPartialBreakeven: '{prefix}: {on} kısmi kar alındı ve stop loss breakeven seviyesine taşındı.',
+  signalModify: '{prefix}: {on} stop loss veya take profit güncellendi.',
+  signalIgnore: '{prefix}: bu mesaj bir işlem sinyali değil.',
+  signalDefault: '{prefix}: kanal güncellemesi{for}.',
+
+  mgmtCloseSuccessNamed: '{symbol} pozisyonu kapatıldı.',
+  mgmtCloseSuccessGeneric: 'Açık işleminiz kapatıldı.',
+  mgmtCloseWorseSuccessNamed: '{symbol} anlık bacakları kapatıldı (katmanlı bacaklar açık bırakıldı).',
+  mgmtCloseWorseSuccessGeneric:
+    'Açık işleminizdeki anlık bacaklar kapatıldı (katmanlı bacaklar açık bırakıldı).',
+  mgmtBreakevenSuccess: 'Stop loss{on} breakeven seviyesine taşındı.',
+  mgmtPartialProfit: '{on} kısmi kar alındı{pct}.',
+  mgmtPartialBreakeven: '{on} kısmi kar alındı ve stop loss breakeven seviyesine taşındı.',
+  mgmtModifySuccess: '{on} stop loss veya take profit güncellendi.',
+  mgmtAppliedNamed: 'Güncelleme {symbol} için uygulandı.',
+  mgmtAppliedGeneric: 'Güncelleme açık işleminiz için uygulandı.',
+
+  mgmtCloseFailNamed: '{symbol} kapatılamadı',
+  mgmtCloseFailGeneric: 'Açık işleminiz kapatılamadı',
+  mgmtCloseWorseFailNamed: '{symbol} anlık bacakları kapatılamadı',
+  mgmtCloseWorseFailGeneric: 'Açık işleminizdeki anlık bacaklar kapatılamadı',
+  mgmtBreakevenFailNamed: '{symbol} breakeven seviyesine taşınamadı',
+  mgmtBreakevenFailGeneric: 'Açık işleminiz breakeven seviyesine taşınamadı',
+  mgmtPartialProfitFail: '{on} kısmi kar alınamadı',
+  mgmtPartialBreakevenFail: '{on} kısmi kar alınamadı veya breakeven seviyesine taşınamadı',
+  mgmtModifyFail: '{on} stop loss veya take profit güncellenemedi',
+  mgmtApplyFailNamed: 'Güncelleme {symbol} için uygulanamadı',
+  mgmtApplyFailGeneric: 'Güncelleme açık işleminiz için uygulanamadı',
+
+  mgmtCloseSkippedNamed: '{symbol} kapatılmadı',
+  mgmtCloseSkippedGeneric: 'Açık işleminiz kapatılmadı',
+  mgmtCloseWorseSkippedNamed: '{symbol} anlık bacakları kapatılmadı',
+  mgmtCloseWorseSkippedGeneric: 'Açık işleminizdeki anlık bacaklar kapatılmadı',
+  mgmtSkippedNamed: '{symbol} güncellemesi atlandı',
+  mgmtSkippedGeneric: 'Atlandı!',
+  mgmtSkippedReason: '{phrase} ({reason}).',
+
+  skipReasons: {
+    entry_price_moved_adverse: 'Emir verilmeden önce fiyat giriş seviyesinin ötesine geçti',
+    ai_classified_as_non_actionable: 'AI bu mesajda bir işlem sinyali bulamadı',
+    ai_classified_as_non_entry: 'AI bu mesajda bir giriş talimatı bulamadı',
+    modification_no_open_trade: 'Değiştirilecek açık işlem yok',
+    no_matching_open_trade: 'Eşleşen açık işlem yok',
+    mgmt_no_open_trades: 'Eşleşen açık işlem yok',
+    mgmt_no_open_trades_db: 'Copier veritabanında eşleşen açık işlem yok',
+    mgmt_no_open_trades_broker: 'Bu kanal için broker tarafında açık pozisyon yok',
+    mgmt_no_open_trades_symbol: 'Kapatma mesajındaki sembol açık bacaklarla eşleşmedi',
+    mgmt_ambiguous_modify: 'Eşleşen açık işlem yok',
+    cwe_no_open_trades: 'Kapatılacak açık bacak yok',
+    cwe_no_eligible_broker_trades: 'Açık bacaklar etkin bir broker hesabına bağlı değil',
+    cwe_no_open_immediates: 'Açık bacakların tamamı katmanlı giriş (açık bırakıldı)',
+    cwe_close_failed: 'Broker seçilen bacakları kapatamadı',
+    copier_paused: 'Copier duraklatıldı',
+    close_worse_entries_disabled: 'Ayarlar’dan “daha kötü girişleri kapat” seçeneği devre dışı',
+    not_placed: 'Emir verilmedi',
+    symbol_exempted_from_trading: 'Sembol işlemlerden muaf',
+    symbol_not_in_whitelist: 'Sembol beyaz listede değil',
+    symbol_excluded: 'Sembol hariç tutuldu',
+    broker_session_not_connected:
+      'Broker bağlı değil — Account Configuration’ı açın ve bu hesap için Reconnect’ü kullanın',
+    no_broker_channel_match:
+      'Bu kanala bağlı bir broker hesabı yok — Account Configuration’ı açın, her broker’ı seçin, Channels sekmesinde sinyal kanalını işaretleyin ve Save’e basın',
+    channel_config_missing:
+      'Bu kanalın kayıtlı işlem ayarı yok — Account Configuration’ı açın, kanalı seçin, lot büyüklüğünü ve Single/Multi’yi ayarlayın, ardından Save’e basın',
+    channel_config_incomplete:
+      'Bu kanalın kayıtlı ayarları eksik — Account Configuration’ı açın, sabit lot ve işlem stilini ayarlayın, ardından Save’e basın',
+    non_trade_message:
+      'Mesaj bir işlem sinyaline benzemiyordu (yön, sembol ve fiyat ya da SL/TP ipuçları gerekli)',
+    channel_filter_ignored: 'Bu kanal talimatı Configure Trading’de Ignore olarak ayarlı',
+    telegram_listener_not_live:
+      'Telegram dinleyici bağlı değil — Copier Process’i açın ve Telegram’ı yeniden bağlayın',
+    explicit_stops_required_when_add_to_existing_off:
+      'Bu kanal tek yuva modunda (Add to Existing Trades kapalı); bu nedenle yeni girişler TP/SL parametreleri içermelidir',
+    entry_not_opened: 'Broker bu sinyal için hiçbir pozisyon açmadı',
+    entry_zone_far_from_market: 'Giriş bölgesi güncel piyasa fiyatından çok uzak',
+    broker_bridge_unavailable:
+      'Broker köprüsü kullanılamıyor — MT5’te Algo Trading’i etkinleştirin ve Account Configuration’da Trade EA ready olduğunu onaylayın',
+    entry_requires_imperative_or_labeled_stops:
+      'Mesaj bir giriş emri ifadesi (örn. buy now, gold sell now) veya etiketli SL/TP içermiyordu',
+    tradingview_missing_sl_tp:
+      'TradingView uyarısında SL ve TP fiyatları yoktu — bunları uyarı mesajına ekleyin veya yapılandırmada Override SL ve Override TP’yi etkinleştirin',
+    entry_tp_without_sl: 'SL verilmemiş — broker yapılandırmasında önceden tanımlı SL pip’lerini ayarlayın',
+    signal_missing_required_sl: 'SL verilmemiş — broker yapılandırmasında önceden tanımlı SL pip’lerini ayarlayın',
+    delete_pendings_no_parent:
+      'Bu yanıtın gönderildiği orijinal işlem bulunamadı — bekleyen emirleri iptal etmek için orijinal sinyal mesajına yanıt verin',
+    delete_pendings_requires_reply:
+      'Bekleyen emir iptal talimatları orijinal sinyal mesajına yanıt olarak gönderilmelidir',
+    delete_pendings_none: 'Bu işlem için iptal edilecek bekleyen emir bulunamadı',
+    delete_pendings_cancel_failed:
+      'Bekleyen emirler bulundu ancak hiçbiri iptal edilemedi (broker reddetti veya kullanılamıyordu) — tekrar deneyin veya bunları Trades sayfasından kapatın',
+    partial_close_unavailable_for_position_size:
+      'Kısmi kapatma mümkün değil — bu pozisyon bölünecek kadar küçük: istenen kısım broker minimum lotunun altında kalacaktı; bu yüzden hiçbir şey kapatılmadı ve işlem tam boyutunda açık kaldı',
+  },
+  dispatchSkipped: 'Bu sinyal kopyalanmadı ({reason}).',
+  rangeRebalanceSkippedNamed: '{symbol} için take profit yeniden dengesi atlandı ({reason})',
+  rangeRebalanceSkippedGeneric: 'Take profit yeniden dengesi atlandı ({reason})',
+  rangeRebalanceFailedNamed: '{on} take profit’leri yeniden dengelenemedi',
+  rangeRebalanceFailedGeneric: 'Açık işleminizde take profit’leri yeniden dengelenemedi',
+  errorTicketNotFound: 'Ticket {ticket} bulunamadı',
+  errorSymbolNotFound:
+    '{symbol} sembolü bu broker’da kullanılamıyor — farklı bir ad kullanılıyor olabilir (örn. XM’de altın için GOLD#). Hata devam ederse hesabı yeniden bağlayın veya destekle iletişime geçin.',
+  errorBrokerRejectedGeneric:
+    'Broker bu emri reddetti — broker’daki sembol adını ve bağlantıyı kontrol edin, ardından tekrar deneyin',
+  errorBrokerBridgeUnavailable:
+    'Broker köprüsü geçici olarak kullanılamıyor — Account Configuration → broker health bölümünü açın, MT5’te Algo Trading’i etkinleştirin ve Trade EA ready yeşil olana kadar bekleyin',
+  errorTradeEaNotReady:
+    'MT5 terminalinizde Trade EA hazır değil — Algo Trading’i etkinleştirin, terminali açık tutun, ardından broker health’i yenileyin',
+  errorBrokerNotConnected:
+    'Broker bağlı değil — Account Configuration’da Reconnect’i kullanın ve bu hesap için MT şifrenizi girin',
+  errorBrokerBusy:
+    'Broker meşgul — gönderilmekte olan emir çok fazla; sonraki sinyaller yük azaldığında çalışır',
+  errorOrderSendTimedOut:
+    'OrderSend zaman aşımına uğradı — açık pozisyonları kontrol edin; emir yine de doldurulmuş olabilir',
+  errorInvalidStops:
+    'Broker bu stop seviyelerini reddetti — SL/TP seviyelerinin piyasanın doğru tarafında olduğunu ve minimum mesafeye uyduğunu kontrol edin.',
+  errorBridgeGlitch:
+    'Geçici broker işlem sunucusu sorunu — katmanlı girişler otomatik olarak yeniden denenecek. Bu durum sürerse Reconnect’i kullanın.',
+  errorStopsAlreadySet: 'Stop loss ve take profit broker’da zaten ayarlıydı (değişiklik gerekmedi).',
+  errorSignalLinkFailed: 'Bu işlem sinyaline bağlanamadı.',
+}

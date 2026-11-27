@@ -11,7 +11,7 @@ test('isRtlLocale: Arabic is RTL', () => {
 })
 
 test('isRtlLocale: LTR locales return false', () => {
-  const ltr: Locale[] = ['en', 'es', 'fr', 'pl', 'ru', 'sv', 'nl', 'ja']
+  const ltr: Locale[] = ['en', 'es', 'fr', 'de', 'pt', 'it', 'pl', 'ru', 'sv', 'nl', 'ja', 'tr']
   for (const code of ltr) {
     assert.equal(isRtlLocale(code), false)
   }

@@ -8,15 +8,17 @@ import { channelWorkerNl } from './nl'
 import { channelWorkerPl } from './pl'
 import { channelWorkerRu } from './ru'
 import { channelWorkerSv } from './sv'
+import { channelWorkerDe } from './de'
+import { channelWorkerTr } from './tr'
 import type { ChannelWorkerTranslations } from './types'
 
 const byLocale: Record<Locale, ChannelWorkerTranslations> = {
   en: channelWorkerEn,
   es: channelWorkerEs,
   fr: channelWorkerFr,
-  // No German/Portuguese/Italian bundle yet: these worker-facing labels stay
+  // No Portuguese/Italian bundle yet: these worker-facing labels stay
   // in English.
-  de: channelWorkerEn,
+  de: channelWorkerDe,
   pt: channelWorkerEn,
   it: channelWorkerEn,
   pl: channelWorkerPl,
@@ -25,6 +27,7 @@ const byLocale: Record<Locale, ChannelWorkerTranslations> = {
   nl: channelWorkerNl,
   ja: channelWorkerJa,
   ar: channelWorkerAr,
+  tr: channelWorkerTr,
 }
 
 export function getChannelWorkerTranslations(locale: Locale): ChannelWorkerTranslations {
